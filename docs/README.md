@@ -1,7 +1,7 @@
 # Документация проекта Kubiki
 
 > **Kubiki** — современная, высокопроизводительная кроссплатформенная IDE для Kubernetes.  
-> Полноценный аналог Lens/OpenLens/Freelens с архитектурой без Electron (Tauri v2 + Rust + React 19), потребляющий в 10–15 раз меньше оперативной памяти и работающий полностью локально (serverless / local-first).
+> Полноценный аналог Lens/OpenLens/Freelens с архитектурой без Electron (на базе чистого Rust-движка `kubiki-core`), потребляющий минимум памяти и работающий полностью локально (serverless / local-first).
 
 ---
 
@@ -11,39 +11,25 @@
 
 | Документ | Содержание | Для кого предназначен |
 |---|---|---|
-| **[01-RESEARCH-ANALYSIS.md](./01-RESEARCH-ANALYSIS.md)** | Глубокий анализ существующих аналогов (Lens, Headlamp, K9s, Aptakube, Octant, Kubenav, Monokle), сравнительные таблицы, анализ причин провала Octant, разбор проблем с памятью в Electron, сравнение GUI-фреймворков для Rust (Tauri, Iced, Slint, egui, Dioxus) и обоснование выбора стека. | Архитекторы, Product Owners, Исследователи |
-| **[02-ARCHITECTURE-AND-DESIGN.md](./02-ARCHITECTURE-AND-DESIGN.md)** | Детальное системное проектирование приложения: схема компонентов, архитектура бэкенда на Rust (Clean Architecture, Informer/Reflector manager, PTY pool, Port-forwarding engine), структура фронтенда (React 19 + TypeScript + Zustand), дизайн-код в стиле JetBrains/VS Code, модель событий IPC и фундамент системы плагинов. | Lead Developers, Инженеры, AI-агенты |
-| **[03-KUBERNETES-SPECIFICATION.md](./03-KUBERNETES-SPECIFICATION.md)** | Полная спецификация функционала Kubernetes: матрица всех поддерживаемых объектов (Workloads, Storage, Config, Network, RBAC, Cluster), динамическое обнаружение и отображение любых CRD со схемами, реализация стриминга логов, интерактивного терминала (exec), проброса портов, полноценной интеграции с Helm 3 и сбора метрик. | Kubernetes/DevOps инженеры, Разработчики фичей |
-| **[04-ROADMAP.md](./04-ROADMAP.md)** | Пошаговый Engineering Roadmap из 10 фаз (от Фазы 0 до Фазы 9), разбитый на блоки и атомарные задачи. Каждая задача снабжена описанием, списком создаваемых файлов, сигнатурами структур/команд, кодом и критериями верификации для прямой передачи ИИ-агенту на реализацию. | ИИ-агенты (AI Coding Agents), Разработчики |
+| **[01-RESEARCH-ANALYSIS.md](./01-RESEARCH-ANALYSIS.md)** | Глубокий анализ существующих аналогов (Lens, Headlamp, K9s, Aptakube, Octant, Kubenav, Monokle), сравнительные таблицы, анализ причин провала Octant, разбор проблем с памятью в Electron, сравнение GUI-фреймворков для Rust. | Архитекторы, Product Owners, Исследователи |
+| **[02-ARCHITECTURE-AND-DESIGN.md](./02-ARCHITECTURE-AND-DESIGN.md)** | Системное проектирование приложения: схема компонентов, архитектура бэкенда на Rust (Clean Architecture, Informer/Reflector manager, PTY pool, Port-forwarding engine), дизайн-код в стиле JetBrains/VS Code. | Lead Developers, Инженеры, AI-агенты |
+| **[03-KUBERNETES-SPECIFICATION.md](./03-KUBERNETES-SPECIFICATION.md)** | Полная спецификация функционала Kubernetes: матрица всех поддерживаемых объектов (Workloads, Storage, Config, Network, RBAC, Cluster), динамическое обнаружение и отображение любых CRD со схемами, логи, exec, port-forward, Helm 3 и метрики. | DevOps инженеры, Разработчики фичей |
+| **[04-ROADMAP.md](./04-ROADMAP.md)** | Пошаговый Engineering Roadmap из 10 фаз (от Фазы 0 до Фазы 9), разбитый на блоки и атомарные задачи. | ИИ-агенты (AI Coding Agents), Разработчики |
+| **[05-HEADLESS-CORE-API.md](./05-HEADLESS-CORE-API.md)** | **Спецификация и API готового ядра `kubiki-core`**: описание сервисов, примеры кода, запуск тестов, использование CLI инструмента `kubiki-cli` и инструкция по подключению любого UI. | Frontend разработчики, UI AI-агенты |
 
 ---
 
-## Ключевые технологические решения
+## Как передать проект на создание UI другому ИИ-агенту
 
-- **Desktop Shell:** [Tauri v2](https://v2.tauri.app/) (нативный системный WebView, размер инсталлятора 3–15 МБ, потребление памяти 30–50 МБ в idle).
-- **Backend Core:** [Rust](https://www.rust-lang.org/) + Tokio async runtime.
-- **K8s Client:** [kube-rs](https://github.com/kube-rs/kube) (CNCF Sandbox Project) с поддержкой Informers, Watch streams, Exec, Port Forward, Log follow.
-- **Frontend Stack:** React 19, TypeScript 5, Vite, [Tailwind CSS v4](https://tailwindcss.com/).
-- **Кодовый редактор:** [Monaco Editor](https://microsoft.github.io/monaco-editor/) (движок VS Code) с поддержкой JSON-схем K8s, автодополнением и Live Diff.
-- **Встроенный терминал:** [xterm.js](https://xtermjs.org/) + `portable-pty` в Rust.
-- **Управление окнами и панелями:** [Dockview](https://dockview.dev/) (панели, вкладки, сплиты как в JetBrains / VS Code).
-- **Реактивное состояние:** [Zustand](https://github.com/pmndrs/zustand) + типизированная шина событий.
-- **Типизация IPC:** `tauri-specta` (автоматическая генерация TypeScript типов из Rust структур).
-
----
-
-## Как передать проект на реализацию ИИ-агенту
-
-Для запуска реализации автономным агентом достаточно передать следующую инструкцию:
+Для запуска разработки UI автономным агентом передайте следующую инструкцию:
 
 ```markdown
-Привет! Ты реализуешь проект Kubiki по готовой архитектурной документации.
-Изучи файлы в папке `./docs`:
-- `./docs/01-RESEARCH-ANALYSIS.md` (контекст и стек)
-- `./docs/02-ARCHITECTURE-AND-DESIGN.md` (системный дизайн)
-- `./docs/03-KUBERNETES-SPECIFICATION.md` (спецификация K8s)
-- `./docs/04-ROADMAP.md` (пошаговый роадмап)
+Привет! Ты разрабатываешь интерфейс для проекта Kubiki.
+Весь основной бэкенд-движок Kubernetes уже полностью готов, оттестирован и находится в папке `crates/kubiki-core`.
 
-Начни реализацию строго с **Фазы 0** документа `./docs/04-ROADMAP.md`.
-Выполняй задачи последовательно, проверяя каждый шаг командами верификации из роадмапа.
+Изучи документацию:
+- `./docs/05-HEADLESS-CORE-API.md` (полное описание API движка kubiki-core)
+- `./docs/02-ARCHITECTURE-AND-DESIGN.md` (требования к раскладке и стилю JetBrains / VS Code)
+
+Подключи к своему UI-проекту крейт `kubiki-core = { path = "../crates/kubiki-core" }` и создай интерфейс на выбранном стеке.
 ```
