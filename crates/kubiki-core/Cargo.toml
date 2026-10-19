@@ -1,0 +1,33 @@
+[package]
+name = "kubiki-core"
+version = "0.1.0"
+edition = "2024"
+description = "Kubiki Core - Headless K8s Engine (Informers, PTY, Port-Forward, Helm)"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Kubernetes Client
+kube = { version = "0.98", default-features = false, features = ["client", "runtime", "derive", "ws", "rustls-tls"] }
+k8s-openapi = { version = "0.24", features = ["latest"] }
+
+# Terminal & PTY
+portable-pty = "0.8"
+
+# Error handling & Logging
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "6"
+regex = "1"
+
+[dev-dependencies]
+tokio-test = "0.4"
