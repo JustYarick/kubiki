@@ -18,6 +18,9 @@ import {
   Box,
   Check,
   ArrowRightLeft,
+  Laptop,
+  Server,
+  FileText,
 } from 'lucide-react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -44,6 +47,8 @@ export const BottomDock: React.FC = () => {
     setDockHeight,
     closeSession,
     setActiveSession,
+    openLocalTerminal,
+    openNodeShell,
     openTerminal,
     openLogs,
     openPorts,
@@ -69,6 +74,7 @@ export const BottomDock: React.FC = () => {
   };
 
   const allPods = useMemo(() => Array.from(resources['Pod']?.values() || []), [resources]);
+  const allNodes = useMemo(() => Array.from(resources['Node']?.values() || []), [resources]);
 
   if (dockCollapsed) {
     return (
@@ -81,7 +87,7 @@ export const BottomDock: React.FC = () => {
         </span>
         <div className="h-3 w-px bg-[var(--border-default)]" />
         <span className="text-[11px] font-mono text-[var(--text-secondary)]">
-          {activeSession?.title || 'Terminal'}
+          {activeSession?.title || 'No active sessions'}
         </span>
         <span className="text-[10px] text-[var(--text-muted)]">
           ({sessions.length} active sessions)
@@ -102,11 +108,73 @@ export const BottomDock: React.FC = () => {
     );
   }
 
-  const getSessionIcon = (type: DockSession['type']) => {
-    if (type === 'terminal') return TerminalIcon;
-    if (type === 'logs') return ArrowDownToLine;
-    if (type === 'ports') return ArrowRightLeft;
+  if (sessions.length === 0) {
+    return (
+      <div
+        className="shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] flex flex-col z-20 overflow-hidden font-sans"
+        style={{ height: dockHeight }}
+      >
+        <div className="h-[32px] shrink-0 flex items-center justify-between px-3 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] select-none">
+          <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            <TerminalIcon size={13} />
+            <span className="font-semibold uppercase tracking-wider text-[10px]">Bottom Drawer (No Open Sessions)</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <IconButton
+              icon={Plus}
+              size="sm"
+              onClick={() => openLocalTerminal()}
+              tooltip="Open Local Terminal"
+              aria-label="New Session"
+            />
+            <IconButton
+              icon={ChevronDown}
+              size="sm"
+              onClick={toggleDock}
+              tooltip="Collapse Panel (⌘J)"
+              aria-label="Collapse"
+            />
+          </div>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-xs text-[var(--text-muted)] bg-[var(--bg-canvas)]">
+          <Laptop size={32} className="text-[var(--text-muted)] mb-2 opacity-60" />
+          <p className="mb-3 text-[var(--text-secondary)]">All bottom drawer tabs have been closed.</p>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="primary" onClick={() => openLocalTerminal()}>
+              <Laptop size={12} className="mr-1.5" /> Open Local Terminal (Host PC)
+            </Button>
+            <Button size="sm" onClick={() => openPorts()}>
+              <ArrowRightLeft size={12} className="mr-1.5" /> Port Forwarding
+            </Button>
+            <Button size="sm" onClick={() => openEvents()}>
+              <Bell size={12} className="mr-1.5" /> Cluster Events
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const getSessionIcon = (s: DockSession) => {
+    if (s.type === 'terminal') {
+      if (s.targetType === 'local') return Laptop;
+      if (s.targetType === 'node') return Server;
+      return TerminalIcon;
+    }
+    if (s.type === 'logs') return FileText;
+    if (s.type === 'ports') return ArrowRightLeft;
     return Bell;
+  };
+
+  const getSessionColor = (s: DockSession) => {
+    if (s.type === 'terminal') {
+      if (s.targetType === 'local') return 'text-sky-400';
+      if (s.targetType === 'node') return 'text-amber-400';
+      return 'text-emerald-400';
+    }
+    if (s.type === 'logs') return 'text-blue-400';
+    if (s.type === 'ports') return 'text-amber-400';
+    return 'text-purple-400';
   };
 
   return (
@@ -118,7 +186,8 @@ export const BottomDock: React.FC = () => {
       <div className="h-[32px] shrink-0 flex items-stretch px-1 gap-0.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-x-auto overflow-y-hidden kubiki-scrollbar select-none">
         {sessions.map((s) => {
           const isActive = s.id === activeSessionId;
-          const Icon = getSessionIcon(s.type);
+          const Icon = getSessionIcon(s);
+          const iconColor = getSessionColor(s);
 
           return (
             <div
@@ -138,13 +207,7 @@ export const BottomDock: React.FC = () => {
 
               <Icon
                 size={12}
-                className={cx(
-                  'shrink-0',
-                  s.type === 'terminal' && 'text-emerald-400',
-                  s.type === 'logs' && 'text-blue-400',
-                  s.type === 'ports' && 'text-amber-400',
-                  s.type === 'events' && 'text-purple-400'
-                )}
+                className={cx('shrink-0', iconColor)}
               />
 
               <div className="flex flex-col min-w-0 flex-1 leading-tight text-left">
@@ -162,21 +225,20 @@ export const BottomDock: React.FC = () => {
                 </span>
               )}
 
-              {!s.pinned && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeSession(s.id);
-                  }}
-                  className={cx(
-                    'p-0.5 rounded hover:bg-[var(--bg-elevated)] hover:text-white transition-opacity',
-                    isActive ? 'opacity-70 group-hover:opacity-100' : 'opacity-0 group-hover:opacity-70'
-                  )}
-                  title="Close Session"
-                >
-                  <X size={11} />
-                </button>
-              )}
+              {/* Unconditional close button for every session */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeSession(s.id);
+                }}
+                className={cx(
+                  'p-0.5 rounded hover:bg-[var(--bg-elevated)] hover:text-white transition-opacity ml-1',
+                  isActive ? 'opacity-70 group-hover:opacity-100' : 'opacity-0 group-hover:opacity-70'
+                )}
+                title="Close Session"
+              >
+                <X size={11} />
+              </button>
             </div>
           );
         })}
@@ -186,31 +248,34 @@ export const BottomDock: React.FC = () => {
         {/* Plus Button: Add New Session (Lens Style) */}
         <div className="flex items-center px-1 gap-0.5 shrink-0 bg-[var(--bg-secondary)]">
           <Popover
-            width={240}
+            width={260}
             trigger={({ open }) => (
               <IconButton
                 icon={Plus}
                 size="sm"
                 active={open}
-                tooltip="New Terminal or Log Session"
+                tooltip="New Terminal, Logs, or Tool"
                 aria-label="New Session"
               />
             )}
           >
             {(close) => (
-              <div className="py-1">
+              <div className="py-1 max-h-[380px] overflow-y-auto kubiki-scrollbar">
                 <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
-                  Start New Session
+                  Workstation &amp; Cluster Tools
                 </div>
                 <button
                   onClick={() => {
-                    openTerminal('host', 'default', 'sh');
+                    openLocalTerminal();
                     close();
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 >
-                  <TerminalIcon size={12} className="text-emerald-400" />
-                  <span>Host Terminal (Node Shell)</span>
+                  <Laptop size={13} className="text-sky-400" />
+                  <div className="flex flex-col text-left">
+                    <span className="font-medium">Local Terminal (Host PC)</span>
+                    <span className="text-[9.5px] text-[var(--text-muted)]">yarick@localhost (~/myproject/kubiki)</span>
+                  </div>
                 </button>
                 <button
                   onClick={() => {
@@ -219,7 +284,7 @@ export const BottomDock: React.FC = () => {
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 >
-                  <ArrowRightLeft size={12} className="text-amber-400" />
+                  <ArrowRightLeft size={13} className="text-amber-400" />
                   <span>Port Forwarding Manager</span>
                 </button>
                 <button
@@ -229,39 +294,86 @@ export const BottomDock: React.FC = () => {
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 >
-                  <Bell size={12} className="text-purple-400" />
+                  <Bell size={13} className="text-purple-400" />
                   <span>Cluster Event Stream</span>
                 </button>
 
+                {/* Node Shells */}
+                <div className="my-1 h-px bg-[var(--border-subtle)]" />
+                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Node Shells (Cluster Nodes)
+                </div>
+                {allNodes.length === 0 ? (
+                  <button
+                    onClick={() => {
+                      openNodeShell('default');
+                      close();
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Server size={12} className="text-amber-400 shrink-0" />
+                      <span className="font-mono text-[11px] truncate">default (k3s)</span>
+                    </div>
+                    <span className="text-[9.5px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)]">
+                      Shell
+                    </span>
+                  </button>
+                ) : (
+                  allNodes.slice(0, 6).map((node) => (
+                    <button
+                      key={node.uid}
+                      onClick={() => {
+                        openNodeShell(node.name);
+                        close();
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Server size={12} className="text-amber-400 shrink-0" />
+                        <span className="font-mono text-[11px] truncate">{node.name}</span>
+                      </div>
+                      <span className="text-[9.5px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)]">
+                        Shell
+                      </span>
+                    </button>
+                  ))
+                )}
+
+                {/* Attach to Pod */}
                 <div className="my-1 h-px bg-[var(--border-subtle)]" />
                 <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Attach to Running Pod
                 </div>
-                {allPods.slice(0, 8).map((p) => (
-                  <div key={p.uid} className="flex items-center justify-between px-2.5 py-1 hover:bg-[var(--bg-hover)] text-[11px]">
-                    <span className="font-mono truncate max-w-[130px] text-[var(--text-secondary)]">{p.name}</span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => {
-                          openTerminal(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
-                          close();
-                        }}
-                        className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[10px]"
-                      >
-                        Shell
-                      </button>
-                      <button
-                        onClick={() => {
-                          openLogs(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
-                          close();
-                        }}
-                        className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[10px]"
-                      >
-                        Logs
-                      </button>
+                {allPods.length === 0 ? (
+                  <div className="px-2.5 py-1 text-[10.5px] text-[var(--text-muted)]">No pods found</div>
+                ) : (
+                  allPods.slice(0, 8).map((p) => (
+                    <div key={p.uid} className="flex items-center justify-between px-2.5 py-1 hover:bg-[var(--bg-hover)] text-[11px]">
+                      <span className="font-mono truncate max-w-[130px] text-[var(--text-secondary)]">{p.name}</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            openTerminal(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
+                            close();
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[10px]"
+                        >
+                          Shell
+                        </button>
+                        <button
+                          onClick={() => {
+                            openLogs(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
+                            close();
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[10px]"
+                        >
+                          Logs
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             )}
           </Popover>
@@ -309,8 +421,12 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
   const pods = useMemo(() => Array.from(podMap?.values() || []), [podMap]);
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
 
-  const [activeContainer, setActiveContainer] = useState(session.container || 'app');
-  const [shellBinary, setShellBinary] = useState('/bin/sh');
+  const isLocal = session.targetType === 'local' || session.resourceName === 'localhost' || session.resourceName === 'local' || !session.resourceName;
+  const isNode = session.targetType === 'node' || session.resourceName?.startsWith('node/');
+  const isPod = !isLocal && !isNode;
+
+  const [activeContainer, setActiveContainer] = useState(session.container || (isLocal ? 'host' : isNode ? 'sh' : 'app'));
+  const [shellBinary, setShellBinary] = useState(isLocal ? '/bin/zsh' : '/bin/sh');
 
   const containers = session.allContainers && session.allContainers.length > 0
     ? session.allContainers
@@ -359,23 +475,32 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
   }, []);
 
   const writePrompt = (term: XTerm) => {
-    const isHost = session.resourceName?.startsWith('node/') || session.resourceName === 'host';
-    const hostStr = isHost ? 'yarick@kubiki' : `${session.resourceName?.slice(0, 16)}:${activeContainer}`;
-    term.write(`\r\n\x1b[32m${hostStr}\x1b[0m:\x1b[34m~\x1b[0m$ `);
+    if (isLocal) {
+      term.write(`\r\n\x1b[1;32myarick@localhost\x1b[0m:\x1b[1;34m~/myproject/kubiki\x1b[0m$ `);
+    } else if (isNode) {
+      term.write(`\r\n\x1b[1;33mroot@${session.resourceName || 'node'}\x1b[0m:\x1b[1;34m/\x1b[0m# `);
+    } else {
+      const hostStr = `${session.resourceName?.slice(0, 16)}:${activeContainer}`;
+      term.write(`\r\n\x1b[32m${hostStr}\x1b[0m:\x1b[34m~\x1b[0m$ `);
+    }
   };
 
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
 
-    const isHost = session.resourceName?.startsWith('node/') || session.resourceName === 'host';
-    const intro = isHost
-      ? '\r\n\x1b[1mKubiki Node Shell Session\x1b[0m — interactive kubectl sandbox. Type `help`.\r\n'
-      : `\r\n\x1b[1;32mConnected to Pod\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m) using \x1b[33m${shellBinary}\x1b[0m.\r\nType \`help\` or any shell command.\r\n`;
+    let intro = '';
+    if (isLocal) {
+      intro = `\r\n\x1b[1;36mKubiki Local Terminal (Host PC)\x1b[0m — interactive local shell session using \x1b[33m${shellBinary}\x1b[0m.\r\nWorkstation: \x1b[1;32myarick@localhost\x1b[0m (openSUSE Tumbleweed · Hyprland)\r\nType \`help\`, \`kubectl get pods\`, \`whoami\`, \`pwd\`, or any command.\r\n`;
+    } else if (isNode) {
+      intro = `\r\n\x1b[1;33mKubiki Node Shell\x1b[0m — privileged interactive shell on node \x1b[1m${session.resourceName}\x1b[0m.\r\nAccessing host root via debug container.\r\nType \`help\` or any node inspection command.\r\n`;
+    } else {
+      intro = `\r\n\x1b[1;32mConnected to Pod\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m) using \x1b[33m${shellBinary}\x1b[0m.\r\nType \`help\` or any container command.\r\n`;
+    }
 
     term.write(intro);
     writePrompt(term);
-  }, [session.resourceName, activeContainer, shellBinary]);
+  }, [session.resourceName, activeContainer, shellBinary, isLocal, isNode]);
 
   useEffect(() => {
     const term = termRef.current;
@@ -383,7 +508,7 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
 
     const onData = term.onData((data) => {
       if (data === '\r') {
-        terminalExec(lineRef.current, (s) => term.write(s), pods);
+        terminalExec(lineRef.current, (s) => term.write(s), pods, isLocal, isNode, session.resourceName);
         lineRef.current = '';
         writePrompt(term);
         return;
@@ -408,7 +533,7 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
     });
 
     return () => onData.dispose();
-  }, [session.resourceName, activeContainer, pods]);
+  }, [session.resourceName, activeContainer, pods, isLocal, isNode]);
 
   const resetSession = () => {
     const term = termRef.current;
@@ -425,12 +550,32 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
       {/* Target Info Header (Lens-grade) */}
       <div className="h-8 shrink-0 flex items-center gap-2 px-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50 text-xs">
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-[var(--status-ok)] shrink-0 animate-pulse" />
+          <span
+            className={cx(
+              'w-2 h-2 rounded-full shrink-0 animate-pulse',
+              isLocal ? 'bg-sky-400' : isNode ? 'bg-amber-400' : 'bg-[var(--status-ok)]'
+            )}
+          />
           <span className="text-[var(--text-muted)]">Target:</span>
-          <span className="font-mono font-medium text-[var(--text-primary)]">
-            {session.resourceName}
-          </span>
-          {session.namespace && (
+          {isLocal && (
+            <div className="flex items-center gap-1 font-mono font-medium text-sky-400">
+              <Laptop size={12} />
+              <span>Local PC (localhost)</span>
+            </div>
+          )}
+          {isNode && (
+            <div className="flex items-center gap-1 font-mono font-medium text-amber-400">
+              <Server size={12} />
+              <span>Node Shell: {session.resourceName}</span>
+            </div>
+          )}
+          {isPod && (
+            <div className="flex items-center gap-1 font-mono font-medium text-[var(--text-primary)]">
+              <Box size={12} className="text-emerald-400" />
+              <span>{session.resourceName}</span>
+            </div>
+          )}
+          {session.namespace && isPod && (
             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
               ns: {session.namespace}
             </span>
@@ -439,46 +584,48 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
 
         <div className="h-3.5 w-px bg-[var(--border-default)] mx-1" />
 
-        {/* Container Selector Dropdown (Fixed Popover) */}
-        <Popover
-          width={200}
-          trigger={({ open }) => (
-            <button
-              className={cx(
-                'flex items-center gap-1 h-[22px] px-2 rounded-[3px] border text-[11px] font-mono transition-colors',
-                open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
-              )}
-              title="Select Container"
-            >
-              <Box size={11} className="text-blue-400" />
-              <span>{activeContainer}</span>
-              <ChevronDown size={10} className="opacity-60" />
-            </button>
-          )}
-        >
-          {(close) => (
-            <div className="py-1">
-              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Select Container
+        {/* Container Selector Dropdown (Pod only) */}
+        {isPod && (
+          <Popover
+            width={200}
+            trigger={({ open }) => (
+              <button
+                className={cx(
+                  'flex items-center gap-1 h-[22px] px-2 rounded-[3px] border text-[11px] font-mono transition-colors',
+                  open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                )}
+                title="Select Container"
+              >
+                <Box size={11} className="text-blue-400" />
+                <span>{activeContainer}</span>
+                <ChevronDown size={10} className="opacity-60" />
+              </button>
+            )}
+          >
+            {(close) => (
+              <div className="py-1">
+                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Select Container
+                </div>
+                {containers.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => {
+                      setActiveContainer(c);
+                      updateSessionContainer(session.id, c);
+                      toast.info(`Switched to container: ${c}`);
+                      close();
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  >
+                    <span className="font-mono">{c}</span>
+                    {activeContainer === c && <Check size={11} className="text-[var(--accent)]" />}
+                  </button>
+                ))}
               </div>
-              {containers.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => {
-                    setActiveContainer(c);
-                    updateSessionContainer(session.id, c);
-                    toast.info(`Switched to container: ${c}`);
-                    close();
-                  }}
-                  className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                >
-                  <span className="font-mono">{c}</span>
-                  {activeContainer === c && <Check size={11} className="text-[var(--accent)]" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </Popover>
+            )}
+          </Popover>
+        )}
 
         {/* Shell Binary Selector Dropdown */}
         <Popover
@@ -498,7 +645,7 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
         >
           {(close) => (
             <div className="py-1">
-              {['/bin/sh', '/bin/bash', '/bin/zsh'].map((sh) => (
+              {(isLocal ? ['/bin/zsh', '/bin/bash', '/bin/sh'] : ['/bin/sh', '/bin/bash']).map((sh) => (
                 <button
                   key={sh}
                   onClick={() => {
@@ -784,33 +931,99 @@ const PODS_LINE = (pods: { name: string; namespace?: string; status?: string; re
   return out;
 };
 
-function terminalExec(input: string, write: (s: string) => void, pods: { name: string; namespace?: string; status?: string; ready?: string }[]) {
+function terminalExec(
+  input: string,
+  write: (s: string) => void,
+  pods: { name: string; namespace?: string; status?: string; ready?: string }[],
+  isLocal = false,
+  isNode = false,
+  resourceName?: string
+) {
   const cmd = input.trim();
   if (!cmd) return;
   const parts = cmd.split(/\s+/);
+
   if (cmd === 'clear') {
     write('\x1b[2J\x1b[H');
     return;
   }
+
   if (cmd === 'help') {
-    write('\r\nCommands: kubectl get <pods|deployments|services|configmaps|secrets> [-n ns], kubectl version, kubectl config get-contexts, clear, exit\r\n');
+    if (isLocal) {
+      write('\r\nLocal Commands: kubectl <get|describe|logs|exec|config>, whoami, pwd, ls, uname, hostname, date, clear, exit\r\n');
+    } else if (isNode) {
+      write('\r\nNode Commands: crictl ps, journalctl -u k3s, df -h, free -m, whoami, uname -a, clear, exit\r\n');
+    } else {
+      write('\r\nPod Commands: cat /etc/hosts, env, ps aux, ls -la, whoami, pwd, clear, exit\r\n');
+    }
     return;
   }
+
+  if (cmd === 'whoami') {
+    write(`\r\n${isLocal ? 'yarick' : isNode ? 'root' : 'app'}\r\n`);
+    return;
+  }
+
+  if (cmd === 'pwd') {
+    write(`\r\n${isLocal ? '/home/yarick/my/myproject/kubiki' : isNode ? '/' : '/app'}\r\n`);
+    return;
+  }
+
+  if (cmd === 'hostname') {
+    write(`\r\n${isLocal ? 'localhost' : resourceName || 'k8s-node'}\r\n`);
+    return;
+  }
+
+  if (cmd === 'uname' || cmd === 'uname -a') {
+    write('\r\nLinux localhost 6.13.0-custom #1 SMP PREEMPT_DYNAMIC x86_64 GNU/Linux\r\n');
+    return;
+  }
+
+  if (cmd === 'date') {
+    write(`\r\n${new Date().toString()}\r\n`);
+    return;
+  }
+
+  if (cmd === 'ls' || cmd === 'ls -la' || cmd === 'ls -l') {
+    if (isLocal) {
+      write('\r\ntotal 56\r\ndrwxr-xr-x 12 yarick users  4096 Oct 19 23:40 .\r\ndrwxr-xr-x  6 yarick users  4096 Oct 19 12:00 ..\r\n-rw-r--r--  1 yarick users  1420 Oct 19 21:10 Cargo.toml\r\n-rw-r--r--  1 yarick users 28540 Oct 19 21:10 Cargo.lock\r\ndrwxr-xr-x  4 yarick users  4096 Oct 19 20:30 crates\r\ndrwxr-xr-x  8 yarick users  4096 Oct 19 22:50 node_modules\r\n-rw-r--r--  1 yarick users  1890 Oct 19 22:15 package.json\r\n-rw-r--r--  1 yarick users 94210 Oct 19 22:15 pnpm-lock.yaml\r\ndrwxr-xr-x  2 yarick users  4096 Oct 19 19:10 public\r\ndrwxr-xr-x  8 yarick users  4096 Oct 19 23:30 src\r\n-rw-r--r--  1 yarick users   620 Oct 19 18:00 tsconfig.json\r\n-rw-r--r--  1 yarick users  1240 Oct 19 22:30 vite.config.ts\r\n');
+    } else if (isNode) {
+      write('\r\nbin  boot  dev  etc  home  lib  lib64  media  mnt  opt  proc  root  run  sbin  srv  sys  tmp  usr  var\r\n');
+    } else {
+      write('\r\nDockerfile  app.js  config.json  node_modules  package.json  src\r\n');
+    }
+    return;
+  }
+
   if (parts[0] === 'kubectl') {
     if (parts[1] === 'version') {
-      write('\r\nClient Version: v1.31.2\r\nServer Version: v1.31.2 (minikube)\r\n');
+      write('\r\nClient Version: v1.35.5+k3s1\r\nServer Version: v1.35.5+k3s1 (default)\r\n');
       return;
     }
     if (parts[1] === 'config' && parts[2] === 'get-contexts') {
-      write('\r\nCURRENT  NAME        CLUSTER     NAMESPACE\r\n*        minikube    minikube    default\r\n         staging     k8s-stage   backend\r\n');
+      write('\r\nCURRENT   NAME      CLUSTER   AUTHINFO   NAMESPACE\r\n*         default   default   default    default\r\n');
       return;
     }
     if (parts[1] === 'get') {
-      const kindWanted = (parts[2] ?? '').replace(/s$/, '');
-      const map: Record<string, string> = { pod: 'Pod', po: 'Pod', deploy: 'Deployment', deployment: 'Deployment', svc: 'Service', service: 'Service', cm: 'ConfigMap', configmap: 'ConfigMap', secret: 'Secret' };
+      const kindWanted = (parts[2] ?? '').replace(/s$/, '').toLowerCase();
+      if (kindWanted === 'node' || kindWanted === 'no') {
+        write('\r\nNAME       STATUS   ROLES                  AGE   VERSION\r\ndefault    Ready    control-plane,master   3d    v1.35.5+k3s1\r\n');
+        return;
+      }
+      const map: Record<string, string> = {
+        pod: 'Pod',
+        po: 'Pod',
+        deploy: 'Deployment',
+        deployment: 'Deployment',
+        svc: 'Service',
+        service: 'Service',
+        cm: 'ConfigMap',
+        configmap: 'ConfigMap',
+        secret: 'Secret',
+      };
       const resolved = map[kindWanted];
       if (!resolved) {
-        write(`\r\nerror: unknown resource "${parts[2] ?? ''}" (try pods|deployments|services|configmaps|secrets)\r\n`);
+        write(`\r\nerror: unknown resource "${parts[2] ?? ''}" (try pods|nodes|deployments|services|configmaps|secrets)\r\n`);
         return;
       }
       const nsIdx = parts.indexOf('-n');
@@ -823,7 +1036,8 @@ function terminalExec(input: string, write: (s: string) => void, pods: { name: s
       return;
     }
   }
-  write(`\r\n${cmd}: command executed (demo session)\r\n`);
+
+  write(`\r\n${cmd}: command executed\r\n`);
 }
 
 /* ------------------------------------------------------------------ */

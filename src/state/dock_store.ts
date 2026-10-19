@@ -3,12 +3,14 @@ import { persist } from 'zustand/middleware';
 import type { ResourceKind } from '../types/k8s';
 
 export type DockSessionType = 'terminal' | 'logs' | 'ports' | 'events';
+export type DockTargetType = 'local' | 'pod' | 'node';
 
 export interface DockSession {
   id: string;
   type: DockSessionType;
   title: string;
   subtitle?: string;
+  targetType?: DockTargetType;
   kind?: ResourceKind;
   resourceName?: string;
   namespace?: string;
@@ -24,11 +26,14 @@ interface DockState {
   dockCollapsed: boolean;
 
   /* Actions */
+  openLocalTerminal: () => string;
+  openNodeShell: (nodeName: string) => string;
   openTerminal: (resourceName?: string, namespace?: string, container?: string, allContainers?: string[]) => string;
   openLogs: (resourceName: string, namespace?: string, container?: string, allContainers?: string[]) => string;
   openPorts: () => void;
   openEvents: () => void;
   closeSession: (id: string) => void;
+  clearAllSessions: () => void;
   setActiveSession: (id: string) => void;
   toggleDock: () => void;
   setDockCollapsed: (collapsed: boolean) => void;
@@ -38,26 +43,27 @@ interface DockState {
 
 const DEFAULT_SESSIONS: DockSession[] = [
   {
-    id: 'dock-terminal-default',
+    id: 'dock-local-terminal-1',
     type: 'terminal',
-    title: 'Terminal: Node Shell',
-    subtitle: 'minikube (default)',
-    resourceName: 'node/minikube',
-    namespace: 'default',
-    container: 'sh',
-    pinned: true,
+    title: 'Terminal: Local Shell',
+    subtitle: 'localhost (bash/zsh)',
+    targetType: 'local',
+    resourceName: 'localhost',
+    pinned: false,
   },
   {
     id: 'dock-ports',
     type: 'ports',
     title: 'Port Forwarding',
     subtitle: 'active tunnels',
+    pinned: false,
   },
   {
     id: 'dock-events',
     type: 'events',
     title: 'Cluster Events',
     subtitle: 'all namespaces',
+    pinned: false,
   },
 ];
 
@@ -65,14 +71,75 @@ export const useDockStore = create<DockState>()(
   persist(
     (set, get) => ({
       sessions: DEFAULT_SESSIONS,
-      activeSessionId: 'dock-terminal-default',
+      activeSessionId: 'dock-local-terminal-1',
       dockHeight: 280,
       dockCollapsed: true,
 
-      openTerminal: (resourceName, namespace = 'default', container = 'app', allContainers = []) => {
+      openLocalTerminal: () => {
         const { sessions } = get();
-        const isHost = !resourceName || resourceName === 'host' || resourceName.startsWith('node/');
-        const id = isHost ? 'dock-terminal-default' : `dock-term-${resourceName}-${container}`;
+        const localCount = sessions.filter((s) => s.targetType === 'local').length;
+        const num = localCount + 1;
+        const id = `dock-term-local-${Date.now()}`;
+
+        const newSession: DockSession = {
+          id,
+          type: 'terminal',
+          title: `Terminal: Local Shell #${num}`,
+          subtitle: 'localhost (bash/zsh)',
+          targetType: 'local',
+          resourceName: 'localhost',
+          container: 'local',
+          pinned: false,
+        };
+
+        set({
+          sessions: [...sessions, newSession],
+          activeSessionId: id,
+          dockCollapsed: false,
+        });
+
+        return id;
+      },
+
+      openNodeShell: (nodeName: string) => {
+        const { sessions } = get();
+        const id = `dock-node-${nodeName}`;
+        const existing = sessions.find((s) => s.id === id);
+        if (existing) {
+          set({ activeSessionId: existing.id, dockCollapsed: false });
+          return existing.id;
+        }
+
+        const newSession: DockSession = {
+          id,
+          type: 'terminal',
+          title: `Node Shell: ${nodeName}`,
+          subtitle: 'Cluster Node',
+          targetType: 'node',
+          resourceName: nodeName,
+          container: 'sh',
+          pinned: false,
+        };
+
+        set({
+          sessions: [...sessions, newSession],
+          activeSessionId: id,
+          dockCollapsed: false,
+        });
+
+        return id;
+      },
+
+      openTerminal: (resourceName, namespace = 'default', container = 'app', allContainers = []) => {
+        if (!resourceName || resourceName === 'host' || resourceName === 'local' || resourceName === 'localhost') {
+          return get().openLocalTerminal();
+        }
+        if (resourceName.startsWith('node/')) {
+          return get().openNodeShell(resourceName.replace('node/', ''));
+        }
+
+        const { sessions } = get();
+        const id = `dock-term-${resourceName}-${container}`;
 
         const existing = sessions.find((s) => s.id === id);
         if (existing) {
@@ -83,13 +150,15 @@ export const useDockStore = create<DockState>()(
         const newSession: DockSession = {
           id,
           type: 'terminal',
-          title: isHost ? 'Terminal: Node Shell' : `Terminal: ${resourceName}`,
+          title: `Pod: ${resourceName}`,
           subtitle: `${namespace} · ${container}`,
+          targetType: 'pod',
           kind: 'Pod',
-          resourceName: resourceName || 'minikube',
+          resourceName,
           namespace,
           container,
           allContainers: allContainers.length > 0 ? allContainers : [container, 'istio-proxy'],
+          pinned: false,
         };
 
         set({
@@ -116,11 +185,13 @@ export const useDockStore = create<DockState>()(
           type: 'logs',
           title: `Logs: ${resourceName}`,
           subtitle: `${namespace} · ${container}`,
+          targetType: 'pod',
           kind: 'Pod',
           resourceName,
           namespace,
           container,
           allContainers: allContainers.length > 0 ? allContainers : [container],
+          pinned: false,
         };
 
         set({
@@ -141,6 +212,7 @@ export const useDockStore = create<DockState>()(
             type: 'ports',
             title: 'Port Forwarding',
             subtitle: 'active tunnels',
+            pinned: false,
           };
           set({ sessions: [...sessions, portSession], activeSessionId: portSession.id, dockCollapsed: false });
         } else {
@@ -157,6 +229,7 @@ export const useDockStore = create<DockState>()(
             type: 'events',
             title: 'Cluster Events',
             subtitle: 'all namespaces',
+            pinned: false,
           };
           set({ sessions: [...sessions, eventSession], activeSessionId: eventSession.id, dockCollapsed: false });
         } else {
@@ -166,12 +239,9 @@ export const useDockStore = create<DockState>()(
 
       closeSession: (id) => {
         const { sessions, activeSessionId } = get();
-        const target = sessions.find((s) => s.id === id);
-        if (target?.pinned) return;
-
         const next = sessions.filter((s) => s.id !== id);
         if (next.length === 0) {
-          set({ sessions: DEFAULT_SESSIONS, activeSessionId: DEFAULT_SESSIONS[0].id });
+          set({ sessions: [], activeSessionId: '', dockCollapsed: true });
           return;
         }
 
@@ -179,10 +249,14 @@ export const useDockStore = create<DockState>()(
         if (activeSessionId === id) {
           const idx = sessions.findIndex((s) => s.id === id);
           const candidate = next[Math.max(0, idx - 1)] || next[0];
-          nextActive = candidate.id;
+          nextActive = candidate ? candidate.id : '';
         }
 
         set({ sessions: next, activeSessionId: nextActive });
+      },
+
+      clearAllSessions: () => {
+        set({ sessions: [], activeSessionId: '', dockCollapsed: true });
       },
 
       setActiveSession: (id) => set({ activeSessionId: id, dockCollapsed: false }),
@@ -200,7 +274,7 @@ export const useDockStore = create<DockState>()(
       },
     }),
     {
-      name: 'kubiki.dock.v1',
+      name: 'kubiki.dock.v2',
       partialize: (s) => ({
         sessions: s.sessions,
         activeSessionId: s.activeSessionId,

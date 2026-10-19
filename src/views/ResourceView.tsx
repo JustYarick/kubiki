@@ -498,6 +498,14 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         { id: 'pf', label: 'Port-forward…', icon: ArrowRightLeft, onSelect: () => setPfFor(item) },
       );
     }
+    if (item.kind === 'Node') {
+      items.push({
+        id: 'dock-node-shell',
+        label: 'Node Shell in Bottom Drawer',
+        icon: Terminal,
+        onSelect: () => useDockStore.getState().openNodeShell(item.name),
+      });
+    }
     if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
       items.push(
         {
@@ -541,6 +549,13 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
           onClick: () => useDockStore.getState().openTerminal(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
         },
       );
+    }
+    if (item.kind === 'Node') {
+      list.push({
+        icon: Terminal,
+        label: 'Node Shell',
+        onClick: () => useDockStore.getState().openNodeShell(item.name),
+      });
     }
     if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
       list.push(
