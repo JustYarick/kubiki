@@ -305,7 +305,8 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
   const fitRef = useRef<FitAddon | null>(null);
   const lineRef = useRef('');
 
-  const pods = useResourceStore((s) => Array.from(s.resources['Pod']?.values() || []));
+  const podMap = useResourceStore((s) => s.resources['Pod']);
+  const pods = useMemo(() => Array.from(podMap?.values() || []), [podMap]);
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
 
   const [activeContainer, setActiveContainer] = useState(session.container || 'app');
