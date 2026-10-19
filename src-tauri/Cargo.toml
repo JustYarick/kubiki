@@ -1,6 +1,7 @@
 [package]
 name = "kubiki"
 version = "0.1.0"
+license = "Apache-2.0"
 description = "Kubiki - Modern Event-Driven Kubernetes Desktop IDE"
 authors = ["Kubiki Team"]
 edition = "2024"

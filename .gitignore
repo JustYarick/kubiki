@@ -12,6 +12,15 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Local environment and Kubernetes credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+.kube/
+/kubeconfig
+/kubeconfig.*
+
 node_modules
 dist
 dist-ssr

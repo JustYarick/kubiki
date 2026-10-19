@@ -41,3 +41,7 @@ cargo check --manifest-path src-tauri/Cargo.toml --offline
 ```
 
 Playwright автоматически использует `/usr/bin/google-chrome`, если он установлен. Другой путь задаётся через `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; при отсутствии системного Chrome используется стандартный браузер Playwright (`pnpm exec playwright install chromium`). Тесты работают в изолированном demo mode и с подставленными ошибками API; они не заменяют live cluster integration.
+
+## Лицензия
+
+Kubiki распространяется под [Apache License 2.0](LICENSE). Лицензии сторонних зависимостей сохраняются за их правообладателями.
