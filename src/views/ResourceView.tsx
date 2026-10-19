@@ -31,6 +31,7 @@ import { useClusterStore } from '../state/cluster_store';
 import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { useDockStore } from '../state/dock_store';
+import { k8s } from '../providers/k8s_provider';
 import { KIND_ICONS, defaultKindFor, kindsFor } from '../core/perspectives';
 import { StatusBadge } from '../components/k8s/StatusBadge';
 import { IconButton, Tooltip } from '../components/ui/Button';
@@ -266,6 +267,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     setSortId(null);
     setSelectedUids(new Set());
     setFocusedIndex(0);
+
+    const curCtx = useClusterStore.getState().currentContext;
+    if (curCtx && (!resources[effectiveKind] || resources[effectiveKind].size === 0)) {
+      k8s.getResources(curCtx, effectiveKind, 'all').then((items) => {
+        if (items && items.length > 0) {
+          useResourceStore.getState().setResourcesForKind(effectiveKind, items);
+        }
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveKind]);
 
@@ -437,7 +447,13 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   };
 
   const doScale = (item: ResourceItem, replicas: number) => {
-    updateItem(item.kind, item.uid, { replicas, ready: `${replicas}/${replicas}` });
+    updateItem(item.kind, item.uid, {
+      replicas,
+      ready: `${replicas}/${replicas}`,
+      status: `${replicas}/${replicas}`,
+    });
+    const curCtx = useClusterStore.getState().currentContext || 'default';
+    k8s.scaleWorkload(curCtx, item.kind, item.name, item.namespace || 'default', replicas);
     toast.success(`Scaled to ${replicas}`, `${item.kind}/${item.name}`);
   };
 

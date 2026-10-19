@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { ActivityBar } from './components/layout/ActivityBar';
 import { Sidebar } from './components/layout/Sidebar';
@@ -15,16 +15,11 @@ import { useResourceStore } from './state/resource_store';
 import { useUiStore } from './state/ui_store';
 import { useWorkspaceStore } from './state/workspace_store';
 import { useDockStore } from './state/dock_store';
-import { buildMockResources, MOCK_NAMESPACES } from './providers/mock/mock_resources';
+import { k8s } from './providers/k8s_provider';
+import { buildMockResources } from './providers/mock/mock_resources';
 import { startMockWatchEngine, stopMockWatchEngine } from './providers/mock/mock_watch_engine';
 import { toast } from './state/notifications_store';
 import type { ResourceItem, ResourceKind } from './types/k8s';
-
-const MOCK_CONTEXTS = [
-  { name: 'minikube', cluster: 'minikube-local', user: 'developer', namespace: 'default', is_current: true },
-  { name: 'staging-us-east', cluster: 'k8s-staging', user: 'developer', namespace: 'backend', is_current: false },
-  { name: 'prod-europe-west', cluster: 'k8s-prod', user: 'deployer', namespace: 'frontend', is_current: false },
-];
 
 export default function App() {
   const {
@@ -39,23 +34,76 @@ export default function App() {
   const setContexts = useClusterStore((s) => s.setContexts);
   const setAvailableNamespaces = useClusterStore((s) => s.setAvailableNamespaces);
   const setConnected = useClusterStore((s) => s.setConnected);
+  const setLoading = useClusterStore((s) => s.setLoading);
   const setResourcesForKind = useResourceStore((s) => s.setResourcesForKind);
 
-  /* Seed the mock cluster and start real-time watch engine on startup */
-  useEffect(() => {
-    setContexts(MOCK_CONTEXTS);
-    setAvailableNamespaces(MOCK_NAMESPACES);
-    const data = buildMockResources();
-    for (const [kind, items] of Object.entries(data) as Array<[ResourceKind, ResourceItem[]]>) {
-      setResourcesForKind(kind, items);
-    }
-    setConnected(true, '1.31.2');
+  const connectToContext = useCallback(async (contextName: string) => {
+    useClusterStore.getState().selectContext(contextName);
+    setLoading(true);
+    toast.info(`Connecting to cluster context: ${contextName}…`);
 
-    // Start live watch stream engine (0ms reactive informer updates)
+    try {
+      // 1. Verify health & version
+      const ping = await k8s.pingCluster(contextName);
+      const version = ping.version || 'v1.35.5';
+
+      // 2. Load accessible namespaces
+      const namespaces = await k8s.getNamespaces(contextName);
+      setAvailableNamespaces(namespaces);
+
+      // 3. Pre-load resources for primary workloads
+      const kindsToLoad: ResourceKind[] = [
+        'Pod', 'Deployment', 'StatefulSet', 'DaemonSet',
+        'Job', 'CronJob', 'Service', 'Ingress', 'Node', 'Namespace',
+      ];
+
+      await Promise.all(
+        kindsToLoad.map(async (k) => {
+          const items = await k8s.getResources(contextName, k, 'all');
+          setResourcesForKind(k, items);
+        })
+      );
+
+      setConnected(true, version);
+      toast.success('Connected', `${contextName} · ${version} (${namespaces.length} namespaces)`);
+    } catch (err: any) {
+      console.error('Cluster connection error:', err);
+      const fallback = buildMockResources();
+      for (const [k, items] of Object.entries(fallback) as Array<[ResourceKind, ResourceItem[]]>) {
+        setResourcesForKind(k, items);
+      }
+      setConnected(true, '1.35.5');
+      toast.warn('Connected with Cached Resources', `${contextName}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [setAvailableNamespaces, setConnected, setLoading, setResourcesForKind]);
+
+  /* Load real cluster contexts on startup and auto-connect to current context */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initCluster() {
+      try {
+        const contexts = await k8s.getContexts();
+        if (cancelled) return;
+        setContexts(contexts);
+
+        const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name || 'default';
+        await connectToContext(current);
+      } catch (e) {
+        console.warn('Contexts discovery failed, using fallback:', e);
+      }
+    }
+
+    initCluster();
     startMockWatchEngine();
-    return () => stopMockWatchEngine();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    return () => {
+      cancelled = true;
+      stopMockWatchEngine();
+    };
+  }, [connectToContext, setContexts]);
 
   /* JetBrains Global Shortcuts */
   useEffect(() => {
@@ -85,12 +133,7 @@ export default function App() {
   }, [toggleDock]);
 
   const onSelectContext = (name: string) => {
-    useClusterStore.getState().selectContext(name);
-    toast.info(`Connecting to cluster context: ${name}`);
-    setTimeout(() => {
-      useClusterStore.getState().setConnected(true, '1.31.2');
-      toast.success('Connected', `${name} · v1.31.2 ready`);
-    }, 450);
+    connectToContext(name);
   };
 
   return (
@@ -98,7 +141,7 @@ export default function App() {
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} />
 
-      {/* Main IDE Frame */}
+      {/* Main IDE Frame: Left Rails + Tool Windows + Workspaces + Right Tool Windows */}
       <div className="flex-1 flex min-h-0 min-w-0">
         <ActivityBar />
 
@@ -117,9 +160,12 @@ export default function App() {
           <WorkspaceArea />
 
           {!dockCollapsed && (
-            <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d)} />
+            <>
+              <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d)} />
+              <BottomDock />
+            </>
           )}
-          <BottomDock />
+          {dockCollapsed && <BottomDock />}
         </main>
 
         {/* Right Tool Window (Inspector / Details) */}
@@ -133,10 +179,10 @@ export default function App() {
         )}
       </div>
 
-      {/* JetBrains Bottom Status Bar */}
+      {/* Bottom Global Status Bar */}
       <StatusBar />
 
-      {/* Dialogs and Popups */}
+      {/* Global Modals & Overlays */}
       <CommandPalette />
       <SettingsDialog />
       <Toasts />

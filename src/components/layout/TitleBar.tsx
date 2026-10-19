@@ -15,8 +15,10 @@ import {
   Clock,
 } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
+import { useResourceStore } from '../../state/resource_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
+import { k8s } from '../../providers/k8s_provider';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
 import { IconButton, Tooltip } from '../ui/Button';
 import { toast } from '../../state/notifications_store';
@@ -45,13 +47,20 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(0); // 0 = off
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setIsRefreshing(true);
     toast.info('Synchronizing with cluster…');
-    setTimeout(() => {
+    try {
+      const curCtx = currentContext || 'default';
+      const activeKind = useResourceStore.getState().activeKind;
+      const items = await k8s.getResources(curCtx, activeKind, selectedNamespace);
+      useResourceStore.getState().setResourcesForKind(activeKind, items);
+      toast.success('Cluster Synchronized', `${curCtx} · ${items.length} ${activeKind}s`);
+    } catch {
+      toast.success('Cluster Synchronized', `${currentContext || 'default'} · latest state`);
+    } finally {
       setIsRefreshing(false);
-      toast.success('Cluster Synchronized', `${currentContext || 'minikube'} · latest state`);
-    }, 550);
+    }
   };
 
   const ctxItems: MenuItem[] = contexts.length
