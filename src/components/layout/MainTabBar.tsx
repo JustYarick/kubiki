@@ -1,0 +1,259 @@
+import React, { useState } from 'react';
+import {
+  X,
+  Pin,
+  Plus,
+  FileCode,
+  Terminal as TermIcon,
+  FileText,
+  Boxes,
+  Columns2,
+} from 'lucide-react';
+import { useWorkspaceStore, type WorkspaceTab } from '../../state/workspace_store';
+import { useResourceStore } from '../../state/resource_store';
+import { KIND_ICONS } from '../../core/perspectives';
+import { FixedMenu, Popover, type MenuItem } from '../ui/Dropdown';
+import { Tooltip, IconButton } from '../ui/Button';
+import { cx } from '../../core/utils/cx';
+import type { ResourceKind } from '../../types/k8s';
+
+export const MainTabBar: React.FC = () => {
+  const {
+    tabs,
+    activeTabId,
+    setActiveTab,
+    closeTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    closeAllTabs,
+    togglePinTab,
+    splitTabId,
+    toggleSplit,
+    openResourceList,
+  } = useWorkspaceStore();
+
+  const setActiveKind = useResourceStore((s) => s.setActiveKind);
+
+  const [contextMenu, setContextMenu] = useState<{
+    tab: WorkspaceTab;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const handleTabClick = (tab: WorkspaceTab) => {
+    setActiveTab(tab.id);
+    if (tab.type === 'resource-list' && tab.kind) {
+      setActiveKind(tab.kind);
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, tab: WorkspaceTab) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ tab, x: e.clientX, y: e.clientY });
+  };
+
+  const handleAuxClick = (e: React.MouseEvent, tab: WorkspaceTab) => {
+    if (e.button === 1 && !tab.pinned) {
+      // Middle click to close tab
+      e.preventDefault();
+      closeTab(tab.id);
+    }
+  };
+
+  const getTabIcon = (tab: WorkspaceTab) => {
+    if (tab.type === 'yaml-editor') return <FileCode size={13} className="text-amber-400 shrink-0" />;
+    if (tab.type === 'terminal') return <TermIcon size={13} className="text-emerald-400 shrink-0" />;
+    if (tab.type === 'logs') return <FileText size={13} className="text-blue-400 shrink-0" />;
+    if (tab.kind && KIND_ICONS[tab.kind]) {
+      const Icon = KIND_ICONS[tab.kind];
+      return <Icon size={13} className="text-[var(--text-secondary)] shrink-0" />;
+    }
+    return <Boxes size={13} className="text-[var(--text-muted)] shrink-0" />;
+  };
+
+  const contextMenuItems: MenuItem[] = contextMenu
+    ? [
+        {
+          id: 'close',
+          label: 'Close Tab',
+          kbd: '⌘W',
+          disabled: contextMenu.tab.pinned,
+          onSelect: () => closeTab(contextMenu.tab.id),
+        },
+        {
+          id: 'close-others',
+          label: 'Close Other Tabs',
+          onSelect: () => closeOtherTabs(contextMenu.tab.id),
+        },
+        {
+          id: 'close-right',
+          label: 'Close Tabs to the Right',
+          onSelect: () => closeTabsToRight(contextMenu.tab.id),
+        },
+        {
+          id: 'close-all',
+          label: 'Close All Tabs',
+          onSelect: () => closeAllTabs(),
+        },
+        { id: 'sep1', label: '', separator: true, onSelect: () => {} },
+        {
+          id: 'pin',
+          label: contextMenu.tab.pinned ? 'Unpin Tab' : 'Pin Tab',
+          icon: Pin,
+          onSelect: () => togglePinTab(contextMenu.tab.id),
+        },
+        {
+          id: 'split',
+          label: splitTabId === contextMenu.tab.id ? 'Close Split' : 'Split Right',
+          icon: Columns2,
+          onSelect: () => toggleSplit(contextMenu.tab.id),
+        },
+      ]
+    : [];
+
+  const newTabKinds: Array<{ kind: ResourceKind; group: string }> = [
+    { kind: 'Pod', group: 'Workloads' },
+    { kind: 'Deployment', group: 'Workloads' },
+    { kind: 'StatefulSet', group: 'Workloads' },
+    { kind: 'DaemonSet', group: 'Workloads' },
+    { kind: 'Service', group: 'Network' },
+    { kind: 'Ingress', group: 'Network' },
+    { kind: 'ConfigMap', group: 'Config' },
+    { kind: 'Secret', group: 'Config' },
+    { kind: 'PersistentVolumeClaim', group: 'Storage' },
+    { kind: 'Node', group: 'Cluster' },
+  ];
+
+  return (
+    <div className="h-[34px] bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-stretch select-none shrink-0 overflow-hidden relative">
+      {/* Scrollable Tabs */}
+      <div className="flex-1 flex items-stretch overflow-x-auto overflow-y-hidden kubiki-scrollbar min-w-0">
+        {tabs.map((tab) => {
+          const isActive = tab.id === activeTabId;
+          const isSplitActive = tab.id === splitTabId;
+
+          return (
+            <div
+              key={tab.id}
+              onClick={() => handleTabClick(tab)}
+              onContextMenu={(e) => handleContextMenu(e, tab)}
+              onAuxClick={(e) => handleAuxClick(e, tab)}
+              className={cx(
+                'group relative flex items-center gap-1.5 px-3 min-w-[120px] max-w-[220px] h-full border-r border-[var(--border-default)] cursor-pointer transition-colors',
+                isActive
+                  ? 'bg-[var(--bg-canvas)] text-[var(--text-primary)] font-medium'
+                  : isSplitActive
+                  ? 'bg-[var(--bg-surface)] text-[var(--text-primary)]'
+                  : 'bg-[var(--bg-inactive-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
+              )}
+              title={`${tab.title}${tab.subtitle ? ` (${tab.subtitle})` : ''}`}
+            >
+              {/* Active Tab bottom accent line */}
+              {isActive && (
+                <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--accent)]" />
+              )}
+
+              {/* Pin indicator */}
+              {tab.pinned && (
+                <Pin size={10} className="text-[var(--accent)] rotate-45 shrink-0" />
+              )}
+
+              {/* Icon */}
+              {getTabIcon(tab)}
+
+              {/* Title & Dirty indicator */}
+              <span className="truncate text-[11.5px] flex-1 text-left">
+                {tab.title}
+              </span>
+
+              {tab.dirty && (
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="Unsaved changes" />
+              )}
+
+              {/* Close Button */}
+              {!tab.pinned && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                  className={cx(
+                    'p-0.5 rounded hover:bg-[var(--bg-elevated)] hover:text-white transition-opacity',
+                    isActive ? 'opacity-70 group-hover:opacity-100' : 'opacity-0 group-hover:opacity-70'
+                  )}
+                  title="Close Tab (⌘W)"
+                  aria-label="Close tab"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Right Tab Controls: New Tab (+), Split Pane, Overflow list */}
+      <div className="flex items-center px-1.5 gap-0.5 bg-[var(--bg-secondary)] border-l border-[var(--border-default)] shrink-0">
+        {/* Split Editor Toggle */}
+        <Tooltip label={splitTabId ? 'Close Split View' : 'Split View Right'} delay={300}>
+          <IconButton
+            icon={Columns2}
+            size="sm"
+            active={!!splitTabId}
+            onClick={() => toggleSplit()}
+            aria-label="Split Editor"
+          />
+        </Tooltip>
+
+        {/* New Tab Menu */}
+        <Popover
+          width={220}
+          trigger={({ open }) => (
+            <IconButton
+              icon={Plus}
+              size="sm"
+              active={open}
+              tooltip="New Tab"
+              aria-label="New Tab"
+            />
+          )}
+        >
+          {(close) => (
+            <div className="py-1">
+              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Open Resource Table
+              </div>
+              {newTabKinds.map(({ kind, group }) => {
+                const Icon = KIND_ICONS[kind] || Boxes;
+                return (
+                  <button
+                    key={kind}
+                    onClick={() => {
+                      openResourceList(kind);
+                      close();
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+                  >
+                    <Icon size={12} className="text-blue-400 shrink-0" />
+                    <span className="flex-1 text-left">{kind}s</span>
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono">{group}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Popover>
+      </div>
+
+      {/* Tab Context Menu */}
+      {contextMenu && (
+        <FixedMenu
+          rect={{ x: contextMenu.x, y: contextMenu.y }}
+          items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </div>
+  );
+};

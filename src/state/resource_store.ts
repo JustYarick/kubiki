@@ -1,17 +1,19 @@
 import { create } from 'zustand';
 import { ResourceDeltaPayload, ResourceItem, ResourceKind } from '../types/k8s';
+import { useClusterStore } from './cluster_store';
 
 interface ResourceState {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
   activeKind: ResourceKind;
   searchQuery: string;
   selectedItem: ResourceItem | null;
-  selectedNamespace: string;
 
   setActiveKind: (kind: ResourceKind) => void;
   setSearchQuery: (query: string) => void;
   selectItem: (item: ResourceItem | null) => void;
   setResourcesForKind: (kind: ResourceKind, items: ResourceItem[]) => void;
+  updateItem: (kind: ResourceKind, uid: string, patch: Partial<ResourceItem>) => void;
+  deleteItem: (kind: ResourceKind, uid: string) => void;
   applyDelta: (delta: ResourceDeltaPayload) => void;
   getActiveResources: () => ResourceItem[];
 }
@@ -41,7 +43,6 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
   activeKind: 'Pod',
   searchQuery: '',
   selectedItem: null,
-  selectedNamespace: 'all',
 
   setActiveKind: (activeKind) => set({ activeKind, selectedItem: null }),
 
@@ -58,6 +59,31 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
           ...state.resources,
           [kind]: map,
         },
+      };
+    });
+  },
+
+  updateItem: (kind, uid, patch) => {
+    set((state) => {
+      const map = new Map(state.resources[kind]);
+      const existing = map.get(uid);
+      if (!existing) return state;
+      const updated = { ...existing, ...patch };
+      map.set(uid, updated);
+      return {
+        resources: { ...state.resources, [kind]: map },
+        selectedItem: state.selectedItem?.uid === uid ? updated : state.selectedItem,
+      };
+    });
+  },
+
+  deleteItem: (kind, uid) => {
+    set((state) => {
+      const map = new Map(state.resources[kind]);
+      map.delete(uid);
+      return {
+        resources: { ...state.resources, [kind]: map },
+        selectedItem: state.selectedItem?.uid === uid ? null : state.selectedItem,
       };
     });
   },
@@ -97,7 +123,8 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
   },
 
   getActiveResources: () => {
-    const { resources, activeKind, searchQuery, selectedNamespace } = get();
+    const { resources, activeKind, searchQuery } = get();
+    const selectedNamespace = useClusterStore.getState().selectedNamespace;
     const map = resources[activeKind] || new Map();
     let list = Array.from(map.values());
 

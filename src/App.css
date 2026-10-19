@@ -1,70 +1,245 @@
 @import "tailwindcss";
-@import "dockview/dist/styles/dockview.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
 
 :root {
-  /* JetBrains Darcula / Fleet Theme (Default) */
-  --bg-primary: #1e1f22;
-  --bg-secondary: #25272a;
-  --bg-sidebar: #2b2d30;
-  --bg-surface: #313438;
-  --bg-hover: #393b40;
+  /* ================= JetBrains Fleet & IntelliJ New UI Design System ================= */
+  --bg-canvas: #1e1f22;           /* Primary editor / data grid canvas              */
+  --bg-secondary: #25272a;        /* Chrome: titlebar, statusbar, inactive toolbars */
+  --bg-sidebar: #2b2d30;          /* Sidebars, tool window panels, tab backgrounds  */
+  --bg-surface: #313438;          /* Cards, inspector, inputs, popovers             */
+  --bg-hover: #393b40;            /* Interactive hover background                   */
+  --bg-elevated: #3a3d42;         /* Pressed / elevated surfaces                    */
+  --bg-overlay: #2b2d30;          /* Popovers, dropdown menus, dialog backdrops     */
+  --bg-primary: var(--bg-canvas);
   --bg-active: #3574f0;
 
-  --border-default: #393b40;
-  --border-subtle: #2e3034;
+  /* JetBrains Selection & Highlight Tokens */
+  --bg-selection: #2e436e;        /* JetBrains royal blue text/row selection        */
+  --bg-selection-subtle: rgba(46, 67, 110, 0.45);
+  --bg-stripe: rgba(255, 255, 255, 0.015); /* Alternating row striping             */
+  --bg-active-tab: #1e1f22;       /* Active tab background matches canvas           */
+  --bg-inactive-tab: #25272a;     /* Inactive tab background                        */
 
-  --text-primary: #dfe1e5;
-  --text-secondary: #9da0a8;
-  --text-muted: #6f737a;
+  /* Borders */
+  --border-default: #32353a;      /* 1px crisp JetBrains micro-border               */
+  --border-subtle: #2b2d30;       /* Divider inside toolbars / subheaders           */
+  --border-strong: #43454a;       /* Active focus / hover border                    */
+  --border-grid: #282a2e;         /* DataGrip inner cell borders                    */
 
-  --accent: #3574f0;
+  /* Typography */
+  --text-primary: #dfe1e5;        /* JetBrains high-contrast primary text           */
+  --text-secondary: #9da0a8;      /* Secondary labels, column headers, meta         */
+  --text-muted: #6f737a;          /* Disabled states, placeholders, icons           */
+  --text-disabled: #565a61;
+
+  /* JetBrains Vivid Electric Accents */
+  --accent: #3574f0;              /* JetBrains Electric Blue                        */
   --accent-hover: #4682f7;
+  --accent-subtle: rgba(53, 116, 240, 0.16);
+  --focus-ring: rgba(53, 116, 240, 0.55);
 
-  /* Status Colors */
-  --status-running: #59a869;
-  --status-pending: #e5b742;
-  --status-failed: #e05555;
-  --status-neutral: #8c9099;
+  /* Status Tokens (JetBrains Diagnostics Palette) */
+  --status-running: #59a869;      /* OK / Running (Emerald Green)                   */
+  --status-pending: #e5b742;      /* Warning / Pending (Amber)                      */
+  --status-failed: #e05555;       /* Error / CrashLoopBackOff / Failed (Coral Red)  */
+  --status-neutral: #8c9099;      /* Completed / Terminated                         */
+  --status-info: #3574f0;         /* Informational Blue                             */
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  --status-ok: var(--status-running);
+  --status-warn: var(--status-pending);
+  --status-danger: var(--status-failed);
+
+  /* Scrollbar */
+  --scrollbar: #3e4249;
+  --scrollbar-hover: #50555e;
+
+  /* Shadows */
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-dialog: 0 20px 60px rgba(0, 0, 0, 0.75), 0 0 1px rgba(255, 255, 255, 0.12);
+
+  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--bg-primary);
+  background-color: var(--bg-canvas);
   color: var(--text-primary);
   font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.45;
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Custom scrollbars matching JetBrains / VS Code */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: var(--bg-primary);
-}
-::-webkit-scrollbar-thumb {
-  background: #3e4249;
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #50555e;
+::selection {
+  background: var(--bg-selection);
+  color: #ffffff;
 }
 
-/* Dockview custom overrides for JetBrains feel */
-.dockview-theme-dark {
-  --dv-drag-over-background-color: rgba(53, 116, 240, 0.2);
-  --dv-drag-over-border-color: #3574f0;
-  --dv-tabs-and-actions-container-background-color: var(--bg-sidebar);
-  --dv-tab-background-color: var(--bg-sidebar);
-  --dv-active-tab-background-color: var(--bg-primary);
-  --dv-active-tab-foreground-color: var(--text-primary);
-  --dv-inactive-tab-foreground-color: var(--text-secondary);
-  --dv-separator-border: var(--border-default);
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Custom JetBrains Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
+
+/* ============ Micro-animations ============ */
+@keyframes kub-pop {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes kub-toast {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes kub-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.kub-pop { animation: kub-pop 0.09s ease-out; }
+.kub-toast { animation: kub-toast 0.14s ease-out; }
+.kub-fade { animation: kub-fade 0.1s ease-out; }
+
+.kubiki-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+/* ============ JetBrains Main Editor Tabs ============ */
+.jb-tab-strip {
+  display: flex;
+  align-items: flex-end;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  height: 34px;
+  user-select: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.jb-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  background-color: var(--bg-inactive-tab);
+  border-right: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.1s, color 0.1s;
+}
+
+.jb-tab:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.jb-tab.active {
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.jb-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: var(--accent);
+}
+
+/* ============ DataGrip Grid Helpers ============ */
+.datagrip-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.datagrip-th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  border-right: 1px solid var(--border-grid);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  user-select: none;
+}
+
+.datagrip-th:last-child {
+  border-right: none;
+}
+
+.datagrip-cell {
+  border-bottom: 1px solid var(--border-grid);
+  border-right: 1px solid var(--border-grid);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.datagrip-cell:last-child {
+  border-right: none;
+}
+
+.datagrip-row:hover .datagrip-cell {
+  background-color: var(--bg-hover) !important;
+}
+
+.datagrip-row.selected .datagrip-cell {
+  background-color: var(--bg-selection-subtle) !important;
+  color: #ffffff;
+}
+
+.datagrip-row.focused .datagrip-cell {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Monaco Editor Container Overrides */
+.monaco-editor, .monaco-editor-background {
+  background-color: var(--bg-canvas) !important;
+}
+.monaco-editor .margin {
+  background-color: var(--bg-canvas) !important;
 }

@@ -25,6 +25,14 @@ export type ResourceKind =
   | 'Event'
   | 'CustomResourceDefinition';
 
+export interface ResourceContainer {
+  name: string;
+  image: string;
+  ready: boolean;
+  restarts: number;
+  port: string;
+}
+
 export interface ResourceItem {
   uid: string;
   name: string;
@@ -44,6 +52,28 @@ export interface ResourceItem {
   metadata?: Record<string, unknown>;
   spec?: Record<string, unknown>;
   statusRaw?: Record<string, unknown>;
+  /* enrichments for the detail view (mock / future core) */
+  labels?: Record<string, string>;
+  containers?: ResourceContainer[];
+  image?: string;
+  dataKeys?: number;
+  secretType?: string;
+  serviceType?: string;
+  clusterIP?: string;
+  volume?: string;
+  storageClass?: string;
+  accessModes?: string;
+  reclaimPolicy?: string;
+  nodeRoles?: string;
+  nodeVersion?: string;
+  nodeCpu?: string;
+  nodeMem?: string;
+  nodePods?: string;
+  nodeIp?: string;
+  nodeOs?: string;
+  ingressHosts?: string;
+  ingressClass?: string;
+  replicas?: number;
 }
 
 export interface ResourceDeltaPayload {

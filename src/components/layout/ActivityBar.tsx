@@ -1,78 +1,103 @@
 import React from 'react';
 import {
-  Boxes,
-  Network,
-  Database,
-  Sliders,
-  Shield,
-  Anchor,
+  FolderOpen,
+  PanelRight,
+  Search,
   Settings,
-  LayoutGrid,
+  Terminal,
 } from 'lucide-react';
+import { useUiStore } from '../../state/ui_store';
+import { Tooltip } from '../ui/Button';
+import { cx } from '../../core/utils/cx';
 
-export type Perspective =
-  | 'cluster'
-  | 'workloads'
-  | 'network'
-  | 'storage'
-  | 'config'
-  | 'access'
-  | 'helm'
-  | 'settings';
-
-interface ActivityBarProps {
-  activePerspective: Perspective;
-  onSelectPerspective: (perspective: Perspective) => void;
-}
-
-export const ActivityBar: React.FC<ActivityBarProps> = ({
-  activePerspective,
-  onSelectPerspective,
-}) => {
-  const items: { id: Perspective; label: string; icon: React.ReactNode }[] = [
-    { id: 'workloads', label: 'Workloads', icon: <Boxes className="w-5 h-5" /> },
-    { id: 'network', label: 'Network', icon: <Network className="w-5 h-5" /> },
-    { id: 'storage', label: 'Storage', icon: <Database className="w-5 h-5" /> },
-    { id: 'config', label: 'Config', icon: <Sliders className="w-5 h-5" /> },
-    { id: 'access', label: 'Access Control', icon: <Shield className="w-5 h-5" /> },
-    { id: 'helm', label: 'Helm Charts', icon: <Anchor className="w-5 h-5" /> },
-    { id: 'cluster', label: 'Cluster', icon: <LayoutGrid className="w-5 h-5" /> },
-  ];
+export const ActivityBar: React.FC = () => {
+  const {
+    sidebarCollapsed,
+    toggleSidebar,
+    toggleInspector,
+    inspectorCollapsed,
+    toggleDock,
+    dockCollapsed,
+    setPaletteOpen,
+    setSettingsOpen,
+  } = useUiStore();
 
   return (
-    <aside className="w-12 bg-[var(--bg-secondary)] border-r border-[var(--border-default)] flex flex-col items-center justify-between py-2 shrink-0 select-none">
+    <aside className="w-10 bg-[var(--bg-secondary)] border-r border-[var(--border-default)] flex flex-col items-center py-2 shrink-0 select-none z-20">
+      {/* Top tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full">
-        {items.map((item) => {
-          const isActive = activePerspective === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onSelectPerspective(item.id)}
-              title={item.label}
-              className={`w-9 h-9 rounded flex items-center justify-center transition-colors relative ${
-                isActive
-                  ? 'text-white bg-[var(--bg-surface)]'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[var(--bg-hover)]'
-              }`}
-            >
-              {isActive && (
-                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-blue-500 rounded-r" />
-              )}
-              {item.icon}
-            </button>
-          );
-        })}
+        <Tooltip label={sidebarCollapsed ? 'Cluster Explorer (⌘B)' : 'Hide Explorer (⌘B)'} side="bottom" delay={300}>
+          <button
+            onClick={toggleSidebar}
+            aria-label="Cluster Explorer"
+            className={cxRail(!sidebarCollapsed)}
+          >
+            <FolderOpen size={16} strokeWidth={1.75} />
+            {!sidebarCollapsed && (
+              <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+            )}
+          </button>
+        </Tooltip>
+
+        <Tooltip label="Search Everywhere (⌘K)" side="bottom" delay={300}>
+          <button
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Search Everywhere"
+            className={cxRail(false)}
+          >
+            <Search size={16} strokeWidth={1.75} />
+          </button>
+        </Tooltip>
       </div>
 
-      <div className="flex flex-col items-center gap-1 w-full">
-        <button
-          onClick={() => onSelectPerspective('settings')}
-          title="Settings"
-          className="w-9 h-9 rounded flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-[var(--bg-hover)] transition-colors"
-        >
-          <Settings className="w-5 h-5" />
-        </button>
+      {/* Bottom tool window buttons */}
+      <div className="flex flex-col items-center gap-1 w-full mt-auto">
+        <Tooltip label={dockCollapsed ? 'Terminal & Services (⌘J)' : 'Hide Terminal & Services (⌘J)'} side="top" delay={300}>
+          <button
+            onClick={toggleDock}
+            aria-label="Toggle Terminal & Services"
+            className={cxRail(!dockCollapsed)}
+          >
+            <Terminal size={16} strokeWidth={1.75} />
+            {!dockCollapsed && (
+              <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+            )}
+          </button>
+        </Tooltip>
+
+        <Tooltip label={inspectorCollapsed ? 'Show Details Inspector' : 'Hide Details Inspector'} side="top" delay={300}>
+          <button
+            onClick={toggleInspector}
+            aria-label="Toggle Inspector"
+            className={cxRail(!inspectorCollapsed)}
+          >
+            <PanelRight size={16} strokeWidth={1.75} />
+            {!inspectorCollapsed && (
+              <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+            )}
+          </button>
+        </Tooltip>
+
+        <div className="w-6 h-px bg-[var(--border-default)] my-1" />
+
+        <Tooltip label="IDE Settings" side="top" delay={300}>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Settings"
+            className={cxRail(false)}
+          >
+            <Settings size={16} strokeWidth={1.75} />
+          </button>
+        </Tooltip>
       </div>
     </aside>
   );
 };
+
+const cxRail = (active: boolean): string =>
+  cx(
+    'relative w-8 h-8 flex items-center justify-center rounded-[4px] transition-all',
+    active
+      ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-2xs'
+      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
+  );

@@ -1,47 +1,39 @@
 import React from 'react';
-import { clsx } from 'clsx';
+import { cx } from '../../core/utils/cx';
 
 interface StatusBadgeProps {
   status?: string;
   className?: string;
+  size?: 'sm' | 'md';
 }
 
-export const StatusBadge: React.FC<StatusBadgeProps> = ({ status = 'Unknown', className }) => {
+export const StatusBadge: React.FC<StatusBadgeProps> = ({ status = 'Unknown', className, size = 'md' }) => {
   const s = status.toLowerCase();
 
-  let colorClasses = 'bg-zinc-800 text-zinc-400 border-zinc-700';
-  let dotColor = 'bg-zinc-400';
-
-  if (s === 'running' || s === 'active' || s === 'ready' || s === 'bound' || s === 'completed') {
-    colorClasses = 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60';
-    dotColor = 'bg-emerald-400';
+  let colorPair: [string, string] = ['bg-[var(--bg-surface)] text-[var(--text-secondary)] border-[var(--border-default)]', 'bg-[var(--status-neutral)]'];
+  if (s === 'running' || s === 'active' || s === 'ready' || s === 'bound' || s === 'completed' || s === 'complete' || s === 'available') {
+    colorPair = ['bg-[var(--status-ok)]/10 text-[var(--status-ok)] border-[var(--status-ok)]/30', 'bg-[var(--status-ok)]'];
   } else if (
-    s === 'pending' ||
-    s === 'containercreating' ||
-    s === 'terminating' ||
-    s === 'waiting'
+    s === 'pending' || s === 'containercreating' || s === 'terminating' || s === 'waiting' ||
+    s === 'progressing' || s === 'notready' || s === 'unavailable'
   ) {
-    colorClasses = 'bg-amber-950/60 text-amber-400 border-amber-800/60';
-    dotColor = 'bg-amber-400 animate-pulse';
+    colorPair = ['bg-[var(--status-warn)]/10 text-[var(--status-warn)] border-[var(--status-warn)]/30', 'bg-[var(--status-warn)] animate-pulse'];
   } else if (
-    s.includes('crashloop') ||
-    s.includes('error') ||
-    s.includes('failed') ||
-    s.includes('imagepull')
+    s.includes('crashloop') || s === 'error' || s === 'failed' || s === 'backoff' || s.includes('imagepull') || s === 'evicted'
   ) {
-    colorClasses = 'bg-rose-950/60 text-rose-400 border-rose-800/60';
-    dotColor = 'bg-rose-400';
+    colorPair = ['bg-[var(--status-danger)]/10 text-[var(--status-danger)] border-[var(--status-danger)]/30', 'bg-[var(--status-danger)]'];
   }
 
   return (
     <span
-      className={clsx(
-        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-mono font-medium border transition-colors',
-        colorClasses,
+      className={cx(
+        'inline-flex items-center gap-1.5 rounded-[4px] font-mono font-medium border whitespace-nowrap transition-colors',
+        size === 'md' ? 'text-[10.5px] px-1.5 py-[1px]' : 'text-[10px] px-1.5 py-0',
+        colorPair[0],
         className
       )}
     >
-      <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', dotColor)} />
+      <span className={cx('w-1.5 h-1.5 rounded-full shrink-0', colorPair[1])} />
       {status}
     </span>
   );

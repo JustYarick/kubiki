@@ -1,144 +1,277 @@
-import React from 'react';
-import { useResourceStore } from '../../state/resource_store';
-import { ResourceKind } from '../../types/k8s';
+import React, { useMemo, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
-  Boxes,
-  CircleDot,
-  Server,
-  Layers,
-  FileCode,
-  Key,
-  Database,
-  Network,
-  Clock,
-  HardDrive,
+  Lock,
+  Search as SearchIcon,
+  X,
+  FolderMinus,
+  FolderPlus,
+  Columns2,
+  ExternalLink,
 } from 'lucide-react';
+import { SIDEBAR_TREE, type KindEntry, type TreeGroup, type TreeCategory } from '../../core/perspectives';
+import { useResourceStore } from '../../state/resource_store';
+import { useClusterStore } from '../../state/cluster_store';
+import { useUiStore } from '../../state/ui_store';
+import { useWorkspaceStore } from '../../state/workspace_store';
+import { FixedMenu, type MenuItem } from '../ui/Dropdown';
+import { Tooltip, IconButton } from '../ui/Button';
+import { cx } from '../../core/utils/cx';
+import type { ResourceKind } from '../../types/k8s';
 
-interface NavSection {
-  title: string;
-  items: { kind: ResourceKind; label: string; icon: React.ReactNode }[];
-}
+const key = (cat: string, group?: string) => (group ? `${cat}/${group}` : cat);
 
 export const Sidebar: React.FC = () => {
   const { activeKind, setActiveKind, resources } = useResourceStore();
-  const [openSections, setOpenSections] = React.useState<Record<string, boolean>>({
-    Workloads: true,
-    Configuration: true,
-    Network: true,
-    Storage: true,
-    Access: true,
-  });
+  const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
+  const groups = useUiStore((s) => s.sidebarGroups);
+  const toggleGroup = useUiStore((s) => s.toggleGroup);
+  const { openResourceList, toggleSplit } = useWorkspaceStore();
 
-  const toggleSection = (title: string) => {
-    setOpenSections((prev) => ({ ...prev, [title]: !prev[title] }));
+  const [filter, setFilter] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ kind: ResourceKind; x: number; y: number } | null>(null);
+
+  const q = filter.trim().toLowerCase();
+  const searching = q.length > 0;
+
+  const matchKind = (e: KindEntry) => e.label.toLowerCase().includes(q);
+
+  const filtered = useMemo(() => {
+    if (!searching) return SIDEBAR_TREE;
+    return SIDEBAR_TREE.map((cat) => {
+      const hitCat = cat.label.toLowerCase().includes(q);
+      return {
+        ...cat,
+        groups: cat.groups
+          .map((g: TreeGroup) => ({
+            ...g,
+            kinds: g.kinds.filter((e: KindEntry) => matchKind(e) || hitCat || (g.label ?? '').toLowerCase().includes(q)),
+          }))
+          .filter((g: TreeGroup) => g.kinds.length > 0 || (g.placeholder && (g.placeholder.toLowerCase().includes(q) || hitCat)) || (g.label ?? '').toLowerCase().includes(q)),
+      } satisfies TreeCategory;
+    }).filter((cat) => cat.groups.length > 0 || cat.label.toLowerCase().includes(q));
+  }, [q, searching]);
+
+  const countFor = (kind: string) => {
+    const map = resources[kind as keyof typeof resources];
+    const total = map?.size ?? 0;
+    if (selectedNamespace === 'all') return total;
+    let ns = 0;
+    map?.forEach((item) => {
+      if (!item.namespace || item.namespace === selectedNamespace) ns++;
+    });
+    return ns;
   };
 
-  const sections: NavSection[] = [
-    {
-      title: 'Workloads',
-      items: [
-        { kind: 'Pod', label: 'Pods', icon: <CircleDot className="w-4 h-4 text-emerald-400" /> },
-        { kind: 'Deployment', label: 'Deployments', icon: <Boxes className="w-4 h-4 text-blue-400" /> },
-        { kind: 'StatefulSet', label: 'StatefulSets', icon: <Database className="w-4 h-4 text-indigo-400" /> },
-        { kind: 'DaemonSet', label: 'DaemonSets', icon: <Server className="w-4 h-4 text-purple-400" /> },
-        { kind: 'Job', label: 'Jobs', icon: <Clock className="w-4 h-4 text-amber-400" /> },
-        { kind: 'CronJob', label: 'CronJobs', icon: <Clock className="w-4 h-4 text-cyan-400" /> },
-      ],
-    },
-    {
-      title: 'Configuration',
-      items: [
-        { kind: 'ConfigMap', label: 'ConfigMaps', icon: <FileCode className="w-4 h-4 text-sky-400" /> },
-        { kind: 'Secret', label: 'Secrets', icon: <Key className="w-4 h-4 text-amber-400" /> },
-      ],
-    },
-    {
-      title: 'Network',
-      items: [
-        { kind: 'Service', label: 'Services', icon: <Network className="w-4 h-4 text-blue-400" /> },
-        { kind: 'Ingress', label: 'Ingresses', icon: <Layers className="w-4 h-4 text-indigo-400" /> },
-      ],
-    },
-    {
-      title: 'Storage',
-      items: [
-        { kind: 'PersistentVolumeClaim', label: 'PVCs', icon: <HardDrive className="w-4 h-4 text-amber-400" /> },
-        { kind: 'PersistentVolume', label: 'PVs', icon: <HardDrive className="w-4 h-4 text-zinc-400" /> },
-        { kind: 'StorageClass', label: 'StorageClasses', icon: <HardDrive className="w-4 h-4 text-sky-400" /> },
-      ],
-    },
-    {
-      title: 'Access Control',
-      items: [
-        { kind: 'CustomResourceDefinition', label: 'CRDs', icon: <Layers className="w-4 h-4 text-violet-400" /> },
-        { kind: 'Namespace', label: 'Namespaces', icon: <Layers className="w-4 h-4 text-emerald-400" /> },
-        { kind: 'Node', label: 'Nodes', icon: <Server className="w-4 h-4 text-blue-400" /> },
-        { kind: 'Event', label: 'Events', icon: <Clock className="w-4 h-4 text-zinc-400" /> },
-      ],
-    },
-  ];
+  const handleSelectKind = (kind: ResourceKind) => {
+    setActiveKind(kind);
+    openResourceList(kind);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, kind: ResourceKind) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ kind, x: e.clientX, y: e.clientY });
+  };
+
+  const contextMenuItems: MenuItem[] = contextMenu
+    ? [
+        {
+          id: 'open-tab',
+          label: `Open ${contextMenu.kind}s in New Tab`,
+          icon: ExternalLink,
+          onSelect: () => openResourceList(contextMenu.kind),
+        },
+        {
+          id: 'open-split',
+          label: `Open ${contextMenu.kind}s in Split Right`,
+          icon: Columns2,
+          onSelect: () => {
+            openResourceList(contextMenu.kind);
+            toggleSplit(`tab-list-${contextMenu.kind}`);
+          },
+        },
+      ]
+    : [];
+
+  const expandAll = () => {
+    SIDEBAR_TREE.forEach((cat) => {
+      useUiStore.setState((s) => ({
+        sidebarGroups: { ...s.sidebarGroups, [cat.id]: true },
+      }));
+      cat.groups.forEach((g) => {
+        useUiStore.setState((s) => ({
+          sidebarGroups: { ...s.sidebarGroups, [key(cat.id, g.id)]: true },
+        }));
+      });
+    });
+  };
+
+  const collapseAll = () => {
+    const newGroups: Record<string, boolean> = {};
+    SIDEBAR_TREE.forEach((cat) => {
+      newGroups[cat.id] = false;
+      cat.groups.forEach((g) => {
+        newGroups[key(cat.id, g.id)] = false;
+      });
+    });
+    useUiStore.setState({ sidebarGroups: newGroups });
+  };
 
   return (
-    <nav className="w-56 bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] flex flex-col h-full overflow-y-auto select-none py-2 text-xs">
-      <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-        Cluster Explorer
+    <nav className="h-full flex flex-col bg-[var(--bg-sidebar)] select-none overflow-hidden font-sans border-r border-[var(--border-default)]">
+      {/* Header — JetBrains Tool Window Header */}
+      <div className="h-9 px-2.5 flex items-center justify-between border-b border-[var(--border-subtle)] shrink-0 bg-[var(--bg-secondary)]/50">
+        <span className="text-[11.5px] font-semibold text-[var(--text-secondary)] tracking-wide uppercase">
+          Cluster Explorer
+        </span>
+        <div className="flex items-center gap-0.5">
+          <Tooltip label="Expand All" delay={400}>
+            <IconButton icon={FolderPlus} size="sm" onClick={expandAll} aria-label="Expand All" />
+          </Tooltip>
+          <Tooltip label="Collapse All" delay={400}>
+            <IconButton icon={FolderMinus} size="sm" onClick={collapseAll} aria-label="Collapse All" />
+          </Tooltip>
+        </div>
       </div>
 
-      <div className="flex flex-col gap-1">
-        {sections.map((section) => {
-          const isOpen = openSections[section.title] ?? true;
+      {/* Filter as you type */}
+      <div className="px-2 py-1.5 shrink-0 border-b border-[var(--border-subtle)]/60">
+        <div className="relative flex items-center">
+          <SearchIcon size={12} className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setFilter('')}
+            placeholder="Filter tree (e.g. pods, cm)…"
+            className="w-full h-[24px] bg-[var(--bg-canvas)] text-[11.5px] text-[var(--text-primary)] rounded-[4px] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] pl-7 pr-6"
+          />
+          {filter && (
+            <button
+              onClick={() => setFilter('')}
+              className="absolute right-1 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tree */}
+      <div className="flex-1 overflow-y-auto kubiki-scrollbar py-1">
+        {filtered.map((cat) => {
+          const catOpen = searching || groups[cat.id] !== false;
+          const CatIcon = cat.icon;
+          const catCount = cat.groups.reduce((acc, g) => acc + g.kinds.reduce((a, e) => a + countFor(e.kind), 0), 0);
+
           return (
-            <div key={section.title} className="flex flex-col">
+            <div key={cat.id} className="mb-0.5">
+              {/* Category Level */}
               <button
-                onClick={() => toggleSection(section.title)}
-                className="flex items-center justify-between px-3 py-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)] font-medium transition-colors"
+                onClick={() => { if (!searching) toggleGroup(cat.id); }}
+                className={cx(
+                  'w-full flex items-center gap-1.5 px-2 h-[24px] text-[11.5px] font-medium transition-colors',
+                  catOpen ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]',
+                  'hover:bg-[var(--bg-hover)]'
+                )}
               >
-                <span className="flex items-center gap-1.5 font-semibold text-[11px]">
-                  {isOpen ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-                  ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
-                  )}
-                  {section.title}
-                </span>
+                {catOpen ? <ChevronDown size={11} className="opacity-60 shrink-0" /> : <ChevronRight size={11} className="opacity-60 shrink-0" />}
+                <CatIcon size={13} strokeWidth={1.75} className="text-[var(--text-secondary)] shrink-0" />
+                <span className="truncate text-left flex-1">{cat.label}</span>
+                {catCount > 0 && (
+                  <span className="text-[10px] font-mono text-[var(--text-muted)] tabular-nums px-1 rounded bg-[var(--bg-canvas)]/50">
+                    {catCount}
+                  </span>
+                )}
               </button>
 
-              {isOpen && (
-                <div className="flex flex-col py-0.5">
-                  {section.items.map((item) => {
-                    const isSelected = activeKind === item.kind;
-                    const count = resources[item.kind]?.size ?? 0;
+              {catOpen && cat.groups.map((g) => {
+                const gOpen = searching || groups[key(cat.id, g.id)] !== false;
+                const gCount = g.kinds.reduce((a, e) => a + countFor(e.kind), 0);
 
-                    return (
+                return (
+                  <div key={g.id}>
+                    {g.label && (
                       <button
-                        key={item.kind}
-                        onClick={() => setActiveKind(item.kind)}
-                        className={`flex items-center justify-between pl-6 pr-3 py-1.5 text-xs transition-colors rounded-none ${
-                          isSelected
-                            ? 'bg-blue-600/20 text-blue-400 font-medium border-l-2 border-blue-500'
-                            : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'
-                        }`}
+                        onClick={() => { if (!searching) toggleGroup(key(cat.id, g.id)); }}
+                        className="w-full flex items-center gap-1.5 pl-[22px] pr-2 h-[22px] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
                       >
-                        <span className="flex items-center gap-2 truncate">
-                          {item.icon}
-                          <span className="truncate">{item.label}</span>
-                        </span>
-                        {count > 0 && (
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-[var(--bg-surface)] text-[var(--text-muted)]">
-                            {count}
-                          </span>
+                        {gOpen
+                          ? <ChevronDown size={10} className="opacity-50 shrink-0" />
+                          : <ChevronRight size={10} className="opacity-50 shrink-0" />}
+                        <span className="truncate text-left flex-1">{g.label}</span>
+                        {!gOpen && gCount > 0 && (
+                          <span className="text-[10px] font-mono text-[var(--text-muted)] tabular-nums">{gCount}</span>
                         )}
                       </button>
-                    );
-                  })}
-                </div>
-              )}
+                    )}
+
+                    {gOpen && g.placeholder && (
+                      <div className="flex items-center gap-1.5 pl-[34px] pr-2 h-[22px] text-[11px] text-[var(--text-disabled)] italic cursor-default">
+                        <Lock size={10} className="shrink-0" />
+                        <span className="truncate">{g.placeholder}</span>
+                      </div>
+                    )}
+
+                    {gOpen && (
+                      <div className="py-0.5">
+                        {g.kinds.map((entry) => {
+                          const selected = activeKind === entry.kind;
+                          const total = countFor(entry.kind);
+                          const Icon = entry.icon;
+
+                          return (
+                            <button
+                              key={entry.kind}
+                              onClick={() => handleSelectKind(entry.kind)}
+                              onContextMenu={(e) => handleContextMenu(e, entry.kind)}
+                              className={cx(
+                                'group relative w-full flex items-center gap-2 h-[24px] pl-[32px] pr-2 text-[11.5px] transition-colors',
+                                selected
+                                  ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-medium shadow-2xs'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                              )}
+                            >
+                              {selected && (
+                                <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+                              )}
+                              <Icon size={13} strokeWidth={1.75} className={cx('shrink-0', entry.hue)} />
+                              <span className="truncate flex-1 text-left">{entry.label}</span>
+                              {total > 0 && (
+                                <span className={cx(
+                                  'text-[10px] font-mono tabular-nums px-1 rounded',
+                                  selected ? 'bg-[var(--bg-canvas)] text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+                                )}>
+                                  {total}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           );
         })}
+        {filtered.length === 0 && (
+          <div className="px-3 py-8 text-[11px] text-[var(--text-muted)] text-center">
+            No matching resources found for “{filter}”
+          </div>
+        )}
       </div>
+
+      {/* Context Menu for Tree Item */}
+      {contextMenu && (
+        <FixedMenu
+          rect={{ x: contextMenu.x, y: contextMenu.y }}
+          items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </nav>
   );
 };
