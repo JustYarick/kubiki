@@ -43,6 +43,10 @@ export const useClusterStore = create<ClusterState>((set) => ({
         is_current: c.name === contextName,
       })),
       isConnected: false,
+      clusterVersion: null,
+      selectedNamespace: 'all',
+      availableNamespaces: [],
+      error: null,
     }));
   },
 

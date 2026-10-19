@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ChevronDown,
   Circle,
@@ -16,12 +16,15 @@ import {
 } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
+import { useDockStore } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
 import { k8s } from '../../providers/k8s_provider';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
 import { IconButton, Tooltip } from '../ui/Button';
+import { SearchableSelect } from '../ui/SearchableSelect';
 import { toast } from '../../state/notifications_store';
+import type { ResourceKind } from '../../types/k8s';
 import { cx } from '../../core/utils/cx';
 
 interface TitleBarProps {
@@ -29,6 +32,7 @@ interface TitleBarProps {
 }
 
 export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
+  const { dockCollapsed, toggleDock } = useDockStore();
   const {
     contexts, currentContext, selectedNamespace, selectNamespace, availableNamespaces,
     isConnected, clusterVersion,
@@ -36,7 +40,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
 
   const {
     sidebarCollapsed, toggleSidebar,
-    dockCollapsed, toggleDock,
     inspectorCollapsed, toggleInspector,
     setPaletteOpen, setSettingsOpen,
     density, setDensity, resetLayout,
@@ -47,21 +50,36 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(0); // 0 = off
 
-  const handleRefresh = async () => {
+  const refreshing = useRef(false);
+  const handleRefresh = useCallback(async () => {
+    if (!currentContext || refreshing.current) return;
+    refreshing.current = true;
     setIsRefreshing(true);
-    toast.info('Synchronizing with cluster…');
     try {
-      const curCtx = currentContext || 'default';
-      const activeKind = useResourceStore.getState().activeKind;
-      const items = await k8s.getResources(curCtx, activeKind, selectedNamespace);
-      useResourceStore.getState().setResourcesForKind(activeKind, items);
-      toast.success('Cluster Synchronized', `${curCtx} · ${items.length} ${activeKind}s`);
-    } catch {
-      toast.success('Cluster Synchronized', `${currentContext || 'default'} · latest state`);
+      const kinds = Object.keys(useResourceStore.getState().resources) as ResourceKind[];
+      const results = await Promise.allSettled(kinds.map(async (kind) => {
+        try {
+          const items = await k8s.getResources(currentContext, kind, 'all');
+          if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setResourcesForKind(kind, items);
+        } catch (error) {
+          if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setLoadError(kind, String(error));
+          throw error;
+        }
+      }));
+      if (useClusterStore.getState().currentContext !== currentContext) return;
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed) toast.warn('Sync incomplete', `${failed} resource types could not be refreshed`);
     } finally {
+      refreshing.current = false;
       setIsRefreshing(false);
     }
-  };
+  }, [currentContext]);
+
+  useEffect(() => {
+    if (!autoRefreshInterval || !isConnected) return;
+    const timer = window.setInterval(() => { void handleRefresh(); }, autoRefreshInterval * 1000);
+    return () => window.clearInterval(timer);
+  }, [autoRefreshInterval, handleRefresh, isConnected]);
 
   const ctxItems: MenuItem[] = contexts.length
     ? contexts.map((c) => ({
@@ -72,16 +90,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         onSelect: () => onSelectContext(c.name),
       }))
     : [{ id: 'none', label: 'No contexts found', disabled: true }];
-
-  const nsItems: MenuItem[] = [
-    { id: 'all', label: 'All Namespaces', checked: selectedNamespace === 'all', onSelect: () => selectNamespace('all') },
-    ...availableNamespaces.map((ns) => ({
-      id: ns,
-      label: ns,
-      checked: selectedNamespace === ns,
-      onSelect: () => selectNamespace(ns),
-    })),
-  ];
 
   /* JetBrains Main Menu items */
   const mainMenuSections: MenuItem[] = [
@@ -218,7 +226,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
               />
               <span className="truncate font-mono text-[11.5px]">{currentContext ?? 'No Context'}</span>
               <span className="text-[10px] text-[var(--text-muted)] font-mono">
-                {clusterVersion ? `v${clusterVersion}` : ''}
+                {clusterVersion ? clusterVersion.replace(/^v?/, 'v') : ''}
               </span>
               <ChevronDown size={11} className="opacity-50 shrink-0 ml-0.5" />
             </button>
@@ -235,35 +243,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         </Popover>
 
         {/* Namespace Picker */}
-        <Popover
-          width={240}
-          trigger={({ open }) => (
-            <button
-              className={cx(
-                'flex items-center gap-1.5 h-[25px] px-2 rounded-[4px] text-[11.5px] transition-colors max-w-[170px]',
-                open
-                  ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-              )}
-              title="Namespace Scope"
-            >
-              <Layers size={12} className="text-violet-400 shrink-0" />
-              <span className="truncate font-mono">
-                {selectedNamespace === 'all' ? 'all-namespaces' : selectedNamespace}
-              </span>
-              <ChevronDown size={11} className="opacity-50 shrink-0" />
-            </button>
-          )}
-        >
-          {(close) => (
-            <>
-              <div className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Namespace Scope
-              </div>
-              <MenuList items={nsItems} onSelect={(item) => { item.onSelect?.(); close(); }} />
-            </>
-          )}
-        </Popover>
+        <SearchableSelect label="Namespace Scope" value={selectedNamespace} onChange={selectNamespace} icon={Layers} className="max-w-[170px] font-mono" options={[
+          { value: 'all', label: 'All Namespaces' },
+          ...availableNamespaces.map((name) => ({ value: name, label: name })),
+        ]} />
       </div>
 
       {/* Center: JetBrains "Search Everywhere" Widget */}
@@ -271,7 +254,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         <button
           onClick={() => setPaletteOpen(true)}
           className="group flex items-center gap-2 h-[26px] w-[380px] max-w-full px-2.5 rounded-[5px] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-all shadow-xs"
-          title="Search Everywhere (Double Shift / ⌘K)"
+          title="Search Everywhere (Ctrl/⌘ K)"
         >
           <Command size={13} className="text-[var(--accent)] shrink-0" />
           <span className="text-xs flex-1 text-left truncate">

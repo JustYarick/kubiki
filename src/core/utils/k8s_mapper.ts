@@ -1,4 +1,5 @@
 import type { ResourceItem, ResourceKind, ResourceContainer } from '../../types/k8s';
+import { stringify } from 'yaml';
 
 /**
  * Maps raw Kubernetes API JSON objects (from kube-rs / kubectl) into normalized ResourceItem objects.
@@ -12,7 +13,7 @@ export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
   const labels: Record<string, string> = meta.labels || {};
 
   const base: ResourceItem = {
-    uid: meta.uid || `${kind.toLowerCase()}-${meta.name}`,
+    uid: meta.uid || JSON.stringify([kind, meta.namespace ?? '', meta.name]),
     name: meta.name || 'unnamed',
     namespace: meta.namespace,
     kind,
@@ -22,7 +23,9 @@ export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
     metadata: meta,
     spec,
     statusRaw: status,
-    rawYaml: '',
+    raw,
+    rawYaml: stringify(raw),
+    age: creationTimestamp ? formatAge(creationTimestamp) : undefined,
   };
 
   switch (kind) {
@@ -221,6 +224,8 @@ export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
         ...base,
         status: hosts || '*',
         ready: hosts || '*',
+        ingressHosts: hosts || '*',
+        ingressClass: spec.ingressClassName,
       };
     }
 
@@ -235,4 +240,13 @@ export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
 export function mapK8sResourceList(rawList: any, kind: ResourceKind): ResourceItem[] {
   const items = rawList?.items || (Array.isArray(rawList) ? rawList : []);
   return items.map((item: any) => mapK8sResource(item, kind));
+}
+
+function formatAge(timestamp: string): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(timestamp)) / 1000));
+  if (!Number.isFinite(seconds)) return '—';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
 }

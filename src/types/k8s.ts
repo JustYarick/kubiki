@@ -9,6 +9,7 @@ export interface KubeContextInfo {
 export type ResourceKind =
   | 'Pod'
   | 'Deployment'
+  | 'ReplicaSet'
   | 'StatefulSet'
   | 'DaemonSet'
   | 'Job'
@@ -52,6 +53,7 @@ export interface ResourceItem {
   metadata?: Record<string, unknown>;
   spec?: Record<string, unknown>;
   statusRaw?: Record<string, unknown>;
+  raw?: Record<string, any>;
   /* enrichments for the detail view (mock / future core) */
   labels?: Record<string, string>;
   containers?: ResourceContainer[];

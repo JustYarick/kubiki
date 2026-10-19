@@ -1,8 +1,11 @@
 # План разработки UI Kubiki (UI Build Plan)
 
+> Актуализация 2026-10-20: это целевой план; раздел исходного состояния исторический. Каноническая нумерация UI-фаз остаётся в этом документе. Фактический статус: [09-PROJECT-STATUS.md](09-PROJECT-STATUS.md); исправления: [08-UX-TECHNICAL-AUDIT.md](08-UX-TECHNICAL-AUDIT.md).
+
+
 > **Назначение:** полное руководство по построению интерфейса приложения Kubiki для UI-разработчиков и автономных ИИ-агентов.
 > **Стек UI:** React 19 + TypeScript + Vite + Tailwind 4 + Zustand + dockview + TanStack Table/Virtual + Monaco + xterm.js + lucide-react
-> **Бэкенд:** `crates/kubiki-core` (100% готов) через Tauri 2 IPC (`src-tauri`)
+> **Бэкенд:** `crates/kubiki-core` (есть сервисы; интеграция и QA не завершены) через Tauri 2 IPC (`src-tauri`)
 > **Референсы стиля:** JetBrains IDE (New UI / Fleet) и современный VS Code (Dark Modern)
 > **Статус документа:** утверждён. Обновляется по факту реализации (метки ✅ в чек-листах фаз).
 
@@ -33,7 +36,7 @@
 
 | Область | Состояние | Файлы |
 |---|---|---|
-| Rust-ядро kubiki-core | ✅ Готово на 100%: contexts, client pool, InformerManager + ResourceStore (watch-дельты), PodLogService, PodExecService, PortForwardManager, CrdDiscovery, HelmClient, MetricsService | `crates/kubiki-core/src/**` |
+| Rust-ядро kubiki-core | 🟡 Есть реализации сервисов; готовность не подтверждена live-тестами: contexts, client pool, InformerManager + ResourceStore (watch-дельты), PodLogService, PodExecService, PortForwardManager, CrdDiscovery, HelmClient, MetricsService | `crates/kubiki-core/src/**` |
 | Tauri-шелл | ⚠️ Минимальный: окно 1280×800, всего 2 команды (`get_kube_contexts`, `get_current_context`) | `src-tauri/src/lib.rs` |
 | Frontend-каркас (моки) | ⚠️ Статичный скелет: TitleBar, ActivityBar, Sidebar, ResourceTable, InspectorDrawer, BottomDock, StatusBadge | `src/components/**`, `src/App.tsx` |
 | Состояние | ⚠️ `cluster_store`, `resource_store` (Zustand) с дельтами Applied/Deleted/Restarted — каркас пригоден | `src/state/**` |

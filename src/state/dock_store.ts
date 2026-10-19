@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ResourceKind } from '../types/k8s';
+import { useClusterStore } from './cluster_store';
 
 export type DockSessionType = 'terminal' | 'logs' | 'ports' | 'events';
 export type DockTargetType = 'local' | 'pod' | 'node';
@@ -39,39 +40,15 @@ interface DockState {
   setDockCollapsed: (collapsed: boolean) => void;
   setDockHeight: (h: number) => void;
   updateSessionContainer: (id: string, container: string) => void;
+  focusTool: (type: DockSessionType) => void;
+  resetLayout: () => void;
 }
-
-const DEFAULT_SESSIONS: DockSession[] = [
-  {
-    id: 'dock-local-terminal-1',
-    type: 'terminal',
-    title: 'Terminal: Local Shell',
-    subtitle: 'localhost (bash/zsh)',
-    targetType: 'local',
-    resourceName: 'localhost',
-    pinned: false,
-  },
-  {
-    id: 'dock-ports',
-    type: 'ports',
-    title: 'Port Forwarding',
-    subtitle: 'active tunnels',
-    pinned: false,
-  },
-  {
-    id: 'dock-events',
-    type: 'events',
-    title: 'Cluster Events',
-    subtitle: 'all namespaces',
-    pinned: false,
-  },
-];
 
 export const useDockStore = create<DockState>()(
   persist(
     (set, get) => ({
-      sessions: DEFAULT_SESSIONS,
-      activeSessionId: 'dock-local-terminal-1',
+      sessions: [],
+      activeSessionId: '',
       dockHeight: 280,
       dockCollapsed: true,
 
@@ -79,7 +56,7 @@ export const useDockStore = create<DockState>()(
         const { sessions } = get();
         const localCount = sessions.filter((s) => s.targetType === 'local').length;
         const num = localCount + 1;
-        const id = `dock-term-local-${Date.now()}`;
+        const id = `dock-term-local-${crypto.randomUUID()}`;
 
         const newSession: DockSession = {
           id,
@@ -103,7 +80,7 @@ export const useDockStore = create<DockState>()(
 
       openNodeShell: (nodeName: string) => {
         const { sessions } = get();
-        const id = `dock-node-${nodeName}`;
+        const id = JSON.stringify(['node', useClusterStore.getState().currentContext, nodeName]);
         const existing = sessions.find((s) => s.id === id);
         if (existing) {
           set({ activeSessionId: existing.id, dockCollapsed: false });
@@ -139,7 +116,7 @@ export const useDockStore = create<DockState>()(
         }
 
         const { sessions } = get();
-        const id = `dock-term-${resourceName}-${container}`;
+        const id = JSON.stringify(['terminal', useClusterStore.getState().currentContext, namespace, resourceName, container]);
 
         const existing = sessions.find((s) => s.id === id);
         if (existing) {
@@ -157,7 +134,7 @@ export const useDockStore = create<DockState>()(
           resourceName,
           namespace,
           container,
-          allContainers: allContainers.length > 0 ? allContainers : [container, 'istio-proxy'],
+          allContainers: allContainers.length > 0 ? allContainers : [container],
           pinned: false,
         };
 
@@ -172,7 +149,7 @@ export const useDockStore = create<DockState>()(
 
       openLogs: (resourceName, namespace = 'default', container = 'app', allContainers = []) => {
         const { sessions } = get();
-        const id = `dock-logs-${resourceName}-${container}`;
+        const id = JSON.stringify(['logs', useClusterStore.getState().currentContext, namespace, resourceName, container]);
 
         const existing = sessions.find((s) => s.id === id);
         if (existing) {
@@ -267,17 +244,25 @@ export const useDockStore = create<DockState>()(
 
       setDockHeight: (h) => set({ dockHeight: Math.min(600, Math.max(140, h)), dockCollapsed: false }),
 
+      resetLayout: () => set({ dockHeight: 280, dockCollapsed: true }),
+      focusTool: (type) => {
+        const session = get().sessions.find((s) => s.type === type);
+        if (session) get().setActiveSession(session.id);
+        else if (type === 'ports') get().openPorts();
+        else if (type === 'events') get().openEvents();
+        else set({ dockCollapsed: false });
+      },
+
       updateSessionContainer: (id, container) => {
-        set((state) => ({
-          sessions: state.sessions.map((s) => (s.id === id ? { ...s, container, subtitle: `${s.namespace} · ${container}` } : s)),
-        }));
+        const session = get().sessions.find((entry) => entry.id === id);
+        if (!session?.resourceName || session.targetType !== 'pod') return;
+        if (session.type === 'logs') get().openLogs(session.resourceName, session.namespace, container, session.allContainers);
+        if (session.type === 'terminal') get().openTerminal(session.resourceName, session.namespace, container, session.allContainers);
       },
     }),
     {
-      name: 'kubiki.dock.v2',
+      name: 'kubiki.dock.v3',
       partialize: (s) => ({
-        sessions: s.sessions,
-        activeSessionId: s.activeSessionId,
         dockHeight: s.dockHeight,
         dockCollapsed: s.dockCollapsed,
       }),

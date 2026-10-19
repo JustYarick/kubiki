@@ -1,7 +1,10 @@
 # Спецификация и API ядра Kubiki Core
 
+> Аудит 2026-10-20: наличие API и успешных unit tests не подтверждает полноту или готовность к production. Открытые риски watch/exec/PF/Helm и объём тестов: [08-UX-TECHNICAL-AUDIT.md](08-UX-TECHNICAL-AUDIT.md).
+
+
 > **Крейт:** `crates/kubiki-core`  
-> **Статус:** 100% готов, протестирован, zero-GUI  
+> **Статус:** headless-сервисы реализованы частично; live integration и production QA не завершены
 > **Язык:** Чистый Rust 2024 (Tokio, kube-rs, k8s-openapi, portable-pty)
 
 ---
@@ -177,4 +180,4 @@ cargo run --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli -- helm
 
 Если следующий ИИ-агент будет создавать интерфейс (TUI на `ratatui`, нативный GUI на `iced` / `gpui`, или десктопный UI):
 - Добавить в зависимости своего интерфейса: `kubiki-core = { path = "../crates/kubiki-core" }`
-- Весь бэкенд, работа с Kubernetes, парсинг конфигурации, кэширование, туннели и стримы логов уже полностью готовы и оттестированы.
+- Проверить конкретный сервис по коду и live integration tests; не считать наличие API подтверждением полной готовности. См. аудит 08 и status report 09.

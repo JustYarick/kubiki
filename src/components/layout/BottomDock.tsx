@@ -25,6 +25,8 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { k8s } from '../../providers/k8s_provider';
+import { useClusterStore } from '../../state/cluster_store';
 import { usePfStore } from '../../state/pf_store';
 import { useResourceStore } from '../../state/resource_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
@@ -37,7 +39,7 @@ import { toast } from '../../state/notifications_store';
 import { fmtBytes, fmtElapsed } from '../../core/utils/fmt';
 import { cx } from '../../core/utils/cx';
 
-export const BottomDock: React.FC = () => {
+const ExpandedDock: React.FC = () => {
   const {
     sessions,
     activeSessionId,
@@ -59,6 +61,14 @@ export const BottomDock: React.FC = () => {
   const resources = useResourceStore((s) => s.resources);
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
 
+  const [visited, setVisited] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!dockCollapsed && activeSession) setVisited((previous) => {
+      if (previous.has(activeSession.id)) return previous;
+      return new Set([...previous, activeSession.id]);
+    });
+  }, [dockCollapsed, activeSession?.id]);
+
   const [isMaximized, setIsMaximized] = useState(false);
   const [prevHeight, setPrevHeight] = useState(dockHeight);
 
@@ -76,43 +86,11 @@ export const BottomDock: React.FC = () => {
   const allPods = useMemo(() => Array.from(resources['Pod']?.values() || []), [resources]);
   const allNodes = useMemo(() => Array.from(resources['Node']?.values() || []), [resources]);
 
-  if (dockCollapsed) {
-    return (
-      <div
-        onClick={toggleDock}
-        className="shrink-0 h-[28px] border-t border-[var(--border-default)] bg-[var(--bg-secondary)] flex items-center px-3 gap-2 select-none cursor-pointer hover:bg-[var(--bg-hover)] transition-colors z-20"
-      >
-        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-          Terminal &amp; Logs Drawer
-        </span>
-        <div className="h-3 w-px bg-[var(--border-default)]" />
-        <span className="text-[11px] font-mono text-[var(--text-secondary)]">
-          {activeSession?.title || 'No active sessions'}
-        </span>
-        <span className="text-[10px] text-[var(--text-muted)]">
-          ({sessions.length} active sessions)
-        </span>
-        <div className="flex-1" />
-        <IconButton
-          icon={ChevronDown}
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleDock();
-          }}
-          tooltip="Expand Drawer (⌘J)"
-          className="rotate-180"
-          aria-label="Expand"
-        />
-      </div>
-    );
-  }
-
   if (sessions.length === 0) {
     return (
       <div
         className="shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] flex flex-col z-20 overflow-hidden font-sans"
-        style={{ height: dockHeight }}
+        style={{ height: dockHeight, maxHeight: '60vh' }}
       >
         <div className="h-[32px] shrink-0 flex items-center justify-between px-3 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] select-none">
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
@@ -180,7 +158,7 @@ export const BottomDock: React.FC = () => {
   return (
     <div
       className="shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] flex flex-col z-20 overflow-hidden font-sans"
-      style={{ height: dockHeight }}
+      style={{ height: dockHeight, maxHeight: '60vh' }}
     >
       {/* Lens-Grade Multi-Session Tab Strip */}
       <div className="h-[32px] shrink-0 flex items-stretch px-1 gap-0.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-x-auto overflow-y-hidden kubiki-scrollbar select-none">
@@ -274,7 +252,7 @@ export const BottomDock: React.FC = () => {
                   <Laptop size={13} className="text-sky-400" />
                   <div className="flex flex-col text-left">
                     <span className="font-medium">Local Terminal (Host PC)</span>
-                    <span className="text-[9.5px] text-[var(--text-muted)]">yarick@localhost (~/myproject/kubiki)</span>
+                    <span className="text-[9.5px] text-[var(--text-muted)]">demo@localhost (~)</span>
                   </div>
                 </button>
                 <button
@@ -304,21 +282,7 @@ export const BottomDock: React.FC = () => {
                   Node Shells (Cluster Nodes)
                 </div>
                 {allNodes.length === 0 ? (
-                  <button
-                    onClick={() => {
-                      openNodeShell('default');
-                      close();
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Server size={12} className="text-amber-400 shrink-0" />
-                      <span className="font-mono text-[11px] truncate">default (k3s)</span>
-                    </div>
-                    <span className="text-[9.5px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)]">
-                      Shell
-                    </span>
-                  </button>
+                  <div className="px-3 py-2 text-[11px] text-[var(--text-muted)]">No loaded nodes</div>
                 ) : (
                   allNodes.slice(0, 6).map((node) => (
                     <button
@@ -398,10 +362,15 @@ export const BottomDock: React.FC = () => {
 
       {/* Active Session Content */}
       <div className="flex-1 min-h-0 relative bg-[var(--bg-canvas)]">
-        {activeSession.type === 'terminal' && <TerminalSessionPane key={activeSession.id} session={activeSession} />}
-        {activeSession.type === 'logs' && <LogsSessionPane key={activeSession.id} session={activeSession} />}
-        {activeSession.type === 'ports' && <PortsPane />}
-        {activeSession.type === 'events' && <EventsPane visible={true} />}
+        {sessions.filter((session) => visited.has(session.id)).map((session) => {
+          const visible = !dockCollapsed && session.id === activeSession?.id;
+          return <div key={session.id} hidden={!visible} className="h-full min-h-0">
+            {session.type === 'terminal' && <TerminalSessionPane session={session} visible={visible} />}
+            {session.type === 'logs' && <LogsSessionPane session={session} visible={visible} />}
+            {session.type === 'ports' && <PortsPane />}
+            {session.type === 'events' && <EventsPane />}
+          </div>;
+        })}
       </div>
     </div>
   );
@@ -411,7 +380,12 @@ export const BottomDock: React.FC = () => {
 /* Terminal Session Component                                         */
 /* ------------------------------------------------------------------ */
 
-function TerminalSessionPane({ session }: { session: DockSession }) {
+export function TerminalSessionPane({ session, visible = true }: { session: DockSession; visible?: boolean }) {
+  if (!k8s.demo) return <div className="p-5 text-[var(--text-secondary)] text-xs"><div className="font-medium mb-2">{session.targetType === 'node' ? 'Node shell' : 'Interactive shell'} · {session.resourceName}</div><p>The live terminal transport is not connected yet. This session does not execute commands.</p></div>;
+  return <DemoTerminalSessionPane session={session} visible={visible} />;
+}
+
+function DemoTerminalSessionPane({ session, visible }: { session: DockSession; visible: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -425,12 +399,12 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
   const isNode = session.targetType === 'node' || session.resourceName?.startsWith('node/');
   const isPod = !isLocal && !isNode;
 
-  const [activeContainer, setActiveContainer] = useState(session.container || (isLocal ? 'host' : isNode ? 'sh' : 'app'));
+  const activeContainer = session.container || (isLocal ? 'host' : isNode ? 'sh' : 'app');
   const [shellBinary, setShellBinary] = useState(isLocal ? '/bin/zsh' : '/bin/sh');
 
   const containers = session.allContainers && session.allContainers.length > 0
     ? session.allContainers
-    : ['app', 'istio-proxy'];
+    : [session.container || 'default'];
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -459,12 +433,12 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
-    fit.fit();
+    try { fit.fit(); } catch { /* Wait for visible dimensions. */ }
     termRef.current = term;
     fitRef.current = fit;
     term.focus();
 
-    const ro = new ResizeObserver(() => fit.fit());
+    const ro = new ResizeObserver(() => { if (containerRef.current?.offsetHeight) fit.fit(); });
     ro.observe(containerRef.current);
 
     return () => {
@@ -474,9 +448,11 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
     };
   }, []);
 
+  useEffect(() => { if (visible && containerRef.current?.offsetHeight) { fitRef.current?.fit(); termRef.current?.focus(); } }, [visible]);
+
   const writePrompt = (term: XTerm) => {
     if (isLocal) {
-      term.write(`\r\n\x1b[1;32myarick@localhost\x1b[0m:\x1b[1;34m~/myproject/kubiki\x1b[0m$ `);
+      term.write(`\r\n\x1b[1;32mdemo@localhost\x1b[0m:\x1b[1;34m~\x1b[0m$ `);
     } else if (isNode) {
       term.write(`\r\n\x1b[1;33mroot@${session.resourceName || 'node'}\x1b[0m:\x1b[1;34m/\x1b[0m# `);
     } else {
@@ -491,11 +467,11 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
 
     let intro = '';
     if (isLocal) {
-      intro = `\r\n\x1b[1;36mKubiki Local Terminal (Host PC)\x1b[0m — interactive local shell session using \x1b[33m${shellBinary}\x1b[0m.\r\nWorkstation: \x1b[1;32myarick@localhost\x1b[0m (openSUSE Tumbleweed · Hyprland)\r\nType \`help\`, \`kubectl get pods\`, \`whoami\`, \`pwd\`, or any command.\r\n`;
+      intro = `\r\n\x1b[1;36mKubiki Local Terminal (Host PC)\x1b[0m — simulated shell session using \x1b[33m${shellBinary}\x1b[0m.\r\nWorkstation: \x1b[1;32mdemo@localhost\x1b[0m (demo workstation)\r\nType \`help\`, \`kubectl get pods\`, \`whoami\`, \`pwd\`, or any command.\r\n`;
     } else if (isNode) {
-      intro = `\r\n\x1b[1;33mKubiki Node Shell\x1b[0m — privileged interactive shell on node \x1b[1m${session.resourceName}\x1b[0m.\r\nAccessing host root via debug container.\r\nType \`help\` or any node inspection command.\r\n`;
+      intro = `\r\n\x1b[1;33mKubiki Node Shell\x1b[0m — simulated shell for node \x1b[1m${session.resourceName}\x1b[0m.\r\nDemo only. No debug container is created.\r\nType \`help\` or any node inspection command.\r\n`;
     } else {
-      intro = `\r\n\x1b[1;32mConnected to Pod\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m) using \x1b[33m${shellBinary}\x1b[0m.\r\nType \`help\` or any container command.\r\n`;
+      intro = `\r\n\x1b[1;32mDemo Pod shell for\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m) using \x1b[33m${shellBinary}\x1b[0m.\r\nType \`help\` or any container command.\r\n`;
     }
 
     term.write(intro);
@@ -611,7 +587,6 @@ function TerminalSessionPane({ session }: { session: DockSession }) {
                   <button
                     key={c}
                     onClick={() => {
-                      setActiveContainer(c);
                       updateSessionContainer(session.id, c);
                       toast.info(`Switched to container: ${c}`);
                       close();
@@ -706,50 +681,59 @@ const LOG_TEMPLATES = [
 
 interface LogLine { t: string; level: string; msg: string; seq: number }
 
-function LogsSessionPane({ session }: { session: DockSession }) {
+export function LogsSessionPane({ session, visible = true }: { session: DockSession; visible?: boolean }) {
+  const [error, setError] = useState('');
+  const context = useClusterStore((s) => s.currentContext);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [wrap, setWrap] = useState(true);
   const [filter, setFilter] = useState('');
   const [showTimestamps, setShowTimestamps] = useState(true);
-  const [activeContainer, setActiveContainer] = useState(session.container || 'app');
+  const activeContainer = session.container || 'app';
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
 
   const containers = session.allContainers && session.allContainers.length > 0
     ? session.allContainers
-    : ['app', 'istio-proxy'];
+    : [session.container || 'default'];
 
   useEffect(() => {
-    // Generate initial tail
-    const initial: LogLine[] = [];
-    for (let i = 0; i < 20; i++) {
-      const [level, tpl] = LOG_TEMPLATES[i % LOG_TEMPLATES.length];
-      const msg = `[${session.resourceName}/${activeContainer}] ` + tpl.replace('{ms}', String(20 + i * 15)).replace(/\{n\}/g, String(i + 1));
-      initial.push({
-        t: new Date(Date.now() - (20 - i) * 1000).toISOString().slice(11, 23),
-        level,
-        msg,
-        seq: seqRef.current++,
-      });
-    }
-    setLines(initial);
+    setLines([]);
+    setError('');
+  }, [session.resourceName, activeContainer, context]);
 
-    // Live streamer interval
-    const iv = setInterval(() => {
-      if (paused) return;
-      const [level, tpl] = LOG_TEMPLATES[Math.floor(Math.random() * LOG_TEMPLATES.length)];
-      const msg = `[${session.resourceName}/${activeContainer}] ` + tpl
-        .replace('{ms}', String(20 + Math.floor(Math.random() * 400)))
-        .replace(/\{n\}/g, () => String(1 + Math.floor(Math.random() * 240)));
-
-      const t = new Date().toISOString().slice(11, 23);
-      setLines((prev) => [...prev, { t, level, msg, seq: seqRef.current++ }].slice(-500));
-    }, 750);
-
-    return () => clearInterval(iv);
-  }, [session.resourceName, activeContainer, paused]);
+  useEffect(() => {
+    if (!visible || paused) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        if (k8s.demo) {
+          const [level, template] = LOG_TEMPLATES[seqRef.current % LOG_TEMPLATES.length];
+          const msg = `[demo ${session.resourceName}/${activeContainer}] ` + template.replace('{ms}', '42').replace(/\{n\}/g, '3');
+          const line = { t: new Date().toISOString().slice(11, 23), level, msg, seq: seqRef.current++ };
+          setLines((previous) => [...previous, line].slice(-500));
+        } else {
+          if (!context || !session.resourceName || !session.namespace) throw new Error('Select a Pod and namespace to view logs.');
+          const text = await k8s.getLogs(context, session.resourceName, session.namespace, activeContainer);
+          if (cancelled) return;
+          const tail = text.trimEnd().split('\n').filter(Boolean).map((line, index) => {
+            const timestamp = /^(\S+)\s(.*)$/.exec(line);
+            const msg = timestamp?.[2] ?? line;
+            return { t: timestamp?.[1] ?? '', msg, seq: index, level: /\berror\b/i.test(msg) ? 'error' : /\bwarn(?:ing)?\b/i.test(msg) ? 'warn' : 'info' };
+          });
+          setLines(tail);
+        }
+        if (!cancelled) setError('');
+      } catch (error) {
+        if (!cancelled) setError(String(error));
+      }
+      if (!cancelled) timer = setTimeout(poll, k8s.demo ? 750 : 3000);
+    };
+    void poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [session.resourceName, session.namespace, activeContainer, context, visible, paused]);
 
   const shown = useMemo(() => {
     if (!filter.trim()) return lines;
@@ -759,6 +743,8 @@ function LogsSessionPane({ session }: { session: DockSession }) {
 
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
+      {error && <div role="alert" className="px-3 py-1 text-[var(--status-danger)] text-xs">{error}</div>}
+      <div className="px-3 py-0.5 text-[10px] text-[var(--text-muted)]">{k8s.demo ? 'Simulated logs' : 'Latest 500 lines · refresh every 3s'}</div>
       {/* Logs Target Header Bar */}
       <div className="h-8 shrink-0 flex items-center gap-2 px-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50 text-xs">
         <div className="flex items-center gap-1.5">
@@ -802,7 +788,6 @@ function LogsSessionPane({ session }: { session: DockSession }) {
                 <button
                   key={c}
                   onClick={() => {
-                    setActiveContainer(c);
                     updateSessionContainer(session.id, c);
                     toast.info(`Switched logs to container: ${c}`);
                     close();
@@ -1051,6 +1036,7 @@ function PortsPane() {
   const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
+    if (!k8s.demo) return;
     const iv = setInterval(() => usePfStore.getState().tick(), 800);
     return () => clearInterval(iv);
   }, []);
@@ -1166,9 +1152,10 @@ function AddPfModal({
           <Button onClick={onClose}>Cancel</Button>
           <Button
             variant="primary"
+            disabled={!k8s.demo}
             onClick={() => onCreate(name, ns, Number(target) || 8080, Number(local) || 8080)}
           >
-            Start Tunnel
+            Start demo tunnel
           </Button>
         </>
       }
@@ -1220,19 +1207,25 @@ const MOCK_EVENTS: ClusterEvent[] = [
   { id: 'ev-6', type: 'Warning', reason: 'BackOff', object: 'Pod/payment-worker-6789b-9876x', message: 'Back-off restarting failed container worker in pod', count: 12, age: '18m' },
 ];
 
-function EventsPane({ visible: _visible }: { visible?: boolean }) {
+function EventsPane() {
+  const events = useResourceStore((s) => s.resources.Event);
+  const loadError = useResourceStore((s) => s.loadErrors.Event);
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Normal' | 'Warning'>('All');
 
   const filtered = useMemo(() => {
-    let list = MOCK_EVENTS;
+    let list: ClusterEvent[] = k8s.demo ? MOCK_EVENTS : [...events.values()].map((event) => {
+      const raw = event.raw ?? {};
+      const ref = raw.involvedObject ?? raw.regarding ?? {};
+      return { id: event.uid, type: raw.type === 'Warning' ? 'Warning' : 'Normal', reason: raw.reason ?? '', object: `${ref.kind ?? ''}/${ref.name ?? ''}`, message: raw.message ?? raw.note ?? '', count: raw.count ?? raw.series?.count ?? 1, age: event.age ?? '—' };
+    });
     if (typeFilter !== 'All') list = list.filter((e) => e.type === typeFilter);
     if (filter) {
       const q = filter.toLowerCase();
       list = list.filter((e) => (e.reason + ' ' + e.object + ' ' + e.message).toLowerCase().includes(q));
     }
     return list;
-  }, [typeFilter, filter]);
+  }, [typeFilter, filter, events]);
 
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
@@ -1255,6 +1248,7 @@ function EventsPane({ visible: _visible }: { visible?: boolean }) {
         <SearchInput value={filter} onChange={setFilter} placeholder="Filter events…" className="w-[180px] h-[22px]" />
       </div>
 
+      {loadError && <div role="alert" className="p-2 text-[var(--status-warn)] text-xs">{loadError}</div>}
       <div className="flex-1 overflow-auto kubiki-scrollbar p-2">
         <table className="datagrip-grid w-full">
           <thead>
@@ -1292,4 +1286,12 @@ function EventsPane({ visible: _visible }: { visible?: boolean }) {
       </div>
     </div>
   );
+}
+
+export function BottomDock() {
+  const { dockCollapsed, toggleDock, sessions } = useDockStore();
+  return <div className="shrink-0 min-h-0">
+    {dockCollapsed && <button onClick={toggleDock} className="w-full h-7 flex items-center gap-2 px-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" aria-label="Expand bottom panel"><TerminalIcon size={12} /><span>Terminal & services</span><span className="text-[var(--text-muted)]">{sessions.length} open tabs</span><span className="ml-auto text-[10px]">Ctrl/⌘ J</span></button>}
+    <div hidden={dockCollapsed}><ExpandedDock /></div>
+  </div>;
 }

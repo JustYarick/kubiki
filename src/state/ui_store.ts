@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useDockStore } from './dock_store';
 import type { Perspective } from '../core/perspectives';
 
 export type Density = 'compact' | 'comfortable';
-export type RightTab = 'overview' | 'yaml';
+export type RightTab = 'overview' | 'yaml' | 'related' | 'events';
 
 interface UIState {
   /* appearance */
@@ -13,8 +14,6 @@ interface UIState {
   sidebarCollapsed: boolean;
   inspectorWidth: number;
   inspectorCollapsed: boolean;
-  dockHeight: number;
-  dockCollapsed: boolean;
   /* sidebar tree groups open/closed */
   sidebarGroups: Record<string, boolean>;
   /* visible columns per kind — hidden column ids */
@@ -25,7 +24,6 @@ interface UIState {
   rightTab: RightTab;
   paletteOpen: boolean;
   settingsOpen: boolean;
-  activeDockTab: DockTab;
   activePerspective: Perspective;
 
   setDensity: (d: Density) => void;
@@ -33,9 +31,6 @@ interface UIState {
   toggleSidebar: () => void;
   setInspectorWidth: (w: number) => void;
   toggleInspector: () => void;
-  setDockHeight: (h: number) => void;
-  toggleDock: () => void;
-  openDock: (tab?: DockTab) => void;
   toggleGroup: (title: string) => void;
   setHiddenColumns: (kind: string, hidden: string[]) => void;
   setColumnWidth: (kind: string, colId: string, width: number) => void;
@@ -47,13 +42,12 @@ interface UIState {
   resetLayout: () => void;
 }
 
-export type DockTab = 'terminal' | 'logs' | 'ports' | 'events';
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 export const DEFAULT_LAYOUT = {
   sidebarWidth: 246,
-  inspectorWidth: 360,
+  inspectorWidth: 440,
   dockHeight: 260,
 };
 
@@ -66,31 +60,20 @@ export const useUiStore = create<UIState>()(
       inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
       /* details pane opens on demand (click a row) — not at launch */
       inspectorCollapsed: true,
-      dockHeight: DEFAULT_LAYOUT.dockHeight,
       /* dock stays hidden on launch — it opens on demand (⌘J / row actions) */
-      dockCollapsed: true,
       sidebarGroups: {},
       hiddenColumns: {},
       columnWidths: {},
       rightTab: 'overview',
       paletteOpen: false,
       settingsOpen: false,
-      activeDockTab: 'logs',
       activePerspective: 'workloads' as Perspective,
 
       setDensity: (density) => set({ density }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 420), sidebarCollapsed: false }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-      setInspectorWidth: (w) => set({ inspectorWidth: clamp(w, 300, 560), inspectorCollapsed: false }),
+      setInspectorWidth: (w) => set({ inspectorWidth: clamp(w, 340, 800), inspectorCollapsed: false }),
       toggleInspector: () => set((s) => ({ inspectorCollapsed: !s.inspectorCollapsed })),
-      setDockHeight: (h) => set({ dockHeight: clamp(h, 140, 560), dockCollapsed: false }),
-      toggleDock: () =>
-        set((s) => ({
-          dockCollapsed: !s.dockCollapsed,
-          dockHeight: s.dockCollapsed ? Math.max(s.dockHeight, 240) : Math.max(32, s.dockHeight),
-        })),
-      openDock: (tab) =>
-        set((s) => ({ dockCollapsed: false, activeDockTab: (tab as DockTab) ?? s.activeDockTab })),
       toggleGroup: (title) =>
         set((s) => ({ sidebarGroups: { ...s.sidebarGroups, [title]: s.sidebarGroups[title] === false } })),
       setHiddenColumns: (kind, hidden) => set((s) => ({ hiddenColumns: { ...s.hiddenColumns, [kind]: hidden } })),
@@ -109,15 +92,15 @@ export const useUiStore = create<UIState>()(
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
       setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
       setActivePerspective: (activePerspective) => set({ activePerspective }),
-      resetLayout: () =>
+      resetLayout: () => {
+        useDockStore.getState().resetLayout();
         set({
           sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
           inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
-          dockHeight: DEFAULT_LAYOUT.dockHeight,
           sidebarCollapsed: false,
           inspectorCollapsed: true,
-          dockCollapsed: true,
-        }),
+        });
+      },
     }),
     {
       name: 'kubiki.settings.v3',
@@ -127,8 +110,6 @@ export const useUiStore = create<UIState>()(
         sidebarCollapsed: s.sidebarCollapsed,
         inspectorWidth: s.inspectorWidth,
         inspectorCollapsed: s.inspectorCollapsed,
-        dockHeight: s.dockHeight,
-        dockCollapsed: s.dockCollapsed,
         sidebarGroups: s.sidebarGroups,
         hiddenColumns: s.hiddenColumns,
         columnWidths: s.columnWidths,

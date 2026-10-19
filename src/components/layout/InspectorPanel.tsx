@@ -1,324 +1,165 @@
-import React, { Suspense, lazy, useState } from 'react';
-import { ArrowRightLeft, Boxes, Copy, FileText, Loader2, Terminal, Trash2, X, ExternalLink } from 'lucide-react';
+import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
+import { ArrowLeft, ArrowRight, ArrowRightLeft, Boxes, Copy, FileText, GitBranch, Loader2, Terminal, X, ExternalLink } from 'lucide-react';
 import { useResourceStore } from '../../state/resource_store';
+import type { RightTab } from '../../state/ui_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
+import { useDockStore } from '../../state/dock_store';
 import { KIND_ICONS } from '../../core/perspectives';
+import { buildResourceGraph } from '../../core/resources/relationships';
+import { resourceKey } from '../../core/resources/identity';
+import { ResourceWarnings } from '../k8s/ResourceWarnings';
+import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
+import { ResourceAnnotations } from '../k8s/ResourceAnnotations';
 import { StatusBadge } from '../k8s/StatusBadge';
-import { IconButton, Button, Tooltip } from '../ui/Button';
-import { Modal } from '../ui/Modal';
+import { IconButton, Button } from '../ui/Button';
+import { SearchInput } from '../ui/Input';
 import { PFDialog } from '../dialogs/PFDialog';
 import { toast } from '../../state/notifications_store';
-import type { RightTab as RightTabT } from '../../state/ui_store';
+import { parse } from 'yaml';
+import { mapK8sResource } from '../../core/utils/k8s_mapper';
+import { k8s } from '../../providers/k8s_provider';
 import { cx } from '../../core/utils/cx';
 import type { ResourceItem } from '../../types/k8s';
 
-/* Monaco is heavy — split it out of the initial chunk. */
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 
 export const InspectorPanel: React.FC = () => {
-  const selectedItem = useResourceStore((s) => s.selectedItem);
-  const updateItem = useResourceStore((s) => s.updateItem);
-  const deleteItem = useResourceStore((s) => s.deleteItem);
-  const { rightTab, setRightTab, toggleInspector, openDock } = useUiStore();
-
-  const [pfOpen, setPfOpen] = useState(false);
-  const [confirmDel, setConfirmDel] = useState(false);
-
-  if (!selectedItem) {
-    /* Frame stays intact even with no selection — the X button is always alive. */
-    return (
-      <div className="h-full flex flex-col bg-[var(--bg-canvas)] min-h-0">
-        <div className="shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
-          <div className="h-9 flex items-center gap-2 px-2.5">
-            <Boxes size={14} strokeWidth={1.75} className="text-[var(--text-muted)] shrink-0" />
-            <span className="text-[12px] font-medium text-[var(--text-secondary)] flex-1">Details</span>
-            <Tooltip label="Close panel" delay={400}>
-              <IconButton icon={X} size="sm" onClick={toggleInspector} aria-label="Close" />
-            </Tooltip>
-          </div>
-        </div>
-        <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="text-center max-w-[260px] px-6">
-            <Boxes size={32} strokeWidth={1.2} className="mx-auto text-[var(--text-muted)] mb-3" />
-            <div className="text-xs font-medium text-[var(--text-primary)]">No resource selected</div>
-            <p className="text-[11px] text-[var(--text-secondary)] mt-1.5 leading-relaxed">
-              Click a row in the table to inspect it here. Double-click opens the YAML editor.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const item = selectedItem;
-  const Icon = KIND_ICONS[item.kind];
-  const isYaml = rightTab === 'yaml';
-
-  const copyYaml = async () => {
-    if (!item.rawYaml) return;
-    try {
-      await navigator.clipboard.writeText(item.rawYaml);
-      toast.success('YAML copied');
-    } catch {
-      toast.error('Clipboard unavailable');
-    }
-  };
-
-  return (
-    <div className="h-full flex flex-col bg-[var(--bg-canvas)] min-h-0">
-      {/* Header */}
-      <div className="shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
-        <div className="h-9 flex items-center gap-2 px-2.5">
-          <Icon size={14} strokeWidth={1.75} className="text-[var(--text-secondary)] shrink-0" />
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="text-[12px] font-mono font-medium text-[var(--text-primary)] truncate">{item.name}</div>
-            <div className="text-[10px] text-[var(--text-muted)] flex items-center gap-1.5">
-              <span>{item.kind}</span>
-              {item.namespace && <><span>·</span><span className="truncate">{item.namespace}</span></>}
-            </div>
-          </div>
-          <Tooltip label="Copy YAML" delay={400}>
-            <IconButton icon={Copy} size="sm" onClick={copyYaml} aria-label="Copy YAML" />
-          </Tooltip>
-          <Tooltip label="Open in Dedicated Tab" delay={400}>
-            <IconButton icon={ExternalLink} size="sm" onClick={() => useWorkspaceStore.getState().openResourceDetail(item)} aria-label="Open in Tab" />
-          </Tooltip>
-          <Tooltip label="Delete…" delay={400}>
-            <IconButton icon={Trash2} size="sm" danger onClick={() => setConfirmDel(true)} aria-label="Delete" />
-          </Tooltip>
-          <Tooltip label="Close panel" delay={400}>
-            <IconButton icon={X} size="sm" onClick={toggleInspector} aria-label="Close" />
-          </Tooltip>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex items-end px-2 gap-1">
-          <InspectorTab id="overview" label="Overview" active={rightTab} onClick={setRightTab} />
-          <InspectorTab id="yaml" label="YAML" active={rightTab} onClick={setRightTab} />
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {isYaml ? (
-          <Suspense
-            fallback={
-              <div className="h-full flex items-center justify-center gap-2 text-[11px] text-[var(--text-muted)]">
-                <Loader2 size={14} className="animate-spin" />
-                Loading editor…
-              </div>
-            }
-          >
-            <YamlEditor
-              item={item}
-              onApply={(yaml) => {
-                updateItem(item.kind, item.uid, { rawYaml: yaml });
-                toast.success('Manifest applied (demo)', `${item.kind}/${item.name}`);
-              }}
-            />
-          </Suspense>
-        ) : (
-          <Overview item={item} onPortForward={() => setPfOpen(true)} onLogs={() => openDock('logs')} onTerminal={() => openDock('terminal')} />
-        )}
-      </div>
-
-      <PFDialog item={pfOpen ? item : null} onClose={() => setPfOpen(false)} />
-
-      <Modal
-        open={confirmDel}
-        onClose={() => setConfirmDel(false)}
-        title={`Delete ${item.kind.toLowerCase()}`}
-        width={400}
-        footer={
-          <>
-            <Button onClick={() => setConfirmDel(false)}>Cancel</Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                deleteItem(item.kind, item.uid);
-                toast.warn('Deleted (demo)', `${item.kind}/${item.name}`);
-                setConfirmDel(false);
-              }}
-            >
-              Delete
-            </Button>
-          </>
-        }
-      >
-        <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
-          Delete <span className="font-mono text-[var(--text-primary)]">{item.name}</span>
-          {item.namespace ? <> from <span className="font-mono">{item.namespace}</span></> : null}? This cannot be undone.
-        </p>
-      </Modal>
-    </div>
-  );
+  const selected = useResourceStore((s) => s.selectedItem);
+  const history = useResourceStore((s) => s.selectionHistory);
+  const resources = useResourceStore((s) => s.resources);
+  const item = selected ? resources[selected.kind]?.get(selected.uid) : undefined;
+  const close = () => useUiStore.setState({ inspectorCollapsed: true });
+  return <ResourceDetails inspector item={item} onClose={close} onNavigate={(next) => useResourceStore.getState().selectItem(next)}
+    onBack={history.length ? () => useResourceStore.getState().goBack() : undefined} />;
 };
 
-function InspectorTab({ id, label, active, onClick }: { id: RightTabT; label: string; active: RightTabT | string; onClick: (id: RightTabT) => void }) {
-  const isActive = active === id;
-  return (
-    <button
-      onClick={() => onClick(id)}
-      className={cx(
-        'relative px-3 h-[26px] text-[11px] font-medium transition-colors',
-        isActive ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-      )}
-    >
-      {label}
-      {id === 'yaml' && <span className="ml-1.5 text-[9px] font-mono opacity-60">⌘S</span>}
-      {isActive && <span className="absolute inset-x-2 bottom-0 h-[2px] bg-[var(--accent)] rounded-t" />}
-    </button>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Overview                                                            */
-/* ------------------------------------------------------------------ */
-
-function Overview({ item, onPortForward, onLogs, onTerminal }: { item: ResourceItem; onPortForward: () => void; onLogs: () => void; onTerminal: () => void }) {
-  const isPod = item.kind === 'Pod';
-  const isWorkload = ['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind);
-  const isSvc = item.kind === 'Service';
-  const isSecret = item.kind === 'Secret';
-  const [reveal, setReveal] = useState(false);
-
-  return (
-    <div className="h-full overflow-y-auto kubiki-scrollbar p-3 flex flex-col gap-3">
-      {/* Status strip */}
-      <div className="flex items-center gap-2 rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-surface)]/40 px-3 py-2">
-        {item.status && <StatusBadge status={item.status} size="sm" />}
-        {item.ready && <span className="font-mono text-[11px] text-[var(--text-primary)]">{item.ready}</span>}
-        {item.kind === 'Pod' && !!item.restarts && (
-          <span className={cx('text-[11px] font-mono', (item.restarts ?? 0) > 10 ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]')}>
-            {item.restarts} restarts
-          </span>
-        )}
-        <div className="flex-1" />
-        {isPod && (
-          <Tooltip label="Stream logs" delay={400}>
-            <IconButton icon={FileText} size="sm" onClick={onLogs} aria-label="Logs" />
-          </Tooltip>
-        )}
-        {isPod && (
-          <Tooltip label="Terminal" delay={400}>
-            <IconButton icon={Terminal} size="sm" onClick={onTerminal} aria-label="Terminal" />
-          </Tooltip>
-        )}
-        {(isPod || isSvc) && (
-          <Tooltip label="Port-forward…" delay={400}>
-            <IconButton icon={ArrowRightLeft} size="sm" onClick={onPortForward} aria-label="Port-forward" />
-          </Tooltip>
-        )}
+export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector = false }: {
+  item?: ResourceItem; onClose?: () => void; onNavigate: (item: ResourceItem) => void; onBack?: () => void; inspector?: boolean;
+}) {
+  const [pfOpen, setPfOpen] = useState(false);
+  const inspectorTab = useUiStore((s) => s.rightTab);
+  const [localTab, setLocalTab] = useState<RightTab>('overview');
+  const rightTab = inspector ? inspectorTab : localTab;
+  const setTab = inspector ? useUiStore.getState().setRightTab : setLocalTab;
+  const resources = useResourceStore((s) => s.resources);
+  const [relatedQuery, setRelatedQuery] = useState('');
+  const [relatedLimit, setRelatedLimit] = useState(50);
+  useEffect(() => { setRelatedQuery(''); setRelatedLimit(50); }, [item?.uid]);
+  // Related is lazy and inspects only adjacent edges, including Namespace membership.
+  const graph = useMemo(() => item && rightTab === 'related' ? buildResourceGraph(resources, { adjacentTo: new Set([resourceKey(item)]) }) : undefined, [resources, item, rightTab]);
+  if (!item) return <div className="h-full flex flex-col bg-[var(--bg-canvas)]">
+    <div className="h-10 flex items-center px-3 gap-2 border-b border-[var(--border-default)]"><Boxes size={14} /><span className="flex-1">Resource details</span>{onClose && <IconButton icon={X} size="sm" onClick={onClose} aria-label="Close details" />}</div>
+    <div className="flex-1 flex items-center justify-center p-8 text-center text-[var(--text-secondary)]"><div><Boxes size={30} className="mx-auto mb-3 opacity-50" /><p>Select a resource to inspect</p><p className="mt-1 text-[11px] text-[var(--text-muted)]">Click a table row or a topology node. Details and related resources appear here.</p></div></div>
+  </div>;
+  const Icon = KIND_ICONS[item.kind];
+  const key = resourceKey(item);
+  const related = graph?.relations.filter((edge) => edge.source === key || edge.target === key) ?? [];
+  const filteredRelated = related.filter((edge) => {
+    const target = graph?.items.get(edge.source === key ? edge.target : edge.source);
+    return [target?.name ?? edge.missing?.name, target?.kind ?? edge.missing?.kind, target?.namespace ?? edge.missing?.namespace, edge.type].join(' ').toLowerCase().includes(relatedQuery.toLowerCase());
+  });
+  const containers = item.containers?.map((c) => c.name) ?? [];
+  const logs = (container = containers[0]) => useDockStore.getState().openLogs(item.name, item.namespace, container, containers);
+  const shell = (container = containers[0]) => item.kind === 'Node' ? useDockStore.getState().openNodeShell(item.name) : useDockStore.getState().openTerminal(item.name, item.namespace, container, containers);
+  const navigate = (next: ResourceItem) => { setTab('overview'); onNavigate(next); };
+  return <div className="h-full flex flex-col bg-[var(--bg-canvas)] min-h-0" data-testid="resource-details">
+    <div className="shrink-0 bg-[var(--bg-secondary)] border-b border-[var(--border-default)]">
+      <div className="flex items-center gap-2 px-3 py-2">
+        {onBack && <IconButton icon={ArrowLeft} size="sm" onClick={onBack} aria-label="Back to previous resource" />}
+        <Icon size={16} className="text-[var(--accent)] shrink-0" />
+        <div className="min-w-0 flex-1"><div className="font-mono text-xs truncate select-text" title={item.name}>{item.name}</div><div className="text-[10px] text-[var(--text-muted)] mt-0.5">{item.kind} · {item.namespace || 'Cluster scoped'}</div></div>
+        <IconButton icon={Copy} size="sm" aria-label="Copy resource name" tooltip="Copy resource name" onClick={() => { void navigator.clipboard.writeText(item.name).catch(() => toast.error('Clipboard unavailable')); }} />
+        <IconButton icon={ExternalLink} size="sm" aria-label="Open details in tab" tooltip="Open in editor tab" onClick={() => useWorkspaceStore.getState().openResourceDetail(item)} />
+        {onClose && <IconButton icon={X} size="sm" onClick={onClose} aria-label="Close details" />}
       </div>
-
-      {/* Metadata */}
-      <Card title="Metadata">
-        <MetaGrid
-          rows={[
-            ['Kind', item.kind],
-            ['API version', item.apiVersion],
-            ['Namespace', item.namespace ?? '(cluster-scoped)'],
-            ['Age', item.age ?? '—'],
-            ['IP', item.ip],
-            ['Node', item.node],
-            ['Image', isWorkload ? item.image : undefined],
-            ['Type', item.serviceType],
-            ['Cluster IP', item.clusterIP],
-            ['Storage class', item.storageClass],
-            ['Volume', item.volume],
-            ['Role', item.nodeRoles],
-            ['Version', item.nodeVersion],
-            ['Hosts', item.ingressHosts],
-          ]}
-        />
-      </Card>
-
-      {/* Containers */}
-      {isPod && !!item.containers?.length && (
-        <Card title={`Containers (${item.containers.length})`}>
-          <div className="flex flex-col divide-y divide-[var(--border-subtle)]">
-            {item.containers.map((c) => (
-              <div key={c.name} className="flex items-center gap-2 py-1.5 text-[11px]">
-                <span className={cx('w-1.5 h-1.5 rounded-full shrink-0', c.ready ? 'bg-[var(--status-ok)]' : 'bg-[var(--status-danger)]')} />
-                <span className="font-mono text-[var(--text-primary)] w-[90px] truncate">{c.name}</span>
-                <span className="font-mono text-[10.5px] text-[var(--text-muted)] truncate flex-1" title={c.image}>{c.image}</span>
-                <span className="font-mono text-[10.5px] text-[var(--text-secondary)] shrink-0">{c.port}</span>
-                {c.restarts > 0 && <span className="font-mono text-[10.5px] text-[var(--status-warn)] shrink-0">{c.restarts}×</span>}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {/* Secret values */}
-      {isSecret && (
-        <Card title="Data (masked)">
-          <div className="flex items-center justify-between gap-2 py-1">
-            <span className="font-mono text-[11px] text-[var(--text-primary)]">
-              {reveal ? 's3cr3t-do-not-share-value' : '••••••••••••••••'}
-            </span>
-            <Button size="sm" variant="ghost" onClick={() => setReveal(!reveal)}>
-              {reveal ? 'Hide values' : 'Reveal (demo)'}
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Labels */}
-      <Card title="Labels">
-        {item.labels && Object.keys(item.labels).length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {Object.entries(item.labels).map(([k, v]) => (
-              <span key={k} className="inline-flex items-center gap-1 rounded-[4px] bg-[var(--bg-surface)] border border-[var(--border-subtle)] pl-1.5 pr-1.5 py-[2px] text-[10px] max-w-full">
-                <span className="text-[var(--text-muted)]">{k}:</span>
-                <span className="font-mono text-[var(--text-primary)]">{v}</span>
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span className="text-[11px] text-[var(--text-muted)]">No labels</span>
-        )}
-      </Card>
-
-      <Card title="Actions">
-        <div className="flex flex-wrap gap-1.5">
-          <Button size="sm" onClick={onLogs} disabled={!isPod}>
-            <FileText size={12} /> Logs
-          </Button>
-          <Button size="sm" onClick={onTerminal} disabled={!isPod}>
-            <Terminal size={12} /> Terminal
-          </Button>
-          <Button size="sm" onClick={onPortForward} disabled={!isPod && !isSvc}>
-            <ArrowRightLeft size={12} /> Port-forward
-          </Button>
-        </div>
-      </Card>
+      <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+        {item.kind === 'Pod' && <Button size="sm" onClick={() => logs()}><FileText size={12} /> Logs</Button>}
+        {['Pod', 'Node'].includes(item.kind) && <Button size="sm" onClick={() => shell()}><Terminal size={12} /> {item.kind === 'Node' ? 'Node shell' : 'Shell'}</Button>}
+        {['Pod', 'Service'].includes(item.kind) && <Button size="sm" onClick={() => setPfOpen(true)}><ArrowRightLeft size={12} /> Ports</Button>}
+        <Button size="sm" onClick={() => useWorkspaceStore.getState().openTopology(item.kind === 'Namespace' ? undefined : item, item.kind === 'Namespace' ? item.name : undefined)}><GitBranch size={12} /> Topology</Button>
+      </div>
+      <div role="tablist" aria-label="Resource details" className="flex px-2 overflow-x-auto">
+        {(['overview', 'related', 'events', 'yaml'] as const).map((tab) => <button key={tab} role="tab" aria-selected={rightTab === tab} onClick={() => setTab(tab)} className={cx('px-3 py-2 text-[11px] border-b-2 whitespace-nowrap', rightTab === tab ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]')}>{tab === 'related' ? graph ? `Related (${related.length})` : 'Related' : tab === 'yaml' ? 'YAML' : tab[0].toUpperCase() + tab.slice(1)}</button>)}
+      </div>
     </div>
-  );
+    <div role="tabpanel" className="flex-1 min-h-0 overflow-hidden">
+      {rightTab === 'yaml' ? <Suspense fallback={<div className="p-4 text-[var(--text-muted)] flex gap-2"><Loader2 size={13} /> Loading editor…</div>}><YamlEditor key={item.uid} item={item} onApply={(yaml) => {
+        if (!k8s.demo) { toast.error('Live manifest apply is not connected yet'); return; }
+        useResourceStore.getState().updateItem(item.kind, item.uid, { ...mapK8sResource(parse(yaml), item.kind), uid: item.uid });
+        toast.success('Manifest saved in demo memory');
+      }} /></Suspense> : rightTab === 'related' ? <div className="h-full overflow-auto p-3"><Card title="Resource relationships">
+        <p className="text-[11px] text-[var(--text-muted)] mb-2">Resolved from owner references, selectors and explicit API references. Unloaded targets may require additional permissions.</p>
+        <SearchInput value={relatedQuery} onChange={(value) => { setRelatedQuery(value); setRelatedLimit(50); }} placeholder="Filter related resources…" className="mb-2 w-full" />
+        <div className="text-[10px] text-[var(--text-muted)] mb-2">{filteredRelated.length} matching · {related.length} relationships</div>
+        {!related.length && <p className="text-[var(--text-secondary)] text-xs">No relationships found in loaded resources.</p>}
+        {filteredRelated.slice(0, relatedLimit).map((edge) => {
+          const outgoing = edge.source === key;
+          const target = edge.missing ? undefined : graph?.items.get(outgoing ? edge.target : edge.source);
+          return <button key={edge.id} disabled={!target} onClick={() => target && navigate(target)} className="w-full flex items-center gap-2 px-2 py-2 border-b border-[var(--border-subtle)] text-left hover:bg-[var(--bg-hover)] disabled:opacity-60">
+            {outgoing ? <ArrowRight size={12} /> : <ArrowLeft size={12} />}<div className="flex-1 min-w-0"><div className="flex items-start gap-2 text-xs font-mono break-all">{target && <ResourceWarnings item={target} />}<span>{target?.name ?? edge.missing?.name}</span></div><div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[10px] text-[var(--text-secondary)]"><ResourceKindBadge kind={target?.kind ?? edge.missing?.kind ?? 'Resource'} /><span>{target?.namespace ?? edge.missing?.namespace ?? 'cluster'}{!target && ' · not loaded'}</span></div></div><span className="text-[10px] text-[var(--text-secondary)]">{edge.label}</span>
+          </button>;
+        })}
+        {filteredRelated.length > relatedLimit && <Button size="sm" className="mt-3" onClick={() => setRelatedLimit((limit) => limit + 50)}>Show next 50</Button>}
+        {!!related.length && !filteredRelated.length && <p className="text-xs text-[var(--text-muted)]">No related resources match this filter.</p>}
+      </Card></div> : rightTab === 'events' ? <ResourceEvents item={item} /> : <Overview key={item.uid} item={item} onNavigate={navigate} onLogs={logs} onShell={shell} />}
+    </div>
+    <PFDialog key={item.uid} item={pfOpen ? item : null} onClose={() => setPfOpen(false)} />
+  </div>;
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-surface)]/30 overflow-hidden">
-      <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]">{title}</div>
-      <div className="px-3 pb-2.5">{children}</div>
-    </section>
-  );
+function Overview({ item, onNavigate, onLogs, onShell }: { item: ResourceItem; onNavigate: (item: ResourceItem) => void; onLogs: (container?: string) => void; onShell: (container?: string) => void }) {
+  const resources = useResourceStore((s) => s.resources);
+  const [reveal, setReveal] = useState(false);
+  const raw = item.raw ?? {};
+  const spec = raw.spec ?? item.spec ?? {};
+  const status = raw.status ?? item.statusRaw ?? {};
+  const metadata = raw.metadata ?? item.metadata ?? {};
+  const conditions: any[] = status.conditions ?? [];
+  const namespace = [...resources.Namespace.values()].find((r) => r.name === item.namespace);
+  const node = [...resources.Node.values()].find((r) => r.name === item.node);
+  const data = raw.data ?? {};
+  return <div className="h-full overflow-y-auto kubiki-scrollbar p-3 flex flex-col gap-3 select-text">
+    <div className="flex items-center gap-3 px-1 py-1">{item.status && <StatusBadge status={item.status} />}<span className="text-[var(--text-secondary)] font-mono text-xs">{item.ready && `Ready ${item.ready}`}</span>{item.restarts !== undefined && <span className="text-[var(--text-secondary)] text-[11px]">{item.restarts} restarts</span>}</div>
+    <div className="shrink-0"><ResourceWarnings item={item} showSummary /></div>
+    <Card title="Metadata"><MetaGrid rows={[
+      ['Name', item.name], ['Kind', item.kind], ['Namespace', namespace ? <ResourceLink item={namespace} onClick={onNavigate} /> : item.namespace ?? 'Cluster scoped'],
+      ['API version', item.apiVersion], ['Created', item.creationTimestamp], ['Age', item.age], ['UID', item.uid],
+      ['Node', node ? <ResourceLink item={node} onClick={onNavigate} /> : item.node], ['Pod IP', item.ip], ['Service type', item.serviceType], ['Cluster IP', item.clusterIP],
+      ['Storage class', item.storageClass], ['Volume', item.volume], ['Version', item.nodeVersion], ['Roles', item.nodeRoles], ['Hosts', item.ingressHosts],
+    ]} /></Card>
+    {!!conditions.length && <Card title="Conditions">{conditions.map((c) => <div key={c.type} className="py-1.5 border-b border-[var(--border-subtle)]"><div className="flex justify-between gap-2 text-xs"><span>{c.type}</span><span className={c.status === 'True' ? 'text-[var(--status-ok)]' : 'text-[var(--text-secondary)]'}>{c.status}</span></div><div className="text-[11px] text-[var(--text-secondary)] mt-1 break-words">{c.reason}{c.message ? ` · ${c.message}` : ''}</div></div>)}</Card>}
+    {!!item.containers?.length && <Card title={`Containers (${item.containers.length})`}>{item.containers.map((c) => {
+      const containerSpec = (spec.containers ?? []).find((s: any) => s.name === c.name) ?? {};
+      const cs = (status.containerStatuses ?? []).find((s: any) => s.name === c.name);
+      return <div key={c.name} className="py-2 border-b border-[var(--border-subtle)]"><div className="flex items-center gap-2"><span className={cx('h-1.5 w-1.5 rounded-full', c.ready ? 'bg-[var(--status-ok)]' : 'bg-[var(--status-warn)]')} /><span className="font-mono text-xs flex-1">{c.name}</span><IconButton icon={FileText} size="sm" onClick={() => onLogs(c.name)} aria-label={`Logs for ${c.name}`} /><IconButton icon={Terminal} size="sm" onClick={() => onShell(c.name)} aria-label={`Shell for ${c.name}`} /></div><div className="font-mono text-[11px] text-[var(--text-secondary)] break-all mt-1">{c.image}</div><MetaGrid rows={[
+        ['Ports', c.port], ['Restarts', String(c.restarts)], ['State', cs?.state ? Object.keys(cs.state).join(', ') : undefined],
+        ['Requests', containerSpec.resources?.requests ? JSON.stringify(containerSpec.resources.requests) : undefined], ['Limits', containerSpec.resources?.limits ? JSON.stringify(containerSpec.resources.limits) : undefined],
+        ['Readiness probe', containerSpec.readinessProbe ? JSON.stringify(containerSpec.readinessProbe) : undefined], ['Liveness probe', containerSpec.livenessProbe ? JSON.stringify(containerSpec.livenessProbe) : undefined],
+      ]} /></div>;
+    })}</Card>}
+    {!!spec.volumes?.length && <Card title="Volumes">{spec.volumes.map((v: any) => <div key={v.name} className="py-1 text-[11px]"><span className="font-mono">{v.name}</span><span className="ml-2 text-[var(--text-muted)]">{Object.keys(v).filter((key) => key !== 'name').join(', ')}</span></div>)}</Card>}
+    {['ConfigMap', 'Secret'].includes(item.kind) && <Card title={item.kind === 'Secret' ? 'Secret data' : 'Configuration data'}>
+      {item.kind === 'Secret' && <Button size="sm" onClick={() => setReveal(!reveal)}>{reveal ? 'Hide values' : 'Reveal values'}</Button>}
+      {!Object.keys(data).length && <span className="text-[11px] text-[var(--text-muted)]">No data keys</span>}
+      {Object.entries(data).map(([key, value]) => <div key={key} className="mt-2"><div className="text-[11px] font-mono text-[var(--text-secondary)]">{key}</div><pre className="text-[11px] whitespace-pre-wrap break-all mt-1">{item.kind === 'Secret' ? reveal ? decodeSecret(String(value)) : '••••••••' : String(value)}</pre></div>)}
+    </Card>}
+    <Card title="Labels"><KeyValues values={item.labels ?? metadata.labels ?? {}} /></Card>
+    {!!Object.keys(metadata.annotations ?? {}).length && <Card title={`Annotations (${Object.keys(metadata.annotations).length})`}><ResourceAnnotations values={metadata.annotations} /></Card>}
+  </div>;
 }
 
-function MetaGrid({ rows }: { rows: Array<[string, string | undefined]> }) {
-  const visible = rows.filter(([, v]) => v !== undefined && v !== '');
-  return (
-    <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[11px]">
-      {visible.map(([k, v]) => (
-        <React.Fragment key={k}>
-          <dt className="text-[var(--text-muted)] whitespace-nowrap py-[1px]">{k}</dt>
-          <dd className={cx('text-[var(--text-primary)] min-w-0 truncate py-[1px]', k !== 'Kind' && k !== 'Namespace' && 'font-mono text-[10.5px]')} title={v}>
-            {v}
-          </dd>
-        </React.Fragment>
-      ))}
-    </dl>
-  );
+function ResourceEvents({ item }: { item: ResourceItem }) {
+  const events = useResourceStore((s) => s.resources.Event);
+  const error = useResourceStore((s) => s.loadErrors.Event);
+  const related = [...events.values()].filter((event) => {
+    const ref = event.raw?.involvedObject ?? event.raw?.regarding;
+    return ref?.uid ? ref.uid === item.uid : ref?.name === item.name && ref?.kind === item.kind && ref?.namespace === item.namespace;
+  });
+  return <div className="h-full overflow-auto p-3"><Card title="Resource events">{error ? <p className="text-[var(--status-warn)] text-xs">{error}</p> : !related.length ? <p className="text-xs text-[var(--text-muted)]">No events in the loaded snapshot.</p> : related.map((event) => <div key={event.uid} className="py-2 border-b border-[var(--border-default)]"><div className="text-xs">{event.raw?.reason} <span className="text-[var(--text-muted)]">{event.raw?.type}</span></div><p className="text-[11px] text-[var(--text-secondary)] mt-1">{event.raw?.message ?? event.raw?.note}</p></div>)}</Card></div>;
 }
+function decodeSecret(value: string) { try { return new TextDecoder().decode(Uint8Array.from(atob(value), (c) => c.charCodeAt(0))); } catch { return '(invalid base64)'; } }
+function ResourceLink({ item, onClick }: { item: ResourceItem; onClick: (item: ResourceItem) => void }) { return <button className="text-[var(--accent)] hover:underline text-left break-all" onClick={() => onClick(item)}>{item.name}</button>; }
+function KeyValues({ values }: { values: Record<string, unknown> }) { return Object.keys(values).length ? <div className="space-y-2">{Object.entries(values).map(([key, value]) => <div key={key} className="text-[11px] break-all"><span className="text-[var(--text-secondary)]">{key}</span><div className="font-mono mt-0.5 whitespace-pre-wrap">{String(value)}</div></div>)}</div> : <span className="text-[11px] text-[var(--text-muted)]">None</span>; }
+function Card({ title, children }: { title: string; children: React.ReactNode }) { return <section aria-label={title} className="shrink-0 border border-[var(--border-default)] rounded-md overflow-hidden"><div className="px-3 py-2 text-[11px] font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)]">{title}</div><div className="p-3">{children}</div></section>; }
+function MetaGrid({ rows }: { rows: Array<[string, React.ReactNode]> }) { return <dl className="grid grid-cols-[100px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[11px] mt-1">{rows.filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => <React.Fragment key={key}><dt className="text-[var(--text-secondary)]">{key}</dt><dd className="font-mono break-all min-w-0">{value}</dd></React.Fragment>)}</dl>; }

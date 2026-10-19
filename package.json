@@ -7,12 +7,13 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
-    "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-table": "^9.3.1",
     "@tanstack/react-virtual": "^3.14.21",
     "@tauri-apps/api": "^2",
@@ -21,16 +22,20 @@
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "@xyflow/react": "^12.12.0",
     "clsx": "^2.1.1",
     "dockview": "^8.6.0",
+    "elkjs": "^0.12.0",
     "lucide-react": "^1.59.0",
     "monaco-editor": "^0.57.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.7.0",
+    "yaml": "^2.9.1",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.6.5",
@@ -39,6 +44,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^5.0.5"
   }
 }

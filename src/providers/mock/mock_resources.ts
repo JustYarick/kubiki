@@ -1,3 +1,4 @@
+import { parse, stringify } from 'yaml';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 
 /* ------------------------------------------------------------ */
@@ -241,7 +242,7 @@ const podYaml = (p: PodSeed) =>
     ...Object.entries(p.labels).map(([k, v]) => `    ${k}: ${v}`),
     'spec:',
     `  nodeSelector:`,
-    `    kubernetes.io/hostname: ${p.node}`,
+    `    kubernetes.io/hostname: ${JSON.stringify(p.node)}`,
     '  containers:',
     ...p.containers.flatMap((c) => [
       `  - name: ${c.name}`,
@@ -251,7 +252,7 @@ const podYaml = (p: PodSeed) =>
     ]),
     'status:',
     `  phase: ${p.status === 'Running' ? 'Running' : 'Pending'}`,
-    `  podIP: ${p.ip}`,
+    `  podIP: ${JSON.stringify(p.ip)}`,
   ]);
 
 /* ------------------------------------------------------------ */
@@ -259,6 +260,7 @@ const podYaml = (p: PodSeed) =>
 /* ------------------------------------------------------------ */
 
 export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
+  uidSeq = 1;
   const out = {} as Record<ResourceKind, ResourceItem[]>;
 
   out.Pod = POD_SEEDS.map(
@@ -278,11 +280,11 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
     out[kind] = rows.map((r) => {
       const replicas = r.ready ? Number(r.ready.split('/')[1]) || 1 : 1;
       return {
-        uid: uid(), name: r.name, namespace: r.namespace, kind, apiVersion: 'apps/v1',
+        uid: uid(), name: r.name, namespace: r.namespace, kind, apiVersion: ['Job', 'CronJob'].includes(kind) ? 'batch/v1' : 'apps/v1',
         status: r.status, ready: seedKind === 'CronJob' ? undefined : r.ready, age: r.age, image: `ghcr.io/kubiki/${r.name}:latest`,
         replicas,
         rawYaml: j([
-          'apiVersion: apps/v1',
+          `apiVersion: ${['Job', 'CronJob'].includes(kind) ? 'batch/v1' : 'apps/v1'}`,
           `kind: ${seedKind}`,
           'metadata:',
           `  name: ${r.name}`,
@@ -480,10 +482,35 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   ];
 
   const all: ResourceKind[] = [
-    'Pod','Deployment','StatefulSet','DaemonSet','Job','CronJob','Service','Ingress','ConfigMap','Secret',
+    'Pod','Deployment','ReplicaSet','StatefulSet','DaemonSet','Job','CronJob','Service','Ingress','ConfigMap','Secret',
     'PersistentVolumeClaim','PersistentVolume','StorageClass','Node','Namespace','Event','CustomResourceDefinition',
   ];
   for (const k of all) if (!out[k]) out[k] = [];
+  for (const list of Object.values(out)) for (const item of list) {
+    item.raw = parse(item.rawYaml ?? '') ?? {};
+    item.raw!.metadata = { ...item.raw!.metadata, uid: item.uid };
+    item.spec = item.raw!.spec;
+    item.metadata = item.raw!.metadata;
+  }
+  for (const pod of out.Pod) {
+    const workload = [...out.Deployment, ...out.StatefulSet, ...out.DaemonSet, ...out.Job].find((w) =>
+      w.namespace === pod.namespace && pod.name.startsWith(w.name + '-'));
+    if (!workload) continue;
+    let owner = workload;
+    if (workload.kind === 'Deployment') {
+      const rsName = pod.name.slice(0, pod.name.lastIndexOf('-'));
+      owner = out.ReplicaSet.find((r) => r.name === rsName && r.namespace === pod.namespace)!;
+      if (!owner) {
+        owner = { uid: uid(), kind: 'ReplicaSet', apiVersion: 'apps/v1', name: rsName, namespace: pod.namespace,
+          raw: { apiVersion: 'apps/v1', kind: 'ReplicaSet', metadata: { name: rsName, namespace: pod.namespace,
+            ownerReferences: [{ apiVersion: 'apps/v1', kind: 'Deployment', name: workload.name, uid: workload.uid }] } } };
+        out.ReplicaSet.push(owner);
+      }
+    }
+    pod.raw!.metadata.ownerReferences = [{ apiVersion: owner.apiVersion, kind: owner.kind, name: owner.name, uid: owner.uid }];
+    pod.raw!.spec.nodeName = pod.node === '-' ? undefined : pod.node;
+  }
+  for (const list of Object.values(out)) for (const item of list) item.rawYaml = stringify(item.raw);
   return out;
 }
 

@@ -5,11 +5,13 @@ import type { LucideIcon } from 'lucide-react';
 import { PERSPECTIVES, defaultKindFor, kindsFor } from '../core/perspectives';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
+import { useDockStore } from '../state/dock_store';
 import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { usePfStore } from '../state/pf_store';
 import { toast } from '../state/notifications_store';
 import { fuzzyScore, fuzzyRanges } from '../core/utils/fuzzy';
+import { k8s } from '../providers/k8s_provider';
 import { cx } from '../core/utils/cx';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 
@@ -76,7 +78,7 @@ export const CommandPalette: React.FC = () => {
       run: () => {
         ui.setActivePerspective(p.id);
         const dk = defaultKindFor(p.id);
-        if (dk) st.setActiveKind(dk);
+        if (dk) useWorkspaceStore.getState().openResourceList(dk);
       },
     });
   }
@@ -90,7 +92,7 @@ export const CommandPalette: React.FC = () => {
       icon: Boxes,
       hint: 'kind',
       keywords: 'list view',
-      run: () => st.setActiveKind(kind),
+      run: () => useWorkspaceStore.getState().openResourceList(kind),
     });
   }
 
@@ -98,7 +100,7 @@ export const CommandPalette: React.FC = () => {
   commands.push(
     { id: 'side', label: 'Toggle sidebar', section: 'View', icon: PanelLeft, kbd: '⌘B', run: ui.toggleSidebar },
     { id: 'insp', label: 'Toggle details pane', section: 'View', icon: PanelRight, run: ui.toggleInspector },
-    { id: 'dock', label: 'Toggle bottom panel', section: 'View', icon: PanelBottom, kbd: '⌘J', run: ui.toggleDock },
+    { id: 'dock', label: 'Toggle bottom panel', section: 'View', icon: PanelBottom, kbd: '⌘J', run: useDockStore.getState().toggleDock },
     { id: 'density', label: ui.density === 'compact' ? 'Row density: comfortable' : 'Row density: compact', section: 'View', icon: Maximize2, run: () => ui.setDensity(ui.density === 'compact' ? 'comfortable' : 'compact') },
     { id: 'tabmode', label: ui.rightTab === 'overview' ? 'Details: focus YAML editor' : 'Details: focus overview', section: 'View', icon: Palette, run: () => ui.setRightTab(ui.rightTab === 'overview' ? 'yaml' : 'overview') },
     { id: 'layout', label: 'Reset layout sizes', section: 'View', icon: Layout, run: () => { ui.resetLayout(); toast.success('Layout reset'); } },
@@ -129,10 +131,10 @@ export const CommandPalette: React.FC = () => {
 
   commands.push(
     { id: 'new', label: 'Create new resource (demo)', section: 'Resource', icon: Rocket, run: () => toast.info('Use the “New” button', 'Toolbar → New opens the create form') },
-    { id: 'term', label: 'Focus terminal', section: 'Panel', icon: Terminal, run: () => ui.openDock('terminal') },
-    { id: 'pf', label: `Port-forwards (${usePfStore.getState().sessions.length})`, section: 'Panel', icon: ArrowRightLeft, run: () => ui.openDock('ports') },
-    { id: 'events', label: 'Live events stream', section: 'Panel', icon: FileText, run: () => ui.openDock('events') },
-    { id: 'refresh', label: 'Refresh current list', section: 'Data', icon: RefreshCw, run: () => toast.success('Refreshed (mock data)', `${st.activeKind}: ${st.resources[st.activeKind].size} items`) },
+    { id: 'term', label: 'Focus terminal', section: 'Panel', icon: Terminal, run: () => useDockStore.getState().focusTool('terminal') },
+    { id: 'pf', label: `Port-forwards (${usePfStore.getState().sessions.length})`, section: 'Panel', icon: ArrowRightLeft, run: () => useDockStore.getState().openPorts() },
+    { id: 'events', label: 'Cluster events snapshot', section: 'Panel', icon: FileText, run: () => useDockStore.getState().openEvents() },
+    { id: 'refresh', label: 'Refresh current list', section: 'Data', icon: RefreshCw, run: () => { if (!cluster.currentContext) return; const context = cluster.currentContext; void k8s.getResources(context, st.activeKind, 'all').then((items) => { if (useClusterStore.getState().currentContext === context) st.setResourcesForKind(st.activeKind, items); }).catch((error) => toast.error('Refresh failed', String(error))); } },
     { id: 'ns', label: `Namespace: ${cluster.selectedNamespace}`, section: 'Data', icon: Boxes, keywords: 'namespace filter', run: () => { const list = ['all', ...cluster.availableNamespaces]; const next = list[(list.indexOf(cluster.selectedNamespace) + 1) % list.length]; cluster.selectNamespace(next); toast.info(`Namespace: ${next}`); } },
     { id: 'settings', label: 'Open settings', section: 'System', icon: Settings, run: () => ui.setSettingsOpen(true) },
     { id: 'clear', label: 'Clear all filters', section: 'Data', icon: Trash2, run: () => { st.setSearchQuery(''); cluster.selectNamespace('all'); toast.success('Filters cleared'); } },
@@ -141,19 +143,19 @@ export const CommandPalette: React.FC = () => {
   // Resources (global search across every kind in the current perspective first, then all)
   const allKinds = Object.keys(st.resources) as ResourceKind[];
   for (const kind of allKinds) {
-    const items = Array.from(st.resources[kind].values()).slice(0, 12);
+    const items = Array.from(st.resources[kind].values());
     for (const item of items) {
       commands.push({
         id: `res-${item.uid}`,
         label: item.name,
         section: `${item.kind}${item.namespace ? ` · ${item.namespace}` : ''}`,
         icon: Boxes,
-        hint: 'open YAML',
+        hint: 'inspect resource',
         keywords: item.namespace,
         resources: [item],
         run: () => {
           st.selectItem(item);
-          ui.setRightTab('yaml');
+          ui.setRightTab('overview');
           if (ui.inspectorCollapsed) ui.toggleInspector();
         },
       });

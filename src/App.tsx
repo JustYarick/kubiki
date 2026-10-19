@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { ActivityBar } from './components/layout/ActivityBar';
 import { Sidebar } from './components/layout/Sidebar';
@@ -14,14 +14,20 @@ import { useClusterStore } from './state/cluster_store';
 import { useResourceStore } from './state/resource_store';
 import { useUiStore } from './state/ui_store';
 import { useWorkspaceStore } from './state/workspace_store';
+import { usePfStore } from './state/pf_store';
 import { useDockStore } from './state/dock_store';
 import { k8s } from './providers/k8s_provider';
-import { buildMockResources } from './providers/mock/mock_resources';
 import { startMockWatchEngine, stopMockWatchEngine } from './providers/mock/mock_watch_engine';
 import { toast } from './state/notifications_store';
-import type { ResourceItem, ResourceKind } from './types/k8s';
+import type { ResourceKind } from './types/k8s';
 
 export default function App() {
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth,
     inspectorWidth, inspectorCollapsed, setInspectorWidth,
@@ -37,70 +43,71 @@ export default function App() {
   const setLoading = useClusterStore((s) => s.setLoading);
   const setResourcesForKind = useResourceStore((s) => s.setResourcesForKind);
 
+  const connectionGeneration = useRef(0);
   const connectToContext = useCallback(async (contextName: string) => {
+    const generation = ++connectionGeneration.current;
+    const current = () => generation === connectionGeneration.current;
+    stopMockWatchEngine();
     useClusterStore.getState().selectContext(contextName);
+    useResourceStore.getState().reset();
+    useDockStore.getState().clearAllSessions();
+    usePfStore.getState().clear();
+    useUiStore.setState({ inspectorCollapsed: true });
     setLoading(true);
-    toast.info(`Connecting to cluster context: ${contextName}…`);
-
     try {
-      // 1. Verify health & version
       const ping = await k8s.pingCluster(contextName);
-      const version = ping.version || 'v1.35.5';
-
-      // 2. Load accessible namespaces
-      const namespaces = await k8s.getNamespaces(contextName);
-      setAvailableNamespaces(namespaces);
-
-      // 3. Pre-load resources for primary workloads
-      const kindsToLoad: ResourceKind[] = [
-        'Pod', 'Deployment', 'StatefulSet', 'DaemonSet',
-        'Job', 'CronJob', 'Service', 'Ingress', 'Node', 'Namespace',
-      ];
-
-      await Promise.all(
-        kindsToLoad.map(async (k) => {
-          const items = await k8s.getResources(contextName, k, 'all');
-          setResourcesForKind(k, items);
-        })
-      );
-
-      setConnected(true, version);
-      toast.success('Connected', `${contextName} · ${version} (${namespaces.length} namespaces)`);
-    } catch (err: any) {
-      console.error('Cluster connection error:', err);
-      const fallback = buildMockResources();
-      for (const [k, items] of Object.entries(fallback) as Array<[ResourceKind, ResourceItem[]]>) {
-        setResourcesForKind(k, items);
+      if (!current()) return;
+      if (ping.status === 'error') throw new Error('Cluster is unavailable');
+      // Namespace listing can be forbidden while individual namespace reads are allowed.
+      try {
+        const namespaces = await k8s.getNamespaces(contextName);
+        if (current()) setAvailableNamespaces(namespaces);
+      } catch (error) {
+        if (current()) toast.warn('Namespace discovery unavailable', String(error));
       }
-      setConnected(true, '1.35.5');
-      toast.warn('Connected with Cached Resources', `${contextName}`);
+      if (!current()) return;
+      setConnected(true, ping.version);
+      const kinds = Object.keys(useResourceStore.getState().resources) as ResourceKind[];
+      const results = await Promise.allSettled(kinds.map(async (kind) => {
+        try {
+          const items = await k8s.getResources(contextName, kind, 'all');
+          if (current()) setResourcesForKind(kind, items);
+        } catch (error) {
+          if (current()) useResourceStore.getState().setLoadError(kind, String(error));
+          throw error;
+        }
+      }));
+      if (!current()) return;
+      const failures = results.filter((r) => r.status === 'rejected').length;
+      if (failures) toast.warn('Some resources could not be loaded', `${failures} resource types unavailable. See individual views.`);
+      if (k8s.demo) startMockWatchEngine();
+    } catch (error) {
+      if (!current()) return;
+      useClusterStore.getState().setError(String(error));
+      toast.error('Connection failed', String(error));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }, [setAvailableNamespaces, setConnected, setLoading, setResourcesForKind]);
 
-  /* Load real cluster contexts on startup and auto-connect to current context */
   useEffect(() => {
     let cancelled = false;
-
     async function initCluster() {
       try {
         const contexts = await k8s.getContexts();
         if (cancelled) return;
         setContexts(contexts);
-
-        const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name || 'default';
-        await connectToContext(current);
-      } catch (e) {
-        console.warn('Contexts discovery failed, using fallback:', e);
+        const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+        if (current) await connectToContext(current);
+        else useClusterStore.getState().setError('No Kubernetes contexts found in kubeconfig.');
+      } catch (error) {
+        if (!cancelled) useClusterStore.getState().setError(String(error));
       }
     }
-
-    initCluster();
-    startMockWatchEngine();
-
+    void initCluster();
     return () => {
       cancelled = true;
+      connectionGeneration.current++;
       stopMockWatchEngine();
     };
   }, [connectToContext, setContexts]);
@@ -132,6 +139,9 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleDock]);
 
+  const showSidebar = !sidebarCollapsed && (inspectorCollapsed || viewportWidth >= 1200);
+  const detailWidth = Math.min(inspectorWidth, Math.max(340, viewportWidth - 40 - 320 - (showSidebar ? sidebarWidth : 0)));
+
   const onSelectContext = (name: string) => {
     connectToContext(name);
   };
@@ -140,13 +150,18 @@ export default function App() {
     <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans">
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} />
+      <ConnectionBanner onRetry={() => {
+        const context = useClusterStore.getState().currentContext;
+        if (context) void connectToContext(context);
+        else window.location.reload();
+      }} />
 
       {/* Main IDE Frame: Left Rails + Tool Windows + Workspaces + Right Tool Windows */}
       <div className="flex-1 flex min-h-0 min-w-0">
         <ActivityBar />
 
         {/* Left Tool Window (Cluster Explorer) */}
-        {!sidebarCollapsed && (
+        {showSidebar && (
           <>
             <div style={{ width: sidebarWidth }} className="shrink-0 min-h-0">
               <Sidebar />
@@ -157,22 +172,17 @@ export default function App() {
 
         {/* Central Workspace: Tabs + Breadcrumbs + DataGrid/Editor + Bottom Dock */}
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
-          <WorkspaceArea />
+          <WorkspaceArea onSelectContext={onSelectContext} />
 
-          {!dockCollapsed && (
-            <>
-              <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d)} />
-              <BottomDock />
-            </>
-          )}
-          {dockCollapsed && <BottomDock />}
+          {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d)} />}
+          <BottomDock />
         </main>
 
         {/* Right Tool Window (Inspector / Details) */}
         {!inspectorCollapsed && (
           <>
             <Resizer orientation="vertical" onDelta={(d) => setInspectorWidth(inspectorWidth - d)} />
-            <div style={{ width: inspectorWidth }} className="shrink-0 border-l border-[var(--border-default)] min-h-0">
+            <div style={{ width: detailWidth }} className="shrink-0 border-l border-[var(--border-default)] min-h-0">
               <InspectorPanel />
             </div>
           </>
@@ -188,4 +198,15 @@ export default function App() {
       <Toasts />
     </div>
   );
+}
+
+function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
+  const error = useClusterStore((s) => s.error);
+  const loading = useClusterStore((s) => s.isLoading);
+  if (!error && !k8s.demo) return null;
+  return <div role="status" className="flex items-center gap-3 px-3 py-1.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] text-xs">
+    <span className={error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'}>{error || 'Demo cluster · simulated resources and sessions'}</span>
+    {error && <button disabled={loading} onClick={onRetry} className="text-[var(--accent)] shrink-0">Reconnect</button>}
+    {error && <a href="?demo=1" className="text-[var(--accent)] shrink-0">Explore demo</a>}
+  </div>;
 }

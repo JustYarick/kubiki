@@ -39,20 +39,22 @@ export function Popover({ trigger, children, align = 'start', width, className }
       });
     };
     update();
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && panelRef.current?.contains(event.target)) return;
+      close();
+    };
     window.addEventListener('resize', update);
-    document.addEventListener('scroll', close, true);
+    document.addEventListener('scroll', onScroll, true);
     const onDown = (e: MouseEvent) => {
-      if (panelRef.current?.contains(e.target as Node) || anchorRef.current?.parentElement?.contains(e.target as Node)) return;
+      if (panelRef.current?.contains(e.target as Node) || anchorRef.current?.contains(e.target as Node)) return;
       close();
     };
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
-    setTimeout(() => {
-      document.addEventListener('mousedown', onDown);
-      document.addEventListener('keydown', onKey);
-    }, 0);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('resize', update);
-      document.removeEventListener('scroll', close, true);
+      document.removeEventListener('scroll', onScroll, true);
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };

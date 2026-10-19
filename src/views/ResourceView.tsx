@@ -1,17 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowDown,
   ArrowRightLeft,
   ArrowUp,
   Boxes,
   Braces,
-  ChevronDown,
   Copy,
   FileText,
-  Layers,
   Maximize2,
   Minimize2,
-  MoreVertical,
   Plus,
   RefreshCw,
   RotateCw,
@@ -25,7 +22,6 @@ import {
   Square,
   MinusSquare,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
 import { useUiStore } from '../state/ui_store';
@@ -33,6 +29,7 @@ import { useWorkspaceStore } from '../state/workspace_store';
 import { useDockStore } from '../state/dock_store';
 import { k8s } from '../providers/k8s_provider';
 import { KIND_ICONS, defaultKindFor, kindsFor } from '../core/perspectives';
+import { ResourceWarnings } from '../components/k8s/ResourceWarnings';
 import { StatusBadge } from '../components/k8s/StatusBadge';
 import { IconButton, Tooltip } from '../components/ui/Button';
 import { Popover, MenuList, FixedMenu, type MenuItem } from '../components/ui/Dropdown';
@@ -43,6 +40,9 @@ import { PFDialog } from '../components/dialogs/PFDialog';
 import { ScaleDialog, ConfirmDialog, RestartDialog } from '../components/dialogs/ActionDialogs';
 import { toast } from '../state/notifications_store';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
+import { resourceTabId } from '../core/resources/identity';
+import { resourceIssues } from '../core/resources/diagnostics';
+import { compareCreation, issuePriority } from '../core/resources/resource_sort';
 import { cx } from '../core/utils/cx';
 
 /* ------------------------------------------------------------------ */
@@ -92,7 +92,7 @@ const columnsFor = (kind: ResourceKind): ColumnDef[] => {
       return [
         ...BASE_COLUMNS,
         { id: 'pods', label: 'Pods (Ready)', get: (i) => i.ready },
-        { id: 'replicas', label: 'Scaling', align: 'right', mono: true, get: (i) => String(i.replicas ?? i.ready?.split('/')[1] ?? 1) },
+        { id: 'replicas', label: 'Replicas', align: 'right', mono: true, get: (i) => String(i.replicas ?? i.ready?.split('/')[1] ?? 1) },
         { id: 'status', label: 'Conditions', get: (i) => i.status },
         { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
@@ -196,7 +196,8 @@ const columnsFor = (kind: ResourceKind): ColumnDef[] => {
 };
 
 const apiVersionFor = (kind: ResourceKind): string => {
-  if (['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob'].includes(kind)) return 'apps/v1';
+  if (['Job', 'CronJob'].includes(kind)) return 'batch/v1';
+  if (['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet'].includes(kind)) return 'apps/v1';
   if (kind === 'Ingress') return 'networking.k8s.io/v1';
   if (kind === 'StorageClass') return 'storage.k8s.io/v1';
   if (kind === 'CustomResourceDefinition') return 'apiextensions.k8s.io/v1';
@@ -225,7 +226,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     resources, activeKind, setActiveKind, setSearchQuery, searchQuery, selectItem, selectedItem,
     updateItem, deleteItem, applyDelta,
   } = useResourceStore();
-  const { selectedNamespace, selectNamespace, availableNamespaces } = useClusterStore();
+  const { selectedNamespace, selectNamespace, isConnected, isLoading } = useClusterStore();
   const {
     density, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidth, resetColumnWidths,
     setRightTab, activePerspective, inspectorCollapsed, toggleInspector,
@@ -233,9 +234,14 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   const { openYamlEditor, openResourceDetail, openLogsTab, toggleSplit } = useWorkspaceStore();
 
   const effectiveKind = explicitKind || activeKind;
+  const tableRef = useRef<HTMLDivElement>(null);
+  const currentContext = useClusterStore((s) => s.currentContext);
+  const loadError = useResourceStore((s) => s.loadErrors[effectiveKind]);
 
   const [sortId, setSortId] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
+  const [healthFilter, setHealthFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('');
   const [menu, setMenu] = useState<{ item: ResourceItem; x: number; y: number } | null>(null);
   const [headerMenu, setHeaderMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
   const [pfFor, setPfFor] = useState<ResourceItem | null>(null);
@@ -265,31 +271,52 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   useEffect(() => {
     setSearchQuery('');
     setSortId(null);
+    setHealthFilter('all');
+    setStatusFilter('');
     setSelectedUids(new Set());
     setFocusedIndex(0);
 
-    const curCtx = useClusterStore.getState().currentContext;
-    if (curCtx && (!resources[effectiveKind] || resources[effectiveKind].size === 0)) {
-      k8s.getResources(curCtx, effectiveKind, 'all').then((items) => {
-        if (items && items.length > 0) {
-          useResourceStore.getState().setResourcesForKind(effectiveKind, items);
-        }
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveKind]);
+  }, [effectiveKind, currentContext, setSearchQuery]);
 
-  const allItems = useMemo(() => Array.from(resources[effectiveKind]?.values() ?? []), [resources, effectiveKind]);
+  const kindResources = resources[effectiveKind];
+  const allItems = useMemo(() => Array.from(kindResources?.values() ?? []), [kindResources]);
+  const statuses = useMemo(() => [...new Set(allItems.map((item) => item.status).filter((status): status is string => Boolean(status)))].sort(), [allItems]);
+  const podError = useResourceStore((state) => state.loadErrors.Pod);
+  const issueRanks = useMemo(() => {
+    const ranks = new Map<string, number>();
+    if (healthFilter !== 'issues' && sortId !== '__issues') return ranks;
+    const podsByNamespace = new Map<string | undefined, ResourceItem[]>();
+    if (effectiveKind === 'Service') for (const pod of resources.Pod.values()) {
+      if (!podsByNamespace.has(pod.namespace)) podsByNamespace.set(pod.namespace, []);
+      podsByNamespace.get(pod.namespace)!.push(pod);
+    }
+    const storageClasses = new Map([...resources.StorageClass.values()].map((entry) => [entry.name, entry]));
+    const now = Date.now();
+    for (const item of allItems) {
+      const storageClassName = item.spec?.storageClassName ?? item.storageClass;
+      ranks.set(item.uid, issuePriority(resourceIssues(item, {
+        now, pods: podsByNamespace.get(item.namespace) ?? [], podsLoaded: isConnected && !isLoading && !podError,
+        storageClass: typeof storageClassName === 'string' ? storageClasses.get(storageClassName) : undefined,
+      })));
+    }
+    return ranks;
+  }, [allItems, effectiveKind, healthFilter, sortId, resources.Pod, resources.StorageClass, isConnected, isLoading, podError]);
 
   const rows = useMemo(() => {
     let list = allItems;
     if (selectedNamespace !== 'all') list = list.filter((i) => !i.namespace || i.namespace === selectedNamespace);
     const q = searchQuery.trim().toLowerCase();
     if (q) list = list.filter((i) => (i.name + ' ' + (i.namespace ?? '') + ' ' + (i.status ?? '')).toLowerCase().includes(q));
+    if (healthFilter === 'issues') list = list.filter((item) => (issueRanks.get(item.uid) ?? 0) > 0);
+    if (statusFilter) list = list.filter((item) => item.status === statusFilter);
 
     const hidden = new Set(hiddenColumns[effectiveKind] ?? []);
     const cols = columnsFor(effectiveKind).filter((c) => !hidden.has(c.id));
-    if (sortId) {
+    if (sortId === '__issues') {
+      list = [...list].sort((a, b) => (issueRanks.get(b.uid) ?? 0) - (issueRanks.get(a.uid) ?? 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
+    } else if (sortId === '__created' || sortId === 'age') {
+      list = [...list].sort((a, b) => compareCreation(a, b, sortId === 'age' ? sortDir === 1 ? -1 : 1 : sortDir));
+    } else if (sortId) {
       const col = cols.find((c) => c.id === sortId);
       if (col) {
         list = [...list].sort((a, b) => {
@@ -304,13 +331,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
       }
     }
     return { list, cols };
-  }, [allItems, selectedNamespace, searchQuery, effectiveKind, sortId, sortDir, hiddenColumns]);
-
-  const isClusterScoped = effectiveKind === 'Node' || effectiveKind === 'Namespace' || effectiveKind === 'PersistentVolume' || effectiveKind === 'StorageClass' || effectiveKind === 'CustomResourceDefinition';
+  }, [allItems, selectedNamespace, searchQuery, effectiveKind, sortId, sortDir, hiddenColumns, healthFilter, statusFilter, issueRanks]);
+  useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, healthFilter, statusFilter, sortId, sortDir]);
+  const order = sortId === '__issues' ? 'issues' : sortId === '__created' ? sortDir === -1 ? 'newest' : 'oldest' : sortId === 'name' ? sortDir === 1 ? 'name-asc' : 'name-desc' : sortId ? 'column' : 'default';
 
   /* ------------------- Keyboard Navigation ------------------- */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!tableRef.current?.contains(e.target as Node)) return;
+      if ((e.target as HTMLElement).closest('[role="dialog"], [role="menu"], [contenteditable="true"]')) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (rows.list.length === 0) return;
@@ -333,7 +362,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         e.preventDefault();
         const cur = rows.list[focusedIndex];
         if (cur) openYamlTab(cur);
-      } else if (e.key.toLowerCase() === 'l' && effectiveKind === 'Pod') {
+      } else if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey && effectiveKind === 'Pod') {
         e.preventDefault();
         const cur = rows.list[focusedIndex];
         if (cur) openLogsTab(cur);
@@ -435,32 +464,39 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     if (inspectorCollapsed) toggleInspector();
   };
 
-  const refresh = () => {
+  const refresh = async () => {
+    if (!currentContext) return;
     setSpinning(true);
-    setTimeout(() => setSpinning(false), 550);
-    toast.info('List refreshed', `${effectiveKind}: ${allItems.length} items (mock)`);
+    try {
+      const items = await k8s.getResources(currentContext, effectiveKind, 'all');
+      if (useClusterStore.getState().currentContext !== currentContext) return;
+      useResourceStore.getState().setResourcesForKind(effectiveKind, items);
+    } catch (error) {
+      if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setLoadError(effectiveKind, String(error));
+      toast.error('Refresh failed', String(error));
+    } finally { setSpinning(false); }
   };
 
   const doDelete = (item: ResourceItem) => {
+    if (!k8s.demo) { toast.error('Live delete is not connected yet'); return; }
     deleteItem(item.kind, item.uid);
-    toast.warn('Deleted (demo)', `${item.kind}/${item.name}`);
+    toast.warn('Deleted from demo memory', `${item.kind}/${item.name}`);
   };
 
-  const doScale = (item: ResourceItem, replicas: number) => {
-    updateItem(item.kind, item.uid, {
-      replicas,
-      ready: `${replicas}/${replicas}`,
-      status: `${replicas}/${replicas}`,
-    });
-    const curCtx = useClusterStore.getState().currentContext || 'default';
-    k8s.scaleWorkload(curCtx, item.kind, item.name, item.namespace || 'default', replicas);
-    toast.success(`Scaled to ${replicas}`, `${item.kind}/${item.name}`);
+  const doScale = async (item: ResourceItem, replicas: number) => {
+    if (!currentContext || !['Deployment', 'StatefulSet'].includes(item.kind)) return;
+    try {
+      await k8s.scaleWorkload(currentContext, item.kind, item.name, item.namespace || 'default', replicas);
+      if (useClusterStore.getState().currentContext !== currentContext) return;
+      if (k8s.demo) updateItem(item.kind, item.uid, { replicas });
+      else await refresh();
+      toast.success(`Desired replicas updated to ${replicas}`, `${item.kind}/${item.name}`);
+    } catch (error) { toast.error('Scale failed', String(error)); }
   };
 
   const doRestart = (item: ResourceItem) => {
-    const n = Number(item.ready?.split('/')[1] ?? item.replicas ?? 1);
-    updateItem(item.kind, item.uid, { status: 'Running', ready: `${n}/${n}` });
-    toast.success('Rollout restarted (demo)', `${item.kind}/${item.name}`);
+    if (!k8s.demo) { toast.error('Live rollout restart is not connected yet'); return; }
+    toast.info('Demo rollout restart requested', `${item.kind}/${item.name}`);
   };
 
   const buildRowMenu = (item: ResourceItem): MenuItem[] => {
@@ -475,7 +511,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         icon: Columns2,
         onSelect: () => {
           openYamlTab(item);
-          toggleSplit(`yaml-${item.kind}-${item.name}`);
+          toggleSplit(resourceTabId('yaml', currentContext, item));
         },
       },
     ];
@@ -506,81 +542,30 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         onSelect: () => useDockStore.getState().openNodeShell(item.name),
       });
     }
-    if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
-      items.push(
-        {
-          id: 'dock-logs',
-          label: 'View Logs in Bottom Drawer',
-          icon: FileText,
-          onSelect: () => useDockStore.getState().openLogs(item.name, item.namespace),
-        },
-        { id: 'scale', label: 'Scale Replicas…', icon: Maximize2, onSelect: () => setScaleFor(item) },
-        { id: 'restart', label: 'Restart Rollout', icon: RotateCw, onSelect: () => setRestartFor(item) },
-      );
+    if (['Deployment', 'StatefulSet'].includes(item.kind)) {
+      items.push({ id: 'scale', label: 'Scale replicas…', icon: Maximize2, onSelect: () => setScaleFor(item) });
     }
-    if (['Service', 'Ingress'].includes(item.kind)) {
+    if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
+      items.push({ id: 'restart', label: 'Restart rollout (demo)', icon: RotateCw, disabled: !k8s.demo, onSelect: () => setRestartFor(item) });
+    }
+    if (item.kind === 'Service') {
       items.push({ id: 'pf', label: 'Port-forward…', icon: ArrowRightLeft, onSelect: () => setPfFor(item) });
     }
     if (item.kind === 'Job') {
-      items.push({ id: 'rerun', label: 'Rerun job', icon: RefreshCw, onSelect: () => toast.success('Job re-run queued (demo)', item.name) });
+      items.push({ id: 'rerun', label: 'Rerun job (demo)', disabled: !k8s.demo, icon: RefreshCw, onSelect: () => toast.success('Job re-run queued (demo)', item.name) });
     }
 
     items.push(
       { id: 'sep1', label: '', separator: true, onSelect: () => {} },
-      { id: 'copyName', label: 'Copy name', icon: Copy, onSelect: () => { navigator.clipboard.writeText(item.name).then(() => toast.success('Name copied')); } },
+      { id: 'copyName', label: 'Copy name', icon: Copy, onSelect: () => { navigator.clipboard.writeText(item.name).then(() => toast.success('Name copied')).catch(() => toast.error('Clipboard unavailable')); } },
       { id: 'sep2', label: '', separator: true, onSelect: () => {} },
-      { id: 'delete', label: 'Delete…', icon: Trash2, danger: true, kbd: '⌫', onSelect: () => setConfirmFor(item) },
+      { id: 'delete', label: 'Delete (demo)…', disabled: !k8s.demo, icon: Trash2, danger: true, kbd: '⌫', onSelect: () => setConfirmFor(item) },
     );
     return items;
   };
 
-  const quickActionsFor = (item: ResourceItem): Array<{ icon: LucideIcon; label: string; onClick: (e: React.MouseEvent) => void; danger?: boolean }> => {
-    const list: Array<{ icon: LucideIcon; label: string; onClick: (e: React.MouseEvent) => void; danger?: boolean }> = [];
-    if (item.kind === 'Pod') {
-      list.push(
-        {
-          icon: FileText,
-          label: 'Logs',
-          onClick: () => useDockStore.getState().openLogs(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
-        },
-        {
-          icon: Terminal,
-          label: 'Terminal',
-          onClick: () => useDockStore.getState().openTerminal(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
-        },
-      );
-    }
-    if (item.kind === 'Node') {
-      list.push({
-        icon: Terminal,
-        label: 'Node Shell',
-        onClick: () => useDockStore.getState().openNodeShell(item.name),
-      });
-    }
-    if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
-      list.push(
-        {
-          icon: FileText,
-          label: 'Logs',
-          onClick: () => useDockStore.getState().openLogs(item.name, item.namespace),
-        },
-        {
-          icon: Maximize2,
-          label: 'Scale…',
-          onClick: () => setScaleFor(item),
-        },
-      );
-    }
-    if (['Pod', 'Service', 'Ingress'].includes(item.kind)) {
-      list.push({ icon: ArrowRightLeft, label: 'Port-forward', onClick: () => setPfFor(item) });
-    }
-    list.push({ icon: Braces, label: 'Edit YAML', onClick: () => openYamlTab(item) });
-    list.push({ icon: MoreIcon, label: 'More actions', onClick: () => setMenu({ item, x: 0, y: 0 }) });
-    return list;
-  };
-
   /* --------------------------- Render --------------------------- */
-  if (noKinds) {
+  if (noKinds && !explicitKind) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm">
@@ -605,7 +590,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         <KindIcon size={15} strokeWidth={1.75} className="text-blue-400 shrink-0" />
         <span className="text-[13px] font-semibold text-[var(--text-primary)]">{effectiveKind}s</span>
         <span className="text-[11px] font-mono text-[var(--text-muted)] px-1.5 py-[1px] rounded-full bg-[var(--bg-surface)]/70">
-          {rows.list.length}{selectedNamespace !== 'all' && <span className="opacity-70"> of {allItems.length}</span>}
+          {rows.list.length}{rows.list.length !== allItems.length && <span className="opacity-70"> of {allItems.length}</span>}
         </span>
 
         {selectedUids.size > 0 && (
@@ -615,48 +600,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         )}
 
         <div className="flex-1" />
-
-        <SearchInput
-          value={searchQuery}
-          onChange={setSearchQuery}
-          placeholder={`Filter ${effectiveKind.toLowerCase()}s…`}
-          className="w-[200px]"
-        />
-
-        {/* Namespace quick filter */}
-        {!isClusterScoped && (
-          <Popover
-            width={200}
-            trigger={({ open }) => (
-              <button
-                className={cx(
-                  'flex items-center gap-1 h-[25px] px-2 rounded-[4px] border text-[11px] font-mono transition-colors max-w-[150px]',
-                  open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
-                )}
-                title="Namespace filter"
-              >
-                <Layers size={11} className="text-violet-400 shrink-0" />
-                <span className="truncate">{selectedNamespace === 'all' ? 'all-namespaces' : selectedNamespace}</span>
-                <ChevronDown size={11} className="opacity-60" />
-              </button>
-            )}
-          >
-            {(close) => (
-              <MenuList
-                items={[
-                  { id: 'all', label: 'All Namespaces', checked: selectedNamespace === 'all', onSelect: () => selectNamespace('all') },
-                  ...availableNamespaces.map((ns) => ({
-                    id: ns,
-                    label: ns,
-                    checked: selectedNamespace === ns,
-                    onSelect: () => selectNamespace(ns),
-                  })),
-                ]}
-                onSelect={(item) => { item.onSelect?.(); close(); }}
-              />
-            )}
-          </Popover>
-        )}
 
         <Tooltip label={density === 'compact' ? 'Comfortable rows' : 'Compact rows'} delay={400}>
           <IconButton
@@ -717,24 +660,47 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
           <IconButton icon={RefreshCw} size="sm" onClick={refresh} className={cx(spinning && 'animate-[spin_0.7s_linear_infinite]')} aria-label="Refresh" />
         </Tooltip>
 
-        <Button variant="primary" size="sm" onClick={() => setNewOpen(true)}>
+        <Button variant="primary" size="sm" disabled={!k8s.demo} title={k8s.demo ? "Create demo resource" : "Live creation is not connected yet"} onClick={() => setNewOpen(true)}>
           <Plus size={13} />
           New
         </Button>
       </div>
 
+      <div className="resource-search-row border-b border-[var(--border-default)]" data-testid="resource-search-toolbar">
+        <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder={`Filter ${effectiveKind.toLowerCase()}s…`} className="resource-search-field" />
+        <div className="resource-filter-controls">
+          <select aria-label="Resource health filter" className="ide-select max-w-full" value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)}>
+            <option value="all">All resources</option><option value="issues">With issues only</option>
+          </select>
+          {(statuses.length > 1 || statusFilter) && <select aria-label="Resource status filter" className="ide-select max-w-full" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="">All statuses</option>
+            {(statusFilter && !statuses.includes(statusFilter) ? [...statuses, statusFilter] : statuses).map((status) => <option key={status} value={status}>{status}</option>)}
+          </select>}
+          <select aria-label="Resource order" className="ide-select max-w-full" value={order} onChange={(event) => {
+            const value = event.target.value;
+            setSortId(value === 'issues' ? '__issues' : ['newest', 'oldest'].includes(value) ? '__created' : value.startsWith('name-') ? 'name' : null);
+            setSortDir(value === 'newest' || value === 'name-desc' ? -1 : 1);
+          }}>
+            <option value="default">Sort: default</option><option value="issues">Issues first</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option>
+            <option value="name-asc">Name: A–Z</option><option value="name-desc">Name: Z–A</option>
+            {order === 'column' && <option value="column">Sort: {columnsFor(effectiveKind).find((column) => column.id === sortId)?.label}</option>}
+          </select>
+        </div>
+      </div>
+
       {/* JetBrains DataGrip Data Table */}
-      <div className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-text" data-testid="resource-table">
+      <div ref={tableRef} tabIndex={0} aria-label={`${effectiveKind} resource table`} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-text" data-testid="resource-table">
+        {loadError && <div role="alert" className="p-3 text-xs text-[var(--status-warn)] border-b border-[var(--border-default)]">{loadError}<button className="ml-3 text-[var(--accent)]" onClick={() => void refresh()}>Retry</button></div>}
         {rows.list.length === 0 ? (
           <EmptyState
             kind={effectiveKind}
-            filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery}
-            onClear={() => { selectNamespace('all'); setSearchQuery(''); }}
-            isNew={allItems.length === 0}
+            filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery || healthFilter !== 'all' || !!statusFilter}
+            onClear={() => { selectNamespace('all'); setSearchQuery(''); setHealthFilter('all'); setStatusFilter(''); }}
+            isNew={k8s.demo && allItems.length === 0 && !loadError}
             onNew={() => setNewOpen(true)}
           />
         ) : (
-          <table className="datagrip-grid w-full table-fixed">
+          <table className="datagrip-grid w-full table-fixed" onClick={() => tableRef.current?.focus({ preventScroll: true })}>
             <thead>
               <tr>
                 {/* Index & Selection Column */}
@@ -792,7 +758,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                     </th>
                   );
                 })}
-                <th className="datagrip-th w-[120px] p-0" />
               </tr>
             </thead>
             <tbody>
@@ -829,24 +794,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                       isRowActive && !isSelected && 'bg-[var(--bg-elevated)]/60'
                     )}
                   >
-                    {/* Checkbox & Row number */}
                     <td className="datagrip-cell text-center p-0 text-[10px] font-mono text-[var(--text-muted)] select-none">
-                      <div
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelectRow(item.uid, e.shiftKey, idx);
-                        }}
-                        className="w-full h-full flex items-center justify-center cursor-pointer"
-                      >
-                        {isSelected ? (
-                          <CheckSquare size={12} className="text-[var(--accent)]" />
-                        ) : (
-                          <span className="group-hover/row:hidden">{idx + 1}</span>
-                        )}
-                        {!isSelected && (
-                          <Square size={12} className="hidden group-hover/row:inline-block opacity-60" />
-                        )}
-                      </div>
+                      {isSelected ? <CheckSquare size={12} className="inline-block text-[var(--accent)]" /> : idx + 1}
                     </td>
 
                     {rows.cols.map((c) => (
@@ -858,29 +807,10 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                           c.mono && 'font-mono text-[11px]'
                         )}
                       >
-                        <CellValue col={c} item={item} onScale={(rep) => doScale(item, rep)} />
+                        <CellValue col={c} item={item} />
                       </td>
                     ))}
 
-                    {/* Quick Row Actions on hover */}
-                    <td className="datagrip-cell relative p-0">
-                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity bg-[var(--bg-secondary)]/90 px-1 py-0.5 rounded border border-[var(--border-subtle)] shadow-2xs">
-                        {quickActionsFor(item).map((a, aIdx) => (
-                          <button
-                            key={aIdx}
-                            title={a.label}
-                            type="button"
-                            className="p-[3px] rounded-[3px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              a.onClick(e);
-                            }}
-                          >
-                            <a.icon size={13} strokeWidth={1.75} />
-                          </button>
-                        ))}
-                      </div>
-                    </td>
                   </tr>
                 );
               })}
@@ -888,58 +818,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
           </table>
         )}
       </div>
-
-      {/* JetBrains Floating Batch Action Bar */}
-      {selectedUids.size > 0 && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-[6px] bg-[var(--bg-surface)] border border-[var(--border-strong)] shadow-dialog text-xs select-none kub-pop">
-          <span className="font-semibold text-[var(--text-primary)]">
-            {selectedUids.size} {selectedUids.size === 1 ? effectiveKind : `${effectiveKind}s`} selected
-          </span>
-          <div className="h-4 w-px bg-[var(--border-default)] mx-1" />
-          {['Deployment', 'StatefulSet', 'DaemonSet'].includes(effectiveKind) && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                selectedUids.forEach((uid) => {
-                  const item = rows.list.find((r) => r.uid === uid);
-                  if (item) doRestart(item);
-                });
-                toast.success(`Rollout restart triggered for ${selectedUids.size} workloads`);
-              }}
-            >
-              <RotateCw size={11} /> Restart Rollout
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              const names = rows.list.filter((r) => selectedUids.has(r.uid)).map((r) => r.name).join('\n');
-              navigator.clipboard.writeText(names);
-              toast.success(`Copied ${selectedUids.size} names`);
-            }}
-          >
-            <Copy size={11} /> Copy Names
-          </Button>
-          <Button
-            size="sm"
-            variant="danger"
-            onClick={() => {
-              selectedUids.forEach((uid) => {
-                deleteItem(effectiveKind, uid);
-              });
-              toast.warn(`Deleted ${selectedUids.size} resources`);
-              setSelectedUids(new Set());
-            }}
-          >
-            <Trash2 size={11} /> Delete ({selectedUids.size})
-          </Button>
-          <Button size="sm" onClick={() => setSelectedUids(new Set())}>
-            Deselect
-          </Button>
-        </div>
-      )}
 
       {/* Row context menu */}
       {menu && <FixedMenu rect={{ x: menu.x, y: menu.y }} items={buildRowMenu(menu.item)} onClose={() => setMenu(null)} />}
@@ -972,8 +850,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         defaultNs={selectedNamespace === 'all' ? 'default' : selectedNamespace}
         onClose={() => setNewOpen(false)}
         onCreate={(name, ns, yaml) => {
+          if (!k8s.demo) return;
           const item: ResourceItem = {
-            uid: `new-${Date.now().toString(36)}`,
+            uid: `new-${crypto.randomUUID()}`,
             name,
             namespace: ns || undefined,
             kind: effectiveKind,
@@ -992,21 +871,17 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   );
 };
 
-const MoreIcon = MoreVertical;
-
 function CellValue({
   col,
   item,
-  onScale,
 }: {
   col: ColumnDef;
   item: ResourceItem;
-  onScale?: (replicas: number) => void;
 }) {
   const v = col.get(item);
   if (v === undefined || v === '') return <span className="text-[var(--text-disabled)]">—</span>;
 
-  if (col.id === 'name') return <span className="text-[var(--text-primary)] font-mono text-[11.5px] font-medium">{v}</span>;
+  if (col.id === 'name') return <span className="inline-flex items-center gap-2 max-w-full align-middle"><ResourceWarnings item={item} /><span className="truncate text-[var(--text-primary)] font-mono text-[11.5px] font-medium" title={v}>{v}</span></span>;
   if (col.id === 'namespace') return <span className="text-[var(--text-secondary)]">{v}</span>;
   if (col.id === 'status' || col.id === 'conditions') return <StatusBadge status={v} />;
 
@@ -1044,34 +919,7 @@ function CellValue({
     return <span className="font-mono text-[11px]">{v}</span>;
   }
 
-  if (col.id === 'replicas') {
-    const curReplicas = Number(v) || item.replicas || 1;
-    return (
-      <div className="inline-flex items-center gap-1 font-mono">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onScale?.(Math.max(0, curReplicas - 1));
-          }}
-          className="w-4 h-4 rounded flex items-center justify-center bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-white transition-colors text-[10px]"
-          title="Scale down by 1"
-        >
-          -
-        </button>
-        <span className="w-5 text-center font-bold text-[var(--text-primary)] tabular-nums">{curReplicas}</span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onScale?.(curReplicas + 1);
-          }}
-          className="w-4 h-4 rounded flex items-center justify-center bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-white transition-colors text-[10px]"
-          title="Scale up by 1"
-        >
-          +
-        </button>
-      </div>
-    );
-  }
+  if (col.id === 'replicas') return <span className="font-mono text-[11px] tabular-nums text-[var(--text-primary)]">{v}</span>;
 
   if (col.id === 'ready') {
     const m = /^(\d+)\/(\d+)$/.exec(v);

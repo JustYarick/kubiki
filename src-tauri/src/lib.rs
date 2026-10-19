@@ -2,7 +2,7 @@ use kubiki_core::cluster::client::ClusterClientPool;
 use kubiki_core::cluster::kubeconfig::{KubeConfigManager, KubeContextInfo};
 use kubiki_core::cluster::namespaces::NamespaceService;
 use serde_json::Value;
-use std::process::Command;
+use tokio::process::Command;
 
 #[tauri::command]
 fn get_kube_contexts() -> Result<Vec<KubeContextInfo>, String> {
@@ -17,17 +17,22 @@ fn get_current_context() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn ping_cluster(context: String) -> Result<Value, String> {
-    let mgr = KubeConfigManager::new();
-    let pool = ClusterClientPool::new(mgr);
-    let ver = pool.check_health(&context).await.map_err(|e| e.to_string())?;
+async fn ping_cluster(
+    context: String,
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<Value, String> {
+    let ver = pool
+        .check_health(&context)
+        .await
+        .map_err(|e| e.to_string())?;
     serde_json::to_value(ver).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn get_namespaces(context: String) -> Result<Vec<String>, String> {
-    let mgr = KubeConfigManager::new();
-    let pool = ClusterClientPool::new(mgr);
+async fn get_namespaces(
+    context: String,
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<Vec<String>, String> {
     let client = pool.get_client(&context).await.map_err(|e| e.to_string())?;
     let namespaces = NamespaceService::list_namespaces(&client)
         .await
@@ -36,10 +41,17 @@ async fn get_namespaces(context: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn get_resources(context: String, kind: String, namespace: Option<String>) -> Result<Value, String> {
+async fn get_resources(
+    context: String,
+    kind: String,
+    namespace: Option<String>,
+) -> Result<Value, String> {
     let plural = match kind.as_str() {
         "Pod" => "pods",
         "Deployment" => "deployments",
+        "ReplicaSet" => "replicasets",
+        "Event" => "events",
+        "CustomResourceDefinition" => "customresourcedefinitions",
         "StatefulSet" => "statefulsets",
         "DaemonSet" => "daemonsets",
         "Job" => "jobs",
@@ -53,13 +65,26 @@ fn get_resources(context: String, kind: String, namespace: Option<String>) -> Re
         "StorageClass" => "storageclasses",
         "Node" => "nodes",
         "Namespace" => "namespaces",
-        _ => "pods",
+        _ => return Err(format!("Unsupported resource kind: {kind}")),
     };
 
     let mut cmd = Command::new("kubectl");
-    cmd.args(["--context", &context, "get", plural, "-o", "json"]);
+    cmd.args([
+        "--context",
+        &context,
+        "get",
+        plural,
+        "-o",
+        "json",
+        "--request-timeout=10s",
+    ]);
+    cmd.kill_on_drop(true);
 
-    let is_cluster_scoped = kind == "Node" || kind == "Namespace" || kind == "PersistentVolume" || kind == "StorageClass";
+    let is_cluster_scoped = kind == "Node"
+        || kind == "Namespace"
+        || kind == "PersistentVolume"
+        || kind == "StorageClass"
+        || kind == "CustomResourceDefinition";
 
     if !is_cluster_scoped {
         if let Some(ref ns) = namespace {
@@ -73,7 +98,10 @@ fn get_resources(context: String, kind: String, namespace: Option<String>) -> Re
         }
     }
 
-    let output = cmd.output().map_err(|e| format!("Failed to execute kubectl: {e}"))?;
+    let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
+        .await
+        .map_err(|_| "kubectl request timed out".to_string())?
+        .map_err(|e| format!("Failed to execute kubectl: {e}"))?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
         return Err(format!("kubectl error: {err}"));
@@ -83,7 +111,7 @@ fn get_resources(context: String, kind: String, namespace: Option<String>) -> Re
 }
 
 #[tauri::command]
-fn scale_workload(
+async fn scale_workload(
     context: String,
     kind: String,
     name: String,
@@ -96,6 +124,9 @@ fn scale_workload(
         _ => return Err("Only Deployment and StatefulSet can be scaled".to_string()),
     };
 
+    if replicas < 0 {
+        return Err("Replicas must be non-negative".into());
+    }
     let output = Command::new("kubectl")
         .args([
             "--context",
@@ -106,8 +137,10 @@ fn scale_workload(
             "-n",
             &namespace,
             &format!("--replicas={replicas}"),
+            "--request-timeout=10s",
         ])
         .output()
+        .await
         .map_err(|e| format!("Failed to execute kubectl scale: {e}"))?;
 
     if !output.status.success() {
@@ -116,6 +149,39 @@ fn scale_workload(
     }
 
     Ok(format!("{target_kind}/{name} scaled to {replicas}"))
+}
+
+#[tauri::command]
+async fn get_pod_logs(
+    context: String,
+    name: String,
+    namespace: String,
+    container: Option<String>,
+) -> Result<String, String> {
+    let mut cmd = Command::new("kubectl");
+    cmd.args([
+        "--context",
+        &context,
+        "logs",
+        &format!("pod/{name}"),
+        "-n",
+        &namespace,
+        "--tail=500",
+        "--timestamps=true",
+        "--request-timeout=10s",
+    ]);
+    if let Some(container) = container {
+        cmd.args(["-c", &container]);
+    }
+    cmd.kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
+        .await
+        .map_err(|_| "Pod logs request timed out".to_string())?
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -127,6 +193,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(ClusterClientPool::new(KubeConfigManager::new()))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_kube_contexts,
@@ -135,6 +202,7 @@ pub fn run() {
             get_namespaces,
             get_resources,
             scale_workload,
+            get_pod_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

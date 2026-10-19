@@ -1,23 +1,25 @@
 import React from 'react';
 import {
   FolderOpen,
+  GitBranch,
   PanelRight,
   Search,
   Settings,
   Terminal,
 } from 'lucide-react';
+import { useDockStore } from '../../state/dock_store';
+import { useWorkspaceStore } from '../../state/workspace_store';
 import { useUiStore } from '../../state/ui_store';
 import { Tooltip } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
 
 export const ActivityBar: React.FC = () => {
+  const { dockCollapsed, toggleDock } = useDockStore();
   const {
     sidebarCollapsed,
     toggleSidebar,
     toggleInspector,
     inspectorCollapsed,
-    toggleDock,
-    dockCollapsed,
     setPaletteOpen,
     setSettingsOpen,
   } = useUiStore();
@@ -50,6 +52,7 @@ export const ActivityBar: React.FC = () => {
         </Tooltip>
       </div>
 
+      <Tooltip label="Cluster topology" side="bottom" delay={300}><button className={cxRail(false)} aria-label="Cluster topology" onClick={() => useWorkspaceStore.getState().openTopology()}><GitBranch size={16} /></button></Tooltip>
       {/* Bottom tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full mt-auto">
         <Tooltip label={dockCollapsed ? 'Terminal & Services (⌘J)' : 'Hide Terminal & Services (⌘J)'} side="top" delay={300}>

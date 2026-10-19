@@ -4,11 +4,16 @@ import { useClusterStore } from './cluster_store';
 
 interface ResourceState {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
+  loadErrors: Partial<Record<ResourceKind, string>>;
   activeKind: ResourceKind;
   searchQuery: string;
   selectedItem: ResourceItem | null;
+  selectionHistory: ResourceItem[];
+  goBack: () => void;
 
   setActiveKind: (kind: ResourceKind) => void;
+  reset: () => void;
+  setLoadError: (kind: ResourceKind, error: string | undefined) => void;
   setSearchQuery: (query: string) => void;
   selectItem: (item: ResourceItem | null) => void;
   setResourcesForKind: (kind: ResourceKind, items: ResourceItem[]) => void;
@@ -21,6 +26,7 @@ interface ResourceState {
 const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => ({
   Pod: new Map(),
   Deployment: new Map(),
+  ReplicaSet: new Map(),
   StatefulSet: new Map(),
   DaemonSet: new Map(),
   Job: new Map(),
@@ -40,15 +46,20 @@ const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => 
 
 export const useResourceStore = create<ResourceState>((set, get) => ({
   resources: initialResources(),
+  loadErrors: {},
   activeKind: 'Pod',
   searchQuery: '',
   selectedItem: null,
+  selectionHistory: [],
+  goBack: () => set((state) => ({ selectedItem: state.selectionHistory[state.selectionHistory.length - 1] ?? state.selectedItem, selectionHistory: state.selectionHistory.slice(0, -1) })),
+  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], loadErrors: {}, searchQuery: '' }),
+  setLoadError: (kind, error) => set((state) => ({ loadErrors: { ...state.loadErrors, [kind]: error } })),
 
-  setActiveKind: (activeKind) => set({ activeKind, selectedItem: null }),
+  setActiveKind: (activeKind) => set({ activeKind }),
 
   setSearchQuery: (searchQuery) => set({ searchQuery }),
 
-  selectItem: (selectedItem) => set({ selectedItem }),
+  selectItem: (selectedItem) => set((state) => ({ selectedItem, selectionHistory: selectedItem && state.selectedItem && selectedItem.uid !== state.selectedItem.uid ? [...state.selectionHistory, state.selectedItem].slice(-40) : state.selectionHistory })),
 
   setResourcesForKind: (kind, items) => {
     set((state) => {
@@ -59,6 +70,8 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
           ...state.resources,
           [kind]: map,
         },
+        loadErrors: { ...state.loadErrors, [kind]: undefined },
+        selectedItem: state.selectedItem?.kind === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
       };
     });
   },
@@ -97,6 +110,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
         payload.items.forEach((item) => newMap.set(item.uid, item));
         return {
           resources: { ...state.resources, [kind]: newMap },
+          selectedItem: state.selectedItem?.kind === kind ? newMap.get(state.selectedItem.uid) ?? null : state.selectedItem,
         };
       }
 
@@ -106,6 +120,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
         map.set(payload.data.uid, payload.data);
         return {
           resources: { ...state.resources, [kind]: map },
+          selectedItem: state.selectedItem?.uid === payload.data.uid ? payload.data : state.selectedItem,
         };
       }
 
@@ -115,6 +130,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
         map.delete(payload.uid);
         return {
           resources: { ...state.resources, [kind]: map },
+          selectedItem: state.selectedItem?.uid === payload.uid ? null : state.selectedItem,
         };
       }
 

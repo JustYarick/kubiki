@@ -1,7 +1,7 @@
 use crate::core::error::KubikiError;
 use k8s_openapi::api::core::v1::Pod;
-use kube::api::{Api, AttachParams};
 use kube::Client;
+use kube::api::{Api, AttachParams};
 
 pub struct PodExecOptions {
     pub container: Option<String>,
@@ -25,7 +25,7 @@ impl Default for PodExecOptions {
             tty: true,
             stdin: true,
             stdout: true,
-            stderr: true,
+            stderr: false,
         }
     }
 }
@@ -46,7 +46,7 @@ impl PodExecService {
             container: opts.container,
             stdin: opts.stdin,
             stdout: opts.stdout,
-            stderr: opts.stderr,
+            stderr: opts.stderr && !opts.tty,
             tty: opts.tty,
             max_stdin_buf_size: Some(1024 * 64),
             ..Default::default()
@@ -58,5 +58,17 @@ impl PodExecService {
             .map_err(|e| KubikiError::KubeApiError(format!("Failed to exec into pod: {e}")))?;
 
         Ok(attached)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PodExecOptions;
+
+    #[test]
+    fn default_interactive_shell_does_not_request_multiplexed_stderr() {
+        let options = PodExecOptions::default();
+        assert!(options.tty);
+        assert!(!options.stderr);
     }
 }

@@ -1,5 +1,8 @@
 # Архитектура и системное проектирование Kubiki
 
+> Примечание аудита 2026-10-20: ниже целевая архитектура. Не все директории, сервисные контракты и показатели реализованы. Доменное ядро фактически находится в `crates/kubiki-core`, текущий IPC — в `src-tauri/src/lib.rs`. Состояние: [09-PROJECT-STATUS.md](09-PROJECT-STATUS.md).
+
+
 > **Проект:** Kubiki — Event-Driven, Serverless K8s Desktop IDE  
 > **Стек:** Tauri v2 (Rust) + React 19 / TypeScript 5 + Tailwind CSS v4 + Monaco Editor + xterm.js  
 > **Дизайн-код:** JetBrains IDE (Fleet / New UI) + VS Code (Dark+/Modern)

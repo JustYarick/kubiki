@@ -55,6 +55,7 @@ export interface TreeCategory {
 export const KIND_ICONS: Record<ResourceKind, LucideIcon> = {
   Pod: CircleDot,
   Deployment: Boxes,
+  ReplicaSet: Boxes,
   StatefulSet: Database,
   DaemonSet: Server,
   Job: Clock,
@@ -91,6 +92,7 @@ export const SIDEBAR_TREE: TreeCategory[] = [
         kinds: [
           k('Pod', 'Pods', 'text-[var(--status-ok)]'),
           k('Deployment', 'Deployments', 'text-[var(--status-info)]'),
+          k('ReplicaSet', 'ReplicaSets', 'text-[var(--status-info)]'),
           k('StatefulSet', 'StatefulSets', 'text-violet-400'),
           k('DaemonSet', 'DaemonSets', 'text-purple-400'),
         ],

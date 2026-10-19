@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { cx } from '../../core/utils/cx';
 
 /**
@@ -19,11 +19,28 @@ export function Resizer({
   const active = useRef(false);
   const last = useRef(0);
 
+  const cleanup = () => {
+    active.current = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+  useEffect(() => () => { if (active.current) cleanup(); }, []);
+
   const pos = (e: React.PointerEvent) => (orientation === 'vertical' ? e.clientX : e.clientY);
 
   return (
     <div
       role="separator"
+      aria-orientation={orientation}
+      aria-label={orientation === 'vertical' ? 'Resize panels' : 'Resize bottom panel'}
+      tabIndex={0}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 40 : 10;
+        const delta = orientation === 'vertical' ? event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0 : event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0;
+        if (delta) { event.preventDefault(); onDelta(delta); }
+      }}
+      onPointerCancel={cleanup}
+      onLostPointerCapture={cleanup}
       onPointerDown={(e) => {
         e.preventDefault();
         (e.target as HTMLElement).setPointerCapture(e.pointerId);

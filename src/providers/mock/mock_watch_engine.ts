@@ -1,6 +1,5 @@
 import { useResourceStore } from '../../state/resource_store';
 import { useClusterStore } from '../../state/cluster_store';
-import { toast } from '../../state/notifications_store';
 
 /**
  * Real-time Informer Watch Engine (Simulation for frontend / mock mode).
@@ -36,14 +35,12 @@ export function startMockWatchEngine() {
           status: 'ContainerCreating',
           ready: '0/1',
         });
-        toast.info(`Pod ${pendingPod.name}`, 'Status: ContainerCreating (watch event)');
       } else if (pendingPod.status === 'ContainerCreating') {
         resourceStore.updateItem('Pod', pendingPod.uid, {
           status: 'Running',
           ready: '1/1',
           ip: `10.42.${Math.floor(Math.random() * 4)}.${Math.floor(Math.random() * 250)}`,
         });
-        toast.success(`Pod ${pendingPod.name}`, 'Status: Running · 1/1 Ready (watch event)');
       }
     }
   }, 4000);

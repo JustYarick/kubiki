@@ -4,14 +4,15 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input, Label } from '../ui/Input';
 import { usePfStore } from '../../state/pf_store';
-import { useUiStore } from '../../state/ui_store';
+import { useDockStore } from '../../state/dock_store';
+import { k8s } from '../../providers/k8s_provider';
 import { toast } from '../../state/notifications_store';
 import type { ResourceItem } from '../../types/k8s';
 
 /** Port-forward launcher for a pod/service/ingress-like item. */
 export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose: () => void }) {
   const add = usePfStore((s) => s.add);
-  const openDock = useUiStore((s) => s.openDock);
+  const openDock = useDockStore((s) => s.openPorts);
 
   const suggested = item?.containers?.[0]?.port ?? item?.ready?.split(':')[0]?.split('/')[0] ?? '80';
   const [remote, setRemote] = useState('');
@@ -28,9 +29,10 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
   if (!item) return null;
 
   const remoteInvalid = !/^\d+$/.test(remote) || +remote < 1 || +remote > 65535;
-  const localInvalid = local !== '' && (!/^\d+$/.test(local) || +local < 1024 || +local > 65534);
+  const localInvalid = local !== '' && local !== '0' && (!/^\d+$/.test(local) || +local < 1024 || +local > 65534);
 
   const start = () => {
+    if (!k8s.demo) { toast.error('Port-forward transport is not connected yet'); return; }
     const session = add({
       targetKind: item.kind,
       targetName: item.name,
@@ -39,9 +41,9 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
       localPort: local === '' ? 0 : Number(local),
       openBrowser: browser,
     });
-    openDock('ports');
+    openDock();
     toast.success(
-      `Port-forward started`,
+      `Demo port-forward created`,
       `${session.targetKind}/${session.targetName} → localhost:${session.localPort}${browser ? ' (browser would open)' : ''}`
     );
     onClose();
@@ -61,7 +63,7 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={remoteInvalid || localInvalid} onClick={start}>
+          <Button variant="primary" disabled={!k8s.demo || remoteInvalid || localInvalid} onClick={start}>
             Start forward
           </Button>
         </>
@@ -110,7 +112,7 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
         </label>
 
         <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
-          Demo mode: a session will appear in the Ports panel with simulated traffic. Real port-forwarding is wired in phase UI-4.
+          Demo mode: a session will appear in the Ports panel with simulated traffic. Live port-forwarding is not connected yet.
         </p>
       </div>
     </Modal>

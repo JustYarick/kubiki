@@ -1,5 +1,13 @@
-import * as monaco from 'monaco-editor';
-import { loader } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor/editor.js';
+import 'monaco-editor/editor/browser/coreCommands.js';
+import 'monaco-editor/features/codeEditor/register.js';
+import 'monaco-editor/features/find/register.js';
+import 'monaco-editor/features/folding/register.js';
+import 'monaco-editor/features/bracketMatching/register.js';
+import 'monaco-editor/features/clipboard/register.js';
+import 'monaco-editor/features/contextmenu/register.js';
+import 'monaco-editor/features/codicon/register.js';
+import 'monaco-editor/languages/definitions/yaml/register.js';
 
 // Bundle workers locally — no CDN dependency (desktop/offline-safe).
 // Rolldown can't handle `?worker` on node_modules deep imports, so we point
@@ -8,8 +16,6 @@ const workerUrl = new URL('./editor_worker.ts', import.meta.url);
 (globalThis as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
   getWorker: () => new Worker(workerUrl, { type: 'module' }),
 };
-
-loader.config({ monaco });
 
 monaco.editor.defineTheme('kubiki-dark', {
   base: 'vs-dark',
