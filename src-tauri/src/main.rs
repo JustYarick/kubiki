@@ -4,12 +4,9 @@
 fn main() {
     #[cfg(target_os = "linux")]
     unsafe {
-        if std::env::var("GDK_BACKEND").is_err() {
-            std::env::set_var("GDK_BACKEND", "x11,wayland");
-        }
-        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        }
+        // Fix for NVIDIA drivers on Linux with WebKitGTK (prevent "Failed to create GBM buffer" and grey screen)
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
 
     kubiki_lib::run()
