@@ -280,6 +280,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
       return {
         uid: uid(), name: r.name, namespace: r.namespace, kind, apiVersion: 'apps/v1',
         status: r.status, ready: seedKind === 'CronJob' ? undefined : r.ready, age: r.age, image: `ghcr.io/kubiki/${r.name}:latest`,
+        replicas,
         rawYaml: j([
           'apiVersion: apps/v1',
           `kind: ${seedKind}`,

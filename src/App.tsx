@@ -14,7 +14,9 @@ import { useClusterStore } from './state/cluster_store';
 import { useResourceStore } from './state/resource_store';
 import { useUiStore } from './state/ui_store';
 import { useWorkspaceStore } from './state/workspace_store';
+import { useDockStore } from './state/dock_store';
 import { buildMockResources, MOCK_NAMESPACES } from './providers/mock/mock_resources';
+import { startMockWatchEngine, stopMockWatchEngine } from './providers/mock/mock_watch_engine';
 import { toast } from './state/notifications_store';
 import type { ResourceItem, ResourceKind } from './types/k8s';
 
@@ -28,15 +30,18 @@ export default function App() {
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth,
     inspectorWidth, inspectorCollapsed, setInspectorWidth,
-    dockHeight, dockCollapsed, setDockHeight,
   } = useUiStore();
+
+  const {
+    dockHeight, dockCollapsed, setDockHeight, toggleDock,
+  } = useDockStore();
 
   const setContexts = useClusterStore((s) => s.setContexts);
   const setAvailableNamespaces = useClusterStore((s) => s.setAvailableNamespaces);
   const setConnected = useClusterStore((s) => s.setConnected);
   const setResourcesForKind = useResourceStore((s) => s.setResourcesForKind);
 
-  /* Seed the mock cluster on startup */
+  /* Seed the mock cluster and start real-time watch engine on startup */
   useEffect(() => {
     setContexts(MOCK_CONTEXTS);
     setAvailableNamespaces(MOCK_NAMESPACES);
@@ -45,6 +50,10 @@ export default function App() {
       setResourcesForKind(kind, items);
     }
     setConnected(true, '1.31.2');
+
+    // Start live watch stream engine (0ms reactive informer updates)
+    startMockWatchEngine();
+    return () => stopMockWatchEngine();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -62,9 +71,8 @@ export default function App() {
         useUiStore.getState().toggleSidebar();
       } else if (key === 'j') {
         e.preventDefault();
-        useUiStore.getState().toggleDock();
+        toggleDock();
       } else if (key === 'w') {
-        // Cmd/Ctrl+W closes active tab if not dirty/pinned
         const activeTabId = useWorkspaceStore.getState().activeTabId;
         if (activeTabId) {
           e.preventDefault();
@@ -74,7 +82,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [toggleDock]);
 
   const onSelectContext = (name: string) => {
     useClusterStore.getState().selectContext(name);
@@ -82,7 +90,7 @@ export default function App() {
     setTimeout(() => {
       useClusterStore.getState().setConnected(true, '1.31.2');
       toast.success('Connected', `${name} · v1.31.2 ready`);
-    }, 550);
+    }, 450);
   };
 
   return (
@@ -90,7 +98,7 @@ export default function App() {
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} />
 
-      {/* Main IDE Frame: Left Rails + Tool Windows + Workspaces + Right Tool Windows */}
+      {/* Main IDE Frame */}
       <div className="flex-1 flex min-h-0 min-w-0">
         <ActivityBar />
 
@@ -109,12 +117,9 @@ export default function App() {
           <WorkspaceArea />
 
           {!dockCollapsed && (
-            <>
-              <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d)} />
-              <BottomDock />
-            </>
+            <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d)} />
           )}
-          {dockCollapsed && <BottomDock />}
+          <BottomDock />
         </main>
 
         {/* Right Tool Window (Inspector / Details) */}

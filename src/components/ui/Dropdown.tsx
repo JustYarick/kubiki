@@ -58,15 +58,21 @@ export function Popover({ trigger, children, align = 'start', width, className }
     };
   }, [open, align]);
 
+  const openRef = useRef(open);
+  openRef.current = open;
+
   const triggerEl = trigger({ open, toggle });
   const ownProps = triggerEl.props;
   return (
     <>
-      {/* Popover owns the toggle; the trigger must NOT call toggle itself (would double-toggle and instantly close). */}
       {React.cloneElement(triggerEl, {
         onClick: (e: React.MouseEvent<HTMLElement>) => {
+          const wasOpen = openRef.current;
           ownProps.onClick?.(e);
-          toggle();
+          // Only toggle if the child's own onClick didn't already toggle it
+          if (openRef.current === wasOpen) {
+            setOpen(!wasOpen);
+          }
         },
         ref: (node: HTMLElement | null) => {
           anchorRef.current = node;

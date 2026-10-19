@@ -30,6 +30,7 @@ import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
 import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
+import { useDockStore } from '../state/dock_store';
 import { KIND_ICONS, defaultKindFor, kindsFor } from '../core/perspectives';
 import { StatusBadge } from '../components/k8s/StatusBadge';
 import { IconButton, Tooltip } from '../components/ui/Button';
@@ -60,7 +61,7 @@ interface ColumnDef {
 const DEFAULT_COL_SIZE: Record<string, number> = {
   name: 240, namespace: 130, ready: 66, restarts: 84, status: 132, ip: 112, node: 96, age: 64,
   ports: 132, type: 112, clusterIP: 120, image: 220, keys: 74, volume: 132, claim: 168,
-  storageclass: 132, reclaim: 92, roles: 152, version: 98, cpu: 112, mem: 172, pods: 92,
+  storageclass: 132, reclaim: 92, roles: 152, version: 98, cpu: 112, mem: 172, pods: 130, replicas: 125,
   provisioner: 184, hosts: 220, class: 100, capacity: 90, group: 110,
 };
 
@@ -87,10 +88,18 @@ const columnsFor = (kind: ResourceKind): ColumnDef[] => {
     case 'Deployment':
     case 'StatefulSet':
     case 'DaemonSet':
+      return [
+        ...BASE_COLUMNS,
+        { id: 'pods', label: 'Pods (Ready)', get: (i) => i.ready },
+        { id: 'replicas', label: 'Scaling', align: 'right', mono: true, get: (i) => String(i.replicas ?? i.ready?.split('/')[1] ?? 1) },
+        { id: 'status', label: 'Conditions', get: (i) => i.status },
+        { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
+        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
+      ];
     case 'Job':
       return [
         ...BASE_COLUMNS,
-        { id: 'ready', label: kind === 'Job' ? 'Completions' : 'Ready', align: 'right', mono: true, get: (i) => i.ready },
+        { id: 'ready', label: 'Completions', align: 'right', mono: true, get: (i) => i.ready },
         { id: 'status', label: 'Status', get: (i) => i.status },
         { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
@@ -220,7 +229,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     density, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidth, resetColumnWidths,
     setRightTab, activePerspective, inspectorCollapsed, toggleInspector,
   } = useUiStore();
-  const { openYamlEditor, openResourceDetail, openLogsTab, openTerminalTab, toggleSplit } = useWorkspaceStore();
+  const { openYamlEditor, openResourceDetail, openLogsTab, toggleSplit } = useWorkspaceStore();
 
   const effectiveKind = explicitKind || activeKind;
 
@@ -457,13 +466,30 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
 
     if (item.kind === 'Pod') {
       items.push(
-        { id: 'logs', label: 'Stream Logs (Tab)', icon: FileText, onSelect: () => openLogsTab(item) },
-        { id: 'terminal', label: 'Terminal into Pod (Tab)', icon: Terminal, onSelect: () => openTerminalTab(item) },
+        {
+          id: 'dock-logs',
+          label: 'Stream Logs in Bottom Drawer',
+          icon: FileText,
+          onSelect: () => useDockStore.getState().openLogs(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
+        },
+        {
+          id: 'dock-terminal',
+          label: 'Terminal in Bottom Drawer',
+          icon: Terminal,
+          onSelect: () => useDockStore.getState().openTerminal(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
+        },
+        { id: 'logs', label: 'Stream Logs in Full Tab', icon: ExternalLink, onSelect: () => openLogsTab(item) },
         { id: 'pf', label: 'Port-forward…', icon: ArrowRightLeft, onSelect: () => setPfFor(item) },
       );
     }
     if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
       items.push(
+        {
+          id: 'dock-logs',
+          label: 'View Logs in Bottom Drawer',
+          icon: FileText,
+          onSelect: () => useDockStore.getState().openLogs(item.name, item.namespace),
+        },
         { id: 'scale', label: 'Scale Replicas…', icon: Maximize2, onSelect: () => setScaleFor(item) },
         { id: 'restart', label: 'Restart Rollout', icon: RotateCw, onSelect: () => setRestartFor(item) },
       );
@@ -488,8 +514,30 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     const list: Array<{ icon: LucideIcon; label: string; onClick: (e: React.MouseEvent) => void; danger?: boolean }> = [];
     if (item.kind === 'Pod') {
       list.push(
-        { icon: FileText, label: 'Logs', onClick: () => openLogsTab(item) },
-        { icon: Terminal, label: 'Terminal', onClick: () => openTerminalTab(item) },
+        {
+          icon: FileText,
+          label: 'Logs',
+          onClick: () => useDockStore.getState().openLogs(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
+        },
+        {
+          icon: Terminal,
+          label: 'Terminal',
+          onClick: () => useDockStore.getState().openTerminal(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
+        },
+      );
+    }
+    if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
+      list.push(
+        {
+          icon: FileText,
+          label: 'Logs',
+          onClick: () => useDockStore.getState().openLogs(item.name, item.namespace),
+        },
+        {
+          icon: Maximize2,
+          label: 'Scale…',
+          onClick: () => setScaleFor(item),
+        },
       );
     }
     if (['Pod', 'Service', 'Ingress'].includes(item.kind)) {
@@ -779,7 +827,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                           c.mono && 'font-mono text-[11px]'
                         )}
                       >
-                        <CellValue col={c} item={item} />
+                        <CellValue col={c} item={item} onScale={(rep) => doScale(item, rep)} />
                       </td>
                     ))}
 
@@ -915,13 +963,85 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
 
 const MoreIcon = MoreVertical;
 
-function CellValue({ col, item }: { col: ColumnDef; item: ResourceItem }) {
+function CellValue({
+  col,
+  item,
+  onScale,
+}: {
+  col: ColumnDef;
+  item: ResourceItem;
+  onScale?: (replicas: number) => void;
+}) {
   const v = col.get(item);
   if (v === undefined || v === '') return <span className="text-[var(--text-disabled)]">—</span>;
 
   if (col.id === 'name') return <span className="text-[var(--text-primary)] font-mono text-[11.5px] font-medium">{v}</span>;
   if (col.id === 'namespace') return <span className="text-[var(--text-secondary)]">{v}</span>;
-  if (col.id === 'status') return <StatusBadge status={v} />;
+  if (col.id === 'status' || col.id === 'conditions') return <StatusBadge status={v} />;
+
+  if (col.id === 'pods') {
+    const m = /^(\d+)\/(\d+)$/.exec(v);
+    if (m) {
+      const readyNum = Number(m[1]);
+      const desiredNum = Number(m[2]) || 1;
+      const pct = Math.min(100, Math.round((readyNum / desiredNum) * 100));
+      const isOk = readyNum === desiredNum && readyNum > 0;
+      const isZero = readyNum === 0;
+
+      return (
+        <div className="flex items-center gap-2">
+          <div className="w-14 h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden border border-[var(--border-subtle)] flex">
+            <div
+              style={{ width: `${pct}%` }}
+              className={cx(
+                'h-full transition-all duration-300',
+                isOk ? 'bg-[var(--status-ok)]' : isZero ? 'bg-[var(--status-danger)]' : 'bg-[var(--status-warn)]'
+              )}
+            />
+          </div>
+          <span
+            className={cx(
+              'font-mono text-[11px] font-semibold tabular-nums',
+              isOk ? 'text-[var(--status-ok)]' : isZero ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'
+            )}
+          >
+            {v}
+          </span>
+        </div>
+      );
+    }
+    return <span className="font-mono text-[11px]">{v}</span>;
+  }
+
+  if (col.id === 'replicas') {
+    const curReplicas = Number(v) || item.replicas || 1;
+    return (
+      <div className="inline-flex items-center gap-1 font-mono">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onScale?.(Math.max(0, curReplicas - 1));
+          }}
+          className="w-4 h-4 rounded flex items-center justify-center bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-white transition-colors text-[10px]"
+          title="Scale down by 1"
+        >
+          -
+        </button>
+        <span className="w-5 text-center font-bold text-[var(--text-primary)] tabular-nums">{curReplicas}</span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onScale?.(curReplicas + 1);
+          }}
+          className="w-4 h-4 rounded flex items-center justify-center bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-white transition-colors text-[10px]"
+          title="Scale up by 1"
+        >
+          +
+        </button>
+      </div>
+    );
+  }
+
   if (col.id === 'ready') {
     const m = /^(\d+)\/(\d+)$/.exec(v);
     const danger = m && m[1] !== m[2] && m[1] === '0';
