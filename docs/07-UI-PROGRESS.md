@@ -6,7 +6,14 @@
 
 ---
 
-## Последний блок — 2026-10-20: UX-18 / DOMAIN-02A, CPU/RAM dashboard
+## Последний блок — 2026-10-20: аудит UI/UX Pro Max
+
+- **Анализ завершён, UI не менялся:** проверены исходники, Chromium demo 1440×900 / 900×720, шесть свежих screenshots и DOM/focus probes. Прочитаны SKILL.md, quick-reference/pro-rules; непригодные landing/glassmorphism шаблоны не применены, использованы релевантные UX/chart/React matches и desktop-specific judgment.
+- **Находки:** недостаточный contrast полезного muted text, 9–11px telemetry labels; при 900px table ≈332px/details ≈518px, Toggle Explorer не преодолевает viewport hiding. Старый inspector/dock сжимают Overview. Вкладки div/tabIndex −1, Settings focus остаётся снаружи и уходит за modal через Shift+Tab; hover-only submenu, unnamed search clear, pointer-only chart points. Также отмечены приоритет колонок, чрезмерный cell focus, Workloads count semantics и локальность Secret validation.
+- **Сохранено:** полный отчёт с плюсами, проблемами, доказательствами и рекомендациями — [20](20-DESIGN-AUDIT.md); DS-01…07 заведены как TODO, без фиктивного закрытия. Базовые шрифты/IDE shell, context-menu actions, terminal keepalive, честная telemetry и статусная палитра рекомендованы к сохранению.
+- **Проверки:** read-only visual/interaction probes и расчёт contrast tokens; сборка/unit/e2e suite не повторялись, код не менялся. Native FPS, screen reader и большие datasets не проверялись. Пользовательский untracked SKILL.md не менялся и в коммит не включён.
+
+## 2026-10-20: UX-18 / DOMAIN-02A, CPU/RAM dashboard
 
 - **DONE:** Overview получил отдельные CPU/RAM telemetry cards, SVG area history с hover и окнами 5/15/30 мин, gauge, configured requests/limits, physical capacity/allocatable и arithmetic headroom. Resource consumers: Pods/Nodes, сортировка CPU/RAM, bounded список, выбор строки и измеренные контейнеры, переход в объект. Requests/limits учитывают restartable init, init peaks, Pod-level resources/overhead; namespace использует только свои PodMetrics, cluster — NodeMetrics. Поддержаны nano/micro/milli/decimal/binary/exponent quantities.
 - **Реальные данные:** desktop IPC → kube-rs MetricsService и browser dev Metrics API bridge подключены. 403/404/503/malformed/timeout не заменяются нулём; Pod/Node sources независимы. Missing source fields больше не получают фиктивные «0» в Rust. Source timestamps/coverage, recreation guard и partial/stale обозначены. Raw quantity и context/namespace проверяются. Синтетические usage/history только в явно отмеченном demo.

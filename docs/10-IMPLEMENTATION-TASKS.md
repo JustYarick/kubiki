@@ -104,3 +104,18 @@
 | GRAPH-12 | Приёмка всех уровней | TODO | Seed namespace с owner/network/storage цепочками; браузерные переходы cluster → namespace → workload → Pod → Node; RBAC partial data; reconnect/delta; измерение больших графов, WebKit и production bundle |
 
 Порядок: GRAPH-00 (готов) → GRAPH-01/02/03/04 (первый удобный обзор) → GRAPH-05/06/07 → GRAPH-08/09/10 → GRAPH-11/12. DATA-01/03 и DOMAIN-01 обеспечивают полноту и актуальность данных; первый UX-проход группировки может использовать уже загруженные snapshots, не объявляя live watch готовым.
+
+
+## Дизайн-аудит UI/UX Pro Max — 2026-10-20
+
+Подробности и воспроизведения: [20](20-DESIGN-AUDIT.md). Ниже — новые задачи, аудит не означает внесённые исправления.
+
+| ID | Приоритет | Задача | Статус | Приёмка |
+|---|---|---|---|---|
+| DS-01 | P1 | Контраст и desktop typography | TODO | Readable secondary отделён от decorative/disabled; contrast значимого текста проверен на actual surfaces; оси/budget labels читаются при 100/110/150/200% |
+| DS-02 | P1 | Adaptive panels и workspace modes | TODO | Toggle Explorer работает при compact viewport; table/details сохраняют рабочую ширину; Overview не сжат неприкреплённым старым inspector; dock не завершает сессии при скрытии |
+| DS-03 | P1 | Tabs/menu/modal/chart keyboard accessibility | TODO | Tab roles/roving keys, modal initial/trap/restore focus, submenu keys, named clear controls, keyboard column resize/context actions и chart data fallback |
+| DS-04 | P2 | Приоритет колонок и спокойный row focus | TODO | Name/Status/Ready/Restarts видимы в подходящем preset, optional columns управляемы; различимы hover/selected/focused; inline actions в строках не возвращаются |
+| DS-05 | P2 | Overview information hierarchy / chart inspection | TODO | Health/load/consumers приоритетны; явный gauge denominator, controllable scale/reference lines/pause/data access; выбранные consumer details доступны сразу |
+| DS-06 | P2 | UI tokens / glossary / platform shortcuts | TODO | Общие chart/spacing/motion tokens; Workloads counts семантически согласованы; одинаковые имена панелей и OS-specific shortcut labels |
+| DS-07 | P2 | Secret row validation и feedback | TODO | Inline errors, focus нового key/первой ошибки, понятный dirty/saving/conflict state; сохранены base64 integrity, draft и UID/resourceVersion protections |
