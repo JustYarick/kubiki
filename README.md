@@ -13,7 +13,7 @@ pnpm dev
 pnpm tauri dev
 ```
 
-Обычный режим читает локальный kubeconfig. Для browser dev bridge нужен `kubectl` в PATH; desktop списки ресурсов используют kube-rs watch через Tauri Channels, scale/logs пока используют kubectl. В browser dev списки остаются snapshots с ручным Sync. Browser preview без dev bridge показывает явную ошибку подключения.
+Обычный режим читает локальный kubeconfig. Для browser dev bridge нужен `kubectl` в PATH; desktop списки ресурсов используют kube-rs watch через Tauri Channels, desktop logs/exec используют kube-rs; scale и browser logs пока используют kubectl. В browser dev списки остаются snapshots с ручным Sync. Browser preview без dev bridge показывает явную ошибку подключения.
 
 Демо доступно отдельно: `http://localhost:1420/?demo=1`. Демо-сессии и ресурсы обозначены явно; ошибка реального API не переключает приложение на демо.
 
@@ -31,7 +31,7 @@ Settings → Appearance: масштаб интерфейса **80–200%** (по
 
 В таблицах поиск и фильтры стоят в одной строке: проблемы/статус и сортировка (ошибки первыми, новые/старые, имя или колонка). В узкой панели фильтры доступны через `Filters`, поиск сохраняет доступную ширину. Общий namespace выбирается один раз рядом с кластером. В desktop это также область live watch: ресурсы другого namespace выгружаются, кластерные остаются. Если список namespaces запрещён RBAC, введите имя в поиске picker и выберите `Use namespace: …`. Открытые вкладки и диаграммы вне области предлагают `Load namespace …`, не объявляя ресурс удалённым. На диаграммах Namespace — рамка с ресурсами внутри, Events — отдельный компактный список сбоку. Произвольные custom resources пока не загружаются, доступны определения CRD.
 
-Реальные логи пока читаются как tail 500 строк с обновлением раз в 3 с. Desktop Pod shell подключён через kube-rs/Tauri/xterm: ввод, resize, exit/error, явный reconnect и cleanup. В логах и shell есть выбор обычных/init/sidecar/ephemeral контейнеров со статусами; toolbar логов адаптивен. Подробности и проверка — [13](docs/13-POD-SESSIONS.md). Host/node shell, port-forward, apply/delete/restart/create ещё не подключены; UI обозначает ограничения. В реальном режиме YAML доступен для просмотра/копирования/скачивания. Наличие Rust API для подсистемы не означает завершённую интеграцию.
+В desktop логи идут настоящим потоком: Pod → Logs → Log options для выбора tail/периода/Previous container и Reconnect. Pause останавливает чтение, Resume заново загружает tail; история ограничена. В browser dev пока tail 500 строк раз в 3 с. Desktop Pod shell подключён через kube-rs/Tauri/xterm: ввод, resize, exit/error, явный reconnect и cleanup. В логах и shell есть выбор обычных/init/sidecar/ephemeral контейнеров со статусами; toolbar логов адаптивен. Подробности — [13](docs/13-POD-SESSIONS.md), [14: поток логов](docs/14-POD-LOG-STREAMS.md). Host/node shell, port-forward, apply/delete/restart/create ещё не подключены; UI обозначает ограничения. В реальном режиме YAML доступен для просмотра/копирования/скачивания. Наличие Rust API для подсистемы не означает завершённую интеграцию.
 
 ## Проверки
 

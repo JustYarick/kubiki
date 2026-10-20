@@ -3,6 +3,7 @@
 pub mod exec;
 pub mod terminal;
 pub mod logs;
+pub mod log_sessions;
 pub mod port_forward;
 
 pub use exec::{PodExecOptions, PodExecService};

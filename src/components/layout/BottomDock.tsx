@@ -19,6 +19,9 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { LogBuffer, type LogLine } from '../../core/utils/log_buffer';
+import { connectPodLogs } from '../../providers/tauri_logs';
+import { resourceRef } from '../../core/resources/identity';
 import { LogsToolbar } from '../k8s/LogsToolbar';
 import { LiveTerminalPane } from '../k8s/LiveTerminalPane';
 import { ContainerSelect } from '../k8s/ContainerSelect';
@@ -644,11 +647,10 @@ const LOG_TEMPLATES = [
   ['warn', 'grpc keepalive timeout probe missed ({n})'],
 ];
 
-interface LogLine { t: string; level: string; msg: string; seq: number }
 
 export function LogsSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
   const [error, setError] = useState('');
-  const { containers, container: activeContainer, context, recreated } = useSessionContainers(session);
+  const { containers, container: activeContainer, context, recreated, uid } = useSessionContainers(session);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [wrap, setWrap] = useState(true);
@@ -657,17 +659,46 @@ export function LogsSessionPane({ session, visible = true, onContainerChange }: 
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
-
+  const native = !k8s.demo && '__TAURI_INTERNALS__' in window;
+  const [previous, setPrevious] = useState(false);
+  const [tail, setTail] = useState(500);
+  const [since, setSince] = useState(0);
+  const [generation, setGeneration] = useState(0);
+  const [phase, setPhase] = useState('Connecting');
+  const [truncated, setTruncated] = useState(false);
+  const bufferRef = useRef(new LogBuffer());
+  const outputRef = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
 
   useEffect(() => {
-    setLines([]);
-    setError('');
-  }, [session.resourceName, activeContainer, context]);
+    if (!native) return;
+    const abort = new AbortController();
+    if (paused) { setPhase('Stopped'); return; }
+    const buffer = new LogBuffer(); bufferRef.current = buffer;
+    setLines([]); setError(''); setTruncated(false); setPhase('Connecting'); pinned.current = true;
+    if (recreated || !context || !session.resourceName || !session.namespace || !uid || !activeContainer) {
+      setError(recreated ? 'The Pod was recreated. Open the current Pod to read its logs.' : 'A Pod with UID, namespace and container is required. Reopen logs from the current Pod.');
+      setPhase('Failed'); return;
+    }
+    const resource = resourceRef(context, { kind: 'Pod', apiVersion: 'v1', uid, name: session.resourceName, namespace: session.namespace });
+    void connectPodLogs({ resource, container: activeContainer, follow: !previous, previous, tail_lines: tail, since_seconds: since || null }, (event) => {
+      if (abort.signal.aborted) return;
+      if (event.type === 'Started') setPhase(previous ? 'Reading previous container' : 'Following');
+      if (event.type === 'Output') { buffer.push(event.payload.data); setLines([...buffer.lines]); setTruncated(buffer.truncated); }
+      if (event.type === 'Completed' || event.type === 'Failed') {
+        buffer.push([], true); setLines([...buffer.lines]); setTruncated(buffer.truncated);
+        setPhase(event.type === 'Completed' ? 'Completed' : 'Failed');
+        if (event.type === 'Failed') setError(event.payload.error.message);
+      }
+    }, abort.signal).catch((error) => { if (!abort.signal.aborted) { setError(String(error)); setPhase('Failed'); } });
+    return () => abort.abort();
+  }, [native, session.resourceName, session.namespace, uid, activeContainer, context, paused, previous, tail, since, generation, recreated]);
 
   useEffect(() => {
-    if (!visible || paused) return;
+    if (native || !visible || paused) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    setLines([]); setError('');
     const poll = async () => {
       try {
         if (k8s.demo) {
@@ -680,22 +711,21 @@ export function LogsSessionPane({ session, visible = true, onContainerChange }: 
           if (!context || !session.resourceName || !session.namespace) throw new Error('Select a Pod and namespace to view logs.');
           const text = await k8s.getLogs(context, session.resourceName, session.namespace, activeContainer);
           if (cancelled) return;
-          const tail = text.trimEnd().split('\n').filter(Boolean).map((line, index) => {
-            const timestamp = /^(\S+)\s(.*)$/.exec(line);
-            const msg = timestamp?.[2] ?? line;
-            return { t: timestamp?.[1] ?? '', msg, seq: index, level: /\berror\b/i.test(msg) ? 'error' : /\bwarn(?:ing)?\b/i.test(msg) ? 'warn' : 'info' };
-          });
-          setLines(tail);
+          const buffer = new LogBuffer(); buffer.push([...new TextEncoder().encode(text)], true);
+          setLines(buffer.lines); setTruncated(buffer.truncated);
         }
         if (!cancelled) setError('');
-      } catch (error) {
-        if (!cancelled) setError(String(error));
-      }
+      } catch (error) { if (!cancelled) setError(String(error)); }
       if (!cancelled) timer = setTimeout(poll, k8s.demo ? 750 : 3000);
     };
     void poll();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [session.resourceName, session.namespace, activeContainer, context, visible, paused, recreated]);
+  }, [native, session.resourceName, session.namespace, activeContainer, context, visible, paused, recreated]);
+
+  useEffect(() => {
+    const output = outputRef.current;
+    if (visible && pinned.current && output) output.scrollTop = output.scrollHeight;
+  }, [lines, visible, filter]);
 
   const shown = useMemo(() => {
     if (!filter.trim()) return lines;
@@ -706,17 +736,23 @@ export function LogsSessionPane({ session, visible = true, onContainerChange }: 
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       {error && <div role="alert" className="px-3 py-1 text-[var(--status-danger)] text-xs">{error}</div>}
-      <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? 'Simulated logs' : 'Latest 500 lines · refresh every 3s'}</div>
-      <LogsToolbar name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
+      <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? 'Simulated logs' : native ? `${phase} · ${previous ? 'previous container' : 'current container'} · latest ${tail} on connect · history up to 1000 lines` : 'Browser snapshot · latest 500 lines · refresh every 3s'}{truncated && ' · older or oversized output discarded'}</div>
+      <LogsToolbar sourceControls={native ? <div className="border-t border-[var(--border-default)] p-2 space-y-2 text-xs">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={previous} onChange={(event) => setPrevious(event.target.checked)} />Previous container instance</label>
+        <label className="flex items-center justify-between gap-2">Initial tail<select aria-label="Initial log tail" value={tail} onChange={(event) => setTail(Number(event.target.value))} className="bg-[var(--bg-primary)] p-1 rounded">{[100, 500, 1000].map((n) => <option key={n} value={n}>{n} lines</option>)}</select></label>
+        <label className="flex items-center justify-between gap-2">Since<select aria-label="Log time range" value={since} onChange={(event) => setSince(Number(event.target.value))} className="bg-[var(--bg-primary)] p-1 rounded">{[[0, 'Any time'], [300, '5 minutes'], [3600, '1 hour'], [86400, '24 hours']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <Button size="sm" onClick={() => { setPaused(false); setGeneration((value) => value + 1); }}>Reconnect logs</Button>
+        <p className="text-[var(--text-muted)]">Changing the source or resuming reloads its tail. Previous logs are a snapshot.</p>
+      </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
         onContainer={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} filter={filter} onFilter={setFilter}
         paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)}
-        onClear={() => setLines([])} onDownload={() => {
+        onClear={() => { bufferRef.current.clear(); setLines([]); setTruncated(false); }} onDownload={() => {
           const blob = new Blob([lines.map((l) => `${l.t} ${l.msg}`).join('\n')], { type: 'text/plain' });
           const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${session.resourceName}-${activeContainer}.log`; anchor.click(); URL.revokeObjectURL(url);
         }} />
 
       {/* Log Output Body */}
-      <div className="flex-1 min-h-0 overflow-auto kubiki-scrollbar bg-[var(--bg-canvas)] px-3 py-2 select-text">
+      <div ref={outputRef} onScroll={() => { const el = outputRef.current; if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }} className="flex-1 min-h-0 overflow-auto kubiki-scrollbar bg-[var(--bg-canvas)] px-3 py-2 select-text">
         {shown.length === 0 ? (
           <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] font-mono py-4 text-center">
             No logs matching filter “{filter}” for {session.resourceName}

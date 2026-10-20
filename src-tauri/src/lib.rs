@@ -1,5 +1,6 @@
 mod k8s_commands;
 mod terminal_commands;
+mod log_commands;
 mod watch_commands;
 
 use k8s_commands::*;
@@ -9,6 +10,8 @@ use kubiki_core::pod_ops::terminal::PodTerminalManager;
 use kubiki_core::{InformerManager, ResourceStore};
 use tauri::Manager;
 use terminal_commands::*;
+use log_commands::*;
+use kubiki_core::pod_ops::log_sessions::PodLogManager;
 use watch_commands::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,6 +26,7 @@ pub fn run() {
         .manage(ClusterClientPool::new(KubeConfigManager::new()))
         .manage(InformerManager::new(ResourceStore::new()))
         .manage(PodTerminalManager::default())
+        .manage(PodLogManager::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_kube_contexts,
@@ -35,6 +39,10 @@ pub fn run() {
             watch_resources,
             stop_resource_watch,
             stop_resource_watches,
+            start_pod_logs,
+            ack_pod_logs,
+            close_pod_logs,
+            stop_pod_logs,
             start_pod_exec,
             write_pod_exec,
             resize_pod_exec,
@@ -46,10 +54,12 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 let manager = window.state::<InformerManager>().inner().clone();
                 let terminals = window.state::<PodTerminalManager>().inner().clone();
+                let logs = window.state::<PodLogManager>().inner().clone();
                 let owner = window.label().to_owned();
                 tauri::async_runtime::spawn(async move {
                     manager.stop_owner(&owner).await;
                     terminals.stop_owner(&owner).await;
+                    logs.stop_owner(&owner).await;
                 });
             }
         })

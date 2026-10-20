@@ -10,7 +10,7 @@ Dropdown логов включает все контейнеры. В shell за�
 
 Открытые terminal/log вкладки сохраняют своё состояние при переключении и сворачивании, в dock и основной рабочей области. Смена контейнера выполняется в текущей вкладке; прежний exec закрывается. Закрытие вкладки, Disconnect, смена context, pagehide и уничтожение окна освобождают транспорт. Reconnect всегда явный: введённые команды автоматически не повторяются. Ctrl-C/D/Z и обычные управляющие последовательности передаются shell; Ctrl-K/B/J/W при фокусе xterm не вызывают глобальные IDE-команды.
 
-Логи пока остаются tail 500 строк с обновлением раз в 3 секунды. Широкая панель показывает toolbar одной строкой; узкая — цель/Pause/Options сверху и контейнер/поиск снизу. Timestamps, Wrap, Download и Clear доступны через Options. Длинные названия сокращаются с полным target в tooltip; выбор контейнера не сбрасывает фильтр.
+В desktop логи подключены настоящим потоком; tail/since/previous/reconnect доступны через Log options. В browser dev остаётся tail 500 строк раз в 3 секунды. Контракт, ограничения и проверки — [14](14-POD-LOG-STREAMS.md). Широкая панель показывает toolbar одной строкой; узкая — цель/Pause/Options сверху и контейнер/поиск снизу. Timestamps, Wrap, Download и Clear доступны через Options. Длинные названия сокращаются с полным target в tooltip; выбор контейнера не сбрасывает фильтр.
 
 ## Модель контейнеров
 
@@ -46,4 +46,4 @@ cargo run --manifest-path crates/kubiki-core/Cargo.toml --example terminal_smoke
 
 В этой сессии проверен существующий `chaos-lab/pod-with-init-container`, контейнер `main-application`: получен выполненный marker, exit 0, TTY 100×40, active_sessions=0. Это проверка живого Rust backend; полная приёмка GUI в Tauri и длительных сессий остаётся открытой.
 
-Browser preview не выполняет remote shell и показывает требование desktop; demo shell остаётся явно симулированным. Host PTY и Node debug shell ещё не подключены. Следующие блоки: follow logs, host PTY, Node debug, полная native/cross-platform QA.
+Browser preview не выполняет remote shell и показывает требование desktop; demo shell остаётся явно симулированным. Host PTY и Node debug shell ещё не подключены. Следующие блоки: browser log streaming, host PTY, Node debug, полная native/cross-platform QA.

@@ -23,6 +23,7 @@ import type { ResourceKind } from './types/k8s';
 import { errorHint } from './providers/errors';
 import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
+import { resetLogSessions, closeLogConnections } from './providers/tauri_logs';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
@@ -55,6 +56,7 @@ export default function App() {
     stopMockWatchEngine();
     stopResourceWatches();
     closeExecConnections();
+    closeLogConnections();
     useClusterStore.getState().selectContext(contextName);
     useResourceStore.getState().reset();
     useDockStore.getState().clearAllSessions();
@@ -64,6 +66,7 @@ export default function App() {
     try {
       await k8s.resetResourceWatches();
       await resetExecSessions();
+      await resetLogSessions();
       if (!current()) return;
       const ping = await k8s.pingCluster(contextName);
       if (!current()) return;
@@ -122,11 +125,12 @@ export default function App() {
       stopMockWatchEngine();
       stopResourceWatches();
       closeExecConnections();
+      closeLogConnections();
     };
   }, [connectToContext, setContexts]);
 
   useEffect(() => {
-    const onPageHide = () => { stopResourceWatches(); closeExecConnections(); };
+    const onPageHide = () => { stopResourceWatches(); closeExecConnections(); closeLogConnections(); };
     window.addEventListener('pagehide', onPageHide);
     return () => window.removeEventListener('pagehide', onPageHide);
   }, []);

@@ -16,7 +16,7 @@
 | 1. Core/Kubeconfig | Сервисы и CLI есть; клиентский пул и базовый health; полноценный multi-cluster session lifecycle не завершён |
 | 2. IDE shell | Дерево/табы/split/inspector/dock есть; только dark, полноценный dockview не интегрирован |
 | 3. Watch/таблицы | Desktop watch подключён через Tauri Channels; atomic relist, bounded batching, reconnect/stale, lifecycle и context isolation покрыты локальным HTTP/API и browser IPC tests. Browser — snapshots; namespace-scoped UI и ручной ввод при RBAC подключены; native/live QA, lazy subscriptions и virtualization ещё открыты |
-| 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Logs пока tail snapshots, follow stream/host PTY/node debug/PF остаются в плане |
+| 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Desktop logs подключены потоком с tail/since/previous/cancel/reconnect; browser logs пока snapshots. Host PTY/node debug/PF остаются в плане |
 | 5. Config/Network/Storage/RBAC | Часть фиксированных списков и деталей есть; RBAC UI, NetworkPolicy, quotas/HPA/EndpointSlice отсутствуют |
 | 6. YAML/CRD | Monaco, просмотр/экспорт и demo edit; live apply/diff/schema и dynamic CRD explorer отсутствуют |
 | 7. Helm | Есть Rust wrapper вокруг helm; нет UI/IPC, context в API wrapper пока не передаётся |
@@ -31,7 +31,7 @@
 
 ## Сверка документов
 
-Дополнено (DATA-01A/B, UX-07/08, YAML-03): общий каталог GVK и типизированные ошибки HTTP/Tauri, подсказки RBAC/timeout и stale snapshot/Retry; group/UID identity защищает вкладки от пересоздания объекта. Масштаб UI 80–200% с default 110%, независимые editor/terminal fonts и persistence подключены. Поиск/фильтры адаптивны и занимают одну строку; на узкой панели фильтры в меню. Воспроизведённая потеря символов Monaco исправлена. DATA-01 целиком остаётся PARTIAL: named operations ещё требуют миграции на ResourceRef/preconditions. DATA-02/03A завершены: desktop watch/relist подключены. DATA-03B2/3 и DATA-03C (lazy subscriptions, native/live QA и browser watch), logs/exec streams остаются открыты. Подробности — [12](12-DATA-CONTRACT-AND-APPEARANCE.md).
+Дополнено (DATA-01A/B, UX-07/08, YAML-03): общий каталог GVK и типизированные ошибки HTTP/Tauri, подсказки RBAC/timeout и stale snapshot/Retry; group/UID identity защищает вкладки от пересоздания объекта. Масштаб UI 80–200% с default 110%, независимые editor/terminal fonts и persistence подключены. Поиск/фильтры адаптивны и занимают одну строку; на узкой панели фильтры в меню. Воспроизведённая потеря символов Monaco исправлена. DATA-01 целиком остаётся PARTIAL: named operations ещё требуют миграции на ResourceRef/preconditions. DATA-02/03A завершены: desktop watch/relist подключены. DATA-03B2/3 и DATA-03C (lazy subscriptions, native/live QA и browser watch) ещё открыты. Desktop logs/Pod exec streams подключены; browser logs и native/cross-platform приёмка остаются открыты. Подробности — [12](12-DATA-CONTRACT-AND-APPEARANCE.md).
 
 | Файл | Что это на самом деле | Расхождения и исправления |
 |---|---|---|
@@ -53,4 +53,6 @@
 
 Ближайший релизный milestone: один реальный тестовый кластер, корректный watch/relist, подробности и ownership navigation, поток логов, exec с resize и cleanup, работающий PF, ошибки RBAC/timeout/reconnect. Затем YAML mutations с dry-run/diff/conflict и production-эргономика. Диаграммы могут развиваться параллельно после стабилизации общей модели ссылок, не заменяя интеграцию.
 
-Pod-сессии дополнены: [13](13-POD-SESSIONS.md). Общая модель normal/init/native-sidecar/ephemeral, status icons и общий picker в логах/shell; toolbar логов адаптивен. Контекстное меню исправлено; terminal/log вкладки сохраняются при навигации. DATA-01C остаётся PARTIAL: exec проверяет UID перед upgrade, остальные named operations и атомарные preconditions ещё не завершены.
+Pod-сессии дополнены: [13](13-POD-SESSIONS.md). Общая модель normal/init/native-sidecar/ephemeral, status icons и общий picker в логах/shell; toolbar логов адаптивен. Контекстное меню исправлено; terminal/log вкладки сохраняются при навигации. DATA-01C остаётся PARTIAL: exec и desktop logs проверяют UID перед открытием транспорта, остальные named operations и атомарные preconditions ещё не завершены.
+
+Desktop log stream (OPS-01A) подключён: follow/tail/since/previous, остановка и явный reconnect, bounded UTF-8/history/IPC, общий container picker; [14](14-POD-LOG-STREAMS.md). OPS-01 остаётся PARTIAL: browser stream и native GUI/длительная QA ещё открыты.
