@@ -1,3 +1,4 @@
+import { shortcutLabel } from '../../core/shortcuts';
 import React, { useState, useCallback, useRef } from 'react';
 import {
   ChevronDown,
@@ -92,7 +93,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
     {
       id: 'new-tab',
       label: 'New Pods View',
-      kbd: '⌘T',
       onSelect: () => openResourceList('Pod'),
     },
     {
@@ -110,7 +110,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
     },
     {
       id: 'view-dock',
-      label: dockCollapsed ? 'Show Tool Window: Terminal & Services' : 'Hide Tool Window: Terminal & Services',
+      label: dockCollapsed ? 'Show Tool Window: Bottom Panel' : 'Hide Tool Window: Bottom Panel',
       kbd: '⌘J',
       onSelect: () => toggleDock(),
     },
@@ -246,14 +246,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         <button
           onClick={() => setPaletteOpen(true)}
           className="group flex items-center gap-2 h-[calc(26px*var(--ui-factor))] w-[calc(380px*var(--ui-factor))] max-w-full px-2.5 rounded-[calc(5px*var(--ui-factor))] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-all shadow-xs"
-          title="Search Everywhere (Ctrl/⌘ K)"
+          title={shortcutLabel("Search Everywhere (⌘K)")}
         >
           <Command size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />
           <span className="text-xs flex-1 text-left truncate">
             Search resources, YAML, actions…
           </span>
           <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-default)] rounded px-1.5 py-0.5 bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-2xs">
-            ⌘K
+            {shortcutLabel('⌘K')}
           </kbd>
         </button>
       </div>

@@ -41,6 +41,7 @@ export function SearchInput({ value, onChange, placeholder, className, refCb }: 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => e.key === 'Escape' && onChange('')}
+        aria-label={placeholder || "Search"}
         placeholder={placeholder}
         className={cx(
           'h-[calc(26px*var(--ui-factor))] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border outline-none transition-colors',
@@ -49,7 +50,7 @@ export function SearchInput({ value, onChange, placeholder, className, refCb }: 
         )}
       />
       {value && (
-        <button onClick={() => onChange('')} className="absolute right-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 rounded">
+        <button aria-label="Clear search" title="Clear search" onClick={() => onChange('')} className="absolute right-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 rounded">
           <X size="calc(12px * var(--ui-factor))" />
         </button>
       )}

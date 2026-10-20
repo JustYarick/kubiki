@@ -39,6 +39,7 @@ test('Secret editor automatically encodes Unicode and preserves binary, adds and
   await editor.getByLabel('Value 1', { exact: true }).fill('Привет 🌍\nsecond line');
   await editor.getByRole('button', { name: 'Remove key 3', exact: true }).click();
   await editor.getByRole('button', { name: 'Add key', exact: true }).click();
+  await expect(editor.getByLabel('Key 3', { exact: true })).toBeFocused();
   await editor.getByLabel('Key 3', { exact: true }).fill('new.key');
   await editor.getByLabel('Value 3', { exact: true }).fill('new value');
   await editor.getByRole('button', { name: 'Save data', exact: true }).click();
@@ -51,7 +52,7 @@ test('Secret editor automatically encodes Unicode and preserves binary, adds and
 });
 for (const mode of ['denied', 'conflict']) test(`Secret ${mode} retains draft, and invalid keys never reach transport`, async ({ page }) => {
   const { editor, writes } = await setup(page, mode);await editor.getByRole('button', { name: 'Edit data' }).click();
-  await editor.getByLabel('Key 1', { exact: true }).fill('bad/key');await editor.getByRole('button', { name: 'Save data' }).click();await expect(editor.getByRole('alert')).toContainText('Keys must');expect(writes).toHaveLength(0);
+  await editor.getByLabel('Key 1', { exact: true }).fill('bad/key');await editor.getByRole('button', { name: 'Save data' }).click();await expect(editor.getByRole('alert')).toContainText('Keys must');await expect(editor.getByLabel('Key 1', { exact: true })).toBeFocused();await expect(editor.getByLabel('Key 1', { exact: true })).toHaveAttribute('aria-invalid', 'true');expect(writes).toHaveLength(0);
   await editor.getByLabel('Key 1', { exact: true }).fill('password');await editor.getByLabel('Value 1', { exact: true }).fill('my draft');await editor.getByRole('button', { name: 'Save data' }).click();await expect(editor.getByRole('alert')).toContainText(mode === 'denied' ? 'forbidden' : 'changed');await expect(editor.getByLabel('Value 1', { exact: true })).toHaveValue('my draft');await editor.getByRole('button', { name: 'Cancel', exact: true }).click();await expect(editor.getByRole('textbox')).toHaveCount(0);
 });
 test('immutable Secret can be revealed but cannot be edited', async ({ page }) => {

@@ -1,3 +1,4 @@
+import { shortcutLabel } from '../../core/shortcuts';
 import React, { useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
@@ -14,7 +15,7 @@ interface BaseProps {
 }
 
 const variantCls: Record<Variant, string> = {
-  primary: 'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] active:bg-[#2e63d4] border border-transparent',
+  primary: 'bg-[var(--accent-fill)] text-white hover:bg-[var(--accent-fill-hover)] active:bg-[#2e63d4] border border-transparent',
   secondary:
     'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)]',
   ghost: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] border border-transparent',
@@ -96,7 +97,7 @@ export function Tooltip({
             side === 'bottom' ? 'top-[calc(100%+calc(6px*var(--ui-factor)))]' : 'bottom-[calc(100%+calc(6px*var(--ui-factor)))]'
           )}
         >
-          {label}
+          {typeof label === 'string' ? shortcutLabel(label) : label}
         </span>
       )}
     </span>

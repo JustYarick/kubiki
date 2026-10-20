@@ -1,6 +1,6 @@
 import { SecretDataEditor } from '../k8s/SecretDataEditor';
-import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
-import { ArrowLeft, ArrowRight, ArrowRightLeft, Boxes, Copy, FileText, GitBranch, Loader2, Terminal, X, ExternalLink } from 'lucide-react';
+import React, { Suspense, lazy, useId, useMemo, useState, useEffect } from 'react';
+import { Pin, ArrowLeft, ArrowRight, ArrowRightLeft, Boxes, Copy, FileText, GitBranch, Loader2, Terminal, X, ExternalLink } from 'lucide-react';
 import { useResourceStore } from '../../state/resource_store';
 import type { RightTab } from '../../state/ui_store';
 import { useUiStore } from '../../state/ui_store';
@@ -42,7 +42,9 @@ export const InspectorPanel: React.FC = () => {
 export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector = false }: {
   item?: ResourceItem; onClose?: () => void; onNavigate: (item: ResourceItem) => void; onBack?: () => void; inspector?: boolean;
 }) {
+  const tabPrefix = useId();
   const [pfOpen, setPfOpen] = useState(false);
+  const inspectorPinned = useUiStore((s) => s.inspectorPinned);
   const inspectorTab = useUiStore((s) => s.rightTab);
   const [localTab, setLocalTab] = useState<RightTab>('overview');
   const rightTab = inspector ? inspectorTab : localTab;
@@ -75,6 +77,7 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
         <Icon size="calc(16px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />
         <div className="min-w-0 flex-1"><div className="font-mono text-xs truncate select-text" title={item.name}>{item.name}</div><div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mt-0.5">{item.kind} · {item.namespace || 'Cluster scoped'}</div></div>
         <IconButton icon={Copy} size="sm" aria-label="Copy resource name" tooltip="Copy resource name" onClick={() => { void navigator.clipboard.writeText(item.name).catch(() => toast.error('Clipboard unavailable')); }} />
+        {inspector && <IconButton icon={Pin} size="sm" aria-label="Keep details on Overview" aria-pressed={inspectorPinned} active={inspectorPinned} tooltip="Keep details on Overview" onClick={() => useUiStore.setState({ inspectorPinned: !inspectorPinned })} />}
         <IconButton icon={ExternalLink} size="sm" aria-label="Open details in tab" tooltip="Open in editor tab" onClick={() => useWorkspaceStore.getState().openResourceDetail(item)} />
         {onClose && <IconButton icon={X} size="sm" onClick={onClose} aria-label="Close details" />}
       </div>
@@ -85,10 +88,15 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
         <Button size="sm" onClick={() => useWorkspaceStore.getState().openTopology(item.kind === 'Namespace' ? undefined : item, item.kind === 'Namespace' ? item.name : undefined)}><GitBranch size="calc(12px * var(--ui-factor))" /> Topology</Button>
       </div>
       <div role="tablist" aria-label="Resource details" className="flex px-2 overflow-x-auto">
-        {(['overview', 'related', 'events', 'yaml'] as const).map((tab) => <button key={tab} role="tab" aria-selected={rightTab === tab} onClick={() => setTab(tab)} className={cx('px-3 py-2 text-[length:calc(11px*var(--ui-factor))] border-b-2 whitespace-nowrap', rightTab === tab ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]')}>{tab === 'related' ? graph ? `Related (${related.length})` : 'Related' : tab === 'yaml' ? 'YAML' : tab[0].toUpperCase() + tab.slice(1)}</button>)}
+        {(['overview', 'related', 'events', 'yaml'] as const).map((tab) => <button key={tab} role="tab" id={`${tabPrefix}-${tab}`} aria-controls={`${tabPrefix}-panel`} tabIndex={rightTab === tab ? 0 : -1} aria-selected={rightTab === tab} onKeyDown={(event) => {
+          const tabs = ['overview', 'related', 'events', 'yaml'] as const;
+          const index = tabs.indexOf(tab);
+          const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[3] : event.key === 'ArrowRight' ? tabs[(index + 1) % 4] : event.key === 'ArrowLeft' ? tabs[(index + 3) % 4] : undefined;
+          if (next) { event.preventDefault(); setTab(next); document.getElementById(`${tabPrefix}-${next}`)?.focus(); }
+        }} onClick={() => setTab(tab)} className={cx('px-3 py-2 text-[length:calc(11px*var(--ui-factor))] border-b-2 whitespace-nowrap', rightTab === tab ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]')}>{tab === 'related' ? graph ? `Related (${related.length})` : 'Related' : tab === 'yaml' ? 'YAML' : tab[0].toUpperCase() + tab.slice(1)}</button>)}
       </div>
     </div>
-    <div role="tabpanel" className="flex-1 min-h-0 overflow-hidden">
+    <div role="tabpanel" id={`${tabPrefix}-panel`} aria-labelledby={`${tabPrefix}-${rightTab}`} className="flex-1 min-h-0 overflow-hidden">
       {rightTab === 'yaml' ? <Suspense fallback={<div className="p-4 text-[var(--text-muted)] flex gap-2"><Loader2 size="calc(13px * var(--ui-factor))" /> Loading editor…</div>}><YamlEditor key={item.uid} item={item} onApply={(yaml) => {
         if (!k8s.demo) { toast.error('Live manifest apply is not connected yet'); return; }
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...mapK8sResource(parse(yaml), item.kind), uid: item.uid });

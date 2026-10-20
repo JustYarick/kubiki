@@ -55,3 +55,27 @@ test('metrics polling pauses when hidden or navigating away and resumes without 
   await expect.poll(() => requests.length).toBe(3);await expect(telemetry.getByRole('button', { name: 'Refresh metrics' })).toBeEnabled();
   await page.getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();await page.clock.runFor(30000);expect(requests).toHaveLength(3);
 });
+
+test('history supports keyboard inspection, sampled data and pause/resume without synthetic points', async ({ page }) => {
+  const { telemetry, requests } = await fixture(page);
+  const chart = telemetry.getByRole('img', { name: 'CPU usage history', exact: true });
+  await expect(chart).toHaveAttribute('data-samples', '1');
+  await telemetry.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(chart).toHaveAttribute('data-samples', '2');
+  await chart.focus(); await page.keyboard.press('Home');
+  const cpu = telemetry.getByRole('region', { name: 'CPU usage', exact: true });
+  await expect(cpu.locator('output')).toContainText('1.6 cores');
+  await page.keyboard.press('End'); await expect(cpu.locator('output')).toContainText('1.7 cores');
+  await cpu.locator('summary').click(); await expect(cpu.getByRole('table')).toBeVisible();
+  await expect(cpu.getByRole('table').locator('tbody tr')).toHaveCount(2);
+  await telemetry.getByLabel('Fixed scale', { exact: true }).check();
+  await expect(cpu).toContainText('Fixed to budget');
+  await telemetry.getByRole('button', { name: 'Pause metrics', exact: true }).click();
+  const before = requests.length;
+  await page.clock.install(); await page.clock.fastForward(31000);
+  expect(requests).toHaveLength(before); await expect(chart).toHaveAttribute('data-samples', '2');
+  await expect(telemetry.getByRole('button', { name: 'Refresh metrics' })).toBeDisabled();
+  await telemetry.getByRole('button', { name: 'Resume metrics', exact: true }).click();
+  await expect.poll(() => requests.length).toBeGreaterThan(before);
+  await expect(chart).toHaveAttribute('data-samples', '3');
+});

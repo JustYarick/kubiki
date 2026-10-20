@@ -5,7 +5,7 @@ import { normalizeK8sError } from './errors';
 import { appendHistory, type HistoryPoint } from '../core/resources/telemetry';
 interface State { key: string; data?: OverviewMetrics; loading: boolean; error?: string; history: HistoryPoint[] }
 const cache = new Map<string, State>();
-export function useOverviewMetrics(context: string | null, namespace: string | null, point: (data: OverviewMetrics) => HistoryPoint | undefined) {
+export function useOverviewMetrics(context: string | null, namespace: string | null, point: (data: OverviewMetrics) => HistoryPoint | undefined, paused = false) {
   const key = JSON.stringify([context, namespace]);
   const [state, setState] = useState<State>({ key, loading: true, history: [] });
   const [attempt, setAttempt] = useState(0);
@@ -14,6 +14,7 @@ export function useOverviewMetrics(context: string | null, namespace: string | n
   useEffect(() => {
     let cancelled = false;let timer: ReturnType<typeof setTimeout>;let controller: AbortController | undefined;let busy = false;
     let current: State = { ...(cache.get(key) ?? { key, history: [] }), loading: true, error: undefined };
+    if (paused) { setState({ ...current, loading: false }); return; }
     setState(current);
     const publish = () => { if (cancelled) return;setState(current);cache.delete(key);cache.set(key, current);while (cache.size > 4) cache.delete(cache.keys().next().value!); };
     const poll = async () => {
@@ -32,7 +33,7 @@ export function useOverviewMetrics(context: string | null, namespace: string | n
     const visibility = () => { clearTimeout(timer);if (document.hidden) controller?.abort();else void poll(); };
     document.addEventListener('visibilitychange', visibility);void poll();
     return () => { cancelled = true;clearTimeout(timer);controller?.abort();document.removeEventListener('visibilitychange', visibility); };
-  }, [key, attempt, project]);
+  }, [key, attempt, project, paused]);
   const refresh = useCallback(() => setAttempt(value => value + 1), []);
   return { ...(state.key === key ? state : { key, loading: true, history: [] }), refresh };
 }

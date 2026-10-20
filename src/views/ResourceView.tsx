@@ -84,11 +84,12 @@ const columnsFor = (kind: ResourceKind): ColumnDef[] => {
   switch (kind) {
     case 'Pod':
       return [
-        ...BASE_COLUMNS,
-        { id: 'ready', label: 'Ready', align: 'right', mono: true, get: (i) => i.ready },
-        { id: 'containers', label: 'Containers', get: (i) => String(i.containers?.length ?? 0) },
-        { id: 'restarts', label: 'Restarts', align: 'right', mono: true, get: (i) => (i.restarts === undefined ? undefined : String(i.restarts)) },
+        BASE_COLUMNS[0],
         { id: 'status', label: 'Status', get: (i) => i.status },
+        { id: 'ready', label: 'Ready', align: 'right', mono: true, get: (i) => i.ready },
+        { id: 'restarts', label: 'Restarts', align: 'right', mono: true, get: (i) => (i.restarts === undefined ? undefined : String(i.restarts)) },
+        BASE_COLUMNS[1],
+        { id: 'containers', label: 'Containers', get: (i) => String(i.containers?.length ?? 0) },
         { id: 'ip', label: 'IP', mono: true, get: (i) => i.ip },
         { id: 'node', label: 'Node', mono: true, get: (i) => i.node },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
@@ -326,7 +327,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     let list = allItems;
     if (selectedNamespace !== 'all') list = list.filter((i) => !i.namespace || i.namespace === selectedNamespace);
     const q = searchQuery.trim().toLowerCase();
-    if (q) list = list.filter((i) => (i.name + ' ' + (i.namespace ?? '') + ' ' + (i.status ?? '')).toLowerCase().includes(q));
+    if (q) list = list.filter((i) => i.name.toLowerCase().includes(q) || (i.namespace ?? '').toLowerCase().includes(q));
     if (healthFilter === 'issues') list = list.filter((item) => (issueRanks.get(item.uid) ?? 0) > 0);
     if (statusFilter) list = list.filter((item) => item.status === statusFilter);
 
@@ -355,16 +356,29 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, healthFilter, statusFilter, sortId, sortDir]);
   const order = sortId === '__issues' ? 'issues' : sortId === '__created' ? sortDir === -1 ? 'newest' : 'oldest' : sortId === 'name' ? sortDir === 1 ? 'name-asc' : 'name-desc' : sortId ? 'column' : 'default';
 
+  const resizeColumnWithKeyboard = (event: React.KeyboardEvent, id: string) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const width = event.key === 'Home' ? DEFAULT_COL_SIZE[id] ?? 120
+      : widthFor(id) + (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 40 : 10);
+    setColumnWidth(effectiveKind, id, Math.max(id === '__index' ? 28 : 48, Math.min(1200, width)));
+  };
+
   /* ------------------- Keyboard Navigation ------------------- */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!tableRef.current?.contains(e.target as Node)) return;
       if ((e.target as HTMLElement).closest('[role="dialog"], [role="menu"], [contenteditable="true"]')) return;
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || (e.target as HTMLElement).closest('[role="separator"]')) return;
       if (rows.list.length === 0) return;
 
-      if (e.key === 'ArrowDown') {
+      if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+        e.preventDefault();
+        const item = rows.list[focusedIndex];
+        const rect = tableRef.current?.querySelectorAll('tbody tr')[focusedIndex]?.getBoundingClientRect();
+        if (item && rect) setMenu({ item, x: rect.left + 60, y: rect.top + rect.height / 2 });
+      } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         setFocusedIndex((prev) => Math.min(rows.list.length - 1, prev + 1));
       } else if (e.key === 'ArrowUp') {
@@ -753,7 +767,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                       <MinusSquare size="calc(12px * var(--ui-factor))" className="text-[var(--accent)]" />
                     )}
                   </div>
-                  <span role="separator" aria-label="Resize row numbers column" aria-orientation="vertical" title="Drag to resize · double-click to reset"
+                  <span role="separator" aria-label="Resize row numbers column" tabIndex={0} aria-valuenow={widthFor('__index')} onKeyDown={(e) => resizeColumnWithKeyboard(e, '__index')} aria-orientation="vertical" title="Drag or use arrow keys to resize · Home to reset"
                     onPointerDown={(e) => startColResize(e, '__index')}
                     onDoubleClick={(e) => { e.stopPropagation(); setColumnWidth(effectiveKind, '__index', DEFAULT_COL_SIZE.__index); }}
                     onClick={(e) => e.stopPropagation()}
@@ -787,8 +801,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                       </span>
                       {/* Drag handle for resizing column */}
                       <span
-                        role="separator" aria-label={`Resize ${c.label} column`} aria-orientation="vertical"
-                        title="Drag to resize · double-click to reset"
+                        role="separator" aria-label={`Resize ${c.label} column`} tabIndex={0} aria-valuenow={widthFor(c.id)} onKeyDown={(e) => resizeColumnWithKeyboard(e, c.id)} aria-orientation="vertical"
+                        title="Drag or use arrow keys to resize · Home to reset"
                         onPointerDown={(e) => startColResize(e, c.id)}
                         onDoubleClick={(e) => {
                           e.stopPropagation();

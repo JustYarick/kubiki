@@ -18,6 +18,7 @@ interface UIState {
   sidebarCollapsed: boolean;
   inspectorWidth: number;
   inspectorCollapsed: boolean;
+  inspectorPinned: boolean;
   /* sidebar tree groups open/closed */
   sidebarGroups: Record<string, boolean>;
   /* visible columns per kind — hidden column ids */
@@ -69,6 +70,7 @@ export const useUiStore = create<UIState>()(
       inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
       /* details pane opens on demand (click a row) — not at launch */
       inspectorCollapsed: true,
+      inspectorPinned: false,
       /* dock stays hidden on launch — it opens on demand (⌘J / row actions) */
       sidebarGroups: {},
       hiddenColumns: {},
@@ -112,6 +114,7 @@ export const useUiStore = create<UIState>()(
           inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
           sidebarCollapsed: false,
           inspectorCollapsed: true,
+          inspectorPinned: false,
         });
       },
     }),

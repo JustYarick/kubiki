@@ -36,7 +36,7 @@ export default function App() {
   }, []);
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth,
-    inspectorWidth, inspectorCollapsed, setInspectorWidth,
+    inspectorWidth, inspectorCollapsed, inspectorPinned, setInspectorWidth,
     uiScale,
   } = useUiStore();
 
@@ -173,10 +173,22 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleDock]);
 
+  const activeTabType = useWorkspaceStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.type);
+  const showInspector = !inspectorCollapsed;
+  useEffect(() => {
+    if (activeTabType === 'overview' && !inspectorPinned) useUiStore.setState({ inspectorCollapsed: true });
+  }, [activeTabType, inspectorPinned]);
   const factor = uiFactor(uiScale);
   const logicalViewportWidth = viewportWidth / factor;
-  const showSidebar = !sidebarCollapsed && (inspectorCollapsed || logicalViewportWidth >= 1200);
-  const detailWidth = Math.min(inspectorWidth, Math.max(280, logicalViewportWidth - 40 - 280 - (showSidebar ? sidebarWidth : 0)));
+  const showSidebar = !sidebarCollapsed;
+  const compact = logicalViewportWidth < 760;
+  const overlaySidebar = compact && showInspector;
+  useEffect(() => {
+    if (compact && showInspector) useUiStore.setState({ sidebarCollapsed: true });
+  }, [compact, showInspector]);
+  const panelSpace = logicalViewportWidth - 48 - (showSidebar && !overlaySidebar ? sidebarWidth : 0);
+  const overlayInspector = panelSpace < 860;
+  const detailWidth = overlayInspector ? Math.min(inspectorWidth, Math.max(240, logicalViewportWidth - 56)) : Math.min(inspectorWidth, panelSpace - 520);
 
   const onSelectContext = (name: string) => {
     connectToContext(name);
@@ -193,16 +205,16 @@ export default function App() {
       }} />
 
       {/* Main IDE Frame: Left Rails + Tool Windows + Workspaces + Right Tool Windows */}
-      <div className="flex-1 flex min-h-0 min-w-0">
+      <div className="flex-1 flex min-h-0 min-w-0 relative">
         <ActivityBar />
 
         {/* Left Tool Window (Cluster Explorer) */}
         {showSidebar && (
           <>
-            <div style={{ width: uiPixels(sidebarWidth) }} className="shrink-0 min-h-0">
+            <div data-testid="explorer-panel" style={{ width: uiPixels(Math.min(sidebarWidth, logicalViewportWidth - 56)) }} className={`shrink-0 min-h-0 ${overlaySidebar ? "absolute left-[calc(40px*var(--ui-factor))] top-0 bottom-0 z-30 shadow-xl border-r border-[var(--border-default)]" : ""}`}>
               <Sidebar />
             </div>
-            <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d / factor)} />
+            {!overlaySidebar && <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d / factor)} />}
           </>
         )}
 
@@ -215,10 +227,10 @@ export default function App() {
         </main>
 
         {/* Right Tool Window (Inspector / Details) */}
-        {!inspectorCollapsed && (
+        {showInspector && (
           <>
-            <Resizer orientation="vertical" onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />
-            <div style={{ width: uiPixels(detailWidth) }} className="shrink-0 border-l border-[var(--border-default)] min-h-0">
+            {!overlayInspector && <Resizer orientation="vertical" onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />}
+            <div data-testid="inspector-panel" data-layout={overlayInspector ? "overlay" : "docked"} style={{ width: uiPixels(detailWidth), top: overlayInspector ? uiPixels(activeTabType === 'resource-list' ? 134 : 100) : undefined, bottom: overlayInspector && !dockCollapsed ? uiPixels(dockHeight + 4) : undefined }} className={`shrink-0 border-l border-[var(--border-default)] min-h-0 ${overlayInspector ? "absolute right-0 top-0 bottom-0 z-40 shadow-xl" : ""}`}>
               <InspectorPanel />
             </div>
           </>

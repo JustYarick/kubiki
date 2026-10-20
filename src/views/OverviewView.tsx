@@ -28,7 +28,7 @@ export function OverviewView() {
     <ResourceTelemetry key={`${currentContext}/${selectedNamespace}`} context={currentContext} namespace={selectedNamespace === 'all' ? null : selectedNamespace} pods={telemetryPods} nodes={telemetryNodes} />
     <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-3">
       <Metric label="Pods" value={value(pods?.count)} detail={pods?.count == null ? 'Awaiting Pod data' : `${summary.phases.Running} running · ${summary.phases.Pending} pending`} onClick={() => open('Pod')} />
-      <Metric label="Workloads" value={value(summary.workloads)} detail="Deployments, StatefulSets, DaemonSets, Jobs, CronJobs" />
+      <Metric label="Workload controllers" value={value(summary.workloads)} detail="Deployments, StatefulSets, DaemonSets, Jobs, CronJobs" />
       <Metric label="Services" value={value(summary.row('Service')?.count)} detail="Services in this scope" onClick={() => open('Service')} />
       <Metric label="Container restarts" value={value(summary.restarts)} detail="Cumulative across loaded Pods" onClick={() => open('Pod')} />
       {selectedNamespace === 'all' && <><Metric label="Nodes" value={value(summary.row('Node')?.count)} detail={summary.row('Node')?.count == null ? 'Awaiting Node data' : `${summary.readyNodes} ready`} onClick={() => open('Node')} /><Metric label="Namespaces" value={value(summary.row('Namespace')?.count)} detail="Loaded namespaces" onClick={() => open('Namespace')} /></>}

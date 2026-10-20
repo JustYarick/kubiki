@@ -88,7 +88,7 @@ export const SIDEBAR_TREE: TreeCategory[] = [
     groups: [
       {
         id: 'workloads-core',
-        label: 'Workloads',
+        label: 'Pods & controllers',
         kinds: [
           k('Pod', 'Pods', 'text-[var(--status-ok)]'),
           k('Deployment', 'Deployments', 'text-[var(--status-info)]'),

@@ -55,10 +55,10 @@ export const ActivityBar: React.FC = () => {
       <Tooltip label="Cluster topology" side="bottom" delay={300}><button className={cxRail(false)} aria-label="Cluster topology" onClick={() => useWorkspaceStore.getState().openTopology()}><GitBranch size="calc(16px * var(--ui-factor))" /></button></Tooltip>
       {/* Bottom tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full mt-auto">
-        <Tooltip label={dockCollapsed ? 'Terminal & Services (⌘J)' : 'Hide Terminal & Services (⌘J)'} side="top" delay={300}>
+        <Tooltip label={dockCollapsed ? 'Bottom Panel (⌘J)' : 'Hide Bottom Panel (⌘J)'} side="top" delay={300}>
           <button
             onClick={toggleDock}
-            aria-label="Toggle Terminal & Services"
+            aria-label="Toggle Bottom Panel"
             className={cxRail(!dockCollapsed)}
           >
             <Terminal size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />

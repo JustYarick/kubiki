@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { secretRows, encodeSecretRows, encodeText } from '../../src/core/resources/secret_data';
+import { secretRows, validateSecretRows, encodeSecretRows, encodeText } from '../../src/core/resources/secret_data';
 describe('Secret data codecs', () => {
   it('round trips Unicode, BOM, multiline, empty and binary without replacing bytes', () => {
     const data = { text: encodeText('\uFEFFПривет 🌍\nline\r\n'), empty: '', binary: '/wAB' };
@@ -17,3 +17,15 @@ describe('Secret data codecs', () => {
     expect(encodeSecretRows([])).toEqual({});
   });
 });
+
+ it('locates errors by stable row ID without including Secret values in errors', () => {
+   const errors = validateSecretRows([
+     { id: 4, key: 'bad/key', value: 'private-content', mode: 'text' },
+     { id: 9, key: 'ok', value: '', mode: 'text' },
+     { id: 12, key: 'ok', value: 'private-content', mode: 'base64' },
+   ]);
+   expect(errors.get(4)?.key).toContain('Keys must');
+   expect(errors.get(9)).toBeUndefined();
+   expect(errors.get(12)).toEqual({ key: 'Secret keys must be unique', value: 'Invalid base64 value' });
+   expect(JSON.stringify([...errors])).not.toContain('private-content');
+ });

@@ -1,3 +1,4 @@
+import { shortcutLabel } from '../../core/shortcuts';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
@@ -98,7 +99,7 @@ const ExpandedDock: React.FC = () => {
         <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-center justify-between px-3 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] select-none">
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
             <TerminalIcon size="calc(13px * var(--ui-factor))" />
-            <span className="font-semibold uppercase tracking-wider text-[length:calc(10px*var(--ui-factor))]">Bottom Drawer (No Open Sessions)</span>
+            <span className="font-semibold uppercase tracking-wider text-[length:calc(10px*var(--ui-factor))]">Bottom panel · no open sessions</span>
           </div>
           <div className="flex items-center gap-1">
             <IconButton
@@ -1180,7 +1181,7 @@ function EventsPane() {
 export function BottomDock() {
   const { dockCollapsed, toggleDock, sessions } = useDockStore();
   return <div className="shrink-0 min-h-0">
-    {dockCollapsed && <button onClick={toggleDock} className="w-full h-7 flex items-center gap-2 px-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" aria-label="Expand bottom panel"><TerminalIcon size="calc(12px * var(--ui-factor))" /><span>Terminal & services</span><span className="text-[var(--text-muted)]">{sessions.length} open tabs</span><span className="ml-auto text-[length:calc(10px*var(--ui-factor))]">Ctrl/⌘ J</span></button>}
+    {dockCollapsed && <button onClick={toggleDock} className="w-full h-7 flex items-center gap-2 px-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" aria-label="Expand bottom panel"><TerminalIcon size="calc(12px * var(--ui-factor))" /><span>Bottom panel</span><span className="text-[var(--text-muted)]">{sessions.length} open tabs</span><span className="ml-auto text-[length:calc(10px*var(--ui-factor))]">{shortcutLabel('⌘J')}</span></button>}
     <div hidden={dockCollapsed}><ExpandedDock /></div>
   </div>;
 }

@@ -45,6 +45,14 @@ test('resource search, health, status and chronological order compose with one g
   expect(Math.abs(healthBounds.y - searchBounds.y)).toBeLessThan(3);
   expect(searchBounds.width).toBeGreaterThan(300);
   expect(searchBounds.x - toolbarBounds.x).toBeLessThan(20);
+  await search.fill('  BACKEND  ');
+  await expect(table.locator('tbody tr')).toHaveCount(5);
+  for (const status of ['Running', 'Pending', 'Succeeded']) {
+    await search.fill(status);
+    await expect(table.locator('tbody tr')).toHaveCount(0);
+  }
+  await search.fill('  A-ERROR  ');
+  await expect.poll(names).toEqual(['a-error']);
   await search.fill('error');
   await expect.poll(names).toEqual(['a-error']);
   await expect(table.locator('tbody tr button')).toHaveCount(0);

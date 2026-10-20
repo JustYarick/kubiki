@@ -46,7 +46,7 @@ export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => voi
       {mounted.map((tab) => {
         const split = tab.id === splitTab?.id;
         const visible = tab.id === activeTab?.id || split;
-        return <div key={tab.id} hidden={!visible} className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
+        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
           {split && <div className="h-6 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-muted)]"><span className="truncate">{tab.title}</span><span>Split View</span></div>}
           <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
         </div>;

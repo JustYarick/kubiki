@@ -108,14 +108,24 @@
 
 ## Дизайн-аудит UI/UX Pro Max — 2026-10-20
 
-Подробности и воспроизведения: [20](20-DESIGN-AUDIT.md). Ниже — новые задачи, аудит не означает внесённые исправления.
+Подробности и воспроизведения: [20](20-DESIGN-AUDIT.md). Реализация первого прохода и остаток работ отражены ниже; исходные измерения в аудите относятся к состоянию до исправлений.
 
 | ID | Приоритет | Задача | Статус | Приёмка |
 |---|---|---|---|---|
-| DS-01 | P1 | Контраст и desktop typography | TODO | Readable secondary отделён от decorative/disabled; contrast значимого текста проверен на actual surfaces; оси/budget labels читаются при 100/110/150/200% |
-| DS-02 | P1 | Adaptive panels и workspace modes | TODO | Toggle Explorer работает при compact viewport; table/details сохраняют рабочую ширину; Overview не сжат неприкреплённым старым inspector; dock не завершает сессии при скрытии |
-| DS-03 | P1 | Tabs/menu/modal/chart keyboard accessibility | TODO | Tab roles/roving keys, modal initial/trap/restore focus, submenu keys, named clear controls, keyboard column resize/context actions и chart data fallback |
-| DS-04 | P2 | Приоритет колонок и спокойный row focus | TODO | Name/Status/Ready/Restarts видимы в подходящем preset, optional columns управляемы; различимы hover/selected/focused; inline actions в строках не возвращаются |
-| DS-05 | P2 | Overview information hierarchy / chart inspection | TODO | Health/load/consumers приоритетны; явный gauge denominator, controllable scale/reference lines/pause/data access; выбранные consumer details доступны сразу |
-| DS-06 | P2 | UI tokens / glossary / platform shortcuts | TODO | Общие chart/spacing/motion tokens; Workloads counts семантически согласованы; одинаковые имена панелей и OS-specific shortcut labels |
-| DS-07 | P2 | Secret row validation и feedback | TODO | Inline errors, focus нового key/первой ошибки, понятный dirty/saving/conflict state; сохранены base64 integrity, draft и UID/resourceVersion protections |
+| DS-01 | P1 | Контраст и desktop typography | DONE | Контраст metadata/links/primary fill проверен на 4 surfaces; подписи графиков масштабируются. Browser acceptance 100/110/150/200% |
+| DS-02 | P1 | Adaptive panels и workspace modes | PARTIAL | Compact overlay inspector, рабочий toggle Explorer, резерв ширины центральной области; Overview auto-close/pin/manual reopen. Keepalive сессий сохранён. Низкие окна и общая ширина dock — DS-08 |
+| DS-03 | P1 | Tabs/menu/modal/chart keyboard accessibility | DONE | Workspace/details tabs + panels/roving keys; modal initial/trap/return/inert; action-list/submenu keys; named clear; keyboard column resize/Shift+F10; chart keyboard/data table. Native AT QA — DS-12 |
+| DS-04 | P2 | Приоритет колонок и спокойный row focus | PARTIAL | Pod Name/Status/Ready/Restarts перенесены вперёд; общий row focus, preferences и отсутствие inline actions сохранены. Остальные kinds/presets — DS-09 |
+| DS-05 | P2 | Overview information hierarchy / chart inspection | PARTIAL | Pause/resume, auto/fixed-to-budget scale, keyboard/data table, min/avg/max/last; consumer details под строкой. Reference lines/health hierarchy — DS-10 |
+| DS-06 | P2 | UI tokens / glossary / platform shortcuts | PARTIAL | Chart/contrast tokens, Workload controllers vs Workloads, Pods & controllers subgroup, OS-specific shortcuts. Общие spacing/radius/motion — DS-11 |
+| DS-07 | P2 | Secret row validation и feedback | DONE | Inline key/base64 errors, focus Add key/первой ошибки, draft/saving/saved/conflict feedback; codec/UID/RV protections сохранены |
+
+Следующий проход (без объявления всего аудита завершённым):
+
+| ID | Приоритет | Задача | Статус | Приёмка |
+|---|---|---|---|---|
+| DS-08 | P2 | Dock и низкие окна | TODO | Динамический резерв высоты основного workspace/inspector при открытых логах; оценить dock на общую ширину, сохранить transport keepalive |
+| DS-09 | P2 | Приоритеты колонок по kinds | TODO | Presets для workloads/network/storage/CRD; Namespace при scoped browsing без нарушения явной настройки столбцов; оценить sticky Name |
+| DS-10 | P2 | Overview hierarchy/reference lines | TODO | Health/scope/load выше inventory, request/limit reference lines и понятная легенда; фиксированная шкала без неверного смысла процентов |
+| DS-11 | P2 | Остальные visual tokens | TODO | Общие spacing/radius/motion tokens; убрать повторяющиеся локальные значения без изменения native graphics settings |
+| DS-12 | P2 | Native accessibility/visual acceptance | TODO | WebKit desktop, клавиатура и screen reader, Windows/macOS/Linux shortcuts, низкие окна/200%, ручная проверка графиков без изменения отложенных native FPS flags |

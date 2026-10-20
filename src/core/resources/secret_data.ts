@@ -18,12 +18,26 @@ export function secretRows(data: Record<string, string>): SecretRow[] {
     catch { return { id, key, value, mode: 'base64' }; }
   });
 }
+export interface SecretRowErrors { key?: string; value?: string }
+export function validateSecretRows(rows: SecretRow[]): Map<number, SecretRowErrors> {
+  const issues = new Map<number, SecretRowErrors>();
+  const keys = new Set<string>();
+  for (const row of rows) {
+    const error: SecretRowErrors = {};
+    if (!/^[A-Za-z0-9._-]+$/.test(row.key) || row.key.length > 253) error.key = 'Keys must contain 1–253 letters, numbers, dots, underscores or hyphens';
+    else if (keys.has(row.key)) error.key = 'Secret keys must be unique';
+    keys.add(row.key);
+    if (row.mode === 'base64') { try { decodeBase64(row.value); } catch { error.value = 'Invalid base64 value'; } }
+    if (error.key || error.value) issues.set(row.id, error);
+  }
+  return issues;
+}
 export function encodeSecretRows(rows: SecretRow[]): Record<string, string> {
+  const first = validateSecretRows(rows).values().next().value;
+  if (first) throw new Error(first.key ?? first.value);
   const data: Record<string, string> = Object.create(null);
   let size = 0;
   for (const row of rows) {
-    if (!/^[A-Za-z0-9._-]+$/.test(row.key) || row.key.length > 253) throw new Error('Keys must contain 1–253 letters, numbers, dots, underscores or hyphens');
-    if (Object.prototype.hasOwnProperty.call(data, row.key)) throw new Error('Secret keys must be unique');
     const encoded = row.mode === 'text' ? encodeText(row.value) : row.value;
     size += decodeBase64(encoded).length;
     if (size > 1024 * 1024) throw new Error('Secret data exceeds 1 MiB');

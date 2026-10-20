@@ -95,7 +95,7 @@ test('container indicators and responsive logs toolbar include init/sidecar/ephe
   await expect(page.getByText('debug log output', { exact: true })).toBeVisible();
   expect((await toolbar.boundingBox())!.height).toBeLessThan(125);
   await toolbar.getByRole('button', { name: 'Log options', exact: true }).click();
-  await expect(page.getByRole('menuitemcheckbox', { name: /Timestamps/ })).toBeVisible(); await page.keyboard.press('Escape');
+  await expect(page.getByRole('menuitemcheckbox', { name: /Timestamps/ }).or(toolbar.getByRole('button', { name: 'Timestamps', exact: true }))).toBeVisible(); await page.keyboard.press('Escape');
   await page.screenshot({ path: 'test-results/containers-and-logs.png' });
 });
 

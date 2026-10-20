@@ -1,3 +1,4 @@
+import { shortcutLabel } from '../../core/shortcuts';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight } from 'lucide-react';
@@ -50,7 +51,7 @@ export function Popover({ trigger, children, align = 'start', width, className }
       if (panelRef.current?.contains(e.target as Node) || anchorRef.current?.contains(e.target as Node)) return;
       close();
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) { close(); anchorRef.current?.focus(); } };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -77,6 +78,7 @@ export function Popover({ trigger, children, align = 'start', width, className }
             setOpen(!wasOpen);
           }
         },
+        'aria-expanded': open,
         ref: (node: HTMLElement | null) => {
           anchorRef.current = node;
         },
@@ -117,69 +119,58 @@ export interface MenuItem {
   onSelect?: () => void;
 }
 
-export function MenuList({ items, onSelect }: { items: MenuItem[]; onSelect: (item: MenuItem) => void }) {
-  const [submenu, setSubmenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  const subRef = useRef(items.find((i) => i.id === submenu?.id)?.items ?? null);
+export function MenuList({ items, onSelect, autoFocus = false, onBack }: { items: MenuItem[]; onSelect: (item: MenuItem) => void; autoFocus?: boolean; onBack?: () => void }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const parentRef = useRef<HTMLButtonElement | null>(null);
+  const submenuRef = useRef<HTMLDivElement>(null);
+  const [submenu, setSubmenu] = useState<{ id: string; x: number; y: number; keyboard: boolean } | null>(null);
+  const subItems = items.find((item) => item.id === submenu?.id)?.items;
   useEffect(() => {
-    subRef.current = items.find((i) => i.id === submenu?.id)?.items ?? null;
-  }, [submenu, items]);
-  const [subPos, setSubPos] = useState({ x: 0, y: 0 });
-
+    if (autoFocus) rootRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, [autoFocus]);
+  useLayoutEffect(() => {
+    if (!submenu || !submenuRef.current) return;
+    const rect = submenuRef.current.getBoundingClientRect();
+    const x = Math.max(8, Math.min(submenu.x, window.innerWidth - rect.width - 8));
+    const y = Math.max(8, Math.min(submenu.y, window.innerHeight - rect.height - 8));
+    if (x !== submenu.x || y !== submenu.y) setSubmenu({ ...submenu, x, y });
+  }, [submenu]);
+  const openSubmenu = (button: HTMLButtonElement, item: MenuItem, keyboard: boolean) => {
+    if (!item.items || item.disabled) return;
+    const rect = button.getBoundingClientRect();
+    parentRef.current = button;
+    setSubmenu({ id: item.id, x: rect.right - 4, y: rect.top - 4, keyboard });
+  };
+  const back = () => { setSubmenu(null); parentRef.current?.focus(); };
   return (
-    <div>
-      {items.map((item) =>
-        item.separator ? (
-          <div key={item.id} className="my-1 h-px bg-[var(--border-subtle)]" />
-        ) : (
-          <button
-            key={item.id}
-            disabled={item.disabled}
-            aria-pressed={item.checked}
-            onMouseEnter={(e) => {
-              if (!item.items) return setSubmenu(null);
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              setSubPos({ x: r.right - 4, y: r.top - 4 });
-              setSubmenu({ id: item.id, x: r.right - 4, y: r.top - 4 });
-            }}
-            onMouseLeave={() => item.items && setSubmenu(null)}
-            onClick={() => {
-              if (item.items || item.disabled) return;
-              onSelect(item);
-            }}
-            className={cx(
-              'flex w-full items-center gap-2 px-2.5 h-[calc(24px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] transition-colors text-left',
-              item.disabled
-                ? 'text-[var(--text-disabled)] cursor-not-allowed'
-                : item.danger
-                  ? 'text-[var(--status-danger)] hover:bg-[var(--status-danger)]/12'
-                  : 'text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-            )}
-          >
-            {item.icon && <item.icon size="calc(14px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-muted)] shrink-0" />}
-            <span className="flex-1 truncate">{item.label}</span>
-            {item.checked === true && <Check size="calc(13px * var(--ui-factor))" className="text-[var(--accent)]" />}
-            {item.kbd && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{item.kbd}</span>}
-            {item.items && <ChevronRight size="calc(12px * var(--ui-factor))" className="text-[var(--text-muted)]" />}
-          </button>
-        )
-      )}
-      {submenu &&
-        subRef.current &&
-        createPortal(
-          <div
-            style={{ top: Math.min(subPos.y, window.innerHeight - 260), left: Math.min(subPos.x, window.innerWidth - 200) }}
-            className="fixed z-[71] min-w-[calc(170px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1"
-          >
-            <MenuList
-              items={subRef.current}
-              onSelect={(it) => {
-                setSubmenu(null);
-                onSelect(it);
-              }}
-            />
-          </div>,
-          document.body
-        )}
+    <div ref={rootRef} role="group" aria-label="Actions" onKeyDown={(event) => {
+      const buttons = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>(':scope > button:not(:disabled)') ?? []);
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? buttons[0] : event.key === 'End' ? buttons[buttons.length - 1]
+        : event.key === 'ArrowDown' ? buttons[(index + 1) % buttons.length]
+        : event.key === 'ArrowUp' ? buttons[(index - 1 + buttons.length) % buttons.length] : undefined;
+      if (next) { event.preventDefault(); event.stopPropagation(); next.focus(); }
+      if (onBack && (event.key === 'ArrowLeft' || event.key === 'Escape')) { event.preventDefault(); event.stopPropagation(); onBack(); }
+    }}>
+      {items.map((item) => item.separator ? <div key={item.id} className="my-1 h-px bg-[var(--border-subtle)]" /> : (
+        <button key={item.id} disabled={item.disabled} aria-pressed={item.checked}
+          aria-expanded={item.items ? submenu?.id === item.id : undefined} aria-haspopup={item.items ? 'true' : undefined}
+          onMouseEnter={(event) => { if (item.items) openSubmenu(event.currentTarget, item, false); else setSubmenu(null); }}
+          onKeyDown={(event) => { if (event.key === 'ArrowRight' && item.items) { event.preventDefault(); event.stopPropagation(); openSubmenu(event.currentTarget, item, true); } }}
+          onClick={(event) => { if (item.items) { openSubmenu(event.currentTarget, item, true); return; } if (!item.disabled) onSelect(item); }}
+          className={cx('flex w-full items-center gap-2 px-2.5 h-[calc(24px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] transition-colors text-left', item.disabled ? 'text-[var(--text-disabled)] cursor-not-allowed' : item.danger ? 'text-[var(--status-danger)] hover:bg-[var(--status-danger)]/12' : 'text-[var(--text-primary)] hover:bg-[var(--bg-hover)]')}>
+          {item.icon && <item.icon size="calc(14px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-muted)] shrink-0" />}
+          <span className="flex-1 truncate">{item.label}</span>
+          {item.checked === true && <Check size="calc(13px * var(--ui-factor))" className="text-[var(--accent)]" />}
+          {item.kbd && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{shortcutLabel(item.kbd)}</span>}
+          {item.items && <ChevronRight size="calc(12px * var(--ui-factor))" className="text-[var(--text-muted)]" />}
+        </button>
+      ))}
+      {submenu && subItems && createPortal(
+        <div ref={submenuRef} data-menu-layer style={{ top: submenu.y, left: submenu.x }}
+          className="fixed z-[86] min-w-[calc(170px*var(--ui-factor))] max-h-[70vh] overflow-auto rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1">
+          <MenuList items={subItems} autoFocus={submenu.keyboard} onBack={back} onSelect={(item) => { setSubmenu(null); onSelect(item); }} />
+        </div>, document.body)}
     </div>
   );
 }
@@ -205,7 +196,7 @@ export function FixedMenu({
       left: Math.min(rect.x, window.innerWidth - w - 8),
     });
     const onDown = (e: MouseEvent) => {
-      if (panelRef.current?.contains(e.target as Node)) return;
+      if (panelRef.current?.contains(e.target as Node) || (e.target instanceof Element && e.target.closest('[data-menu-layer]'))) return;
       onClose();
     };
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -226,7 +217,7 @@ export function FixedMenu({
       style={{ top: pos.top, left: pos.left }}
       className="fixed z-[85] min-w-[calc(200px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1 kub-pop kubiki-scrollbar max-h-[70vh] overflow-y-auto"
     >
-      <MenuList items={items} onSelect={(item) => { onClose(); item.onSelect?.(); }} />
+      <MenuList items={items} autoFocus onSelect={(item) => { onClose(); item.onSelect?.(); }} />
     </div>,
     document.body
   );

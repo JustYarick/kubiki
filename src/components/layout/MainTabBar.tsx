@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { shortcutLabel } from '../../core/shortcuts';
+import React, { useRef, useState } from 'react';
 import {
   X,
   Pin,
@@ -33,6 +34,7 @@ export const MainTabBar: React.FC = () => {
     openResourceList,
   } = useWorkspaceStore();
 
+  const tabRefs = useRef(new Map<string, HTMLDivElement>());
   const setActiveKind = useResourceStore((s) => s.setActiveKind);
 
   const [contextMenu, setContextMenu] = useState<{
@@ -130,7 +132,7 @@ export const MainTabBar: React.FC = () => {
   return (
     <div className="h-[calc(34px*var(--ui-factor))] bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-stretch select-none shrink-0 overflow-hidden relative">
       {/* Scrollable Tabs */}
-      <div className="flex-1 flex items-stretch overflow-x-auto overflow-y-hidden kubiki-scrollbar min-w-0">
+      <div role="tablist" aria-label="Workspace tabs" className="flex-1 flex items-stretch overflow-x-auto overflow-y-hidden kubiki-scrollbar min-w-0">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           const isSplitActive = tab.id === splitTabId;
@@ -138,6 +140,20 @@ export const MainTabBar: React.FC = () => {
           return (
             <div
               key={tab.id}
+              ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id); }}
+              role="tab" aria-selected={isActive} tabIndex={isActive ? 0 : -1}
+              id={`workspace-tab-${encodeURIComponent(tab.id)}`}
+              aria-controls={`workspace-panel-${encodeURIComponent(tab.id)}`}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                const index = tabs.findIndex((candidate) => candidate.id === tab.id);
+                const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1]
+                  : event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length]
+                  : event.key === 'ArrowLeft' ? tabs[(index - 1 + tabs.length) % tabs.length] : undefined;
+                if (next) { event.preventDefault(); handleTabClick(next); tabRefs.current.get(next.id)?.focus(); }
+                else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handleTabClick(tab); }
+                else if (event.key === 'Delete' && !tab.pinned) { event.preventDefault(); const adjacent = tabs[index + 1] ?? tabs[index - 1]; closeTab(tab.id); if (adjacent) tabRefs.current.get(adjacent.id)?.focus(); }
+              }}
               onClick={() => handleTabClick(tab)}
               onContextMenu={(e) => handleContextMenu(e, tab)}
               onAuxClick={(e) => handleAuxClick(e, tab)}
@@ -181,10 +197,10 @@ export const MainTabBar: React.FC = () => {
                     closeTab(tab.id);
                   }}
                   className={cx(
-                    'p-0.5 rounded hover:bg-[var(--bg-elevated)] hover:text-white transition-opacity',
+                    'p-0.5 rounded focus-visible:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-white transition-opacity',
                     isActive ? 'opacity-70 group-hover:opacity-100' : 'opacity-0 group-hover:opacity-70'
                   )}
-                  title="Close Tab (⌘W)"
+                  title={shortcutLabel("Close Tab (⌘W)")}
                   aria-label="Close tab"
                 >
                   <X size="calc(12px * var(--ui-factor))" />

@@ -103,3 +103,17 @@ Secret editor уже сохраняет draft при ошибке и огран�
 4. DS-06/07: tokens/glossary/platform labels и post-row form validation.
 
 Критерии результата: на 900/1280/1440/1920px сохраняется понятная рабочая область; toggle всегда управляет видимой панелью; Overview не сжимается чужими неприкреплёнными details; важные подписи читаются; tabs/menu/modal/chart доступны без мыши; сохранены terminal keepalive, user column preferences и недеструктивные действия через ПКМ. Реальный native FPS и большие datasets проверяются отдельно, а не оцениваются по Chromium screenshots.
+
+## Выполнение рекомендаций — 2026-10-20
+
+Первый implementation pass: contrast и масштабируемые подписи, adaptive inspector/Explorer, pin деталей на Overview, keyboard navigation/focus, таблица и Secret validation внедрены. Исторические измерения выше относятся к состоянию **до исправлений**.
+
+- `--text-muted`: #9da0a8, contrast 6.30 / 5.72 / 5.28 / 4.78 на canvas/secondary/sidebar/surface. `--accent-text`: #82aaff, минимум 5.45:1; отдельные заливки primary buttons проверяются с белым текстом. Chart labels масштабируются вместе с интерфейсом.
+- Центральная область стремится сохранить 520 logical px; при нехватке места inspector становится overlay. Compact Explorer скрывается при открытии деталей и открывается явным toggle. Верхние controls и открытый bottom dock остаются доступны. Overview закрывает незакреплённый inspector, pin сохраняет его; ручное открытие разрешено. Сессии остаются смонтированы при скрытии dock.
+- Workspace/details tabs: tab roles, связанный panel, roving arrows/Home/End. Modal initial/trap/return focus и inert background, keyboard column widths/Shift+F10, action-list arrows/Home/End и submenu click/Right/Left. Search clear имеет имя. Native screen-reader и OS/WebKit acceptance остаются отдельной работой.
+- Pod columns: Name → Status → Ready → Restarts → Namespace → Containers; IDs/width/visibility preferences сохранены. Focus обводит строку целиком. По уточнению пользователя поиск таблицы ресурсов учитывает **только name и namespace**, регистр и крайние пробелы игнорируются; status остаётся отдельным фильтром.
+- Telemetry: Pause/Resume, auto/fixed-to-budget scale, keyboard sample inspection, measured sample table, min/avg/max/last; consumer details под выбранной строкой. Fixed scale честно помечает clipping превышений. Синтетическая live history не добавляется.
+- Secret: inline key/base64 errors, stable row IDs, focus нового ключа/первой ошибки, draft/saving feedback. Byte-preserving codecs и UID/resourceVersion protections сохранены.
+- Glossary: Workload controllers в Overview явно отличается от общей категории Workloads (которая включает Pods/ReplicaSets); убран Workloads→Workloads. Подписи модификаторов соответствуют ОС, основные chart colors вынесены в tokens.
+
+Не завершены: отдельные compact column presets/приоритеты для остальных kinds, перераспределение высоты dock на очень низких окнах, budget reference lines и новая иерархия health/load/inventory, общая шкала spacing/radius/motion и native visual/assistive QA. Актуальные статусы и дальнейшие задачи — в [10](10-IMPLEMENTATION-TASKS.md).

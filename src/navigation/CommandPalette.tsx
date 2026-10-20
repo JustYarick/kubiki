@@ -1,3 +1,4 @@
+import { shortcutLabel } from '../core/shortcuts';
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRightLeft, Boxes, Braces, Command, FileText, Layout, Maximize2, Minimize2, PanelBottom, PanelLeft, PanelRight, Palette, RefreshCw, Rocket, Settings, Terminal, Trash2, Columns2, X } from 'lucide-react';
@@ -244,7 +245,7 @@ export const CommandPalette: React.FC = () => {
                       <TextWithRanges text={c.label} query={query} />
                     </span>
                     {c.hint && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{c.hint}</span>}
-                    {c.kbd && <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-subtle)] rounded px-1 text-[var(--text-muted)] bg-[var(--bg-surface)]">{c.kbd}</kbd>}
+                    {c.kbd && <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-subtle)] rounded px-1 text-[var(--text-muted)] bg-[var(--bg-surface)]">{shortcutLabel(c.kbd)}</kbd>}
                   </button>
                 );
               })}
