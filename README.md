@@ -53,3 +53,10 @@ Kubiki распространяется под [Apache License 2.0](LICENSE). Л
 
 
 Общая статистика: **Overview** в левом Cluster Explorer (или «+» у вкладок). При All Namespaces — сводка кластера, при выбранном namespace — только его ресурсы. Counts, Pod phases, restarts, проблемы и переходы к объектам используют текущие watch/snapshots; недоступные данные отмечены отдельно. CPU/RAM подключены через Metrics API: history/gauges, requests/limits, node capacity/allocatable, consumers и контейнеры; требуется доступ к metrics.k8s.io. История накапливается во время наблюдения; см. [19](docs/19-OVERVIEW-TELEMETRY.md). См. [18](docs/18-OVERVIEW.md).
+
+
+## Linux / NVIDIA: запуск и диагностика графики
+
+Полностью перезапустите `pnpm tauri dev` после обновления. По умолчанию `auto` не отключает быстрый DMABUF path; только NVIDIA/Wayland получает explicit-sync workaround. При blank window/графических артефактах прежний режим: `KUBIKI_GRAPHICS_MODE=compatibility pnpm tauri dev`. Режим без overrides приложения: `KUBIKI_GRAPHICS_MODE=system pnpm tauri dev`. Унаследованные graphics env в auto/system сохраняются.
+
+Собранный бинарник: `src-tauri/target/debug/kubiki --graphics-info` — диагностика без окна и kubeconfig; `--graphics=compatibility` — явный fallback. Изменения действуют только после перезапуска процесса, HMR недостаточно. Измерения и границы проверки — [native rendering](docs/11-TOPOLOGY-PERFORMANCE.md).

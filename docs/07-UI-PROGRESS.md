@@ -6,7 +6,14 @@
 
 ---
 
-## Последний блок — 2026-10-20: Helm, RBAC и замечания по рабочей области
+## Последний блок — 2026-10-20: WebKitGTK/NVIDIA startup
+
+- Владелец возобновил graphics work и уточнил: тормозит весь UI в tauri dev, browser плавный. Убраны два unconditional DMABUF disable; одна ранняя policy до GTK/Tokio. Auto сохраняет быстрый presentation path, только NVIDIA/Wayland получает sync workaround; compatibility возвращает старый режим, system сохраняет окружение. CLI/env selection + --graphics-info без окна/кластера. SVG/CSS/DPI/fonts не менялись.
+- Проверено на RTX 5070 / NVIDIA 595.104.02 / WebKitGTK 2.54.1: одинаковый SVG graph 229/730 в полном Tauri debug — **10.84 → 56.75 rAF FPS**, p95 **99 → 18ms**; GTK подтвердил тот же эффект. Простая таблица с Vite dev: compatibility 62.57, auto 60.24 FPS, оба p95 17ms; простой scroll не воспроизводит тяжёлую сцену и не доказывает исправление всех live-задержек. Основной UI GTK snapshot при scale=1 читается чётко; физический input/fractional DPI/субъективная чёткость требуют отдельной приёмки.
+- Добавлен отдельный full-Tauri graphics_probe (incognito, mock reads, без cluster managers/мутаций), общий JS для pan/scroll и GTK harness со snapshot/metadata. Vite заранее оптимизирует ELK worker, чтобы первое открытие topology не вызывало full reload после late discovery.
+- Проверки: 4 Rust policy tests, offline Tauri check/debug build + example, 214 TS unit; production build и targeted browser regression 11/11. Release installer не собирался: пользователь работает в tauri dev. Graphics diagnostics actual binary проверены для трёх режимов. Подробности/команды/ограничения — [11](11-TOPOLOGY-PERFORMANCE.md). GRAPH-PERF остаётся PARTIAL, runtime startup NATIVE-01 DONE.
+
+## 2026-10-20: Helm, RBAC и замечания по рабочей области
 
 - **DONE REQUEST-HELM/RBAC:** основные desktop Helm operations через prepared backend review/native consent, frozen chart/values, snapshot/re-render conflict checks; repository CRUD/cache update и chart search. Helm Release ↔ managed K8s objects на топологии/в Related, переходы к details. Pod/workload → ServiceAccount → binding → role/cluster role, scoped cluster dependencies и aggregation. Контракт и ограничения CLI: [24](24-HELM-OPERATIONS-AND-RBAC.md).
 - **DONE REQUEST-TOPOLOGY-FILTERS:** по уточнению владельца широкая колонка заменена компактным всплывающим **Types** с counts/checkboxes/Show all/Hide all/Escape. Не занимает ширину холста; скрывает только узлы/incident edges/Namespace frames, позиции сохранены, новый ELK не запускается. Events island расположен ниже кнопки и не перекрывает её. Кнопки из подробностей, включая Helm, везде **Topology**.

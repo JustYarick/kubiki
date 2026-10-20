@@ -17,7 +17,7 @@ export default defineConfig(() => ({
   plugins: [react(), tailwindcss(), k8sDevServerPlugin()],
   // Lazy editor/graph chunks must share the renderer's React dispatcher in dev and desktop.
   resolve: { dedupe: ['react', 'react-dom'] },
-  optimizeDeps: { include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime'] },
+  optimizeDeps: { include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'elkjs/lib/elk-worker.min.js'] },
   clearScreen: false,
   server: {
     port: 1420, strictPort: true, host: host || false,

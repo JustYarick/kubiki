@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+mod graphics;
 mod port_forward_commands;
 use port_forward_commands::*;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
@@ -29,9 +31,16 @@ use watch_commands::*;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
-    unsafe {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        std::env::set_var("__NV_DISABLE_EXPLICIT_SYNC", "1");
+    {
+        let graphics = graphics::initialize().unwrap_or_else(|error| {
+            eprintln!("{error}");
+            std::process::exit(2);
+        });
+        if graphics.options.report_only {
+            print!("{}", graphics.report);
+            return;
+        }
+        eprintln!("{}", graphics.report);
     }
 
     tauri::Builder::default()

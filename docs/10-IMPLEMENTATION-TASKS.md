@@ -57,8 +57,8 @@
 | GRAPH-SAFE | P0 | Безопасный выбор области и бюджеты диаграммы | DONE | Нет автоматического графа всего кластера; namespace/resource scope; cluster summary только counts. До layout проверяются 250 узлов / 1000 рёбер; worker отменяется через 10 с и освобождается; Pod не расширяется через общий Node/ConfigMap на всех потребителей; тест 5000 ресурсов |
 | GRAPH-EVENTS | P1 | Отдельный остров событий вместо узлов Event | DONE | Event исключён до бюджетов и layout; последние 10 событий области, Warning/count/time, collapse, переход к ресурсу; события не сбрасывают позиции |
 | GRAPH-NS | P1 | Namespace как контейнер | DONE | Compound ELK layout и React Flow parentId: namespaced ресурсы внутри рамки, Node/PV/StorageClass снаружи; оба направления, drag остаётся внутри |
-| GRAPH-PERF | P0 | Устранить задержки pan/drag | DEFERRED | По запросу владельца из-за размытости восстановлены SVG, полные детали и прежние graphics settings; Canvas2D/LOD/culling эксперименты сняты. Исследование и harness сохранены в 11; проблема native pan остаётся открытой |
-| NATIVE-01 | P0 | WebKitGTK/NVIDIA renderer | DEFERRED | A/B системного WebKit показал ~19 → ~60 FPS при отказе от forced DMABUF disable, но владелец предпочёл прежнюю чёткость и потребовал откат. Оба старых назначения flags восстановлены. Не продолжать без нового запроса; см. 11 |
+| GRAPH-PERF | P0 | Устранить задержки pan/drag | PARTIAL | По новому запросу исследование возобновлено: текущий SVG в полном Tauri debug — 10.84 → 56.75 rAF FPS, p95 99 → 18ms. Убран forced DMABUF disable, без изменений CSS/масштаба. Физический input, субъективная чёткость, fractional DPI/разные GPU остаются QA; [11](11-TOPOLOGY-PERFORMANCE.md) |
+| NATIVE-01 | P0 | WebKitGTK/NVIDIA startup policy | DONE | Новое разрешение владельца: единая ранняя настройка, auto/compatibility/system, Nvidia/Wayland-only sync workaround, inherited env, CLI diagnostics; 4 policy tests, native GTK/full Tauri A/B без кластера. Полная visual/live QA остаётся GRAPH-PERF/DS-12; [11](11-TOPOLOGY-PERFORMANCE.md) |
 | QA-01 | P1 | Регрессии и документация этого блока | DONE | 35 unit и 16 browser tests на dev/production пройдены; production build и diff check пройдены. WebKit не запустился из-за системных зависимостей; YAML-01 остаётся открытым, подробности в 07 |
 | QA-02 | P1 | Приёмка Events/Namespace/filters и отката graphics | DONE | 45 unit, 19 production browser tests, build/offline cargo check/diff check пройдены. Native A/B и откат отдельно записаны в 11; performance-задачи не закрыты |
 | QA-03 | P1 | Data contract, масштаб UI, YAML input и адаптивные фильтры | DONE | 98 unit/contract, 29 production browser, 9 Rust tests; typecheck app/server/tests, build/offline cargo check/diff check. Полный dev до последнего toolbar — 28/28, целевые dev после адаптации — 4/4; live/native ограничения записаны в 07/12 |
@@ -159,7 +159,7 @@
 | DS-09 | P2 | Приоритеты колонок по kinds | TODO | Presets для workloads/network/storage/CRD; Namespace при scoped browsing без нарушения явной настройки столбцов; оценить sticky Name |
 | DS-10 | P2 | Overview hierarchy/reference lines | TODO | Health/scope/load выше inventory, request/limit reference lines и понятная легенда; фиксированная шкала без неверного смысла процентов |
 | DS-11 | P2 | Остальные visual tokens | TODO | Общие spacing/radius/motion tokens; убрать повторяющиеся локальные значения без изменения native graphics settings |
-| DS-12 | P2 | Native accessibility/visual acceptance | TODO | WebKit desktop, клавиатура и screen reader, Windows/macOS/Linux shortcuts, низкие окна/200%, ручная проверка графиков без изменения отложенных native FPS flags |
+| DS-12 | P2 | Native accessibility/visual acceptance | TODO | WebKit desktop, клавиатура и screen reader, Windows/macOS/Linux shortcuts, низкие окна/200%, ручная проверка графиков и чёткости с текущими native graphics profiles |
 
 ## Терминал, resize и реальные туннели — 2026-10-20
 
