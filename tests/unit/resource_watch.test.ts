@@ -5,9 +5,9 @@ import type { ResourceWatchProvider, WatchBatch, WatchCommit, WatchMessage } fro
 import { useResourceStore } from '../../src/state/resource_store';
 
 const pod = (uid: string, phase = 'Running', namespace = 'backend') => ({ kind: 'Pod', apiVersion: 'v1', metadata: { uid, name: uid, namespace }, status: { phase } });
-const delta = (items: ReturnType<typeof pod>[]): WatchMessage['event'] => ({ type: 'Delta', payload: { type: 'Restarted', payload: { items } } });
+const delta = (items: Record<string, any>[]): WatchMessage['event'] => ({ type: 'Delta', payload: { type: 'Restarted', payload: { items } } });
 const live: WatchMessage['event'] = { type: 'Status', payload: { phase: 'live', error: null } };
-function harness(context = 'a') {
+function harness(context = 'a', namespace = 'all') {
   const connections: Array<{ query: ResourceQuery; signal: AbortSignal; close: ReturnType<typeof vi.fn>; emit: (...events: WatchMessage['event'][]) => void; send: (batch: WatchBatch) => void }> = [];
   const commits: WatchCommit[] = [];
   const provider: ResourceWatchProvider = { watchResources: vi.fn(async (query, send, signal) => {
@@ -15,7 +15,7 @@ function harness(context = 'a') {
     connections.push({ query, signal, close, send, emit: (...events) => send({ subscription_id: 'test', query, messages: events.map((event) => ({ sequence: ++sequence, event })) }) });
     return close;
   }) };
-  const session = new ResourceWatchSession(context, provider, (kind, commit) => { commits.push(commit); useResourceStore.getState().applyWatchCommit(kind, commit); });
+  const session = new ResourceWatchSession(context, provider, (kind, commit) => { commits.push(commit); useResourceStore.getState().applyWatchCommit(kind, commit); }, namespace);
   return { session, connections, commits };
 }
 const flush = () => vi.advanceTimersByTimeAsync(WATCH_FLUSH_MS);
@@ -87,5 +87,60 @@ describe('Resource watch session', () => {
     const session = new ResourceWatchSession('a', { watchResources: () => new Promise((resolve) => { acknowledge = resolve; }) }, vi.fn());
     const ready = session.refresh('Pod'); await Promise.resolve(); session.stop(); await ready;
     acknowledge(close); await Promise.resolve(); await Promise.resolve(); expect(close).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('Namespace-scoped watch sessions', () => {
+  it('replaces only namespaced subscriptions and clears old snapshots, selection and pending changes', async () => {
+    const { session, connections } = harness();
+    const initial = session.start(['Pod', 'Service', 'Node']); await Promise.resolve();
+    connections[0].emit(delta([pod('web'), pod('other', 'Running', 'other')]), live);
+    connections[1].emit(delta([]), live);
+    connections[2].emit(delta([{ kind: 'Node', apiVersion: 'v1', metadata: { uid: 'node', name: 'worker' } }]), live);
+    await flush(); await initial;
+    const nodeMap = useResourceStore.getState().resources.Node;
+    const selected = useResourceStore.getState().resources.Pod.get('web')!;
+    useResourceStore.getState().selectItem(selected);
+    useResourceStore.setState({ selectionHistory: [selected] });
+    connections[0].emit({ type: 'Delta', payload: { type: 'Applied', payload: { data: pod('buffered') } } });
+    const scoped = session.setNamespace('backend');
+    expect(useResourceStore.getState().resources.Pod.size).toBe(0);
+    expect(useResourceStore.getState().selectedItem).toBeNull();
+    expect(useResourceStore.getState().selectionHistory).toEqual([]);
+    expect(useResourceStore.getState().watchStates.Pod).toMatchObject({ phase: 'connecting', hasSnapshot: false, query: { namespace: 'backend' } });
+    await Promise.resolve();
+    expect(connections.slice(3).map((c) => [c.query.kind, c.query.namespace])).toEqual([['Pod', 'backend'], ['Service', 'backend']]);
+    expect(connections[0].signal.aborted).toBe(true); expect(connections[2].signal.aborted).toBe(false);
+    connections[0].emit(delta([pod('late')]), live);
+    connections[3].emit(delta([pod('current')]), live); connections[4].emit(delta([]), live);
+    await flush(); await scoped;
+    expect([...useResourceStore.getState().resources.Pod.keys()]).toEqual(['current']);
+    expect(useResourceStore.getState().resources.Node).toBe(nodeMap);
+    const count = connections.length; await session.setNamespace('backend'); expect(connections.length).toBe(count);
+    session.stop(); expect(vi.getTimerCount()).toBe(0);
+  });
+  it('starts at the requested namespace, validates object scope, and keeps scoped data on Retry', async () => {
+    const { session, connections } = harness('a', 'backend'); const initial = session.refresh('Pod'); await Promise.resolve();
+    expect(connections[0].query.namespace).toBe('backend');
+    connections[0].emit(delta([pod('current')]), live); await flush(); await initial;
+    const retry = session.refresh('Pod'); const rejected = expect(retry).rejects.toThrow('scope'); await Promise.resolve();
+    expect(useResourceStore.getState().resources.Pod.has('current')).toBe(true);
+    expect(useResourceStore.getState().watchStates.Pod?.hasSnapshot).toBe(true);
+    connections[1].emit(delta([pod('foreign', 'Running', 'other')])); await flush();
+    await rejected;
+    expect([...useResourceStore.getState().resources.Pod.keys()]).toEqual(['current']);
+    session.stop();
+  });
+  it('isolates rapid namespace A → B → A and returning to all namespaces', async () => {
+    const { session, connections } = harness('context', 'backend'); const first = session.refresh('Pod'); await Promise.resolve();
+    const second = session.setNamespace('other'); await Promise.resolve();
+    const third = session.setNamespace('backend'); await Promise.resolve();
+    connections[0].emit(delta([pod('stale-a')]), live);
+    connections[1].emit(delta([pod('stale-b', 'Running', 'other')]), live);
+    connections[2].emit(delta([pod('current')]), live); await flush(); await Promise.all([first, second, third]);
+    expect([...useResourceStore.getState().resources.Pod.keys()]).toEqual(['current']);
+    const all = session.setNamespace('all'); await Promise.resolve(); expect(connections[3].query.namespace).toBeNull();
+    connections[3].emit(delta([pod('a'), pod('b', 'Running', 'other')]), live); await flush(); await all;
+    expect(useResourceStore.getState().resources.Pod.size).toBe(2); session.stop();
   });
 });

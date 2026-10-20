@@ -6,7 +6,25 @@
 
 ---
 
-## Последний блок — 2026-10-20: DATA-02/03A, desktop live watch и стабильность диаграмм
+## Последний блок — 2026-10-20: DATA-03B1, namespace-scoped watch и состояния неполных данных
+
+- **DATA-03B1 — готово:** общий namespace picker управляет реальным query desktop watch. Пересоздаются только namespaced подписки; Node/Namespace/PersistentVolume/StorageClass/CustomResourceDefinition продолжают работать без restart и потери snapshot. При возврате в All Namespaces query снова получает namespace=null.
+- **Изоляция scope:** новая область немедленно очищает старый snapshot, pending changes, selectedItem и историю namespaced ресурсов; hasSnapshot=false до полного списка. Retry/Sync прежней области сохраняет последний snapshot. WatchState содержит query. Старые callbacks и late acknowledgements не меняют новую область, включая быстрые A → B → A; подписка на изменение namespace снимается вместе с session.
+- **RBAC:** desktop picker позволяет выбрать `Use namespace: …` после ввода имени, даже если list namespaces запрещён. Имя валидируется как DNS label; путь, пробелы, uppercase и слишком длинные значения не принимаются. Это выбор области, не создание namespace; кластерные виды могут оставаться недоступными, независимо от доступа к Pods выбранной области.
+- **Вкладки:** ресурс другого namespace получает «Resource outside namespace scope» и кнопку `Load namespace …`. Initial sync и ошибка чтения также не показываются как Resource Not Found. При загрузке прежнего namespace pinned UID снова разрешается обычным способом; защита от пересозданного одноимённого объекта сохраняется.
+- **Related/диаграммы:** указана область загруженных namespaced данных. Namespace вне неё обозначен `not loaded`, а не нулём ресурсов; его диаграмма запускается после явной загрузки области. При initial sync есть предупреждение о неполных counts/relationships. Cluster Node/PV продолжают отображаться, но их связи учитывают ресурсы выбранного namespace.
+- **Roadmap:** DATA-03B разбита на B1 (готово), B2 (lazy subscriptions) и B3 (native/live QA). Browser snapshots/filter semantics не изменены. Пока открыты watches всех 18 встроенных kinds; при стартовом All Namespaces по-прежнему запрашивается весь кластер. Следующие блоки — lazy subscriptions и OPS-01 follow logs; native pan/blur остаётся отложенным, графические настройки не менялись.
+
+Проверки финального состояния:
+
+- `pnpm test`: **116 unit/contract tests**, 13 файлов. Новые проверки: переключение namespace с сохранением cluster maps/watchers, очистка pending/selection/history, scope validation, Retry, быстрые A → B → A, возврат к all, unsubscribe lifecycle и валидация namespace.
+- `pnpm typecheck`, `pnpm build`, `git diff --check`: успешно; прежнее предупреждение о крупных Monaco/main chunks сохраняется.
+- **37 browser scenarios на production preview пройдены**, 44,4 с. Отдельный dev-прогон desktop adapter — 8/8. Добавлены namespace switching с pinned tab/late events, ручной namespace после RBAC 403 и возвратом к запрещённому all, явная загрузка namespace из диаграммы.
+- Browser-сценарии desktop adapter используют реальный JS Channel SDK с подставленным IPC; это **не native GUI/live cluster QA**. Rust/backend API в этом блоке не менялись, прежние 18 Rust tests относятся к предыдущему блоку. Проверка живого native-кластера остаётся DATA-03B3.
+
+---
+
+## 2026-10-20: DATA-02/03A, desktop live watch и стабильность диаграмм
 
 - **DATA-02 — готово:** Init/InitApply буферизуются до InitDone; полный Restarted атомарно заменяет map UID, включая пустой результат. Не остаются объекты, удалённые во время disconnect. Store изолирован по context/group/version/kind/namespace/subscription; перекрывающиеся подписки не стирают друг друга. Неверный GVK/namespace/UID, ошибка или отмена initial list не публикуют частичный список. ResourceVersion не преобразуется в число.
 - **DATA-03A — готово:** desktop использует kube-rs watcher через Tauri Channels, команды watch/stop/stop-owner. Owner определяется окном; ограничены число watchers (128), очередь (256) и IPC пачка (128 сообщений/50 мс). UI coalescing по UID до mapper/YAML serialization, одно обновление store каждые 50 мс; sequence gaps/overflow вызывают явную ошибку с Retry. Подписки закрываются при смене context, Sync/Retry, pagehide, window destroy и отказе канала; поздние callbacks/registration acknowledgements не оживляют старую generation.

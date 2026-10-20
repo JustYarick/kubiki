@@ -20,7 +20,7 @@ interface Subscription {
 export class ResourceWatchSession {
   private active = true;
   private subscriptions = new Map<ResourceKind, Subscription>();
-  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void) {}
+  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all') {}
 
   async start(kinds: ResourceKind[]): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled(kinds.map((kind) => this.refresh(kind))); }
 
@@ -28,14 +28,15 @@ export class ResourceWatchSession {
     if (!this.active) return Promise.resolve();
     const previous = this.subscriptions.get(kind);
     if (previous) this.closeSubscription(previous);
-    const query = resourceQuery(this.context, kind);
+    const query = resourceQuery(this.context, kind, this.namespace);
+    const sameScope = previous && sameQuery(previous.query, query);
     let resolve!: () => void; let reject!: (error: K8sRequestError) => void;
     const ready = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     let settled = false;
-    const subscription: Subscription = { query, abort: new AbortController(), sequence: 0, changes: new Map(), phase: 'connecting', hasSnapshot: previous?.hasSnapshot ?? false,
+    const subscription: Subscription = { query, abort: new AbortController(), sequence: 0, changes: new Map(), phase: 'connecting', hasSnapshot: sameScope ? previous.hasSnapshot : false,
       settle: (error) => { if (settled) return; settled = true; clearTimeout(subscription.firstTimer); if (error) reject(error); else resolve(); } };
     this.subscriptions.set(kind, subscription);
-    this.commit(kind, { changes: [], state: { phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
+    this.commit(kind, { ...(!sameScope ? { snapshot: [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
     subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
     void Promise.resolve().then(() => this.provider.watchResources(query, (batch) => this.receive(kind, subscription, batch), subscription.abort.signal)).then((close) => {
       subscription.close = close;
@@ -102,7 +103,7 @@ export class ResourceWatchSession {
       const changes: WatchCommit['changes'] = [...subscription.changes.values()].map((delta) => delta.type === 'Applied'
         ? { type: 'apply', item: mapK8sResource(delta.payload.data, kind) } : { type: 'delete', uid: (delta as Extract<WatchDelta, { type: 'Deleted' }>).payload.uid });
       if ((subscription.phase === 'failed' || subscription.phase === 'stopped') && !subscription.error) subscription.error = requestError('unavailable', 'Resource watch stopped', { operation: 'watch', context: this.context, resource: subscription.query });
-      this.commit(kind, { snapshot, changes, state: { phase: subscription.phase, hasSnapshot: subscription.hasSnapshot, updatedAt: Date.now() }, error: subscription.error });
+      this.commit(kind, { snapshot, changes, state: { query: subscription.query, phase: subscription.phase, hasSnapshot: subscription.hasSnapshot, updatedAt: Date.now() }, error: subscription.error });
       subscription.snapshot = undefined; subscription.changes.clear();
       if (subscription.phase === 'failed' || subscription.phase === 'stopped') {
         const error = subscription.error ?? requestError('unavailable', 'Resource watch stopped', { operation: 'watch', context: this.context, resource: subscription.query });
@@ -113,13 +114,20 @@ export class ResourceWatchSession {
 
   private fail(kind: ResourceKind, subscription: Subscription, error: K8sRequestError): void {
     if (!this.current(kind, subscription)) return;
-    this.commit(kind, { changes: [], state: { phase: 'failed', hasSnapshot: subscription.hasSnapshot }, error });
+    this.commit(kind, { changes: [], state: { query: subscription.query, phase: 'failed', hasSnapshot: subscription.hasSnapshot }, error });
     subscription.settle(error); this.closeSubscription(subscription);
   }
 
   private closeSubscription(subscription: Subscription): void {
     subscription.abort.abort(); subscription.close?.(); clearTimeout(subscription.flushTimer); clearTimeout(subscription.firstTimer);
     subscription.changes.clear(); subscription.snapshot = undefined; subscription.settle();
+  }
+
+  /** Only namespaced kinds change scope; cluster watches and their snapshots stay intact. */
+  async setNamespace(namespace: string): Promise<PromiseSettledResult<void>[]> {
+    if (!this.active || namespace === this.namespace) return [];
+    this.namespace = namespace;
+    return Promise.allSettled([...this.subscriptions.keys()].filter((kind) => resourceType(kind).namespaced).map((kind) => this.refresh(kind)));
   }
 
   async refreshAll(): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled([...this.subscriptions.keys()].map((kind) => this.refresh(kind))); }

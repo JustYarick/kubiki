@@ -5,7 +5,8 @@ import { useResourceStore } from './resource_store';
 import { useClusterStore } from './cluster_store';
 
 let session: ResourceWatchSession | undefined;
-export function stopResourceWatches(): void { session?.stop(); session = undefined; }
+let unsubscribeNamespace: (() => void) | undefined;
+export function stopResourceWatches(): void { unsubscribeNamespace?.(); unsubscribeNamespace = undefined; session?.stop(); session = undefined; }
 export async function startResourceWatches(context: string): Promise<PromiseSettledResult<void>[]> {
   stopResourceWatches();
   const next = new ResourceWatchSession(context, k8s, (kind, update) => {
@@ -14,8 +15,13 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     if (kind === 'Namespace' && update.state.hasSnapshot) {
       useClusterStore.getState().setAvailableNamespaces([...useResourceStore.getState().resources.Namespace.values()].map((item) => item.name).sort());
     }
-  });
+  }, useClusterStore.getState().selectedNamespace);
   session = next;
+  unsubscribeNamespace = useClusterStore.subscribe((state, previous) => {
+    if (session === next && state.currentContext === context && state.selectedNamespace !== previous.selectedNamespace) {
+      void next.setNamespace(state.selectedNamespace);
+    }
+  });
   useResourceStore.getState().setSyncMode('watch');
   return next.start(Object.keys(useResourceStore.getState().resources) as ResourceKind[]);
 }

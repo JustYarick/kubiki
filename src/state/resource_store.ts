@@ -61,6 +61,8 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     return {
       resources: map === state.resources[kind] ? state.resources : { ...state.resources, [kind]: map },
       selectedItem: state.selectedItem?.kind === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
+      // Scope changes must not leave navigation history pointing to stale, unloaded objects.
+      selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => item.kind !== kind) : state.selectionHistory,
       watchStates: { ...state.watchStates, [kind]: update.state },
       loadErrors: { ...state.loadErrors, [kind]: update.error ? normalizeK8sError(update.error, { operation: 'watch', context: useClusterStore.getState().currentContext ?? undefined }) : undefined },
     };

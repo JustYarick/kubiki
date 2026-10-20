@@ -38,9 +38,15 @@ kube-rs использует default exponential backoff. Ошибки 400/401/4
 
 Status bar отличает Watch от Snapshot. До first sync таблица показывает ожидание, без ложного «No resources». Диагностика отсутствующих backend Pods у Service выполняется только по актуальным Pod-данным. Изменение статуса узла диаграммы сохраняет позиции/viewport; изменение структуры пока запускает полную раскладку.
 
+Общий namespace picker теперь меняет реальную область desktop watch. Пересоздаются только namespaced kinds; Node/Namespace/PersistentVolume/StorageClass/CustomResourceDefinition остаются в cluster scope. При смене scope старые snapshot, selection и история namespaced ресурсов очищаются сразу, hasSnapshot становится false; Retry/Sync в том же scope сохраняют последний полный snapshot. Каждый WatchState включает query, чтобы ожидание/ошибка оставались привязаны к области. Поздние события старой области не публикуются, даже при A → B → A.
+
+Если list namespaces запрещён, можно ввести имя вручную в поиске общего picker и выбрать `Use namespace: …`; проверяется DNS label (1–63 символа, lowercase/digits/hyphen, без ведущего/замыкающего hyphen). Это выбор существующей области, не создание namespace. Операция доступна в desktop; browser остаётся на прежних snapshots/filter semantics.
+
+Открытая вкладка другого namespace показывает «Resource outside namespace scope» и `Load namespace …`. Ожидание initial sync и ошибка чтения также отделены от Resource Not Found. Related и диаграммы предупреждают о пределах загруженных данных; namespace вне текущей области получает `not loaded` вместо ложного нуля. Его диаграмма строится после явной загрузки области через общий picker. Для cluster Node/PV отношения учитывают только Pods/PVC выбранного namespace.
+
 Для потока использованы [Tauri Channels](https://v2.tauri.app/develop/calling-frontend/#channels); семантика Init/InitDone и backoff сверена с исходниками установленного kube-runtime 0.98. Адаптер освобождает callback через guarded `__TAURI_INTERNALS__.unregisterCallback`, поскольку установленный JS SDK не имеет public Channel.close; это место необходимо проверять при обновлении Tauri.
 
-**Ограничения:** browser dev bridge остаётся snapshot; UI пока открывает all-namespaces watches для 18 встроенных kinds (поддержка узких scopes уже есть в core, требуется подключение к UI). Произвольные CR instances не добавлены. Native GUI/live cluster QA и долгий нагрузочный прогон ещё не выполнены; HTTP server и browser IPC tests их не заменяют.
+**Ограничения:** browser dev bridge остаётся snapshot; UI открывает watches всех 18 встроенных kinds; namespaced queries следуют общему picker. Стартовый All Namespaces всё ещё загружает весь кластер; lazy subscriptions остаются DATA-03B2. Произвольные CR instances не добавлены. Native GUI/live cluster QA и долгий нагрузочный прогон ещё не выполнены; HTTP server и browser IPC tests их не заменяют.
 
 ## Размер интерфейса
 

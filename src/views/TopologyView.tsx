@@ -11,6 +11,8 @@ import { Button } from '../components/ui/Button';
 import { SearchInput } from '../components/ui/Input';
 import { SearchableSelect } from '../components/ui/SearchableSelect';
 import type { ResourceItem } from '../types/k8s';
+import { NamespaceScopeNotice } from '../components/k8s/NamespaceScopeNotice';
+import { namespaceIsOutsideScope } from '../core/resources/resource_types';
 import { TopologyCanvas } from './TopologyCanvas';
 import { TopologyEvents } from './TopologyEvents';
 
@@ -18,6 +20,8 @@ const NO_EVENTS = new Map<string, ResourceItem>();
 
 export function TopologyView({ item, namespace }: { item?: ResourceItem; namespace?: string }) {
   const resources = useResourceStore(useShallow((s) => ({ ...s.resources, Event: NO_EVENTS })));
+  const syncMode = useResourceStore((s) => s.syncMode);
+  const watchStates = useResourceStore((s) => s.watchStates);
   const errors = useResourceStore((s) => s.loadErrors);
   const namespaces = useClusterStore((s) => s.availableNamespaces);
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
@@ -28,8 +32,12 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const [direction, setDirection] = useState<'RIGHT' | 'DOWN'>('RIGHT');
   const [revision, setRevision] = useState(0);
   const [scopeQuery, setScopeQuery] = useState('');
+  const diagramNamespace = scope.startsWith('namespace:') ? scope.slice(10) : scope === 'resource' ? item?.namespace ?? (item?.kind === 'Namespace' ? item.name : undefined) : undefined;
+  const outsideScope = namespaceIsOutsideScope(diagramNamespace, selectedNamespace, syncMode);
+  const namespaceLoaded = (name: string) => !namespaceIsOutsideScope(name, selectedNamespace, syncMode);
+  const synchronizing = syncMode === 'watch' && Object.values(watchStates).some((state) => state.phase === 'connecting' || state.phase === 'syncing');
   const summaries = useMemo(() => {
-    const counts = new Map(namespaces.map((name) => [name, { name, resources: 0, pods: 0 }]));
+    const counts = new Map([...new Set([...namespaces, ...(selectedNamespace !== 'all' ? [selectedNamespace] : [])])].map((name) => [name, { name, resources: 0, pods: 0 }]));
     for (const map of Object.values(resources)) for (const item of map.values()) {
       const name = item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined);
       if (!name) continue;
@@ -38,11 +46,12 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
       if (item.kind === 'Pod') counts.get(name)!.pods++;
     }
     return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [resources, namespaces]);
+  }, [resources, namespaces, selectedNamespace]);
   const { graph, notice } = useMemo(() => {
+    if (outsideScope) return { graph: EMPTY_GRAPH, notice: '' };
     try { return { graph: buildTopology(resources, scope, item, depth), notice: '' }; }
     catch (error) { return { graph: EMPTY_GRAPH, notice: error instanceof Error ? error.message : String(error) }; }
-  }, [resources, scope, item, depth]);
+  }, [resources, scope, item, depth, outsideScope]);
   const chooseScope = !scope || scope === 'overview';
   const canLayout = !chooseScope && !notice && graph.items.size > 0;
   const warningCount = useMemo(() => {
@@ -64,24 +73,26 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
       <SearchableSelect label="Diagram scope" value={scope} onChange={setScope} options={[
         { value: '', label: 'Choose a namespace or resource…' },
         { value: 'overview', label: 'Cluster summary (counts only)' },
-        ...summaries.map((summary) => ({ value: `namespace:${summary.name}`, label: `Namespace: ${summary.name} (${summary.resources})` })),
+        ...summaries.map((summary) => ({ value: `namespace:${summary.name}`, label: `Namespace: ${summary.name} (${namespaceLoaded(summary.name) ? summary.resources : 'not loaded'})` })),
         ...(item && item.kind !== 'Event' ? [{ value: 'resource', label: `${item.kind}: ${item.name}` }] : []),
       ]} />
       {scope === 'resource' && <select aria-label="Relationship depth" className="ide-select" value={depth} onChange={(event) => setDepth(Number(event.target.value))}>{[1, 2, 3].map((n) => <option key={n} value={n}>{n} hop{n > 1 ? 's' : ''}</option>)}</select>}
       <select aria-label="Diagram direction" className="ide-select" value={direction} onChange={(event) => setDirection(event.target.value as 'RIGHT' | 'DOWN')}><option value="RIGHT">Left to right</option><option value="DOWN">Top to bottom</option></select>
       <Button size="sm" disabled={!canLayout} onClick={() => setRevision((value) => value + 1)}><RotateCw size="calc(12px * var(--ui-factor))" /> Arrange</Button>
-      {!chooseScope && !notice && <span className="ml-auto text-[var(--text-muted)] text-[length:calc(11px*var(--ui-factor))]">{graph.items.size} resources · {graph.relations.length} links</span>}
+      {!chooseScope && !outsideScope && !notice && <span className="ml-auto text-[var(--text-muted)] text-[length:calc(11px*var(--ui-factor))]">{graph.items.size} resources · {graph.relations.length} links</span>}
       {warningCount > 0 && <span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size="calc(12px * var(--ui-factor))" />{warningCount} with issues</span>}
     </div>
+    <NamespaceScopeNotice namespace={diagramNamespace} />
+    {synchronizing && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Resources are synchronizing. Counts and relationships may be incomplete.</p>}
     {!!Object.values(errors).filter(Boolean).length && <div className="px-3 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Some resource types are unavailable. This diagram shows loaded resources only.</div>}
     <div className="flex-1 min-h-0 relative overflow-hidden">
-      {chooseScope ? <div className="h-full overflow-auto p-6">
+      {outsideScope ? <div className="p-6 text-sm text-[var(--text-secondary)]">Load this namespace using the button above to build its diagram.</div> : chooseScope ? <div className="h-full overflow-auto p-6">
         <h2 className="text-sm font-medium">Choose a diagram scope</h2>
         <p className="text-xs text-[var(--text-secondary)] mt-2 max-w-xl">Select a namespace below, or open Topology from a Pod, workload or Node. The entire cluster is never expanded automatically.</p>
         <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mt-2">Limits: {MAX_TOPOLOGY_NODES} resources, {MAX_TOPOLOGY_EDGES} links and 10 seconds for layout. Cluster summary shows counts only.</p>
         <SearchInput value={scopeQuery} onChange={setScopeQuery} placeholder="Find namespace…" className="mt-4 max-w-sm" />
         <div className="grid gap-2 mt-3 max-w-2xl">{summaries.filter((summary) => summary.name.toLowerCase().includes(scopeQuery.toLowerCase())).slice(0, 50).map((summary) => <button key={summary.name} onClick={() => setScope(`namespace:${summary.name}`)} className="flex items-center gap-3 text-left px-3 py-2 rounded border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:border-[var(--accent)]">
-          <span className="font-mono text-xs flex-1 truncate">{summary.name}</span><span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)]">{summary.resources} resources · {summary.pods} Pods</span>
+          <span className="font-mono text-xs flex-1 truncate">{summary.name}</span><span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)]">{namespaceLoaded(summary.name) ? `${summary.resources} resources · ${summary.pods} Pods` : 'Not loaded'}</span>
         </button>)}</div>
         {!summaries.length && <p className="text-xs text-[var(--text-muted)] mt-4">No namespaces have been loaded. Open a resource topology from its details.</p>}
       </div> : notice ? <div role="alert" className="p-6 text-[var(--status-warn)] text-xs"><TriangleAlert size="calc(18px * var(--ui-factor))" className="mb-2" />{notice}<p className="mt-2 text-[var(--text-secondary)]">No graph was sent to the layout worker. Use fewer hops, or open a specific workload or Pod.</p><Button size="sm" className="mt-3" onClick={() => setScope('')}>Choose another scope</Button></div> : <><TopologyCanvas graph={graph} direction={direction} revision={revision} focusKey={item ? resourceKey(item) : undefined} /><TopologyEvents scope={scope} graph={graph} /></>}

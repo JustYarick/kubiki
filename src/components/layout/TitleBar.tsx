@@ -19,6 +19,7 @@ import { useResourceStore } from '../../state/resource_store';
 import { useDockStore } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
+import { isValidNamespaceName } from '../../core/resources/resource_types';
 import { k8s } from '../../providers/k8s_provider';
 import { refreshResourceWatches } from '../../state/resource_watch';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
@@ -247,9 +248,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         </Popover>
 
         {/* Namespace Picker */}
-        <SearchableSelect label="Namespace Scope" value={selectedNamespace} onChange={selectNamespace} icon={Layers} className="max-w-[calc(170px*var(--ui-factor))] font-mono" options={[
+        <SearchableSelect label="Namespace Scope" value={selectedNamespace} onChange={selectNamespace} icon={Layers}
+          customOption={k8s.supportsResourceWatch ? (name) => isValidNamespaceName(name) && name !== 'all' ? { value: name, label: `Use namespace: ${name}` } : undefined : undefined}
+          customHint={k8s.supportsResourceWatch ? 'Enter a namespace name when it is not listed. This changes the live data scope.' : undefined}
+          className="max-w-[calc(170px*var(--ui-factor))] font-mono" options={[
           { value: 'all', label: 'All Namespaces' },
-          ...availableNamespaces.map((name) => ({ value: name, label: name })),
+          ...[...new Set([...availableNamespaces, ...(selectedNamespace !== 'all' ? [selectedNamespace] : [])])].sort().map((name) => ({ value: name, label: name })),
         ]} />
       </div>
 

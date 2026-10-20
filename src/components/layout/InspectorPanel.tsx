@@ -8,6 +8,7 @@ import { useDockStore } from '../../state/dock_store';
 import { KIND_ICONS } from '../../core/perspectives';
 import { buildResourceGraph } from '../../core/resources/relationships';
 import { resourceKey } from '../../core/resources/identity';
+import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
 import { ResourceWarnings } from '../k8s/ResourceWarnings';
 import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
 import { ResourceAnnotations } from '../k8s/ResourceAnnotations';
@@ -88,7 +89,7 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
         if (!k8s.demo) { toast.error('Live manifest apply is not connected yet'); return; }
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...mapK8sResource(parse(yaml), item.kind), uid: item.uid });
         toast.success('Manifest saved in demo memory');
-      }} /></Suspense> : rightTab === 'related' ? <div className="h-full overflow-auto p-3"><Card title="Resource relationships">
+      }} /></Suspense> : rightTab === 'related' ? <div className="h-full overflow-auto p-3"><NamespaceScopeNotice namespace={item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined)} /><Card title="Resource relationships">
         <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mb-2">Resolved from owner references, selectors and explicit API references. Unloaded targets may require additional permissions.</p>
         <SearchInput value={relatedQuery} onChange={(value) => { setRelatedQuery(value); setRelatedLimit(50); }} placeholder="Filter related resources…" className="mb-2 w-full" />
         <div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mb-2">{filteredRelated.length} matching · {related.length} relationships</div>

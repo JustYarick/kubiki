@@ -14,6 +14,10 @@ import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
 import { toast } from '../../state/notifications_store';
 import { FileCode, Loader2 } from 'lucide-react';
+import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
+import { RequestErrorNotice } from '../k8s/RequestErrorNotice';
+import { refreshResourceWatches } from '../../state/resource_watch';
+import { namespaceIsOutsideScope } from '../../core/resources/resource_types';
 import { matchesResourceRef } from '../../core/resources/identity';
 
 const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => ({ default: m.TopologyView })));
@@ -81,7 +85,8 @@ export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => voi
 };
 
 function TabContent({ tab }: { tab?: WorkspaceTab }) {
-  const { resources, updateItem } = useResourceStore();
+  const { resources, updateItem, syncMode, watchStates, loadErrors } = useResourceStore();
+  const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   const context = useClusterStore((s) => s.currentContext);
 
   if (!tab) {
@@ -104,6 +109,13 @@ function TabContent({ tab }: { tab?: WorkspaceTab }) {
       : tab.name ? Array.from(resources[kind]?.values() || []).find((item) => matchesResourceRef(item, { ...tab, kind, name: tab.name! })) : undefined;
     const item = candidate && matchesResourceRef(candidate, tab.resource ?? { ...tab, kind, name: tab.name ?? candidate.name }) ? candidate : undefined;
 
+    if (!item && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
+      return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;
+    }
+    if (!item && syncMode === 'watch' && watchStates[kind]?.phase !== 'live') {
+      const error = loadErrors[kind];
+      return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <p role="status" className="text-xs text-[var(--text-secondary)]">Waiting for a complete {kind} snapshot…</p>}</div>;
+    }
     if (!item) {
       return (
         <div className="flex-1 flex items-center justify-center p-6 text-center">

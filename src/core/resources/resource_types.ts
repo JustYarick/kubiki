@@ -27,3 +27,12 @@ export function resourceQuery(context: string, kind: ResourceKind, namespace?: s
   const { group, version, namespaced } = resourceType(kind);
   return { context, group, version, kind, namespace: namespaced && namespace && namespace !== 'all' ? namespace : null };
 }
+
+/** Kubernetes namespace names follow DNS label syntax (the same validation as core). */
+export function isValidNamespaceName(value: string): boolean {
+  return value.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value);
+}
+
+export function namespaceIsOutsideScope(namespace: string | undefined, selectedNamespace: string, syncMode: string): boolean {
+  return syncMode === 'watch' && selectedNamespace !== 'all' && namespace !== undefined && namespace !== selectedNamespace;
+}
