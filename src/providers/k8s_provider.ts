@@ -124,11 +124,12 @@ export class K8sProvider implements KubernetesProvider {
     return this.request('update_secret_data', 'secrets', { ...request.resource }, request, { request });
   }
 
-  async scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number): Promise<boolean> {
+  async scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number, uid: string, resourceVersion: string): Promise<boolean> {
     if (this.demo) return true;
     if (!['Deployment', 'StatefulSet'].includes(kind)) throw requestError('unsupported', 'Only Deployment and StatefulSet can be scaled', { context, operation: 'scale' }, 400);
-    const args = { ...resourceQuery(context, kind as ResourceKind, namespace), name, replicas };
-    await this.request('scale_workload', 'scale', args, args);
+    const resource = { ...resourceQuery(context, kind as ResourceKind, namespace), name, uid };
+    const args = { resource, resourceVersion, replicas };
+    await this.request('scale_workload', 'scale', resource, args, args);
     return true;
   }
 }

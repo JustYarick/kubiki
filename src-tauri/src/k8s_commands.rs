@@ -175,45 +175,26 @@ pub async fn get_resources(
 
 #[tauri::command]
 pub async fn scale_workload(
-    context: String,
-    kind: String,
-    name: String,
-    namespace: String,
+    resource: kubiki_core::core::api::ResourceRef,
+    resource_version: String,
     replicas: i32,
+    window: tauri::WebviewWindow,
+    pool: tauri::State<'_, ClusterClientPool>,
+    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<String, ApiError> {
-    require_context(&context, "scale")?;
-    let target = match kind.as_str() {
-        "Deployment" => "deployments.apps",
-        "StatefulSet" => "statefulsets.apps",
-        _ => {
-            return Err(ApiError::from_status(
-                400,
-                "Only Deployment and StatefulSet can be scaled",
-                "scale",
-                Some(&context),
-            ));
-        }
-    };
-    if name.is_empty() || namespace.is_empty() || !(0..=100000).contains(&replicas) {
-        return Err(ApiError::from_status(
-            400,
-            "Invalid scale request",
-            "scale",
-            Some(&context),
-        ));
-    }
-    let args = vec![
-        "--context".into(),
-        context.clone(),
-        "scale".into(),
-        target.into(),
-        name.clone(),
-        "-n".into(),
-        namespace,
-        format!("--replicas={replicas}"),
-    ];
-    kubectl(&args, "scale", &context).await?;
-    Ok(format!("{target}/{name} scaled to {replicas}"))
+    let _gate = guard.acquire(&resource)?;
+    let context = resource.query.context.clone();
+    let client = mutation_client(&pool, &resource).await?;
+    let plan = kubiki_core::core::mutations::PreparedMutation::prepare(client,
+        kubiki_core::core::mutations::MutationIntent::Scale { resource: resource.clone(), resource_version, replicas }).await?;
+    plan.confirm_and_commit(|review| crate::mutation_guard::confirm(window, &resource, review)).await?;
+    Ok(format!("{}/{} scaled to {} in {}", resource.query.kind, resource.name, replicas, context))
+}
+
+async fn mutation_client(pool: &ClusterClientPool, resource: &kubiki_core::core::api::ResourceRef) -> Result<kube::Client, ApiError> {
+    tokio::time::timeout(std::time::Duration::from_secs(15), pool.get_client(&resource.query.context)).await
+        .map_err(|_| kubiki_core::core::mutations::error(resource, 504, "Context connection timed out"))?
+        .map_err(|_| kubiki_core::core::mutations::error(resource, 503, "Cannot connect to the requested context"))
 }
 
 #[tauri::command]
@@ -251,14 +232,16 @@ pub async fn get_pod_logs(
 #[tauri::command]
 pub async fn update_secret_data(
     request: kubiki_core::core::secret_data::SecretDataRequest,
+    window: tauri::WebviewWindow,
     pool: tauri::State<'_, ClusterClientPool>,
+    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<k8s_openapi::api::core::v1::Secret, ApiError> {
     request.validate()?;
-    let context = request.resource.query.context.clone();
-    tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        let client = pool.get_client(&context).await.map_err(|_| ApiError::from_status(503, "Cannot connect to Secret context", "secret_data", Some(&context)))?;
-        kubiki_core::core::secret_data::update_secret_data(client, request).await
-    }).await.map_err(|_| ApiError::from_status(504, "Secret update timed out. Refresh to verify the saved state", "secret_data", Some(&context)))?
+    let resource = request.resource.clone();
+    let _gate = guard.acquire(&resource)?;
+    let client = mutation_client(&pool, &resource).await?;
+    kubiki_core::core::secret_data::update_secret_data(client, request,
+        |review| crate::mutation_guard::confirm(window, &resource, review)).await
 }
 
 #[tauri::command]

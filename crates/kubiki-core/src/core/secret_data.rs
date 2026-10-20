@@ -2,7 +2,7 @@
 use super::api::{ApiError, ResourceRef, validate_query};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use k8s_openapi::{ByteString, api::core::v1::Secret};
-use kube::{Api, Client, api::PostParams};
+use kube::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -72,38 +72,18 @@ impl SecretDataRequest {
         Ok(result)
     }
 }
-pub async fn update_secret_data(
+/// Headless callers must explicitly provide a trusted consent implementation.
+pub async fn update_secret_data<F, Fut>(
     client: Client,
     request: SecretDataRequest,
-) -> Result<Secret, ApiError> {
-    let data = request.validate()?;
-    let api: Api<Secret> =
-        Api::namespaced(client, request.resource.query.namespace.as_deref().unwrap());
-    let sanitize = |error: kube::Error| {
-        let status = match error {
-            kube::Error::Api(response) => response.code,
-            _ => 503,
-        };
-        request.error(
-            status,
-            "Secret update failed; check permissions, connectivity and object version",
-        )
-    };
-    let mut current = api.get(&request.resource.name).await.map_err(sanitize)?;
-    if current.metadata.uid != request.resource.uid
-        || current.metadata.resource_version.as_deref() != Some(&request.resource_version)
-    {
-        return Err(request.error(
-            409,
-            "Secret changed or was recreated. Reload before editing again",
-        ));
-    }
-    if current.immutable == Some(true) {
-        return Err(request.error(422, "This Secret is immutable"));
-    }
-    current.data = Some(data);
-    current.string_data = None;
-    api.replace(&request.resource.name, &PostParams::default(), &current)
-        .await
-        .map_err(sanitize)
+    confirm: F,
+) -> Result<Secret, ApiError>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<bool, ApiError>>,
+{
+    let resource = request.resource.clone();
+    let result = super::mutations::PreparedMutation::prepare(client, super::mutations::MutationIntent::Secret(request)).await?
+        .confirm_and_commit(confirm).await?;
+    serde_json::from_value(result).map_err(|_| super::mutations::error(&resource, 500, "Cannot decode Secret response; refresh to verify saved state"))
 }

@@ -49,7 +49,9 @@ fn api(current: Value, failure: u16) -> (Client, Arc<Mutex<Vec<Value>>>) {
 async fn updates_only_data_preserves_metadata_and_puts_atomic_uid_and_version() {
     let (client, writes) = api(secret(), 0);
     let request = request();
-    update_secret_data(client, request.clone()).await.unwrap();
+    update_secret_data(client, request.clone(), |_| async { Ok(true) })
+        .await
+        .unwrap();
     let writes = writes.lock().unwrap();
     assert_eq!(writes.len(), 1);
     assert_eq!(
@@ -66,7 +68,7 @@ async fn refuses_stale_recreated_immutable_and_invalid_requests_without_writes()
         current["metadata"]["resourceVersion"] = json!("11");
         let (client, writes) = api(current, 0);
         assert_eq!(
-            update_secret_data(client, request())
+            update_secret_data(client, request(), |_| async { Ok(true) })
                 .await
                 .unwrap_err()
                 .status,
@@ -78,7 +80,7 @@ async fn refuses_stale_recreated_immutable_and_invalid_requests_without_writes()
     current["metadata"]["uid"] = json!("replacement");
     let (client, writes) = api(current, 0);
     assert_eq!(
-        update_secret_data(client, request())
+        update_secret_data(client, request(), |_| async { Ok(true) })
             .await
             .unwrap_err()
             .status,
@@ -89,7 +91,7 @@ async fn refuses_stale_recreated_immutable_and_invalid_requests_without_writes()
     current["immutable"] = json!(true);
     let (client, writes) = api(current, 0);
     assert_eq!(
-        update_secret_data(client, request())
+        update_secret_data(client, request(), |_| async { Ok(true) })
             .await
             .unwrap_err()
             .status,
@@ -109,7 +111,9 @@ async fn refuses_stale_recreated_immutable_and_invalid_requests_without_writes()
 async fn preserves_rbac_and_race_status_without_leaking_server_values() {
     for status in [403, 409, 422] {
         let (client, _) = api(secret(), status);
-        let error = update_secret_data(client, request()).await.unwrap_err();
+        let error = update_secret_data(client, request(), |_| async { Ok(true) })
+            .await
+            .unwrap_err();
         assert_eq!(error.status, Some(status));
         assert!(!error.message.contains("sensitive"));
     }

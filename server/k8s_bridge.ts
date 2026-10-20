@@ -1,7 +1,6 @@
 import { normalizeMetricList } from '../src/providers/overview_metrics.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
-import { encodeSecretRows } from '../src/core/resources/secret_data.ts';
 import { RESOURCE_TYPES, isValidNamespaceName, type ResourceQuery } from '../src/core/resources/resource_types.ts';
 import { kubectlError, normalizeK8sError, requestError, type RequestInfo } from '../src/providers/errors.ts';
 
@@ -33,6 +32,7 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
       const methods: Record<string, string> = { contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET' };
       if (!methods[operation]) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== methods[operation]) throw requestError('invalid_request', 'Method not allowed', info, 405);
+      if (operation === 'scale' || operation === 'secrets') throw requestError('forbidden', 'Kubernetes changes require the desktop application and backend system confirmation. HTTP bridge is read-only', info, 403);
       if (operation === 'contexts') {
         const data = JSON.parse(await kubectl(['config', 'view', '-o', 'json']));
         return send((data.contexts ?? []).map((entry: any) => ({ name: entry.name, cluster: entry.context?.cluster, user: entry.context?.user, namespace: entry.context?.namespace, is_current: entry.name === data['current-context'] })));
@@ -77,40 +77,6 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
         const container = url.searchParams.get('container');
         if (!name || !namespace) throw invalid('Pod name and namespace are required');
         return send(await kubectl([...contextArgs, 'logs', `pod/${name}`, '-n', namespace, ...(container ? ['-c', container] : []), '--tail=500', '--timestamps=true']));
-      }
-      if (operation === 'secrets') {
-        if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw requestError('forbidden', 'Cross-origin mutations are forbidden', info, 403);
-        let body = '';
-        for await (const chunk of req) { body += chunk; if (body.length > 2 * 1024 * 1024) throw invalid('Request body too large'); }
-        let request: any;
-        try { request = JSON.parse(body); } catch { throw invalid('Invalid JSON request body'); }
-        const { resource, resource_version, data } = request ?? {};
-        if (!resource || resource.context !== context || resource.kind !== 'Secret' || resource.group !== '' || resource.version !== 'v1' || typeof resource.name !== 'string' || !resource.name || resource.name.length > 253 || !resource.name.split('.').every((label: string) => isValidNamespaceName(label)) || typeof resource.namespace !== 'string' || !isValidNamespaceName(resource.namespace) || resource.namespace === 'all' || typeof resource.uid !== 'string' || !resource.uid || typeof resource_version !== 'string' || !resource_version || !data || typeof data !== 'object' || Array.isArray(data) || Object.values(data).some(v => typeof v !== 'string')) throw invalid('An exact Secret identity, version and base64 data are required');
-        try { encodeSecretRows(Object.entries(data).map(([key, value], id) => ({ id, key, value: value as string, mode: 'base64' }))); }
-        catch { throw invalid('Invalid Secret keys, base64 values or data exceeds 1 MiB'); }
-        const target = [...contextArgs, 'get', 'secret', resource.name, '-n', resource.namespace, '-o', 'json'];
-        const current = JSON.parse(await kubectl(target));
-        if (current.metadata?.uid !== resource.uid || current.metadata?.resourceVersion !== resource_version) throw requestError('conflict', 'Secret changed or was recreated. Reload before editing again', info, 409);
-        if (current.immutable) throw invalid('This Secret is immutable');
-        current.data = data;
-        delete current.stringData;
-        try { return send(JSON.parse(await run([...contextArgs, 'replace', '-f', '-', '-o', 'json'], JSON.stringify(current)))); }
-        catch (error) {
-          const failure = kubectlError(error, info);
-          throw requestError(failure.code, 'Secret update failed; check permissions, connectivity and object version. Refresh to verify saved state', info, failure.status);
-        }
-      }
-      if (operation === 'scale') {
-        if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw requestError('forbidden', 'Cross-origin mutations are forbidden', info, 403);
-        let body = '';
-        for await (const chunk of req) { body += chunk; if (body.length > 16384) throw invalid('Request body too large'); }
-        let data: any;
-        try { data = JSON.parse(body); } catch { throw invalid('Invalid JSON request body'); }
-        const { kind, name, namespace, replicas, context: targetContext } = data ?? {};
-        if (!['Deployment', 'StatefulSet'].includes(kind) || !Number.isInteger(replicas) || replicas < 0 || replicas > 100000 || typeof name !== 'string' || !name || typeof namespace !== 'string' || !namespace || targetContext !== context) throw invalid('Invalid scale request');
-        const type = RESOURCE_TYPES.find((type) => type.kind === kind)!;
-        await kubectl([...contextArgs, 'scale', `${type.plural}.${type.group}`, name, '-n', namespace, `--replicas=${replicas}`]);
-        return send({ success: true });
       }
     } catch (error) {
       const failure = normalizeK8sError(error, info);

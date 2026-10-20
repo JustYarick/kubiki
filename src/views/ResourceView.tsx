@@ -544,12 +544,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   const doScale = async (item: ResourceItem, replicas: number) => {
     if (!currentContext || !['Deployment', 'StatefulSet'].includes(item.kind)) return;
     try {
-      await k8s.scaleWorkload(currentContext, item.kind, item.name, item.namespace || 'default', replicas);
+      await k8s.scaleWorkload(currentContext, item.kind, item.name, item.namespace || 'default', replicas, item.uid, item.raw?.metadata?.resourceVersion ?? '');
       if (useClusterStore.getState().currentContext !== currentContext) return;
       if (k8s.demo) updateItem(item.kind, item.uid, { replicas });
       else await refresh();
       toast.success(`Desired replicas updated to ${replicas}`, `${item.kind}/${item.name}`);
-    } catch (error) { toast.error('Scale failed', String(error)); }
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'cancelled') toast.info('Scale cancelled');
+      else toast.error('Scale failed', String(error));
+    }
   };
 
   const doRestart = (item: ResourceItem) => {

@@ -1,6 +1,6 @@
 import type { ResourceQuery, ResourceRef } from '../core/resources/resource_types.ts';
 
-export const ERROR_CODES = ['unauthorized', 'forbidden', 'not_found', 'conflict', 'timeout', 'rate_limited', 'unavailable', 'invalid_request', 'unsupported', 'bridge_unavailable', 'internal'] as const;
+export const ERROR_CODES = ['cancelled', 'unauthorized', 'forbidden', 'not_found', 'conflict', 'timeout', 'rate_limited', 'unavailable', 'invalid_request', 'unsupported', 'bridge_unavailable', 'internal'] as const;
 export type K8sErrorCode = typeof ERROR_CODES[number];
 export interface RequestInfo { operation: string; context?: string; resource?: ResourceQuery | ResourceRef }
 export interface K8sErrorPayload extends RequestInfo { code: K8sErrorCode; message: string; status?: number; retryable: boolean }
@@ -47,7 +47,9 @@ export function normalizeK8sError(error: unknown, info: RequestInfo = { operatio
   if (value && typeof value === 'object' && 'code' in value && 'message' in value && ERROR_CODES.includes(value.code as K8sErrorCode) && typeof value.message === 'string') {
     const payload = value as K8sErrorPayload;
     // Request identity is owned by the caller, never replaced by a stale transport payload.
-    return requestError(payload.code, payload.message, info, payload.status ?? status);
+    const normalized = requestError(payload.code, payload.message, info, payload.status ?? status);
+    return new K8sRequestError({ ...info, code: normalized.code, message: normalized.message, status: normalized.status,
+      retryable: normalized.retryable && payload.retryable !== false });
   }
   const message = value instanceof Error ? value.message : typeof value === 'string' ? value : 'Kubernetes request failed';
   return requestError(status ? codeForStatus(status) : 'internal', message, info, status);

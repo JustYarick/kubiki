@@ -41,33 +41,14 @@ describe('HTTP bridge without a real cluster', () => {
     await fetch(`${base}resources?context=test&group=&version=v1&kind=Node`);
     expect(run).toHaveBeenCalledWith(['--context', 'test', 'get', 'nodes', '-o', 'json']);
   });
-  it('rejects cross-origin and invalid scale requests, but allows zero replicas', async () => {
-    const target = { context: 'test', kind: 'Deployment', namespace: 'backend', name: 'web', replicas: 0 };
-    const crossOrigin = await fetch(`${base}scale?context=test`, { method: 'POST', headers: { origin: 'http://untrusted.invalid' }, body: JSON.stringify(target) });
-    expect(crossOrigin.status).toBe(403);
-    const invalid = await fetch(`${base}scale?context=test`, { method: 'POST', body: JSON.stringify({ ...target, replicas: -1 }) });
-    expect(invalid.status).toBe(400); expect(run).not.toHaveBeenCalled();
-    const valid = await fetch(`${base}scale?context=test`, { method: 'POST', body: JSON.stringify(target) });
-    expect(valid.status).toBe(200);
-    expect(run).toHaveBeenCalledWith(['--context', 'test', 'scale', 'deployments.apps', 'web', '-n', 'backend', '--replicas=0']);
+  it.each(['scale', 'secrets'])('denies all %s writes, including forged approvals, before any kubectl call', async (operation) => {
+    for (const extra of [{}, { confirmed: true, approved: true, token: 'forged' }]) {
+      const response = await fetch(`${base}${operation}?context=test`, { method: 'POST', body: JSON.stringify({ context: 'test', kind: 'Deployment', namespace: 'backend', name: 'web', replicas: 0, ...extra }) });
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.message).toContain('backend system confirmation');
+    }
+    expect(run).not.toHaveBeenCalled();
   });
-});
-
-it('updates Secret data through stdin with UID/version, and redacts mutation errors', async () => {
-  const target = { resource: { context: 'test', group: '', version: 'v1', kind: 'Secret', namespace: 'backend', name: 'credentials', uid: 'uid' }, resource_version: '10', data: { password: 'c2VjcmV0' } };
-  const current = { apiVersion: 'v1', kind: 'Secret', metadata: { name: 'credentials', namespace: 'backend', uid: 'uid', resourceVersion: '10', labels: { keep: 'yes' } }, data: { old: 'b2xk' } };
-  const post = (data = target) => fetch(`${base}secrets?context=test`, { method: 'POST', body: JSON.stringify(data) });
-  run.mockResolvedValueOnce(JSON.stringify(current)).mockResolvedValueOnce(JSON.stringify({ ...current, data: target.data }));
-  expect((await post()).status).toBe(200);
-  const call = run.mock.calls[1] as unknown as [string[], string];
-  expect(call[0]).toEqual(['--context', 'test', 'replace', '-f', '-', '-o', 'json']);
-  expect(JSON.parse(call[1])).toEqual({ ...current, data: target.data });
-  run.mockReset().mockResolvedValue(JSON.stringify({ ...current, metadata: { ...current.metadata, resourceVersion: '11' } }));
-  expect((await post()).status).toBe(409); expect(run).toHaveBeenCalledTimes(1);
-  run.mockReset().mockResolvedValueOnce(JSON.stringify(current)).mockRejectedValueOnce({ stderr: 'Error from server (Forbidden): c2VjcmV0' });
-  const denied = await post(); expect(denied.status).toBe(403); expect(await denied.text()).not.toContain('c2VjcmV0');
-  run.mockReset(); expect((await post({ ...target, data: { password: '!' } })).status).toBe(400); expect(run).not.toHaveBeenCalled();
-  expect((await fetch(`${base}secrets?context=test`, { method: 'POST', headers: { origin: 'http://untrusted.invalid' }, body: JSON.stringify(target) })).status).toBe(403);
 });
 
 it('metrics bridge scopes Pod metrics to one namespace and isolates Node metrics RBAC failures', async () => {

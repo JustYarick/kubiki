@@ -64,3 +64,6 @@ Host terminal (OPS-02B) подключён: без kubeconfig/кластера, 
 
 
 Overview кластера/namespace подключён (UX-17): следует глобальному scope/context, агрегирует counts/Pod phases/restarts/diagnostics из текущих snapshots, выделяет partial/stale и позволяет открыть списки/объекты. Cluster-scoped ресурсы не попадают в namespace summary; Event не входит в общий object count. Дополнительных watches нет. Usage metrics и короткая история наблюдений подключены DOMAIN-02A; Prometheus/history backfill, quotas и native metrics QA остаются TODO, DOMAIN-02 PARTIAL. См. [19](19-OVERVIEW-TELEMETRY.md). См. [18](18-OVERVIEW.md).
+
+
+Защита записи WRITE-GUARD-01: backend prepared mutation, точный diff, системное подтверждение, повторный GET и Kubernetes preconditions; 120-секундный одноразовый review, без автоматического retry. Node helper создаётся только после подтверждения privileged manifest; создание также разрешает UID-scoped cleanup этого временного Pod. Осиротевший helper требует отдельного подтверждения при ручном удалении. HTTP mutation endpoints отклоняются. Автоматические Rust/TS/browser-тесты проходят; native dialog acceptance на других ОС и live QA отдельны. См. [22](22-MUTATION-SAFETY.md).

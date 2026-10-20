@@ -46,6 +46,7 @@ pub fn resource_type(kind: &str) -> Option<&'static ResourceType> {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiErrorCode {
+    Cancelled,
     Unauthorized,
     Forbidden,
     NotFound,

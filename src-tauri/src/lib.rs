@@ -1,6 +1,7 @@
 mod port_forward_commands;
 use port_forward_commands::*;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
+mod mutation_guard;
 mod k8s_commands;
 mod terminal_commands;
 mod node_commands;
@@ -39,7 +40,9 @@ pub fn run() {
         .manage(HostTerminalManager::default())
         .manage(PodLogManager::default())
         .manage(PortForwardManager::default())
+        .manage(mutation_guard::MutationGuard::default())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             start_port_forward,
             list_port_forwards,

@@ -172,15 +172,18 @@ pub fn debug_pod(request: &NodeDebugRequest, id: &str) -> Pod {
     }})).expect("bundled debug Pod spec is valid")
 }
 impl NodeDebugManager {
-    pub async fn prepare<F>(
+    pub async fn prepare<F, C, CF>(
         &self,
         owner: &str,
         id: &str,
         request: NodeDebugRequest,
         client: F,
+        confirm: C,
     ) -> Result<ResourceRef, ApiError>
     where
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
+        C: FnOnce(String) -> CF + Send + 'static,
+        CF: Future<Output = Result<bool, ApiError>> + Send + 'static,
     {
         validate_request(&request)?;
         if id.is_empty()
@@ -241,6 +244,12 @@ impl NodeDebugManager {
                 *lease.client.lock().await=Some(client.clone());
                 verify_node(&request,client.clone()).await?;
                 check_permissions(&request,&lease.name,client.clone()).await?;
+                let review = format!("CREATE privileged node-debug Pod\n{}\n\nManifest to create:\n{}\n\nThis grants root host access (hostPID/IPC/network, privileged, /host mount). Confirming also authorizes automatic deletion of this exact owned helper Pod by UID when the session ends or its window closes.\n\nCreate this Pod and authorize its cleanup?", crate::core::mutations::identity_summary(&request.resource, "(Node UID checked before create)"), serde_json::to_string_pretty(&debug_pod(&request, &lease.id)).expect("Pod serializes"));
+                let reviewed_at = std::time::Instant::now();
+                if !confirm(review).await? { return Err(crate::core::mutations::cancelled(&request.resource,"Operation cancelled. Debug Pod was not created")); }
+                if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL { return Err(error(&request,409,"Confirmation expired. Start and review again")); }
+                verify_node(&request,client.clone()).await?;
+
                 Ok::<_,ApiError>(client)
             }=>result };
             let provision = match result {
@@ -501,11 +510,13 @@ impl NodeDebugManager {
             })
             .collect())
     }
-    pub async fn remove_other(
+    pub async fn remove_other<C, CF>(
         &self,
         client: Client,
         resource: ResourceRef,
-    ) -> Result<(), ApiError> {
+        confirm: C,
+    ) -> Result<(), ApiError>
+    where C: FnOnce(String) -> CF, CF: Future<Output = Result<bool, ApiError>> {
         validate_query(&resource.query)?;
         if resource.query.kind != "Pod"
             || resource.query.namespace.is_none()
@@ -559,6 +570,16 @@ impl NodeDebugManager {
                 ));
             }
         }
+        let version = pod.metadata.resource_version.clone().filter(|v| !v.is_empty())
+            .ok_or_else(|| error(&request,409,"Debug Pod has no resourceVersion; refresh"))?;
+        let review = format!("DELETE debug Pod\n{}\n\nPod to delete:\n{}\n\nDeletion uses background garbage collection; dependents may also be removed. This action cannot be undone.\n\nDelete this Pod?", crate::core::mutations::identity_summary(&resource, &version), serde_json::to_string_pretty(&pod).expect("Pod serializes"));
+        let reviewed_at = std::time::Instant::now();
+        if !confirm(review).await? { return Err(crate::core::mutations::cancelled(&resource,"Operation cancelled. Nothing was deleted")); }
+        if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL { return Err(error(&request,409,"Confirmation expired. Refresh and review again")); }
+        let current = bounded(&request, pods.get(&resource.name)).await?;
+        if current.metadata.uid != resource.uid || current.metadata.resource_version.as_deref() != Some(&version) {
+            return Err(error(&request,409,"Debug Pod changed during confirmation; refresh and review again"));
+        }
         bounded(
             &request,
             pods.delete(
@@ -566,8 +587,9 @@ impl NodeDebugManager {
                 &DeleteParams {
                     preconditions: Some(Preconditions {
                         uid: resource.uid.clone(),
-                        resource_version: None,
+                        resource_version: Some(version),
                     }),
+                    propagation_policy: Some(kube::api::PropagationPolicy::Background),
                     ..DeleteParams::default()
                 },
             ),

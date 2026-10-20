@@ -974,6 +974,7 @@ dependencies = [
  "base64",
  "chrono",
  "dirs",
+ "either",
  "futures",
  "http",
  "k8s-openapi",

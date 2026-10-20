@@ -405,3 +405,14 @@
 - Воркер Monaco: бандлить через локальный шим `src/views/editor_worker.ts` (`?worker` из node_modules rolldown не берёт).
 - Строу правила именования: компоненты `.tsx` в PascalCase, остальное snake_case.
 - Не добавляй CDN-ресурсы: десктоп должен работать локально (шрифты, Monaco — уже локальные).
+
+
+## 2026-10-20 — WRITE-GUARD-01: подтверждение операций записи на backend
+
+- Добавлен `PreparedMutation` в `kubiki-core`: backend валидирует ResourceRef/GVK/context/ns/name/UID/resourceVersion и payload, получает фактический объект, строит неизменяемый review и не допускает no-op. Secret diff явно показывает изменённые ключи и значения BEFORE/AFTER в base64; лимит 24k символов, truncation запрещён.
+- Tauri `MutationGuard` сериализует изменение через try-lock. Подтверждение — native UI, вызванный Rust; нет IPC `approved` или token. Linux получил прокручиваемый GTK review с Cancel по умолчанию, literal TextView (без markup), dialog родительского окна и блокировку повторного показа. Windows/macOS используют native Tauri dialog, требуется platform acceptance.
+- После согласия истекает через 120 секунд; backend повторно получает объект и сверяет UID/RV. Secret сохраняет metadata/type из snapshot, scale применяет только `spec.replicas` с условием UID/RV в patch. Ошибка финальной записи не retryable; frontend сохраняет draft и отличает Cancel от RBAC.
+- Node debug Pod создаётся после показа фиксированного привилегированного manifest, повторно проверяет UID Node после согласия. Согласие разрешает очистку только созданного helper по UID/labels/session; ручное удаление orphan helper проходит отдельный native dialog и UID+RV delete preconditions.
+- HTTP `/scale` и `/secrets` переведены в read-only 403 перед чтением request body/вызовом kubectl. Обычный live Delete, YAML Apply и restart остаются отключёнными; для подключения обязателен WRITE-GUARD-03.
+- Проверки: 56 Rust tests, 178 Vitest unit tests, 83 Playwright browser tests; `pnpm typecheck`, `pnpm build`, `cargo check --manifest-path src-tauri/Cargo.toml --offline`, `git diff --check` прошли. Все мутации тестировались на mock API, реальный кластер не менялся. Native GUI/real-cluster acceptance не выполнялась.
+- Дальше: WRITE-GUARD-02 проверить native диалог и window lifecycle на Linux/Windows/macOS; WRITE-GUARD-03 провести generic Delete/YAML/restart через тот же guard до включения; WRITE-GUARD-04 показать server-normalized response. Полный архитектурный контракт и ограничения: [22](22-MUTATION-SAFETY.md).

@@ -63,6 +63,11 @@ describe('Typed errors', () => {
     expect(codeForStatus(404)).toBe('not_found');
     expect(errorHint(requestError('forbidden', 'No access', info))).toContain('RBAC');
   });
+  it('preserves backend cancellation and never upgrades a non-retryable mutation failure', () => {
+    const cancelled = normalizeK8sError({ code: 'cancelled', message: 'Operation cancelled', retryable: false }, info);
+    expect(cancelled).toMatchObject({ code: 'cancelled', retryable: false });expect(errorHint(cancelled)).toBe('');
+    expect(normalizeK8sError({ code: 'timeout', message: 'Refresh to verify the outcome', status: 504, retryable: false }, info).retryable).toBe(false);
+  });
   it('accepts JSON IPC and legacy strings while retaining caller identity', () => {
     const error = { code: 'forbidden', message: 'No access', status: 403, retryable: true, context: 'wrong-context' };
     expect(normalizeK8sError(JSON.stringify(error), info)).toMatchObject({ code: 'forbidden', context: 'production', retryable: false });
@@ -86,6 +91,12 @@ describe.each(['HTTP', 'Tauri'] as const)('%s provider transport', (transport) =
       expect(String(url)).not.toContain('password'); expect(String(url)).not.toContain('c2VjcmV0');
       expect(JSON.parse(init!.body as string)).toEqual(request);
     }
+  });
+  it('pins scale requests to the displayed UID and resourceVersion without any frontend approval flag', async () => {
+    respond({ success: true });await new K8sProvider().scaleWorkload('production', 'Deployment', 'web', 'backend', 0, 'original', '10');
+    const request = { resource: { ...resourceQuery('production', 'Deployment', 'backend'), name: 'web', uid: 'original' }, resourceVersion: '10', replicas: 0 };
+    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('scale_workload', request);
+    else expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual(request);
   });
   it('routes namespace metrics through HTTP/native and validates the response identity', async () => {
     const data = { context: 'production', namespace: 'backend', pods: { items: [], error: null }, nodes: { items: null, error: null } };

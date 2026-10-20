@@ -4,6 +4,15 @@
 
 Статусы: `TODO` — не начато, `IN PROGRESS` — выполняется, `PARTIAL` — реализована часть, `DONE` — реализовано и проверено, `DEFERRED` — отложено по запросу владельца. Наличие backend/UI само по себе не закрывает сквозной сценарий.
 
+## Централизованная защита записи — 2026-10-20
+
+| ID | Приоритет | Задача | Статус | Критерий приёмки |
+|---|---|---|---|---|
+| WRITE-GUARD-01 | P0 | Backend prepare/diff/native consent/conditional commit для существующих записей; HTTP read-only | PARTIAL | Scale, Secret, node helper creation/cleanup и orphan debug Pod delete защищены; общий live Delete/YAML Apply пока disabled; ADR [22](22-MUTATION-SAFETY.md) |
+| WRITE-GUARD-02 | P1 | Native acceptance системного подтверждения | TODO | Linux/Windows/macOS: Cancel/Escape, закрытие родителя, длинные diff; ручная проверка на изолированном кластере |
+| WRITE-GUARD-03 | P0 | Подключение generic Delete/YAML/restart через guard | PARTIAL | Core generic Delete prepare/conditional commit реализован и тестирован, UI/live IPC disabled; YAML/restart и type-specific cascade/dry-run acceptance остаются TODO |
+| WRITE-GUARD-04 | P2 | Послеоперационное сравнение с результатом admission | TODO | Отображение фактического ответа API и расхождений с запросом |
+
 ## Текущий блок: подробности, YAML и безопасные диаграммы
 
 | ID | Приоритет | Задача | Статус | Критерий приёмки |
@@ -67,7 +76,7 @@
 | OPS-03B | UI-5 | Native/live приёмка Node debug | TODO | Тестовый кластер, Pod Security/admission/image pull/finalizers, неопределённый POST/crash recovery, длительные потоки и cross-platform transport |
 | OPS-04 | UI-5 | Доработать PF lifecycle и подключить UI | TODO | Отмена listener и дочерних соединений; Starting/Active/Failed; context и Service resolution |
 | MUT-01 | UI-6 | YAML schema, dry-run, diff и live apply | TODO | DATA-01; 403/409/timeout не объявляются успехом; точная цель и conflict handling |
-| MUT-02 | UI-7 | Реальные create/delete/restart через единый action pipeline | TODO | MUT-01; context/ns/name и подтверждение операции; строки таблицы остаются без action buttons |
+| MUT-02 | UI-7 | Реальные create/delete/restart через единый action pipeline | TODO | WRITE-GUARD-01; context/ns/name и подтверждение операции; строки таблицы остаются без action buttons |
 | MUT-03A | UI-6 | Построчный Secret data editor | DONE | Text/Base64 общий toggle, UTF-8/binary/empty, add/remove keys, immutable/validation, desktop и browser stdin save, UID/resourceVersion conflicts и draft preservation. [17](17-SECRET-EDITOR.md) |
 | MUT-03B | UI-6 | Native/live приёмка Secret mutations | TODO | Отдельный test namespace, controlled Secret, admission/webhooks, реальные timeout outcomes и required type keys. Не закрывает MUT-01 live YAML apply |
 | PERF-01 | UI-3/10 | Виртуализация таблиц и фильтры по вкладкам | TODO | Измерение 10k строк; отсутствие перехвата клавиатуры чужих панелей |
@@ -81,7 +90,7 @@
 | DOMAIN-02D | UI-8 | Native/cross-platform metrics QA | TODO | Tauri GUI FPS/animations при больших кластерах, credentials/proxy, длительный polling и memory QA |
 | RELEASE-01 | UI-11 | CI, desktop smoke, нагрузка и длительные сессии | TODO | Все MVP сценарии; Linux WebKit + macOS/Windows; измеренные бюджеты |
 
-Порядок исполнения: текущий блок → DATA-01A/B (готовы) → DATA-02/03A (готовы) → DATA-03B/C и OPS-01/02/04 с DATA-01C → OPS-03 и MUT-01/02 → PERF/GRAPH/DOMAIN → release QA. Для каждого рабочего блока в 07 записываются изменения, выполненные проверки и незавершённые пункты. Демо/подставленный API и настоящий кластер учитываются отдельно.
+Порядок исполнения: текущий блок → DATA-01A/B (готовы) → DATA-02/03A (готовы) → DATA-03B/C и OPS-01/02/04 с DATA-01C → OPS-03 и WRITE-GUARD-01/02 → MUT-01/02 → PERF/GRAPH/DOMAIN → release QA. Для каждого рабочего блока в 07 записываются изменения, выполненные проверки и незавершённые пункты. Демо/подставленный API и настоящий кластер учитываются отдельно.
 
 ## Диаграммы: отдельный план по уровням
 

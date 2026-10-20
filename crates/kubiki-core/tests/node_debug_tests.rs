@@ -190,6 +190,7 @@ async fn fixture() -> Fixture {
                 } else if line.starts_with("POST /api/v1/namespaces/debug/pods ") {
                     let mut pod = body;
                     pod["metadata"]["uid"] = json!("debug-uid");
+                    pod["metadata"]["resourceVersion"] = json!("10");
                     pod["status"] = json!({"phase":"Running","containerStatuses":[{"name":"debugger","ready":true,"restartCount":0,"image":"ubuntu","imageID":"test","state":if s.pending{json!({"waiting":{"reason":"ContainerCreating"}})}else{json!({"running":{}})}}]});
                     assert_eq!(pod["metadata"]["labels"]["kubiki.io/node-debug"], "true");
                     assert_eq!(pod["spec"]["nodeName"], "worker");
@@ -255,7 +256,13 @@ async fn provisions_uid_bound_privileged_helper_and_real_exec_uses_host_chroot_t
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
     let resource = manager
-        .prepare("main", "session", request(), async move { Ok(client) })
+        .prepare(
+            "main",
+            "session",
+            request(),
+            async move { Ok(client) },
+            |_| async { Ok(true) },
+        )
         .await
         .unwrap();
     assert_eq!(resource.uid.as_deref(), Some("debug-uid"));
@@ -327,7 +334,13 @@ async fn denies_rbac_and_replaced_nodes_before_any_pod_create() {
         let manager = NodeDebugManager::default();
         let client = f.client.clone();
         let err = manager
-            .prepare("main", "session", request(), async move { Ok(client) })
+            .prepare(
+                "main",
+                "session",
+                request(),
+                async move { Ok(client) },
+                |_| async { Ok(true) },
+            )
             .await
             .unwrap_err();
         assert_eq!(err.status, Some(if bad_node { 409 } else { 403 }));
@@ -345,7 +358,13 @@ async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_read
     let client = f.client.clone();
     let preparing = tokio::spawn(async move {
         task_manager
-            .prepare("main", "session", request(), async move { Ok(client) })
+            .prepare(
+                "main",
+                "session",
+                request(),
+                async move { Ok(client) },
+                |_| async { Ok(true) },
+            )
             .await
     });
     f.created.notified().await;
@@ -360,7 +379,13 @@ async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_read
     let client = f.client.clone();
     assert_eq!(
         manager
-            .prepare("main", "late", request(), async move { Ok(client) })
+            .prepare(
+                "main",
+                "late",
+                request(),
+                async move { Ok(client) },
+                |_| async { Ok(true) }
+            )
             .await
             .unwrap_err()
             .status,
@@ -375,7 +400,13 @@ async fn cleanup_failure_is_retained_retryable_and_never_deletes_a_replacement()
         let manager = NodeDebugManager::default();
         let client = f.client.clone();
         manager
-            .prepare("main", "session", request(), async move { Ok(client) })
+            .prepare(
+                "main",
+                "session",
+                request(),
+                async move { Ok(client) },
+                |_| async { Ok(true) },
+            )
             .await
             .unwrap();
         {
@@ -407,12 +438,18 @@ async fn lists_and_deletes_only_inactive_marked_debug_pods_with_atomic_uid_preco
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
     let resource = manager
-        .prepare("main", "session", request(), async move { Ok(client) })
+        .prepare(
+            "main",
+            "session",
+            request(),
+            async move { Ok(client) },
+            |_| async { Ok(true) },
+        )
         .await
         .unwrap();
     assert_eq!(
         manager
-            .remove_other(f.client.clone(), resource.clone())
+            .remove_other(f.client.clone(), resource.clone(), |_| async { Ok(true) })
             .await
             .unwrap_err()
             .status,
@@ -427,8 +464,102 @@ async fn lists_and_deletes_only_inactive_marked_debug_pods_with_atomic_uid_preco
     assert_eq!(pods.len(), 1);
     f.state.lock().await.deny_delete = false;
     manager
-        .remove_other(f.client.clone(), pods[0].resource.clone())
+        .remove_other(f.client.clone(), pods[0].resource.clone(), |_| async {
+            Ok(true)
+        })
         .await
         .unwrap();
     assert_eq!(f.state.lock().await.deleted, 1);
+}
+
+#[tokio::test]
+async fn node_create_requires_consent_to_exact_privileged_manifest_and_rechecks_node_afterwards() {
+    for approve in [false, true] {
+        let f = fixture().await;
+        let manager = NodeDebugManager::default();
+        let client = f.client.clone();
+        let state = f.state.clone();
+        let result = manager
+            .prepare(
+                "main",
+                "review",
+                request(),
+                async move { Ok(client) },
+                move |review| async move {
+                    assert!(
+                        review.contains("CREATE privileged")
+                            && review.contains("node-uid")
+                            && review.contains("ubuntu:24.04")
+                    );
+                    assert!(
+                        review.contains("\"privileged\": true")
+                            && review.contains("automatic deletion")
+                            && review.contains("kubiki-node-debug-review")
+                    );
+                    assert_eq!(state.lock().await.created, 0);
+                    if approve {
+                        state.lock().await.wrong_node = true;
+                    }
+                    Ok(approve)
+                },
+            )
+            .await
+            .unwrap_err();
+        if approve {
+            assert_eq!(result.status, Some(409));
+        } else {
+            assert_eq!(result.code, kubiki_core::core::api::ApiErrorCode::Cancelled);
+        }
+        manager.stop_owner("main").await;
+        assert_eq!(f.state.lock().await.created, 0);
+        assert_eq!(f.state.lock().await.deleted, 0);
+    }
+}
+
+#[tokio::test]
+async fn orphan_delete_cancellation_and_concurrent_changes_never_delete() {
+    let f = fixture().await;
+    let manager = NodeDebugManager::default();
+    let client = f.client.clone();
+    let resource = manager
+        .prepare(
+            "main",
+            "review",
+            request(),
+            async move { Ok(client) },
+            |_| async { Ok(true) },
+        )
+        .await
+        .unwrap();
+    f.state.lock().await.deny_delete = true;
+    assert!(manager.stop("main", "review").await.is_err());
+    f.state.lock().await.deny_delete = false;
+    let result = manager
+        .remove_other(f.client.clone(), resource.clone(), |review| async move {
+            assert!(
+                review.contains("DELETE debug Pod")
+                    && review.contains("debug-uid")
+                    && review.contains("Resource version: \"10\"")
+            );
+            Ok(false)
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(result.code, kubiki_core::core::api::ApiErrorCode::Cancelled);
+    assert_eq!(f.state.lock().await.deleted, 0);
+    let state = f.state.clone();
+    assert_eq!(
+        manager
+            .remove_other(f.client.clone(), resource, move |_| async move {
+                state.lock().await.pod.as_mut().unwrap()["metadata"]["resourceVersion"] =
+                    json!("11");
+                Ok(true)
+            })
+            .await
+            .unwrap_err()
+            .status,
+        Some(409)
+    );
+    assert_eq!(f.state.lock().await.deleted, 0);
+    manager.stop_owner("main").await;
 }
