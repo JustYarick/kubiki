@@ -67,7 +67,7 @@ export const useDockStore = create<DockState>()(
           type: 'terminal',
           context: useClusterStore.getState().currentContext,
           title: `Terminal: Local Shell #${num}`,
-          subtitle: 'localhost (bash/zsh)',
+          subtitle: 'Local host shell',
           targetType: 'local',
           resourceName: 'localhost',
           container: 'local',

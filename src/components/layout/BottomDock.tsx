@@ -254,7 +254,7 @@ const ExpandedDock: React.FC = () => {
                   <Laptop size="calc(13px * var(--ui-factor))" className="text-sky-400" />
                   <div className="flex flex-col text-left">
                     <span className="font-medium">Local Terminal (Host PC)</span>
-                    <span className="text-[length:calc(9.5px*var(--ui-factor))] text-[var(--text-muted)]">demo@localhost (~)</span>
+                    <span className="text-[length:calc(9.5px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? 'Simulated local shell' : 'Your workstation · home directory'}</span>
                   </div>
                 </button>
                 <button
@@ -383,7 +383,7 @@ const ExpandedDock: React.FC = () => {
 /* ------------------------------------------------------------------ */
 
 export function TerminalSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
-  if (!k8s.demo && session.targetType === 'pod') return <LiveTerminalPane session={session} visible={visible} onContainerChange={onContainerChange} />;
+  if (!k8s.demo && (session.targetType === 'pod' || session.targetType === 'local')) return <LiveTerminalPane session={session} visible={visible} onContainerChange={onContainerChange} />;
   if (!k8s.demo) return <div className="p-5 text-xs text-[var(--text-secondary)]">{session.targetType === 'node' ? 'Node debug shell requires a managed debug Pod; this transport is not connected yet.' : 'Local host PTY is not connected yet. Open Shell from a Pod to use Kubernetes exec.'}</div>;
   return <DemoTerminalSessionPane session={session} visible={visible} onContainerChange={onContainerChange} />;
 }

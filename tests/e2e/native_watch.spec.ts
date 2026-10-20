@@ -27,6 +27,7 @@ async function nativeApi(page: Page, holdPod = false, restricted = false) {
       unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
         if (command === 'stop_pod_execs' || command === 'stop_pod_logs') return;
+        if (command === 'stop_host_terminals') return;
         if (command === 'get_kube_contexts') return [{ name: 'native-test', is_current: true }, { name: 'native-other', is_current: false }];
         if (command === 'ping_cluster') return { git_version: 'v1.34.0' };
         if (command === 'get_namespaces') { if (restricted) throw { code: 'forbidden', status: 403, message: 'namespaces list forbidden', retryable: false }; return ['backend', 'other']; }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { connectPodExec, closeExecConnections, type ExecBatch } from '../../src/providers/tauri_exec';
+import { connectPodExec, connectHostTerminal, getHostTerminalInfo, resetExecSessions, closeExecConnections, type ExecBatch } from '../../src/providers/tauri_exec';
 import { resourceQuery } from '../../src/core/resources/resource_types';
 const mock = vi.hoisted(() => ({ invoke: vi.fn(), channels: [] as Array<{ id: number; onmessage: (batch: ExecBatch) => void }> }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mock.invoke, Channel: class { id = mock.channels.length + 1; onmessage = (_batch: ExecBatch) => {}; constructor() { mock.channels.push(this); } } }));
@@ -43,4 +43,24 @@ it('finishes only after acknowledging final output; large input fails instead of
   await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('close_pod_exec', { sessionId: id }));
   const ackIndex = mock.invoke.mock.calls.findIndex(([c]) => c === 'ack_pod_exec'); const closeIndex = mock.invoke.mock.calls.findIndex(([c]) => c === 'close_pod_exec'); expect(ackIndex).toBeLessThan(closeIndex);
   const other = await connectPodExec(request, receive, new AbortController().signal); other.write('x'.repeat(65537)); expect(receive).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'Failed' })); conn.close();
+});
+
+it('routes host shell IO/resize/ACK/exit to independent host commands with no Kubernetes context', async () => {
+  const receive = vi.fn();const conn = await connectHostTerminal({ shell: '/bin/zsh', cols: 100, rows: 32 }, receive, new AbortController().signal);
+  expect(mock.invoke.mock.calls[0][0]).toBe('start_host_terminal');expect(mock.invoke.mock.calls[0][1].request).toEqual({ shell: '/bin/zsh', cols: 100, rows: 32 });
+  const id = mock.invoke.mock.calls[0][1].sessionId;conn.write('printf test\r');conn.resize(120, 40);
+  await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('write_host_terminal', { sessionId: id, data: 'printf test\r' }));
+  expect(mock.invoke).toHaveBeenCalledWith('resize_host_terminal', { sessionId: id, cols: 120, rows: 40 });
+  mock.channels[0].onmessage({ session_id: id, messages: [{ sequence: 1, event: { type: 'Exited', payload: { code: 0 } } }] });
+  await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('close_host_terminal', { sessionId: id }));
+  expect(mock.invoke).toHaveBeenCalledWith('ack_host_terminal', { sessionId: id, sequence: 1 });expect(unregister).toHaveBeenCalledOnce();
+});
+it('loads real shell metadata and reset stops both Pod and host transports', async () => {
+  mock.invoke.mockResolvedValue({ shells: ['/bin/zsh'], default_shell: '/bin/zsh', cwd: '/home/user' });
+  expect(await getHostTerminalInfo()).toEqual({ shells: ['/bin/zsh'], default_shell: '/bin/zsh', cwd: '/home/user' });
+  await resetExecSessions();expect(mock.invoke).toHaveBeenCalledWith('stop_host_terminals');expect(mock.invoke).toHaveBeenCalledWith('stop_pod_execs');
+});
+it('browser host shell reports desktop requirement without attempting native commands', async () => {
+  vi.stubGlobal('window', {});await expect(getHostTerminalInfo()).rejects.toMatchObject({ code: 'unsupported' });
+  await expect(connectHostTerminal({ shell: '/bin/sh', cols: 80, rows: 24 }, vi.fn(), new AbortController().signal)).rejects.toMatchObject({ code: 'unsupported' });expect(mock.invoke).not.toHaveBeenCalled();
 });

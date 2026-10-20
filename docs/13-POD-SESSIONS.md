@@ -46,4 +46,4 @@ cargo run --manifest-path crates/kubiki-core/Cargo.toml --example terminal_smoke
 
 В этой сессии проверен существующий `chaos-lab/pod-with-init-container`, контейнер `main-application`: получен выполненный marker, exit 0, TTY 100×40, active_sessions=0. Это проверка живого Rust backend; полная приёмка GUI в Tauri и длительных сессий остаётся открытой.
 
-Browser preview не выполняет remote shell и показывает требование desktop; demo shell остаётся явно симулированным. Host PTY и Node debug shell ещё не подключены. Следующие блоки: browser log streaming, host PTY, Node debug, полная native/cross-platform QA.
+Browser preview не выполняет remote shell и показывает требование desktop; demo shell остаётся явно симулированным. Host PTY подключён, см. [15](15-HOST-TERMINAL.md); Node debug shell ещё не подключён. Следующие блоки: browser log streaming, Node debug, полная native/cross-platform QA.

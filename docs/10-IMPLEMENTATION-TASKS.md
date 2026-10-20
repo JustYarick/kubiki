@@ -52,10 +52,10 @@
 | OPS-01A | UI-5 | Desktop Pod log stream | DONE | kube-rs → Tauri Channel, ResourceRef/UID check, follow/tail/since/previous, общий контейнерный picker, cancel/явный reconnect, bounded history/UTF-8/IPC ACK. Local HTTP + browser IPC tests и read-only live smoke; см. [14](14-POD-LOG-STREAMS.md) |
 | OPS-01B | UI-5 | Browser log stream | TODO | SSE/HTTP streaming вместо tail polling, options и единый lifecycle/error/identity контракт; snapshot fallback обозначен явно |
 | OPS-01C | UI-5 | Native GUI и длительная приёмка logs | TODO | Живой Tauri GUI, длительные/большие потоки, реальные log disconnect/proxy/RBAC, quiet streams, Linux/macOS/Windows; headless smoke это не заменяет |
-| OPS-02 | UI-5 | Pod exec + host PTY: start/write/resize/close | PARTIAL | OPS-02A готова, host PTY и полная native QA остаются |
+| OPS-02 | UI-5 | Pod exec + host PTY: start/write/resize/close | PARTIAL | OPS-02A/B готовы; полная native/cross-platform QA остаётся |
 | OPS-02A | UI-5 | Pod exec: WebSocket + Tauri + xterm | DONE | ResourceRef/UID check, контейнер/shell picker, stdin/stdout/TTY resize, ACK/backpressure, exit/error, cancellation/cleanup, keepalive full tabs/dock, control keys. Rust local WS + browser IPC tests; живой backend проверен на указанном Pod |
-| OPS-02B | UI-5 | Настоящий host PTY | TODO | start/write/resize/close, независимые сессии и cleanup; сейчас local terminal в реальном режиме обозначен как pending |
-| OPS-02C | UI-5 | Native GUI и длительная приёмка exec | TODO | GUI Tauri на живом кластере, длительные/большие потоки, credentials/proxy edge cases и Linux/macOS/Windows. Живой Rust smoke не заменяет эту приёмку |
+| OPS-02B | UI-5 | Настоящий host PTY | DONE | portable-pty → Tauri → общий xterm; системный shell/home, stdin/resize/exit/ACK, независимые сессии, cancel/reap/owner limits; реальные Linux PTY tests и browser IPC/unsupported/retry. Native GUI и macOS/Windows остаются OPS-02C; см. [15](15-HOST-TERMINAL.md) |
+| OPS-02C | UI-5 | Native GUI и длительная приёмка terminal transports | TODO | Pod exec на живом кластере + host PTY в GUI Tauri: длительные/большие потоки, teardown/process trees, credentials/proxy edge cases и Linux/macOS/Windows, ConPTY final output/cancel. Rust PTY/HTTP smoke не заменяет эту приёмку |
 | OPS-03 | UI-5 | Управляемый Node debug shell | TODO | OPS-02; создание/debug permissions, attach, cleanup и удаление orphan debug pod |
 | OPS-04 | UI-5 | Доработать PF lifecycle и подключить UI | TODO | Отмена listener и дочерних соединений; Starting/Active/Failed; context и Service resolution |
 | MUT-01 | UI-6 | YAML schema, dry-run, diff и live apply | TODO | DATA-01; 403/409/timeout не объявляются успехом; точная цель и conflict handling |

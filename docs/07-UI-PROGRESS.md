@@ -6,7 +6,22 @@
 
 ---
 
-## Последний блок — 2026-10-20: OPS-01A, настоящий desktop log stream
+## Последний блок — 2026-10-20: OPS-02B, настоящий local host terminal
+
+- **OPS-02B — готово:** Local Terminal теперь portable-pty → Tauri Channel → xterm, общий renderer/JS transport с Pod exec. Настоящий interactive shell, домашняя папка, наследуемое окружение, stdin/UTF-8/Ctrl-C/resize/exit code, явные Reconnect/Disconnect и Clear. Локальный терминал доступен без kubeconfig и Kubernetes context. Demo остаётся симулированным, browser явно требует desktop.
+- **Shell/metadata:** backend сообщает доступные shell/default/home; Unix учитывает SHELL и bash/zsh/fish/sh, Windows — COMSPEC/PowerShell. В local header нет контейнерного dropdown и Kubernetes target. Выбор shell создаёт новый процесс. Ошибка metadata нормализуется в читаемое сообщение; Reconnect повторно запрашивает metadata. Исправление проверено после воспроизведения `[object Object]` в первом browser прогоне.
+- **Lifecycle:** сессии раздельные, owner настоящего окна, максимум 16; stdout/input/IPC ограничены. ACK идёт после xterm write callback. Blocking PTY I/O вынесено из async runtime; Unix nonblocking read/write и проверка cancel при backpressure. Close/pagehide/context change/destroy освобождают сессию; Unix teardown завершает foreground process group в собственной session и shell, выполняет wait. Сворачивание и переключение dock не пересоздают PTY. Общая политика dock при смене cluster context по-прежнему очищает local sessions.
+- **Roadmap:** OPS-02B DONE; OPS-02 остаётся PARTIAL из-за OPS-02C. В native QA явно включены host PTY, длительные потоки/процессы, macOS и Windows ConPTY. Node debug — OPS-03, port-forward — OPS-04, остаются TODO. Документ с контрактом и запуском проверки — [15](15-HOST-TERMINAL.md).
+
+Проверки финального состояния:
+
+- `pnpm test`: **140 unit/contract tests**, 18 файлов. Новые 3 проверяют host commands/ACK/exit без ResourceRef, metadata/reset Pod+host и browser requirement; существующие sequence/input/late/cancel tests общего транспорта сохранены.
+- `cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline`: **30 Rust tests**. Четыре новых используют **настоящий Linux PTY**: TTY/UTF-8/cwd, stty 100×40 и exit 7, Ctrl-C/sleep с сохранением shell, независимость двух сессий, исчезновение PID shell/foreground job после stop, чужой owner, full-output queue/oversized input/invalid options/ранняя отмена. Проверяется реальный процесс и cleanup, не только mocks.
+- `pnpm build`/typecheck, `cargo check --manifest-path src-tauri/Cargo.toml --offline`, `git diff --check`: успешно. К прежним зависимостям добавлен прямой Unix libc для PTY flags/process-group signals; оба tracked Cargo.lock обновлены. Сохраняется прежнее предупреждение о крупных bundle chunks.
+- **46/46 production browser scenarios**, 53,9 с. Новые 3: host без кластера, ввод/Ctrl-C/W/resize/ACK, shell change/exit/reconnect/disconnect/hidden tabs/late batches/pagehide; metadata error + Retry; browser requirement. Общие Pod exec/logs/watch/diagram/YAML/appearance регрессии прошли. Первый прогон обнаружил ошибку отображения metadata и неточный test locator; исправления прошли целевой 3/3 и полный финальный прогон.
+- Screenshot host terminal при 900×700 просмотрен. Native GUI/cross-platform/длительная приёмка не объявляется выполненной; реальные PTY backend tests выполнены на Linux. Изменений native pan/blur/graphics flags нет.
+
+## 2026-10-20: OPS-01A, настоящий desktop log stream
 
 - **OPS-01A — готово:** desktop вместо tail polling использует kube-rs log_stream → Tauri Channel → общий LogsSessionPane. ResourceRef/context/UID/container; предварительный GET Pod проверяет UID и наличие app/init/ephemeral container. Поддержаны follow, tail, since, previous; завершённому init не требуется Running. UID preflight не объявляется атомарной log precondition.
 - **UI/lifecycle:** контейнерный picker и фильтр сохранены; Log options на любой ширине содержит tail 100/500/1000, since 5m/1h/24h, Previous container instance и Reconnect. Pause закрывает чтение, Resume заменяет историю новым tail (пояснение в меню). Статусы Connecting/Following/Completed/Failed/Stopped; ошибка не стирает уже полученные строки. Закрытие вкладки, смена контейнера/context, pagehide и destroy окна освобождают поток. Неактивная посещённая вкладка сохраняет поток; чтение истории не сбрасывает скролл вниз.
