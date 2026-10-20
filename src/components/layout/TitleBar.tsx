@@ -20,6 +20,7 @@ import { useDockStore } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
 import { k8s } from '../../providers/k8s_provider';
+import { refreshResourceWatches } from '../../state/resource_watch';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
 import { IconButton, Tooltip } from '../ui/Button';
 import { SearchableSelect } from '../ui/SearchableSelect';
@@ -56,6 +57,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
     refreshing.current = true;
     setIsRefreshing(true);
     try {
+      if (await refreshResourceWatches()) return;
       const kinds = Object.keys(useResourceStore.getState().resources) as ResourceKind[];
       const results = await Promise.allSettled(kinds.map(async (kind) => {
         try {
@@ -69,6 +71,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
       if (useClusterStore.getState().currentContext !== currentContext) return;
       const failed = results.filter((r) => r.status === 'rejected').length;
       if (failed) toast.warn('Sync incomplete', `${failed} resource types could not be refreshed`);
+    } catch (error) {
+      toast.error('Sync incomplete', String(error));
     } finally {
       refreshing.current = false;
       setIsRefreshing(false);

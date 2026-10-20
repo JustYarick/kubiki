@@ -4,12 +4,28 @@ import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
 import { parseApiVersion, resourceQuery } from '../core/resources/resource_types';
 import type { KubernetesProvider } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
+import type { ResourceQuery } from '../core/resources/resource_types';
+import type { WatchBatch } from './watch_types';
 
 export const DEMO_CONTEXT = 'kubiki-demo';
 
 export class K8sProvider implements KubernetesProvider {
   readonly demo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
   private mock: ReturnType<typeof buildMockResources> | undefined;
+  get supportsResourceWatch(): boolean { return !this.demo && this.isTauriEnv(); }
+
+  async resetResourceWatches(): Promise<void> {
+    if (!this.supportsResourceWatch) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    try { await invoke('stop_resource_watches'); }
+    catch (error) { throw normalizeK8sError(error, { operation: 'unwatch' }); }
+  }
+
+  async watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
+    if (!this.supportsResourceWatch) throw requestError('unsupported', 'Resource watch is available in the desktop app. Browser mode uses snapshots.', { operation: 'watch', context: query.context, resource: query });
+    const { watchTauriResources } = await import('./tauri_watch');
+    return watchTauriResources(query, onBatch, signal);
+  }
 
   private isTauriEnv(): boolean {
     return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;

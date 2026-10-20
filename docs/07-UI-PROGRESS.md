@@ -6,7 +6,28 @@
 
 ---
 
-## Последний блок — 2026-10-20: DATA-01A/B, масштаб UI и адаптивные фильтры
+## Последний блок — 2026-10-20: DATA-02/03A, desktop live watch и стабильность диаграмм
+
+- **DATA-02 — готово:** Init/InitApply буферизуются до InitDone; полный Restarted атомарно заменяет map UID, включая пустой результат. Не остаются объекты, удалённые во время disconnect. Store изолирован по context/group/version/kind/namespace/subscription; перекрывающиеся подписки не стирают друг друга. Неверный GVK/namespace/UID, ошибка или отмена initial list не публикуют частичный список. ResourceVersion не преобразуется в число.
+- **DATA-03A — готово:** desktop использует kube-rs watcher через Tauri Channels, команды watch/stop/stop-owner. Owner определяется окном; ограничены число watchers (128), очередь (256) и IPC пачка (128 сообщений/50 мс). UI coalescing по UID до mapper/YAML serialization, одно обновление store каждые 50 мс; sequence gaps/overflow вызывают явную ошибку с Retry. Подписки закрываются при смене context, Sync/Retry, pagehide, window destroy и отказе канала; поздние callbacks/registration acknowledgements не оживляют старую generation.
+- **Состояния и recovery:** connecting/syncing/live/reconnecting/failed, first-sync timeout 30 с, client initialization 15 с, kube-rs exponential backoff. 403 и другие terminal ошибки не превращаются в пустой список и не создают busy retry; 410 вызывает relist. Последний полный snapshot сохраняется при ошибке. Quiet reconnect подтверждается успешными HTTP watch headers, без ожидания изменения объекта; запоздалое подтверждение не перекрывает более свежую ошибку тела потока.
+- **UI:** status bar отличает Watch от Snapshot, таблица показывает ожидание first sync, Sync/Retry пересоздают подписку. Таблица/inspector/Related/топология получают новые данные. Service не получает ложное предупреждение об отсутствии backend Pods, пока Pod watch не актуален. Browser dev bridge по-прежнему использует snapshots; demo остаётся отдельным режимом.
+- **GRAPH-09 — частично:** обновление статуса/данных при прежнем составе и связях графа сохраняет ручные позиции и viewport, не создаёт новый ELK worker. Изменения структуры ещё запускают полную раскладку; инкрементальное размещение новых узлов остаётся TODO. Отложенная проблема native pan/blur и графические WebKit flags не менялись.
+- **Roadmap разбит дальше:** DATA-03B — native/live cluster QA, namespace-scoped UI subscriptions и lazy watches; DATA-03C — browser SSE/WebSocket. Core уже поддерживает узкий namespace REST endpoint, но UI пока подписан на 18 встроенных kinds во всех namespaces. Произвольные custom resources не подключены. Далее OPS-01 (follow logs), OPS-02/04 (exec/lifecycle) и DATA-01C (refs/preconditions).
+- Обновлены README, API-пример informer, фактический status, roadmap и [контракт watch](12-DATA-CONTRACT-AND-APPEARANCE.md). Старый generic watcher/global broadcast заменён query + отдельной bounded очередью; это изменение early-alpha core API.
+
+Проверки финального состояния:
+
+- `pnpm test`: **110 unit/contract tests**, 12 файлов. Новые проверки: coalescing 1000 событий одного UID, empty relist, stale recovery, sequence gap/duplicates/foreign query, неверный snapshot, first-sync timeout, cancellation/late acknowledgement, очистка Tauri callbacks и стабильная подпись структуры графа.
+- `pnpm typecheck`, `pnpm build`: успешно; прежнее предупреждение о крупных Monaco/main chunks сохраняется.
+- **34 browser scenarios на production preview пройдены**, 39,3 с. Новые 5 сценариев используют реальный JS Channel SDK с подставленным IPC: table/inspector updates, stale → empty recovery, Sync/cleanup/pagehide, A → B → A + late callbacks, first-sync без ложного empty state, сохранение ручных позиций/viewport при status delta.
+- `cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline`: **18 Rust tests**. Из них 5 используют настоящий kube-rs client/runtime с локальным HTTP Kubernetes API: 410/relist/offline deletions, 403, quiet reconnect после 503, bounded slow-consumer без потери порядка, cancellation pending client/owner isolation/reused ID. Отдельные reconciler/store tests проверяют atomic init/cancel и scope isolation.
+- `cargo check --manifest-path src-tauri/Cargo.toml --offline`: успешно; `git diff --check`: успешно.
+- Подставленные Tauri IPC и локальный HTTP API **не заменяют native GUI/live cluster QA**. Стадия проекта остаётся early alpha; DATA-03 целиком — PARTIAL. Native YAML dispatcher crash и native pan performance остаются открыты/отложены.
+
+---
+
+## 2026-10-20: DATA-01A/B, масштаб UI и адаптивные фильтры
 
 - **DATA-01A/B — готово:** общий каталог GVK TS/Rust/browser bridge, ResourceQuery/ResourceRef и group/UID identity вкладок. Вкладка не переключается на пересозданный одноимённый объект, owner references и Events острова учитывают API group. Оба транспорта нормализуют ошибки в единый payload: code/status/retryable/operation/context/resource. Сохраняются настоящие API status kube-rs; ограниченная классификация stderr kubectl проверяется общими fixtures.
 - **Ошибки UI:** 403/404/timeout и auth отображаются с понятными подсказками, Retry восстанавливает список; ошибка refresh оставляет последний snapshot с явной пометкой об устаревании. Неверный success payload не становится пустым кластером или ложным Connected. Browser requests/body ограничены 20 с; kubectl и desktop health/namespaces — 15 с. Scale переведён на общий timeout/kill-on-drop helper.

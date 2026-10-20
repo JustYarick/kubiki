@@ -975,6 +975,7 @@ dependencies = [
  "chrono",
  "dirs",
  "futures",
+ "http",
  "k8s-openapi",
  "kube",
  "portable-pty",
@@ -986,6 +987,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-test",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

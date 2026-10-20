@@ -1,5 +1,6 @@
 use kubiki_core::core::events::{EventBus, KubikiEvent};
-use kubiki_core::informer::delta::ResourceDelta;
+use kubiki_core::informer::delta::{ResourceDelta, WatchScope};
+use kubiki_core::core::api::ResourceQuery;
 use kubiki_core::informer::store::ResourceStore;
 use kubiki_core::pod_ops::port_forward::{ForwardStatus, ForwardTargetKind, PortForwardSession};
 use serde_json::json;
@@ -21,69 +22,26 @@ async fn test_event_bus_broadcast() {
 }
 
 #[tokio::test]
-async fn test_resource_store_multi_namespace_filtering() {
+async fn resource_snapshots_are_isolated_by_context_namespace_and_subscription() {
     let store = ResourceStore::new();
-
-    // Pod in default namespace
-    let pod_default = json!({
-        "metadata": {
-            "name": "web-default",
-            "namespace": "default",
-            "uid": "uid-default-1"
-        }
-    });
-
-    // Pod in kube-system namespace
-    let pod_system = json!({
-        "metadata": {
-            "name": "coredns",
-            "namespace": "kube-system",
-            "uid": "uid-system-1"
-        }
-    });
-
-    store
-        .apply_delta(&ResourceDelta::Applied {
-            gvk: "Pod".into(),
-            uid: "uid-default-1".into(),
-            name: "web-default".into(),
-            namespace: Some("default".into()),
-            data: pod_default,
-        })
-        .await;
-
-    store
-        .apply_delta(&ResourceDelta::Applied {
-            gvk: "Pod".into(),
-            uid: "uid-system-1".into(),
-            name: "coredns".into(),
-            namespace: Some("kube-system".into()),
-            data: pod_system,
-        })
-        .await;
-
-    // Total count
-    assert_eq!(store.count("Pod").await, 2);
-
-    // Filter by default
-    let default_items = store.get_resources("Pod", Some("default")).await;
-    assert_eq!(default_items.len(), 1);
-    assert_eq!(
-        default_items[0]["metadata"]["name"].as_str().unwrap(),
-        "web-default"
-    );
-
-    // Filter by kube-system
-    let system_items = store.get_resources("Pod", Some("kube-system")).await;
-    assert_eq!(system_items.len(), 1);
-    assert_eq!(
-        system_items[0]["metadata"]["name"].as_str().unwrap(),
-        "coredns"
-    );
-
-    // Filter by all
-    let all_items = store.get_resources("Pod", Some("all")).await;
-    assert_eq!(all_items.len(), 2);
+    let scope = |context: &str, namespace: &str, id: &str| WatchScope {
+        subscription_id: id.into(), query: ResourceQuery { context: context.into(), group: "".into(), version: "v1".into(), kind: "Pod".into(), namespace: Some(namespace.into()) },
+    };
+    let a = scope("a", "default", "one");
+    let b = scope("a", "other", "two");
+    let c = scope("b", "default", "three");
+    let d = scope("a", "default", "four");
+    for target in [&a, &b, &c, &d] {
+        store.apply_delta(target, &ResourceDelta::Restarted { items: vec![json!({ "metadata": { "uid": "same-uid", "namespace": target.query.namespace, "name": "web" } })] }).await;
+    }
+    store.apply_delta(&a, &ResourceDelta::Restarted { items: vec![] }).await;
+    assert!(store.snapshot(&a).await.unwrap().is_empty());
+    for target in [&b, &c, &d] { assert_eq!(store.snapshot(target).await.unwrap().len(), 1); }
+    store.remove(&a).await;
+    assert!(store.snapshot(&a).await.is_none());
+    store.apply_delta(&b, &ResourceDelta::Deleted { uid: "same-uid".into() }).await;
+    assert!(store.snapshot(&b).await.unwrap().is_empty());
+    assert_eq!(store.snapshot(&c).await.unwrap().len(), 1);
 }
 
 #[test]

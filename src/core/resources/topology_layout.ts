@@ -39,3 +39,11 @@ export function topologyLayout(graph: ResourceGraph, direction: 'RIGHT' | 'DOWN'
   };
   return { root, namespaces };
 }
+
+/** Only membership and relationships affect layout. Status/resourceVersion changes retain positions. */
+export function topologyStructureKey(graph: ResourceGraph): string {
+  return JSON.stringify([
+    [...graph.items].map(([id, item]) => [id, item.kind, item.namespace ?? '', item.name]).sort((a, b) => a[0].localeCompare(b[0])),
+    graph.relations.map((edge) => [edge.id, edge.source, edge.target, edge.type, edge.label]).sort((a, b) => a[0].localeCompare(b[0])),
+  ]);
+}

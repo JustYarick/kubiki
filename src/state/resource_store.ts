@@ -2,10 +2,15 @@ import { create } from 'zustand';
 import { ResourceDeltaPayload, ResourceItem, ResourceKind } from '../types/k8s';
 import { useClusterStore } from './cluster_store';
 import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
+import type { WatchCommit, WatchState } from '../providers/watch_types';
 
 interface ResourceState {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
   loadErrors: Partial<Record<ResourceKind, K8sRequestError>>;
+  syncMode: 'snapshot' | 'watch' | 'demo';
+  watchStates: Partial<Record<ResourceKind, WatchState>>;
+  setSyncMode: (mode: 'snapshot' | 'watch' | 'demo') => void;
+  applyWatchCommit: (kind: ResourceKind, update: WatchCommit) => void;
   activeKind: ResourceKind;
   searchQuery: string;
   selectedItem: ResourceItem | null;
@@ -48,12 +53,24 @@ const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => 
 export const useResourceStore = create<ResourceState>((set, get) => ({
   resources: initialResources(),
   loadErrors: {},
+  syncMode: 'snapshot', watchStates: {},
+  setSyncMode: (syncMode) => set({ syncMode }),
+  applyWatchCommit: (kind, update) => set((state) => {
+    const map = update.snapshot ? new Map(update.snapshot.map((item) => [item.uid, item])) : update.changes.length ? new Map(state.resources[kind]) : state.resources[kind];
+    for (const change of update.changes) { if (change.type === 'apply') map.set(change.item.uid, change.item); else map.delete(change.uid); }
+    return {
+      resources: map === state.resources[kind] ? state.resources : { ...state.resources, [kind]: map },
+      selectedItem: state.selectedItem?.kind === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
+      watchStates: { ...state.watchStates, [kind]: update.state },
+      loadErrors: { ...state.loadErrors, [kind]: update.error ? normalizeK8sError(update.error, { operation: 'watch', context: useClusterStore.getState().currentContext ?? undefined }) : undefined },
+    };
+  }),
   activeKind: 'Pod',
   searchQuery: '',
   selectedItem: null,
   selectionHistory: [],
   goBack: () => set((state) => ({ selectedItem: state.selectionHistory[state.selectionHistory.length - 1] ?? state.selectedItem, selectionHistory: state.selectionHistory.slice(0, -1) })),
-  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], loadErrors: {}, searchQuery: '' }),
+  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], loadErrors: {}, searchQuery: '', watchStates: {}, syncMode: 'snapshot' }),
   setLoadError: (kind, error) => set((state) => ({ loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
 
   setActiveKind: (activeKind) => set({ activeKind }),

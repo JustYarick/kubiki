@@ -1,6 +1,7 @@
 //! Informer & Watch Stream Engine
 
 pub mod delta;
+pub mod reconcile;
 pub mod store;
 pub mod watcher;
 

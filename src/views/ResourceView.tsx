@@ -45,6 +45,7 @@ import { uiFactor, uiPixels } from '../core/appearance';
 import { resourceTabId } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
 import { compareCreation, issuePriority } from '../core/resources/resource_sort';
+import { refreshResourceWatches } from '../state/resource_watch';
 import { cx } from '../core/utils/cx';
 
 /* ------------------------------------------------------------------ */
@@ -240,6 +241,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   const paneRef = useRef<HTMLDivElement>(null);
   const [compactFilters, setCompactFilters] = useState(true);
   const currentContext = useClusterStore((s) => s.currentContext);
+  const watchState = useResourceStore((s) => s.watchStates[effectiveKind]);
   const loadError = useResourceStore((s) => s.loadErrors[effectiveKind]);
 
   const [sortId, setSortId] = useState<string | null>(null);
@@ -294,6 +296,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   const kindResources = resources[effectiveKind];
   const allItems = useMemo(() => Array.from(kindResources?.values() ?? []), [kindResources]);
   const statuses = useMemo(() => [...new Set(allItems.map((item) => item.status).filter((status): status is string => Boolean(status)))].sort(), [allItems]);
+  const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
   const podError = useResourceStore((state) => state.loadErrors.Pod);
   const issueRanks = useMemo(() => {
     const ranks = new Map<string, number>();
@@ -308,12 +311,12 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     for (const item of allItems) {
       const storageClassName = item.spec?.storageClassName ?? item.storageClass;
       ranks.set(item.uid, issuePriority(resourceIssues(item, {
-        now, pods: podsByNamespace.get(item.namespace) ?? [], podsLoaded: isConnected && !isLoading && !podError,
+        now, pods: podsByNamespace.get(item.namespace) ?? [], podsLoaded: isConnected && !isLoading && podsCurrent && !podError,
         storageClass: typeof storageClassName === 'string' ? storageClasses.get(storageClassName) : undefined,
       })));
     }
     return ranks;
-  }, [allItems, effectiveKind, healthFilter, sortId, resources.Pod, resources.StorageClass, isConnected, isLoading, podError]);
+  }, [allItems, effectiveKind, healthFilter, sortId, resources.Pod, resources.StorageClass, isConnected, isLoading, podsCurrent, podError]);
 
   const rows = useMemo(() => {
     let list = allItems;
@@ -481,6 +484,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     if (!currentContext) return;
     setSpinning(true);
     try {
+      if (await refreshResourceWatches(effectiveKind)) return;
       const items = await k8s.getResources(currentContext, effectiveKind, 'all');
       if (useClusterStore.getState().currentContext !== currentContext) return;
       useResourceStore.getState().setResourcesForKind(effectiveKind, items);
@@ -710,8 +714,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
 
       {/* JetBrains DataGrip Data Table */}
       <div ref={tableRef} tabIndex={0} aria-label={`${effectiveKind} resource table`} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-text" data-testid="resource-table">
-        {loadError && <RequestErrorNotice error={loadError} onRetry={() => void refresh()} retainedData={allItems.length > 0} />}
-        {rows.list.length === 0 ? !loadError && (
+        {loadError && <RequestErrorNotice error={loadError} onRetry={() => void refresh()} retainedData={allItems.length > 0 || watchState?.hasSnapshot === true} />}
+        {watchState && !loadError && watchState.phase !== 'live' && <div role="status" className="px-3 py-2 text-xs text-[var(--text-secondary)]">{watchState.phase === 'reconnecting' ? 'Reconnecting' : 'Synchronizing'}…{watchState.hasSnapshot ? ' Showing the last complete snapshot.' : ' Waiting for the first complete snapshot.'}</div>}
+        {rows.list.length === 0 ? !loadError && (!watchState || watchState.hasSnapshot) && (
           <EmptyState
             kind={effectiveKind}
             filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery || healthFilter !== 'all' || !!statusFilter}

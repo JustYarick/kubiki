@@ -10,7 +10,7 @@
 
 Логический ключ Related/диаграммы включает API group, kind, namespace и name. Версии внутри одной группы относятся к одному логическому объекту. Вкладки дополнительно учитывают context и UID: после удаления и создания одноимённого ресурса старая вкладка показывает Resource Not Found, новая открывается отдельно. Owner/Event references проверяют API group и UID, если они есть.
 
-Списки передают group/version в оба транспорта. Bridge валидирует каталог и использует квалифицированные plural (`deployments.apps`), чтобы избежать неоднозначности с CRD. Динамические версии/plurals, watcher scope/session identity и атомарные UID/resourceVersion preconditions для mutations ещё не реализованы. Существующие logs/scale пока принимают отдельные context/name/namespace, не полноценный ResourceRef с обязательным UID.
+Списки передают group/version в оба транспорта. Bridge валидирует каталог и использует квалифицированные plural (`deployments.apps`), чтобы избежать неоднозначности с CRD. Watcher scope/session identity реализованы; динамические версии/plurals и атомарные UID/resourceVersion preconditions для mutations ещё не реализованы. Существующие logs/scale пока принимают отдельные context/name/namespace, не полноценный ResourceRef с обязательным UID.
 
 Официальная модель Kubernetes: [имена и UID](https://kubernetes.io/docs/concepts/overview/working-with-objects/names/), [API concepts](https://kubernetes.io/docs/reference/using-api/api-concepts/).
 
@@ -23,6 +23,24 @@
 Для kube-rs сохраняется настоящий status из ErrorResponse. kubectl по-прежнему возвращает stderr: классифицируются только известные server reasons и transport failures, неизвестные ошибки остаются internal с исходным сообщением. Совпадение kind/name с текстом «forbidden» не считается HTTP 403. Общие fixtures проверяются Rust и TypeScript; HTTP bridge дополнительно тестируется через локальный HTTP server с подставленным executor без запуска kubectl.
 
 Browser request и чтение body ограничены 20 с. Процессы kubectl в обоих bridge ограничены 15 с, API request — 10 с; desktop ping/namespace discovery также ограничены 15 с. Scale теперь использует тот же timeout/kill-on-drop lifecycle, что reads/logs. Это ещё не lifecycle live streams.
+
+## Desktop resource watch
+
+В desktop списки 18 встроенных kinds поступают из kube-rs через Tauri `watch_resources(query, subscriptionId, onEvent)`. `stop_resource_watch(subscriptionId)` отменяет одну подписку; `stop_resource_watches` — подписки текущего окна. Owner берётся из реального WebviewWindow, а не из аргумента JavaScript. Window destroy, pagehide, context switch, Sync/Retry и отказ канала освобождают watchers. На переподключении страницы сначала очищаются старые подписки окна.
+
+`WatchBatch { subscription_id, query, messages: [{ sequence, event }] }`; event — Status (connecting/syncing/live/reconnecting/failed/stopped) или Delta (Restarted/Applied/Deleted). Sequence монотонна внутри подписки; повторы игнорируются, пропуск останавливает подписку с явной ошибкой и возможностью Retry. Подписка привязана к context/GVK/namespace и generation UI. Поздние callbacks/ack предыдущей подписки не меняют актуальные данные.
+
+Init/InitApply не публикуют частичный список: InitDone заменяет map UID одним Restarted, включая пустой список. Relist удаляет объекты, исчезнувшие во время disconnect. Scope Rust store включает subscription и query; один namespace/context не стирает другой. Namespace REST endpoint выбирается напрямую, без fieldSelector на all-namespaces endpoint. ResourceVersion остаётся непрозрачной строкой.
+
+Очередь core ограничена 256 сообщениями; IPC пачки — до 128 каждые 50 мс, с backpressure. UI объединяет изменения одного UID за 50 мс до mapper/YAML serialization и применяет одним обновлением store; максимум 5000 уникальных ожидающих изменений, превышение вызывает явную ошибку и resync через Retry. Это ограничение очередей, не числа ресурсов в полном snapshot.
+
+kube-rs использует default exponential backoff. Ошибки 400/401/403/404/422 завершают подписку без busy retry; 410 вызывает relist. Клиент инициализируется не более 15 с, first complete sync в UI — не более 30 с; stop отменяет также инициализацию. Ошибки сохраняют последний полный snapshot. Подтверждение восстановления тихого watch берётся из успешного HTTP-ответа на открытие потока, поэтому live не зависит от следующего изменения объекта. Некорректный snapshot или sequence не публикуют накопленную частичную пачку.
+
+Status bar отличает Watch от Snapshot. До first sync таблица показывает ожидание, без ложного «No resources». Диагностика отсутствующих backend Pods у Service выполняется только по актуальным Pod-данным. Изменение статуса узла диаграммы сохраняет позиции/viewport; изменение структуры пока запускает полную раскладку.
+
+Для потока использованы [Tauri Channels](https://v2.tauri.app/develop/calling-frontend/#channels); семантика Init/InitDone и backoff сверена с исходниками установленного kube-runtime 0.98. Адаптер освобождает callback через guarded `__TAURI_INTERNALS__.unregisterCallback`, поскольку установленный JS SDK не имеет public Channel.close; это место необходимо проверять при обновлении Tauri.
+
+**Ограничения:** browser dev bridge остаётся snapshot; UI пока открывает all-namespaces watches для 18 встроенных kinds (поддержка узких scopes уже есть в core, требуется подключение к UI). Произвольные CR instances не добавлены. Native GUI/live cluster QA и долгий нагрузочный прогон ещё не выполнены; HTTP server и browser IPC tests их не заменяют.
 
 ## Размер интерфейса
 

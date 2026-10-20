@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import { topologyLayout, namespaceGroupId } from '../../src/core/resources/topology_layout';
+import { topologyLayout, namespaceGroupId, topologyStructureKey } from '../../src/core/resources/topology_layout';
 import { resourceKey } from '../../src/core/resources/identity';
 import { buildResourceGraph } from '../../src/core/resources/relationships';
 import { useResourceStore } from '../../src/state/resource_store';
@@ -30,4 +30,13 @@ describe('Compound namespace layout', () => {
     const overlaps = external.x! < group.x! + group.width! && external.x! + external.width! > group.x! && external.y! < group.y! + group.height! && external.y! + external.height! > group.y!;
     expect(overlaps).toBe(false);
   });
+});
+
+it('changes the layout signature only for structure, independent of insertion order and live status', () => {
+  const pod: ResourceItem = { uid: 'web', apiVersion: 'v1', kind: 'Pod', name: 'web', namespace: 'backend', status: 'Running' };
+  const config: ResourceItem = { uid: 'config', apiVersion: 'v1', kind: 'ConfigMap', name: 'config', namespace: 'backend' };
+  const a = { items: new Map([['web', pod], ['config', config]]), relations: [] };
+  const b = { items: new Map([['config', config], ['web', { ...pod, status: 'Failed' }]]), relations: [] };
+  expect(topologyStructureKey(a)).toBe(topologyStructureKey(b));
+  b.items.delete('web'); expect(topologyStructureKey(a)).not.toBe(topologyStructureKey(b));
 });

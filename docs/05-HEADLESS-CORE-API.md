@@ -78,24 +78,26 @@ println!("K8s version: {}", health.git_version);
 ### 2.3. Event-Driven Informer и Watch Streams
 
 ```rust
-use kubiki_core::{EventBus, InformerManager, ResourceStore};
-use k8s_openapi::api::core::v1::Pod;
+use kubiki_core::{InformerManager, ResourceStore};
+use kubiki_core::core::api::ResourceQuery;
 
 let store = ResourceStore::new();
-let event_bus = EventBus::new(1024);
-let informers = InformerManager::new(store.clone(), event_bus.clone());
-
-// Подписка на дельты событий
-let mut rx = event_bus.subscribe();
-tokio::spawn(async move {
-    while let Ok(event) = rx.recv().await {
-        println!("Received event: {:?}", event);
-    }
-});
-
-// Запуск фонового watcher для Pods
-informers.start_watch::<Pod>(client, Some("default".into()), "Pod").await;
+let informers = InformerManager::new(store.clone());
+let query = ResourceQuery {
+    context: "minikube".into(), group: "".into(), version: "v1".into(),
+    kind: "Pod".into(), namespace: Some("default".into()),
+};
+// client: kube::Client, созданный для того же context.
+let mut rx = informers.start_watch("cli", "pods", query, async move { Ok(client) }).await?;
+while let Some(message) = rx.recv().await {
+    println!("Watch message: {:?}", message);
+    // Завершить цикл по сигналу приложения, затем обязательно stop_watch.
+}
+informers.stop_watch("cli", "pods").await;
 ```
+
+API изменён в DATA-02/03A: generic `start_watch::<Pod>` и глобальный broadcast заменены ResourceQuery и отдельной bounded очередью подписки. `ResourceStore::snapshot(&WatchScope)` возвращает `None` до первого полного списка и `Some([])` для успешно синхронизированного пустого scope. `Restarted` атомарно заменяет только эту область; InitApply остаётся внутри буфера. `stop_watch`/`stop_owner` отменяют задачу и удаляют cache scope. Получатель и registry должны освобождаться явно; drop manager отменяет фоновые задачи. Протокол, таймауты, transport и ограничения — [12](12-DATA-CONTRACT-AND-APPEARANCE.md).
+
 
 ### 2.4. Стриминг логов подов
 

@@ -1,137 +1,370 @@
-use crate::core::events::{EventBus, KubikiEvent};
-use crate::informer::delta::ResourceDelta;
+use crate::core::api::{ApiError, ApiErrorCode, ResourceQuery, validate_query};
+use crate::informer::delta::{WatchEvent, WatchMessage, WatchPhase, WatchScope};
+use crate::informer::reconcile::Reconciler;
 use crate::informer::store::ResourceStore;
 use futures::StreamExt;
-use kube::api::{Api, ResourceExt};
-use kube::runtime::watcher::{self, Event};
-use kube::{Client, Resource};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
+use kube::core::{ApiResource, DynamicObject};
+use kube::runtime::{
+    WatchStreamExt,
+    watcher::{self, Event},
+};
+use kube::{Api, Client};
+use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinHandle,
+};
 
+pub const WATCH_QUEUE_CAPACITY: usize = 256;
+const MAX_WATCHERS: usize = 128;
+
+struct ActiveWatch {
+    owner: String,
+    scope: WatchScope,
+    handle: JoinHandle<()>,
+}
+struct Inner {
+    active: Mutex<HashMap<String, ActiveWatch>>,
+}
+impl Drop for Inner {
+    fn drop(&mut self) {
+        for watch in self.active.get_mut().values() {
+            watch.handle.abort();
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct InformerManager {
     store: ResourceStore,
-    event_bus: EventBus,
-    active_watchers: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
+    inner: Arc<Inner>,
+}
+
+/// Exact REST scope, no metadata.namespace field selector on an all-namespaces endpoint.
+pub fn resource_api(client: Client, query: &ResourceQuery) -> Result<Api<DynamicObject>, ApiError> {
+    let resource = validate_query(query)?;
+    let api_version = if query.group.is_empty() {
+        query.version.clone()
+    } else {
+        format!("{}/{}", query.group, query.version)
+    };
+    let resource = ApiResource {
+        group: query.group.clone(),
+        version: query.version.clone(),
+        api_version,
+        kind: query.kind.clone(),
+        plural: resource.plural.clone(),
+    };
+    Ok(match &query.namespace {
+        Some(namespace) => Api::namespaced_with(client, namespace, &resource),
+        None => Api::all_with(client, &resource),
+    })
 }
 
 impl InformerManager {
-    pub fn new(store: ResourceStore, event_bus: EventBus) -> Self {
+    pub fn new(store: ResourceStore) -> Self {
         Self {
             store,
-            event_bus,
-            active_watchers: Arc::new(RwLock::new(HashMap::new())),
+            inner: Arc::new(Inner {
+                active: Mutex::new(HashMap::new()),
+            }),
         }
     }
-
     pub fn store(&self) -> &ResourceStore {
         &self.store
     }
 
-    pub fn event_bus(&self) -> &EventBus {
-        &self.event_bus
+    /// Reserve before client construction. Stop can cancel auth/config initialization too.
+    pub async fn start_watch<F>(
+        &self,
+        owner: &str,
+        id: &str,
+        query: ResourceQuery,
+        client: F,
+    ) -> Result<mpsc::Receiver<WatchMessage>, ApiError>
+    where
+        F: Future<Output = Result<Client, ApiError>> + Send + 'static,
+    {
+        validate_query(&query)?;
+        if id.is_empty()
+            || id.len() > 128
+            || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(ApiError::from_status(
+                400,
+                "Invalid watch subscription ID",
+                "watch",
+                Some(&query.context),
+            ));
+        }
+        let key = format!("{owner}:{id}");
+        let mut active = self.inner.active.lock().await;
+        if active.contains_key(&key) {
+            return Err(ApiError::from_status(
+                409,
+                "Watch subscription already exists",
+                "watch",
+                Some(&query.context),
+            ));
+        }
+        if active.len() >= MAX_WATCHERS {
+            return Err(ApiError::from_status(
+                429,
+                "Too many active resource watches",
+                "watch",
+                Some(&query.context),
+            ));
+        }
+        let scope = WatchScope {
+            subscription_id: key.clone(),
+            query,
+        };
+        let store = self.store.clone();
+        let (tx, rx) = mpsc::channel(WATCH_QUEUE_CAPACITY);
+        let task_scope = scope.clone();
+        let handle = tokio::spawn(async move {
+            run_watch(store, task_scope, client, tx).await;
+        });
+        active.insert(
+            key,
+            ActiveWatch {
+                owner: owner.into(),
+                scope,
+                handle,
+            },
+        );
+        Ok(rx)
     }
 
-    /// Start watching a specific resource type in an optional namespace
-    pub async fn start_watch<K>(
-        &self,
-        client: Client,
-        namespace: Option<String>,
-        kind_name: &str,
-    ) where
-        K: Resource<DynamicType = ()> + Clone + DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
-    {
-        let watch_key = format!("{}:{}", kind_name, namespace.as_deref().unwrap_or("all"));
-
-        // If watcher already running for this key, return
-        let mut watchers = self.active_watchers.write().await;
-        if watchers.contains_key(&watch_key) {
-            return;
+    /// Abort and join while holding the registry lock: a reused ID cannot race old writes.
+    pub async fn stop_watch(&self, owner: &str, id: &str) {
+        let mut active = self.inner.active.lock().await;
+        if let Some(watch) = active.remove(&format!("{owner}:{id}")) {
+            watch.handle.abort();
+            let _ = watch.handle.await;
+            self.store.remove(&watch.scope).await;
         }
+    }
 
-        let mut watcher_config = watcher::Config::default();
-        if let Some(ref ns) = namespace {
-            if ns != "all" {
-                watcher_config = watcher_config.fields(&format!("metadata.namespace={}", ns));
+    pub async fn stop_owner(&self, owner: &str) {
+        let mut active = self.inner.active.lock().await;
+        let keys: Vec<_> = active
+            .iter()
+            .filter(|(_, watch)| watch.owner == owner)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in keys {
+            if let Some(watch) = active.remove(&key) {
+                watch.handle.abort();
+                let _ = watch.handle.await;
+                self.store.remove(&watch.scope).await;
             }
         }
+    }
 
-        let api: Api<K> = Api::all(client);
+    pub async fn active_count(&self) -> usize {
+        self.inner.active.lock().await.len()
+    }
+}
 
-        let store = self.store.clone();
-        let event_bus = self.event_bus.clone();
-        let kind = kind_name.to_string();
+async fn emit(tx: &mpsc::Sender<WatchMessage>, sequence: &mut u64, event: WatchEvent) -> bool {
+    *sequence += 1;
+    tx.send(WatchMessage {
+        sequence: *sequence,
+        event,
+    })
+    .await
+    .is_ok()
+}
+async fn status(
+    tx: &mpsc::Sender<WatchMessage>,
+    sequence: &mut u64,
+    phase: WatchPhase,
+    error: Option<ApiError>,
+) -> bool {
+    emit(tx, sequence, WatchEvent::Status { phase, error }).await
+}
 
-        let handle = tokio::spawn(async move {
-            let stream = watcher::watcher(api, watcher_config).boxed();
-            tokio::pin!(stream);
+fn watch_error(error: watcher::Error, query: &ResourceQuery) -> ApiError {
+    let result = match error {
+        watcher::Error::InitialListFailed(kube::Error::Api(error))
+        | watcher::Error::WatchStartFailed(kube::Error::Api(error))
+        | watcher::Error::WatchFailed(kube::Error::Api(error))
+        | watcher::Error::WatchError(error) => {
+            if error.code == 410 {
+                ApiError::new(
+                    ApiErrorCode::Unavailable,
+                    error.message,
+                    "watch",
+                    Some(&query.context),
+                    Some(410),
+                )
+            } else {
+                ApiError::from_status(error.code, error.message, "watch", Some(&query.context))
+            }
+        }
+        error => ApiError::new(
+            ApiErrorCode::Unavailable,
+            error.to_string(),
+            "watch",
+            Some(&query.context),
+            None,
+        ),
+    };
+    result.with_resource(query)
+}
 
-            while let Some(event_res) = stream.next().await {
-                match event_res {
-                    Ok(Event::Apply(obj)) | Ok(Event::InitApply(obj)) => {
-                        let uid = obj.meta().uid.clone().unwrap_or_default();
-                        let name = obj.name_any();
-                        let ns = obj.meta().namespace.clone();
-                        if let Ok(data) = serde_json::to_value(&obj) {
-                            let delta = ResourceDelta::Applied {
-                                gvk: kind.clone(),
-                                uid,
-                                name,
-                                namespace: ns,
-                                data,
-                            };
-                            store.apply_delta(&delta).await;
-                            event_bus.publish(KubikiEvent::ResourceDelta(delta));
+async fn run_watch<F>(
+    store: ResourceStore,
+    scope: WatchScope,
+    client: F,
+    tx: mpsc::Sender<WatchMessage>,
+) where
+    F: Future<Output = Result<Client, ApiError>>,
+{
+    let mut sequence = 0;
+    if !status(&tx, &mut sequence, WatchPhase::Connecting, None).await {
+        return;
+    }
+    let initialized = tokio::select! {
+        _ = tx.closed() => return,
+        result = tokio::time::timeout(Duration::from_secs(15), client) => result,
+    };
+    let client = match initialized {
+        Ok(Ok(client)) => client,
+        result => {
+            let error = match result {
+                Ok(Err(error)) => error,
+                _ => ApiError::from_status(
+                    504,
+                    "Watch client initialization timed out",
+                    "watch",
+                    Some(&scope.query.context),
+                ),
+            };
+            status(
+                &tx,
+                &mut sequence,
+                WatchPhase::Failed,
+                Some(error.with_resource(&scope.query)),
+            )
+            .await;
+            return;
+        }
+    };
+    // watcher filters bookmarks/connection establishment. Observe successful watch headers so
+    // a quiet, recovered stream can leave Reconnecting without waiting for an object mutation.
+    let (connected_tx, mut connected_rx) = mpsc::channel(1);
+    let namespace = client.default_namespace().to_owned();
+    let observed = tower::service_fn(move |request: http::Request<kube::client::Body>| {
+        let client = client.clone();
+        let connected = connected_tx.clone();
+        async move {
+            let watch = request
+                .uri()
+                .query()
+                .is_some_and(|query| query.split('&').any(|part| part == "watch=true"));
+            let response = client.send(request).await?;
+            if watch && response.status().is_success() {
+                let _ = connected.send(()).await;
+            }
+            Ok::<_, kube::Error>(response)
+        }
+    });
+    let client = Client::new(observed, namespace);
+    let api = match resource_api(client, &scope.query) {
+        Ok(api) => api,
+        Err(error) => {
+            status(&tx, &mut sequence, WatchPhase::Failed, Some(error)).await;
+            return;
+        }
+    };
+    let stream = watcher::watcher(api, watcher::Config::default().timeout(30)).default_backoff();
+    tokio::pin!(stream);
+    let mut reconcile = Reconciler::new(scope.query.clone());
+    let mut phase = WatchPhase::Connecting;
+    loop {
+        let event = tokio::select! {
+            _ = tx.closed() => return,
+            Some(()) = connected_rx.recv() => {
+                if phase == WatchPhase::Reconnecting {
+                    phase = WatchPhase::Live;
+                    if !status(&tx, &mut sequence, phase.clone(), None).await { return; }
+                }
+                continue;
+            },
+            event = stream.next() => event,
+        };
+        match event {
+            Some(Ok(event)) => {
+                let event = match event {
+                    Event::Init => {
+                        phase = WatchPhase::Syncing;
+                        if !status(&tx, &mut sequence, phase.clone(), None).await {
+                            return;
+                        }
+                        Event::Init
+                    }
+                    Event::InitDone => Event::InitDone,
+                    Event::Apply(value) => {
+                        Event::Apply(serde_json::to_value(value).expect("DynamicObject is JSON"))
+                    }
+                    Event::InitApply(value) => Event::InitApply(
+                        serde_json::to_value(value).expect("DynamicObject is JSON"),
+                    ),
+                    Event::Delete(value) => {
+                        Event::Delete(serde_json::to_value(value).expect("DynamicObject is JSON"))
+                    }
+                };
+                match reconcile.consume(event) {
+                    Ok(Some(delta)) => {
+                        store.apply_delta(&scope, &delta).await;
+                        if !emit(&tx, &mut sequence, WatchEvent::Delta(delta)).await {
+                            return;
+                        }
+                        if phase != WatchPhase::Live {
+                            phase = WatchPhase::Live;
+                            if !status(&tx, &mut sequence, phase.clone(), None).await {
+                                return;
+                            }
                         }
                     }
-                    Ok(Event::Delete(obj)) => {
-                        let uid = obj.meta().uid.clone().unwrap_or_default();
-                        let name = obj.name_any();
-                        let ns = obj.meta().namespace.clone();
-                        let delta = ResourceDelta::Deleted {
-                            gvk: kind.clone(),
-                            uid,
-                            name,
-                            namespace: ns,
-                        };
-                        store.apply_delta(&delta).await;
-                        event_bus.publish(KubikiEvent::ResourceDelta(delta));
-                    }
-                    Ok(Event::Init) => {
-                        // Watch stream initialized/restarted
-                        tracing::debug!(kind = %kind, "Watcher initialized/restarted");
-                    }
-                    Ok(Event::InitDone) => {
-                        tracing::debug!(kind = %kind, "Watcher initial listing complete");
-                    }
-                    Err(err) => {
-                        tracing::warn!(kind = %kind, error = %err, "Watcher received error from K8s API");
+                    Ok(None) => {}
+                    Err(error) => {
+                        reconcile.discard_pending();
+                        status(&tx, &mut sequence, WatchPhase::Failed, Some(error)).await;
+                        return;
                     }
                 }
             }
-        });
-
-        watchers.insert(watch_key, handle);
-    }
-
-    /// Stop watching a specific resource type
-    pub async fn stop_watch(&self, kind_name: &str, namespace: Option<&str>) {
-        let watch_key = format!("{}:{}", kind_name, namespace.unwrap_or("all"));
-        let mut watchers = self.active_watchers.write().await;
-        if let Some(handle) = watchers.remove(&watch_key) {
-            handle.abort();
-        }
-    }
-
-    /// Stop all active watchers
-    pub async fn stop_all(&self) {
-        let mut watchers = self.active_watchers.write().await;
-        for (_, handle) in watchers.drain() {
-            handle.abort();
+            Some(Err(error)) => {
+                // Headers and a body error can arrive in one poll; never let that stale success
+                // clear the newer error on the next turn.
+                while connected_rx.try_recv().is_ok() {}
+                reconcile.discard_pending();
+                let error = watch_error(error, &scope.query);
+                let terminal = matches!(error.status, Some(400 | 401 | 403 | 404 | 422));
+                phase = if terminal {
+                    WatchPhase::Failed
+                } else {
+                    WatchPhase::Reconnecting
+                };
+                if !status(&tx, &mut sequence, phase.clone(), Some(error)).await || terminal {
+                    return;
+                }
+            }
+            None => {
+                let error = ApiError::new(
+                    ApiErrorCode::Unavailable,
+                    "Resource watch stream ended",
+                    "watch",
+                    Some(&scope.query.context),
+                    None,
+                )
+                .with_resource(&scope.query);
+                status(&tx, &mut sequence, WatchPhase::Failed, Some(error)).await;
+                return;
+            }
         }
     }
 }

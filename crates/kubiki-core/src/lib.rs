@@ -28,7 +28,9 @@ pub use crd::discovery::{CrdDiscoveryService, CrdInfo, CrdPrinterColumn, CrdVers
 pub use crd::dynamic_client::DynamicCrdService;
 pub use helm::client::HelmClient;
 pub use helm::model::{HelmRelease, HelmReleaseHistory, HelmRepo};
-pub use informer::delta::ResourceDelta;
+pub use informer::delta::{
+    ResourceDelta, WatchBatch, WatchEvent, WatchMessage, WatchPhase, WatchScope,
+};
 pub use informer::store::ResourceStore;
 pub use informer::watcher::InformerManager;
 pub use metrics::client::{ContainerMetric, MetricsService, NodeMetricsInfo, PodMetricsInfo};

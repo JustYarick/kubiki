@@ -12,7 +12,7 @@ pub struct ResourceType {
     pub namespaced: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct ResourceQuery {
     pub context: String,
     pub group: String,
@@ -215,6 +215,13 @@ pub fn validate_query(query: &ResourceQuery) -> Result<&'static ResourceType, Ap
             ApiErrorCode::InvalidRequest,
             "Cluster-scoped resources cannot have a namespace".to_owned(),
         ));
+    }
+    if let Some(namespace) = &query.namespace {
+        if namespace.is_empty() || namespace.len() > 63
+            || !namespace.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+            || namespace.starts_with('-') || namespace.ends_with('-') {
+            return Err(fail(ApiErrorCode::InvalidRequest, "Invalid namespace name".to_owned()));
+        }
     }
     Ok(resource)
 }

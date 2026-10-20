@@ -21,6 +21,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const errors = useResourceStore((s) => s.loadErrors);
   const namespaces = useClusterStore((s) => s.availableNamespaces);
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
+  const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
   const snapshotsReady = useClusterStore((s) => s.isConnected && !s.isLoading);
   const [scope, setScope] = useState(() => item?.kind === 'Event' ? item.namespace ? `namespace:${item.namespace}` : '' : item ? 'resource' : namespace ? `namespace:${namespace}` : selectedNamespace !== 'all' ? `namespace:${selectedNamespace}` : '');
   const [depth, setDepth] = useState(2);
@@ -51,11 +52,11 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
       const storageClassName = resource.spec?.storageClassName ?? resource.storageClass;
       return resourceIssues(resource, {
         pods,
-        podsLoaded: snapshotsReady && !errors.Pod,
+        podsLoaded: snapshotsReady && podsCurrent && !errors.Pod,
         storageClass: typeof storageClassName === 'string' ? storageClasses.get(storageClassName) : undefined,
       }).length > 0;
     }).length;
-  }, [graph, resources.Pod, resources.StorageClass, snapshotsReady, errors.Pod]);
+  }, [graph, resources.Pod, resources.StorageClass, snapshotsReady, podsCurrent, errors.Pod]);
 
   return <div className="h-full min-h-0 flex flex-col topology-view">
     <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-secondary)]">

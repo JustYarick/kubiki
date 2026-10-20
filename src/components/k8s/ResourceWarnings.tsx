@@ -11,11 +11,12 @@ export const ResourceWarnings = memo(function ResourceWarnings({ item, showSumma
   const pods = useResourceStore((state) => item.kind === 'Service' ? state.resources.Pod : undefined);
   const podError = useResourceStore((state) => item.kind === 'Service' ? state.loadErrors.Pod : undefined);
   const storageClasses = useResourceStore((state) => item.kind === 'PersistentVolumeClaim' ? state.resources.StorageClass : undefined);
+  const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
   const snapshotsReady = useClusterStore((state) => item.kind === 'Service' ? state.isConnected && !state.isLoading : false);
   const storageClassName = item.spec?.storageClassName ?? item.storageClass;
   const issues = resourceIssues(item, {
     pods: pods ? [...pods.values()] : undefined,
-    podsLoaded: snapshotsReady && !podError,
+    podsLoaded: snapshotsReady && podsCurrent && !podError,
     storageClass: storageClasses ? [...storageClasses.values()].find((entry) => entry.name === storageClassName) : undefined,
   });
   if (!issues.length) return null;

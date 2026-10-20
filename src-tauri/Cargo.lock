@@ -2408,6 +2408,7 @@ dependencies = [
  "chrono",
  "dirs 6.0.0",
  "futures",
+ "http",
  "k8s-openapi",
  "kube",
  "portable-pty",
@@ -2418,6 +2419,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

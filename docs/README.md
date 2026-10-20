@@ -16,7 +16,7 @@ Kubiki — разрабатываемая desktop IDE для Kubernetes на Tau
 | [08 — аудит](08-UX-TECHNICAL-AUDIT.md) | Находки, исправления, UX, связи, выбор диаграмм, приоритеты |
 | [10 — задачи реализации](10-IMPLEMENTATION-TASKS.md) | Исполняемый backlog: статусы, критерии, зависимости и отдельные уровни диаграмм |
 | [11 — плавность диаграмм](11-TOPOLOGY-PERFORMANCE.md) | Native WebKit исследование, A/B и явный откат graphics-экспериментов по запросу владельца |
-| [12 — данные и масштаб UI](12-DATA-CONTRACT-AND-APPEARANCE.md) | GVK/ResourceRef, типизированные ошибки HTTP/Tauri, persistence масштаба и размеров шрифтов, исправленная потеря текста Monaco |
+| [12 — данные и масштаб UI](12-DATA-CONTRACT-AND-APPEARANCE.md) | GVK/ResourceRef, типизированные ошибки HTTP/Tauri, desktop watch/relist/lifecycle и ограничения, persistence масштаба и размеров шрифтов, исправленная потеря текста Monaco |
 | [09 — status](09-PROJECT-STATUS.md) | Стадия проекта и сверка документов с кодом |
 
 Сервисы `kubiki-core` не означают автоматически работающие функции приложения: отдельно проверяются backend, IPC, UI и live-сценарий. Не переносите прежние утверждения «100% готово» в новые задачи без проверки.

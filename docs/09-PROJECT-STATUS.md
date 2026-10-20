@@ -15,7 +15,7 @@
 | 0. Окружение и CI | Tauri/React, зависимости, сборка есть; CI, генерация IPC типов и release pipeline отсутствуют |
 | 1. Core/Kubeconfig | Сервисы и CLI есть; клиентский пул и базовый health; полноценный multi-cluster session lifecycle не завершён |
 | 2. IDE shell | Дерево/табы/split/inspector/dock есть; только dark, полноценный dockview не интегрирован |
-| 3. Watch/таблицы | Таблицы есть, данные — snapshots; Rust watcher не подключён через IPC, batching и virtualization отсутствуют |
+| 3. Watch/таблицы | Desktop watch подключён через Tauri Channels; atomic relist, bounded batching, reconnect/stale, lifecycle и context isolation покрыты локальным HTTP/API и browser IPC tests. Browser — snapshots; native/live QA, scoped UI subscriptions и virtualization ещё открыты |
 | 4. Pod Ops | Реальные logs tail snapshots добавлены; follow stream, interactive exec, node debug и PF не подключены к UI |
 | 5. Config/Network/Storage/RBAC | Часть фиксированных списков и деталей есть; RBAC UI, NetworkPolicy, quotas/HPA/EndpointSlice отсутствуют |
 | 6. YAML/CRD | Monaco, просмотр/экспорт и demo edit; live apply/diff/schema и dynamic CRD explorer отсутствуют |
@@ -31,7 +31,7 @@
 
 ## Сверка документов
 
-Дополнено (DATA-01A/B, UX-07/08, YAML-03): общий каталог GVK и типизированные ошибки HTTP/Tauri, подсказки RBAC/timeout и stale snapshot/Retry; group/UID identity защищает вкладки от пересоздания объекта. Масштаб UI 80–200% с default 110%, независимые editor/terminal fonts и persistence подключены. Поиск/фильтры адаптивны и занимают одну строку; на узкой панели фильтры в меню. Воспроизведённая потеря символов Monaco исправлена. DATA-01 целиком остаётся PARTIAL: named operations ещё требуют миграции на ResourceRef/preconditions. Watch/relist/streaming остаются следующими задачами. Подробности — [12](12-DATA-CONTRACT-AND-APPEARANCE.md).
+Дополнено (DATA-01A/B, UX-07/08, YAML-03): общий каталог GVK и типизированные ошибки HTTP/Tauri, подсказки RBAC/timeout и stale snapshot/Retry; group/UID identity защищает вкладки от пересоздания объекта. Масштаб UI 80–200% с default 110%, независимые editor/terminal fonts и persistence подключены. Поиск/фильтры адаптивны и занимают одну строку; на узкой панели фильтры в меню. Воспроизведённая потеря символов Monaco исправлена. DATA-01 целиком остаётся PARTIAL: named operations ещё требуют миграции на ResourceRef/preconditions. DATA-02/03A завершены: desktop watch/relist подключены. DATA-03B/C (native/live QA, UI namespace scopes и browser watch), logs/exec streams остаются открыты. Подробности — [12](12-DATA-CONTRACT-AND-APPEARANCE.md).
 
 | Файл | Что это на самом деле | Расхождения и исправления |
 |---|---|---|

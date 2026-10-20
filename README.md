@@ -13,7 +13,7 @@ pnpm dev
 pnpm tauri dev
 ```
 
-Обычный режим читает локальный kubeconfig. Для browser dev bridge нужен `kubectl` в PATH; desktop snapshots/scale/logs также пока используют kubectl. Browser preview без dev bridge показывает явную ошибку подключения.
+Обычный режим читает локальный kubeconfig. Для browser dev bridge нужен `kubectl` в PATH; desktop списки ресурсов используют kube-rs watch через Tauri Channels, scale/logs пока используют kubectl. В browser dev списки остаются snapshots с ручным Sync. Browser preview без dev bridge показывает явную ошибку подключения.
 
 Демо доступно отдельно: `http://localhost:1420/?demo=1`. Демо-сессии и ресурсы обозначены явно; ошибка реального API не переключает приложение на демо.
 
@@ -27,7 +27,7 @@ Ctrl/⌘ K — поиск, B — дерево, J — нижняя панель. 
 
 Settings → Appearance: масштаб интерфейса **80–200%** (по умолчанию **110%**, базовый UI-шрифт 13 CSS px при 100%), отдельно размер YAML и терминала **10–24 px** (по умолчанию 14 px). Изменения применяются сразу и сохраняются. Ctrl/⌘ `+` / `−` меняют масштаб, `0` восстанавливает стандартный, `,` открывает настройки. Собственный zoom диаграммы управляется на холсте.
 
-Ошибки чтения ресурсов показывают причину и подсказку для RBAC/auth/timeout. Ошибка refresh сохраняет последний snapshot с отметкой об устаревании; Retry повторяет запрос. Вкладка подробностей/YAML не переключается на новый объект после пересоздания ресурса с тем же именем. Контракты и ограничения — [12](docs/12-DATA-CONTRACT-AND-APPEARANCE.md).
+В desktop таблицы и подробности обновляются по live watch; status bar показывает синхронизацию и переподключение. Relist атомарно заменяет полный список; Sync/Retry пересоздают подписки. Ошибки чтения ресурсов показывают причину и подсказку для RBAC/auth/timeout. Ошибка refresh сохраняет последний snapshot с отметкой об устаревании; Retry повторяет запрос. Вкладка подробностей/YAML не переключается на новый объект после пересоздания ресурса с тем же именем. Контракты и ограничения — [12](docs/12-DATA-CONTRACT-AND-APPEARANCE.md).
 
 В таблицах поиск и фильтры стоят в одной строке: проблемы/статус и сортировка (ошибки первыми, новые/старые, имя или колонка). В узкой панели фильтры доступны через `Filters`, поиск сохраняет доступную ширину. Общий namespace выбирается один раз рядом с кластером. На диаграммах Namespace — рамка с ресурсами внутри, Events — отдельный компактный список сбоку. Произвольные custom resources пока не загружаются, доступны определения CRD.
 
@@ -45,7 +45,7 @@ cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline
 cargo check --manifest-path src-tauri/Cargo.toml --offline
 ```
 
-Playwright автоматически использует `/usr/bin/google-chrome`, если он установлен. Другой путь задаётся через `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; при отсутствии системного Chrome используется стандартный браузер Playwright (`pnpm exec playwright install chromium`). Тесты работают в изолированном demo mode и с подставленными ошибками API; они не заменяют live cluster integration.
+Playwright автоматически использует `/usr/bin/google-chrome`, если он установлен. Другой путь задаётся через `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; при отсутствии системного Chrome используется стандартный браузер Playwright (`pnpm exec playwright install chromium`). Тесты работают в изолированном demo mode, с подставленными ошибками API и Tauri IPC; Rust tests проверяют kube-rs watcher через локальный HTTP API; они не заменяют live cluster integration.
 
 ## Лицензия
 

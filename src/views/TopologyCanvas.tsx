@@ -10,7 +10,7 @@ import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import type { ResourceGraph } from '../core/resources/relationships';
 import type { ResourceItem } from '../types/k8s';
-import { layoutNodeId, namespaceGroupId, topologyLayout } from '../core/resources/topology_layout';
+import { layoutNodeId, namespaceGroupId, topologyLayout, topologyStructureKey } from '../core/resources/topology_layout';
 
 type ResourceNode = Node<{ item: ResourceItem; direction: 'RIGHT' | 'DOWN' }, 'resource'>;
 type NamespaceNode = Node<{ name: string; item?: ResourceItem; count: number; direction: 'RIGHT' | 'DOWN' }, 'namespace'>;
@@ -58,7 +58,18 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
   const onInit = useCallback((instance: ReactFlowInstance<GraphNode>) => { flow.current = instance; }, []);
   const nodeColor = useCallback((node: Node) => node.id === focusKey ? '#3574f0' : '#545d70', [focusKey]);
 
+  const latestGraph = useRef(graph);
+  latestGraph.current = graph;
+  const structureKey = topologyStructureKey(graph);
   useEffect(() => {
+    setNodes((nodes) => nodes.map((node) => {
+      const item = node.type === 'resource' ? graph.items.get(node.id) : [...graph.items.values()].find((item) => item.kind === 'Namespace' && item.name === node.data.name);
+      return item && item !== node.data.item ? { ...node, data: { ...node.data, item } } as GraphNode : node;
+    }));
+  }, [graph, setNodes]);
+
+  useEffect(() => {
+    const graph = latestGraph.current;
     setError('');
     setNodes([]);
     setEdges([]);
@@ -84,13 +95,13 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
         const position = { x: node.x ?? 0, y: node.y ?? 0 };
         const namespace = [...layout.namespaces.values()].find((group) => node.id === namespaceGroupId(group.name));
         if (namespace) {
-          positioned.push({ id: node.id, type: 'namespace', position, data: { name: namespace.name, item: namespace.item, count: namespace.members.length, direction }, width: node.width, height: node.height, style: { width: node.width, height: node.height }, draggable: false, selectable: false, zIndex: -1 });
+          positioned.push({ id: node.id, type: 'namespace', position, data: { name: namespace.name, item: [...latestGraph.current.items.values()].find((item) => item.kind === 'Namespace' && item.name === namespace.name), count: namespace.members.length, direction }, width: node.width, height: node.height, style: { width: node.width, height: node.height }, draggable: false, selectable: false, zIndex: -1 });
           for (const child of node.children ?? []) {
-            const item = graph.items.get(child.id);
+            const item = latestGraph.current.items.get(child.id);
             if (item) positioned.push({ id: child.id, type: 'resource', parentId: node.id, extent: 'parent', position: { x: child.x ?? 0, y: child.y ?? 0 }, data: { item, direction }, width: 232, height: 76 });
           }
         } else {
-          const item = graph.items.get(node.id);
+          const item = latestGraph.current.items.get(node.id);
           if (item) positioned.push({ id: node.id, type: 'resource', position, data: { item, direction }, width: 232, height: 76 });
         }
       }
@@ -104,7 +115,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     }).catch((error) => { clearTimeout(timeout); worker?.terminate(); if (!cancelled) { setError(String(error)); setBusy(false); } });
     worker.onerror = (event) => { clearTimeout(timeout); worker?.terminate(); if (!cancelled) { setError(`Automatic layout failed: ${event.message}`); setBusy(false); } };
     return () => { cancelled = true; clearTimeout(timeout); worker?.terminate(); };
-  }, [graph, direction, revision, setNodes]);
+  }, [structureKey, direction, revision, setNodes]);
 
   useEffect(() => {
     if (!containerRef.current) return;

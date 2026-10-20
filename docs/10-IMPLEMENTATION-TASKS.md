@@ -36,8 +36,11 @@
 | DATA-01A | UI-1/4 | Общие GVK/query/ref и идентичность вкладок/ссылок | DONE | Общий каталог 18 kinds TS/Rust/bridge; context/group/version/kind/namespace/name/nullable uid; UID не даёт вкладке привязаться к пересозданному объекту; owner/Event group validation |
 | DATA-01B | UI-1/4 | Единый контракт ошибок HTTP/Tauri и provider | DONE | 403/404/409/timeout/rate limit/bridge failures; status kube-rs сохраняется, stderr kubectl ограниченно классифицируется; malformed responses, bounded requests, stale snapshot/Retry и transport parity покрыты тестами |
 | DATA-01C | UI-5/6 | Named operations через ResourceRef с preconditions | TODO | OPS-01/02 и MUT-01; перенести старые context/name/namespace arguments, обязательный UID там, где нужен запрет операции над пересозданным объектом; атомарные preconditions и конфликтный ответ |
-| DATA-02 | UI-4 | Исправить atomic snapshot/relist в Rust informer | TODO | Следующий блок после DATA-01A/B: удалённые во время disconnect объекты не остаются; namespace watchers не стирают соседние snapshots; context/GVK/scope isolation, отменённый initial list не публикует частичный snapshot |
-| DATA-03 | UI-4 | Watch/unwatch IPC и batching в UI | TODO | DATA-02; reconnect/backoff/first-sync/stale; context isolation |
+| DATA-02 | UI-4 | Исправить atomic snapshot/relist в Rust informer | DONE | Init/InitApply буферизуются до InitDone, полный relist атомарно заменяет только context/GVK/namespace/subscription scope; отмена/ошибка не публикует частичный список. Проверено с настоящим kube-rs runtime и локальным HTTP API, включая 410 и offline deletions |
+| DATA-03 | UI-4 | Watch/unwatch IPC и batching в UI | PARTIAL | DATA-03A готова; DATA-03B/C остаются открыты |
+| DATA-03A | UI-4 | Desktop watch, batching и lifecycle | DONE | Tauri Channels; очередь 256, IPC до 128 сообщений/50 мс, UI coalescing по UID/50 мс; first-sync/reconnect/backoff/stale/RBAC, Sync/Retry и cleanup. Quiet reconnect подтверждается успешным открытием watch. Rust HTTP + browser IPC tests, A → B → A и late callbacks |
+| DATA-03B | UI-4 | Live/native приёмка и namespace scope | TODO | Реальный кластер + native Tauri: 410/disconnect/RBAC/reload, память и длительный поток; UI сейчас подписан на 18 встроенных kinds во всех namespaces. Подключить namespace-scoped подписки для ограниченных прав и lazy subscriptions |
+| DATA-03C | UI-4 | Browser watch transport | TODO | Browser dev bridge пока snapshots; добавить SSE/WebSocket с таким же query/error/sequence/cleanup контрактом |
 | OPS-01 | UI-5 | Настоящий log stream | TODO | DATA-01; follow/tail/previous/since, контейнеры, cancel/reconnect |
 | OPS-02 | UI-5 | Pod exec + host PTY: start/write/resize/close | TODO | DATA-01; многосессионность, exit/error, освобождение backend при закрытии |
 | OPS-03 | UI-5 | Управляемый Node debug shell | TODO | OPS-02; создание/debug permissions, attach, cleanup и удаление orphan debug pod |
@@ -51,7 +54,7 @@
 | DOMAIN-02 | UI-8/9 | Metrics и Helm с явным context | TODO | Отдельные IPC/UI/live tests, отсутствие фиктивной телеметрии |
 | RELEASE-01 | UI-11 | CI, desktop smoke, нагрузка и длительные сессии | TODO | Все MVP сценарии; Linux WebKit + macOS/Windows; измеренные бюджеты |
 
-Порядок исполнения: текущий блок → DATA-01A/B (готовы) → DATA-02/03 → OPS-01/02/04 с DATA-01C → OPS-03 и MUT-01/02 → PERF/GRAPH/DOMAIN → release QA. Для каждого рабочего блока в 07 записываются изменения, выполненные проверки и незавершённые пункты. Демо/подставленный API и настоящий кластер учитываются отдельно.
+Порядок исполнения: текущий блок → DATA-01A/B (готовы) → DATA-02/03A (готовы) → DATA-03B/C и OPS-01/02/04 с DATA-01C → OPS-03 и MUT-01/02 → PERF/GRAPH/DOMAIN → release QA. Для каждого рабочего блока в 07 записываются изменения, выполненные проверки и незавершённые пункты. Демо/подставленный API и настоящий кластер учитываются отдельно.
 
 ## Диаграммы: отдельный план по уровням
 
@@ -68,7 +71,7 @@
 | GRAPH-06 | Сетевой путь | TODO | Ingress → Service → EndpointSlice → Pod, порт/targetPort, ready/not-ready endpoints; учитывать selectorless Service и ExternalName. Конфигурационный путь не объявляется доказанным сетевым трафиком |
 | GRAPH-07 | Хранилище и конфигурация | TODO | Pod → PVC → PV → StorageClass; mounted volumes/env/envFrom/projected refs; обратные consumers; причины Pending и WaitForFirstConsumer. Для Secret — только reference/key metadata, без значений |
 | GRAPH-08 | Исследование графа в стиле IDE | TODO | Контекстные Open details/YAML/logs/shell; раскрыть соседей, свернуть группу, focus/back, поиск, фильтры kinds/edge types, legend; клавиатурная навигация. На каждом узле цветной kind badge и общий warning tooltip |
-| GRAPH-09 | Инкрементальная раскладка | TODO | Сохранять ручные позиции и viewport; перестраивать затронутую часть; отменять устаревший worker; Arrange — явное полное переупорядочивание. Сейчас при обновлении snapshot раскладка может сбрасываться |
+| GRAPH-09 | Инкрементальная раскладка | PARTIAL | Status/resourceVersion updates сохраняют ручные позиции и viewport, worker запускается только при изменении состава/связей, direction или Arrange; browser test с live delta. Изменения структуры пока вызывают полную раскладку; сохранять незатронутые узлы и инкрементально размещать новые — TODO |
 | GRAPH-10 | Большие кластеры и неполные права | TODO | Lazy expansion, агрегированные узлы, уровни детализации по zoom; loaded/forbidden/not-found состояния; не трактовать неполную загрузку как отсутствие связей. Предварительные бюджеты, отмена layout, счётчики namespace и общее предупреждение о недоступных kinds уже есть (GRAPH-SAFE); настоящая нагрузочная приёмка и группировка ещё нет |
 | GRAPH-11 | Сохранение и экспорт | TODO | Layout по context/scope, экспорт SVG/PNG/JSON, имя/context/ns/время и легенда; секретные данные не попадают в экспорт |
 | GRAPH-12 | Приёмка всех уровней | TODO | Seed namespace с owner/network/storage цепочками; браузерные переходы cluster → namespace → workload → Pod → Node; RBAC partial data; reconnect/delta; измерение больших графов, WebKit и production bundle |
