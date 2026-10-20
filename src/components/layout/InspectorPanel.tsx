@@ -8,6 +8,7 @@ import { useDockStore } from '../../state/dock_store';
 import { KIND_ICONS } from '../../core/perspectives';
 import { buildResourceGraph } from '../../core/resources/relationships';
 import { resourceKey } from '../../core/resources/identity';
+import { resourceEvents } from '../../core/resources/resource_events';
 import { ContainerStatusIcon } from '../k8s/ContainerSelect';
 import { canExecContainer, defaultContainer, podContainers, CONTAINER_ROLE_LABEL } from '../../core/resources/containers';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
@@ -105,7 +106,7 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
         })}
         {filteredRelated.length > relatedLimit && <Button size="sm" className="mt-3" onClick={() => setRelatedLimit((limit) => limit + 50)}>Show next 50</Button>}
         {!!related.length && !filteredRelated.length && <p className="text-xs text-[var(--text-muted)]">No related resources match this filter.</p>}
-      </Card></div> : rightTab === 'events' ? <ResourceEvents item={item} /> : <Overview key={item.uid} item={item} onNavigate={navigate} onLogs={logs} onShell={shell} />}
+      </Card></div> : rightTab === 'events' ? <ResourceEvents key={item.uid} item={item} /> : <Overview key={item.uid} item={item} onNavigate={navigate} onLogs={logs} onShell={shell} />}
     </div>
     <PFDialog key={item.uid} item={pfOpen ? item : null} onClose={() => setPfOpen(false)} />
   </div>;
@@ -155,11 +156,29 @@ function Overview({ item, onNavigate, onLogs, onShell }: { item: ResourceItem; o
 function ResourceEvents({ item }: { item: ResourceItem }) {
   const events = useResourceStore((s) => s.resources.Event);
   const error = useResourceStore((s) => s.loadErrors.Event);
-  const related = [...events.values()].filter((event) => {
-    const ref = event.raw?.involvedObject ?? event.raw?.regarding;
-    return ref?.uid ? ref.uid === item.uid : ref?.name === item.name && ref?.kind === item.kind && ref?.namespace === item.namespace;
-  });
-  return <div className="h-full overflow-auto p-3"><Card title="Resource events">{error ? <p className="text-[var(--status-warn)] text-xs">{error.message}</p> : !related.length ? <p className="text-xs text-[var(--text-muted)]">No events in the loaded snapshot.</p> : related.map((event) => <div key={event.uid} className="py-2 border-b border-[var(--border-default)]"><div className="text-xs">{event.raw?.reason} <span className="text-[var(--text-muted)]">{event.raw?.type}</span></div><p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] mt-1">{event.raw?.message ?? event.raw?.note}</p></div>)}</Card></div>;
+  const watchState = useResourceStore((s) => s.watchStates.Event);
+  const [query, setQuery] = useState('');
+  const [limit, setLimit] = useState(50);
+  const related = useMemo(() => resourceEvents(events.values(), item), [events, item]);
+  const filtered = related.filter((entry) => [entry.reason, entry.message, entry.warning ? 'Warning' : 'Normal', entry.reporter].join(' ').toLowerCase().includes(query.toLowerCase()));
+  return <div className="h-full overflow-auto p-3">
+    <NamespaceScopeNotice namespace={item.namespace} />
+    <Card title="Resource events">
+      <p className="text-xs text-[var(--text-muted)] mb-3">Notifications for {item.kind}/{item.name} only. Newest first; events for child resources are shown on those objects.</p>
+      {error && <p role="status" className="text-[var(--status-warn)] text-xs mb-2">{error.message} Loaded events may be incomplete or stale.</p>}
+      {watchState && watchState.phase !== 'live' && <p role="status" className="text-xs text-[var(--text-muted)] mb-2">Event watch: {watchState.phase}. {watchState.hasSnapshot ? 'Showing the last loaded snapshot.' : 'Waiting for an event snapshot.'}</p>}
+      <SearchInput value={query} onChange={(value) => { setQuery(value); setLimit(50); }} placeholder="Filter events by reason, message or type…" className="w-full mb-2" />
+      <div className="text-xs text-[var(--text-muted)] mb-2">{filtered.length} matching · {related.length} events · {related.filter((entry) => entry.warning).length} warnings</div>
+      {!related.length && <p className="text-xs text-[var(--text-muted)]">No events for this object in the loaded snapshot. Events are retained temporarily by Kubernetes.</p>}
+      {!!related.length && !filtered.length && <p className="text-xs text-[var(--text-muted)]">No events match this filter.</p>}
+      {filtered.slice(0, limit).map((entry) => <article key={entry.event.uid} aria-label={entry.reason} className="py-3 border-b border-[var(--border-default)]">
+        <div className="flex flex-wrap items-center gap-2 text-xs"><span className={entry.warning ? 'text-[var(--status-warn)]' : 'text-[var(--status-ok)]'}>{entry.warning ? 'Warning' : 'Normal'}</span><strong className="break-all">{entry.reason}</strong><span className="text-[var(--text-muted)]">×{entry.count}</span></div>
+        <p className="text-xs text-[var(--text-secondary)] mt-1 whitespace-pre-wrap break-words">{entry.message}</p>
+        <div className="flex flex-wrap gap-x-2 mt-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">{entry.timestamp ? <time dateTime={entry.timestamp} title={entry.timestamp}>{new Date(entry.time).toLocaleString()}</time> : <span>Time unavailable</span>}{entry.reporter && <span className="break-all">{entry.reporter}</span>}</div>
+      </article>)}
+      {filtered.length > limit && <Button size="sm" className="mt-3" onClick={() => setLimit((value) => value + 50)}>Show next 50</Button>}
+    </Card>
+  </div>;
 }
 function decodeSecret(value: string) { try { return new TextDecoder().decode(Uint8Array.from(atob(value), (c) => c.charCodeAt(0))); } catch { return '(invalid base64)'; } }
 function ResourceLink({ item, onClick }: { item: ResourceItem; onClick: (item: ResourceItem) => void }) { return <button className="text-[var(--accent)] hover:underline text-left break-all" onClick={() => onClick(item)}>{item.name}</button>; }

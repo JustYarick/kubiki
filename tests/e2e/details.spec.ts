@@ -238,3 +238,48 @@ test('an editor module load failure leaves the manifest and inspector usable', a
   await inspector.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(inspector.getByRole('region', { name: 'Metadata', exact: true })).toBeVisible();
 });
+
+test('Related excludes notifications; each object has its own searchable and paginated Events', async ({ page }) => {
+  const reference = { kind: 'Pod', apiVersion: 'v1', name: 'web', namespace: 'backend', uid: 'web-uid' };
+  const event = (name: string, ref: object, raw = {}) => ({ apiVersion: 'v1', kind: 'Event', metadata: { uid: name, name, namespace: 'backend', ownerReferences: [reference] }, involvedObject: ref, reason: 'Scheduled', message: name, ...raw });
+  await mockResourceLists(page, {
+    Namespace: [{ metadata: { uid: 'ns', name: 'backend' } }],
+    Pod: [{ apiVersion: 'v1', metadata: { uid: 'web-uid', name: 'web', namespace: 'backend' }, spec: { containers: [] } }],
+    Event: [
+      ...Array.from({ length: 51 }, (_, index) => event(`notification-${index}`, reference, { lastTimestamp: new Date(1700000000000 + index * 1000).toISOString() })),
+      event('warning-event', reference, { type: 'Warning', reason: 'BackOff', message: 'Application restarting', count: 8, lastTimestamp: '2026-10-20T08:00:00Z', source: { component: 'kubelet' } }),
+      event('old-incarnation', { ...reference, uid: 'deleted' }),
+      event('foreign-group', { ...reference, apiVersion: 'example.com/v1' }),
+      event('namespace-event', { kind: 'Namespace', apiVersion: 'v1', name: 'backend', uid: 'ns' }, { reason: 'NamespaceNotice' }),
+    ],
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: /^Namespaces(?: \d+)?$/ }).click();
+  await page.getByTestId('resource-table').getByText('backend', { exact: true }).click();
+  const inspector = page.getByTestId('resource-details');
+  await inspector.getByRole('tab', { name: /^Related/ }).click();
+  await expect(inspector.getByText('1 matching · 1 relationships')).toBeVisible();
+  await expect(inspector.locator('[data-resource-kind="Event"]')).toHaveCount(0);
+  await inspector.getByRole('tab', { name: 'Events', exact: true }).click();
+  await expect(inspector.getByRole('article')).toHaveCount(1);
+  await expect(inspector.getByRole('article', { name: 'NamespaceNotice', exact: true })).toBeVisible();
+  await inspector.getByRole('tab', { name: /^Related/ }).click();
+  await inspector.getByRole('button').filter({ has: page.locator('[data-resource-kind="Pod"]') }).click();
+  await inspector.getByRole('tab', { name: /^Related/ }).click();
+  await expect(inspector.locator('[data-resource-kind="Event"]')).toHaveCount(0);
+  await inspector.getByRole('tab', { name: 'Events', exact: true }).click();
+  await expect(inspector.getByText('52 matching · 52 events · 1 warnings')).toBeVisible();
+  await expect(inspector.getByRole('article')).toHaveCount(50);
+  const warning = inspector.getByRole('article').first();
+  await expect(warning).toHaveAccessibleName('BackOff');
+  await expect(warning).toContainText('Warning');
+  await expect(warning).toContainText('×8');
+  await expect(warning).toContainText('kubelet');
+  await expect(warning.locator('time')).toHaveAttribute('datetime', '2026-10-20T08:00:00Z');
+  await inspector.getByRole('button', { name: 'Show next 50', exact: true }).click();
+  await expect(inspector.getByRole('article')).toHaveCount(52);
+  await expect(inspector.getByText('old-incarnation', { exact: true })).toHaveCount(0);
+  await inspector.getByPlaceholder('Filter events by reason, message or type…').fill('Warning');
+  await expect(inspector.getByRole('article')).toHaveCount(1);
+  await expect(inspector.getByRole('article')).toContainText('Application restarting');
+});

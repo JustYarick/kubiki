@@ -6,7 +6,16 @@
 
 ---
 
-## Последний блок — 2026-10-20: OPS-02A, живой Pod exec, контейнеры и адаптивные логи
+## Последний блок — 2026-10-20: UX-12, Events как уведомления объекта
+
+- **UX-12 — готово:** Event исключён из общего графа отношений до построения contains/ownerReferences и проверки бюджета. Related у Namespace, Pod и остальных объектов показывает только структурные связи с ресурсами; Events не попадают в список, поиск и счётчик, включая отсутствующие Event targets.
+- **Отдельная вкладка Events:** уведомления только самого выбранного объекта; Namespace не собирает уведомления всех своих Pod. Сопоставление проверяет UID, kind, API group, namespace и name; при старом UID нет fallback на пересозданный объект. Для legacy events без UID проверяется ссылка по имени, для Node/Namespace учитывается cluster scope.
+- **Отображение:** новые события первыми, Warning/Normal, reason/message, последнее время с исходным timestamp в tooltip, число повторений, reporting component/controller; поиск и вывод порциями по 50. Ошибка загрузки не скрывает ранее загруженные события, видны watch state и ограничение namespace scope. История ограничена snapshot, retention и разрешениями API, отдельного архива пока нет.
+- **Единая нормализация:** core/v1 involvedObject и events.k8s.io regarding/series/note используют общий helper с боковым Events island диаграммы. Его лимит 10 и переходы к объекту сохранены.
+- **Проверки:** 129 unit/contract tests в 16 файлах; production build с typecheck; 42 browser scenarios на production preview. Новые проверки покрывают отсутствие Events в Namespace/Pod Related и бюджете графа, чужие ссылки/старый UID, обе схемы событий, порядок, количество, поиск, пагинацию и события самого Namespace. `git diff --check` пройден. Прежнее предупреждение о крупных bundle chunks сохраняется; Rust/backend этим блоком не менялись.
+- Roadmap: UX-12 закрыта; остальные открытые задачи, включая native GUI QA и отложенный pan/blur, не менялись.
+
+## 2026-10-20: OPS-02A, живой Pod exec, контейнеры и адаптивные логи
 
 - **OPS-02A — готово:** заглушка Pod terminal заменена kube-rs WebSocket → Tauri Channel → xterm. Работают stdin/stdout, Ctrl-C и другие управляющие последовательности, TTY resize, shell binary picker, exit/error, явные Reconnect/Disconnect. Контекст и UID закреплены в ResourceRef; перед подключением проверяются UID и running-состояние контейнера. Предварительный GET не объявляется атомарной exec precondition.
 - **Lifecycle/flow control:** регистрация до handshake, cancel pending connection, owner реального окна, лимит 32 сессии, bounded input/output, отдельное параллельное чтение stdout, IPC batching и один batch в полёте. ACK идёт после xterm write callback; split UTF-8 передаётся байтами. При отмене RAII guard явно abort-ит задачу AttachedProcess и закрывает WebSocket. Автоматический reconnect/повтор ввода отсутствует. Сохраняются 403 как GET Pod, так и exec upgrade (в kube-rs 0.98 это отдельный ProtocolSwitch error).

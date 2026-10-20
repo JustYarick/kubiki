@@ -41,7 +41,8 @@ export function matchesSelector(labels: Record<string, string>, selector: any): 
 
 /** Resolve API references, never infer ownership from a resource's name. */
 export function buildResourceGraph(resources: Record<ResourceKind, Map<string, ResourceItem>>, options: GraphBuildOptions = {}): ResourceGraph {
-  const all = Object.values(resources).flatMap((map) => [...map.values()]);
+  // Events describe notifications about objects, not structural relationships.
+  const all = Object.values(resources).flatMap((map) => [...map.values()].filter((item) => item.kind !== 'Event'));
   const items = new Map(all.map((item) => [resourceKey(item), item]));
   const byUid = new Map(all.map((item) => [item.uid, item]));
   const relations = new Map<string, ResourceRelation>();
@@ -79,7 +80,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     relations.set(id, { id, source, target, type, label, missing });
   };
   const reference = (from: ResourceItem, kind: string, name: string | undefined, namespace: string | null = from.namespace ?? null, type: RelationType = 'uses', reverse = false, uid?: string, apiVersion?: string) => {
-    if (!name || name === '-') return;
+    if (!name || name === '-' || kind === 'Event') return;
     const builtin = RESOURCE_TYPES.find((resource) => resource.kind === kind);
     const reference = { kind, name, namespace: namespace ?? undefined, uid, apiVersion: apiVersion ?? (builtin ? apiVersionFor(builtin) : '') };
     const key = resourceKey(reference);

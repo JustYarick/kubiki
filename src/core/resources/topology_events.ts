@@ -1,10 +1,9 @@
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import type { ResourceGraph } from './relationships';
 import { matchesResourceRef, resourceKey } from './identity';
-import { RESOURCE_TYPES, apiVersionFor } from './resource_types';
+import { eventDetails, eventReference } from './resource_events';
 
 export const MAX_TOPOLOGY_EVENTS = 10;
-const CLUSTER_KINDS = new Set(['Node', 'Namespace', 'PersistentVolume', 'StorageClass', 'CustomResourceDefinition']);
 export interface TopologyEvent {
   event: ResourceItem; target?: ResourceItem; objectLabel: string;
   warning: boolean; reason: string; message: string; count: number;
@@ -24,26 +23,20 @@ export function topologyEvents(events: Iterable<ResourceItem>, scope: string, gr
     return byName.get(kind)?.get(key);
   };
   for (const event of events) {
-    const raw = event.raw ?? {};
-    const ref = raw.involvedObject ?? raw.regarding ?? {};
-    const namespace = ref.namespace ?? (CLUSTER_KINDS.has(ref.kind) ? undefined : event.namespace);
-    const builtin = RESOURCE_TYPES.find((type) => type.kind === ref.kind);
-    const reference = { ...ref, namespace, apiVersion: ref.apiVersion ?? (builtin ? apiVersionFor(builtin) : '') };
+    const reference = eventReference(event);
+    const ref = reference;
+    const namespace = reference.namespace;
     const key = resourceKey(reference);
     const candidate = scope === 'resource' ? ref.uid ? byUid.get(ref.uid) : graph.items.get(key)
       : ref.uid ? resources[ref.kind as ResourceKind]?.get(ref.uid)
         : lookupByName(ref.kind, key);
     const target = candidate && matchesResourceRef(candidate, reference) ? candidate : undefined;
     if (scope === 'resource' ? !target : !scope.startsWith('namespace:') || (event.namespace ?? namespace) !== scope.slice('namespace:'.length)) continue;
-    const warning = raw.type === 'Warning';
+    const details = eventDetails(event);
     total++;
-    if (warning) warnings++;
-    const timestamp = [raw.series?.lastObservedTime, raw.lastTimestamp, raw.deprecatedLastTimestamp, raw.eventTime, raw.firstTimestamp, event.creationTimestamp]
-      .find((value): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value)));
+    if (details.warning) warnings++;
     const entry: TopologyEvent = {
-      event, target, objectLabel: ref.kind && ref.name ? `${ref.kind}/${ref.name}` : 'Unknown resource',
-      warning, reason: raw.reason || 'Event', message: raw.message ?? raw.note ?? '',
-      count: Math.max(1, Number(raw.series?.count ?? raw.count) || 1), timestamp, time: timestamp ? Date.parse(timestamp) : 0,
+      ...details, target, objectLabel: ref.kind && ref.name ? `${ref.kind}/${ref.name}` : 'Unknown resource',
     };
     const index = entries.findIndex((existing) => entry.time > existing.time || entry.time === existing.time && entry.event.uid.localeCompare(existing.event.uid) < 0);
     if (index !== -1) entries.splice(index, 0, entry);
