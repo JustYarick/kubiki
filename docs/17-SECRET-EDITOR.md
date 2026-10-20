@@ -10,6 +10,8 @@ Text использует строгий UTF-8 и сохраняет Unicode/BOM
 
 Проверяются уникальность ключей, допустимые символы/длина, canonical base64 и суммарный decoded data limit 1 MiB. Immutable Secret можно читать, но нельзя изменять.
 
+Большие значения Secret и ConfigMap прокручиваются внутри собственного блока: максимум `min(280px × UI scale, 40vh)`. Это ограничение действует и на textarea Secret при ручном resize. Ключи, следующие значения и действия остаются вне внутренней прокрутки; данные не обрезаются. Прокручиваемый preview доступен с клавиатуры.
+
 ## Сохранение
 
 Цель фиксируется по context + core/v1 Secret + namespace/name + UID + resourceVersion на момент начала редактирования. Desktop получает актуальный Secret через kube-rs, проверяет UID/resourceVersion/immutable, заменяет только содержимое data в полученном объекте, сохраняет прочие поля и отправляет PUT с исходными UID/resourceVersion. Серверная optimistic concurrency защищает промежуток между GET и PUT. Требуются get и update Secret. Browser dev делает тот же GET/check/replace через kubectl; manifest передаётся **stdin**, значения не попадают в argv/URL/временные файлы.

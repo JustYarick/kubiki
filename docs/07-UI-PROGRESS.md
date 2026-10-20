@@ -6,7 +6,13 @@
 
 ---
 
-## Последний блок — 2026-10-20: Secret data editor, Columns, Node shell и статусы
+## Последний блок — 2026-10-20: UX-16, внутренний scroll больших data values
+
+- **DONE:** высота отдельного значения Secret/ConfigMap ограничена `min(280px × UI scale, 40vh)`; длинный текст и base64 прокручиваются внутри блока. Содержимое полностью сохраняется, ключи/следующие значения/действия не входят во внутреннюю прокрутку. Preview доступен с клавиатуры; textarea Secret сохраняет ограничение при ручном resize. Остальные Overview-разделы не менялись.
+- **Проверки:** production build с app/server/tests typecheck и `git diff --check` пройдены; 7/7 целевых production browser scenarios (5 прежних Secret + 2 новых Secret/ConfigMap с текстом более 10k символов). Проверены полный текст, внутренний scroll с клавиатуры, положение следующего ключа и cap при resize textarea. Rust не менялся. Прежний build warning о крупных chunks остаётся.
+- **Roadmap:** UX-16 DONE; незавершённые native/live задачи и последующий OPS-04 сохранены.
+
+## 2026-10-20: Secret data editor, Columns, Node shell и статусы
 
 - **MUT-03A — готово:** Secret data редактируется построчно: ключ/значение, Add/Remove, Unicode/empty/binary без потери байтов. Общий компактный Text/Base64 рядом с Reveal работает при просмотре и редактировании; dropdown на строках убраны по обратной связи. Текст автоматически кодируется при Save; immutable/неверные/повторные ключи/base64/1 MiB проверяются до записи. Desktop kube-rs и browser dev stdin replace подключены; UID/resourceVersion проверяются, API PUT защищён optimistic concurrency. Ошибки сохраняют draft; watch updates не затирают ввод и блокируют устаревшую запись. Значения не попадают в URL/argv/localStorage/уведомления. Детали и границы — [17](17-SECRET-EDITOR.md).
 - **UX-15 — готово:** исправлен noop `onSelect` меню Columns. Видимость действительно переключается и сохраняется; Name остаётся обязательным. Колонка номеров получила resize, double-click reset и сохранение ширины отдельно по kind. Перетаскивание учитывает фактическую ширину/UI scale, отмена pointer очищает обработчики. Resize не выбирает строки.

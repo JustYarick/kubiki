@@ -36,7 +36,7 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Secret update failed. Refresh to verify saved state'); }
     finally { setSaving(false); }
   }
-  return <section aria-label="Secret data" className="rounded border border-[var(--border-default)] p-3 min-w-0">
+  return <section aria-label="Secret data" className="shrink-0 rounded border border-[var(--border-default)] p-3 min-w-0">
     <div className="flex flex-wrap items-center gap-2 mb-2"><h3 className="font-medium flex-1">Secret data ({rows.length})</h3><div role="group" aria-label="Secret value encoding" className="inline-flex rounded border border-[var(--border-default)] overflow-hidden shrink-0">{(['text', 'base64'] as const).map(mode => <button key={mode} type="button" aria-pressed={encoding === mode} disabled={saving} className={`px-2 py-1 text-xs ${encoding === mode ? 'bg-[var(--bg-hover)] text-[var(--accent)]' : 'text-[var(--text-secondary)]'}`} onClick={() => {
       try { const converted = formatRows(rows, mode, true); if (draft) setDraft({ ...draft, rows: converted }); setEncoding(mode); setError(''); }
       catch { setError('Invalid base64 value. Fix it before switching to Text.'); }
@@ -50,7 +50,7 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
         {row.mode === 'base64' && encoding === 'text' && <span className="text-xs text-[var(--text-muted)] shrink-0" title="Binary value cannot be decoded as UTF-8">Binary · base64</span>}
         {draft && <Button size="sm" disabled={saving} aria-label={`Remove key ${row.id + 1}`} onClick={() => setDraft(d => d && ({ ...d, rows: d.rows.filter(r => r.id !== row.id) }))}>Remove</Button>}
       </div>
-      {draft ? <textarea aria-label={`Value ${row.id + 1}`} className={`${field} resize-y min-h-20`} value={row.value} disabled={saving} autoComplete="off" spellCheck={false} onChange={e => update(row.id, { value: e.target.value })} /> : <pre className="text-xs font-mono whitespace-pre-wrap break-all">{reveal ? row.value || '(empty)' : '••••••••'}</pre>}
+      {draft ? <textarea aria-label={`Value ${row.id + 1}`} className={`${field} resource-data-value kubiki-scrollbar resize-y min-h-20`} value={row.value} disabled={saving} autoComplete="off" spellCheck={false} onChange={e => update(row.id, { value: e.target.value })} /> : <pre tabIndex={0} aria-label={`Value for ${row.key}`} className="resource-data-value kubiki-scrollbar text-xs font-mono whitespace-pre-wrap break-all">{reveal ? row.value || '(empty)' : '••••••••'}</pre>}
     </div>)}</div>
     {error && <p role="alert" className="text-xs text-[var(--status-danger)] mt-2">{error}</p>}
     {saved && <p role="status" className="text-xs text-[var(--status-ok)] mt-2">{saved}</p>}

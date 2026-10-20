@@ -325,3 +325,11 @@ body {
 
 /* Graph coordinates belong to React Flow/ELK; its own zoom controls scale the diagram. */
 .react-flow__viewport { --ui-factor: 1; font-size: 12px; }
+
+/* Bound individual Secret/ConfigMap values without clipping their keys or actions. */
+.resource-data-value {
+  max-height: min(calc(280px * var(--ui-factor)), 40vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.resource-data-value:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: 2px; }

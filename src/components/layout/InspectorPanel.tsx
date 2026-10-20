@@ -146,7 +146,7 @@ function Overview({ item, onNavigate, onLogs, onShell }: { item: ResourceItem; o
     {item.kind === 'Secret' && <SecretDataEditor key={item.uid} item={item} />}
     {item.kind === 'ConfigMap' && <Card title="Configuration data">
       {!Object.keys(data).length && <span className="text-xs text-[var(--text-muted)]">No data keys</span>}
-      {Object.entries(data).map(([key, value]) => <div key={key} className="mt-2"><div className="text-xs font-mono text-[var(--text-secondary)]">{key}</div><pre className="text-xs whitespace-pre-wrap break-all mt-1">{String(value)}</pre></div>)}
+      {Object.entries(data).map(([key, value]) => <div key={key} className="mt-2"><div className="text-xs font-mono text-[var(--text-secondary)]">{key}</div><pre tabIndex={0} aria-label={`Value for ${key}`} className="resource-data-value kubiki-scrollbar text-xs whitespace-pre-wrap break-all mt-1">{String(value)}</pre></div>)}
     </Card>}
     <Card title="Labels"><KeyValues values={item.labels ?? metadata.labels ?? {}} /></Card>
     {!!Object.keys(metadata.annotations ?? {}).length && <Card title={`Annotations (${Object.keys(metadata.annotations).length})`}><ResourceAnnotations values={metadata.annotations} /></Card>}
