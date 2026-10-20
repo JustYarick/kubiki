@@ -74,10 +74,7 @@ impl ClusterClientPool {
         let version_resp = client
             .apiserver_version()
             .await
-            .map_err(|e| KubikiError::ClusterConnectionFailed {
-                context: context.to_string(),
-                message: format!("Failed to query apiserver version: {e}"),
-            })?;
+            .map_err(KubikiError::from)?;
 
         Ok(ClusterVersionInfo {
             git_version: version_resp.git_version,

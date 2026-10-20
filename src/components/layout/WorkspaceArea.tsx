@@ -14,6 +14,7 @@ import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
 import { toast } from '../../state/notifications_store';
 import { FileCode, Loader2 } from 'lucide-react';
+import { matchesResourceRef } from '../../core/resources/identity';
 
 const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => ({ default: m.TopologyView })));
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
@@ -61,9 +62,9 @@ export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => voi
               style={{ flex: `${1 - splitRatio} 1 0%` }}
               className="min-w-0 min-h-0 flex flex-col"
             >
-              <div className="h-6 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-[11px] text-[var(--text-muted)] select-none">
+              <div className="h-6 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] select-none">
                 <span className="font-medium text-[var(--text-secondary)]">{splitTab.title}</span>
-                <span className="text-[10px] uppercase font-mono">Split View</span>
+                <span className="text-[length:calc(10px*var(--ui-factor))] uppercase font-mono">Split View</span>
               </div>
               <ErrorBoundary key={splitTab.id}><TabContent tab={splitTab} /></ErrorBoundary>
             </div>
@@ -97,17 +98,17 @@ function TabContent({ tab }: { tab?: WorkspaceTab }) {
   if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<div className="p-4">Loading topology…</div>}><TopologyView namespace={tab.namespace} /></Suspense>;
 
   if (tab.type !== 'resource-list') {
-    // Find current item from resource store or fallback to tab.item
+    // A pinned UID must never silently bind to a recreated object with the same name.
     const kind = tab.kind || 'Pod';
-    const item =
-      (tab.uid ? resources[kind]?.get(tab.uid) : null) ||
-      (tab.name ? Array.from(resources[kind]?.values() || []).find((i) => i.name === tab.name && i.namespace === tab.namespace) : null);
+    const candidate = tab.uid ? resources[kind]?.get(tab.uid)
+      : tab.name ? Array.from(resources[kind]?.values() || []).find((item) => matchesResourceRef(item, { ...tab, kind, name: tab.name! })) : undefined;
+    const item = candidate && matchesResourceRef(candidate, tab.resource ?? { ...tab, kind, name: tab.name ?? candidate.name }) ? candidate : undefined;
 
     if (!item) {
       return (
         <div className="flex-1 flex items-center justify-center p-6 text-center">
           <div>
-            <FileCode size={36} className="mx-auto text-[var(--text-muted)] mb-2" />
+            <FileCode size="calc(36px * var(--ui-factor))" className="mx-auto text-[var(--text-muted)] mb-2" />
             <div className="text-sm font-medium text-[var(--text-primary)]">Resource Not Found</div>
             <p className="text-xs text-[var(--text-muted)] mt-1">
               {tab.title} was deleted or is not currently available.
@@ -129,8 +130,8 @@ function TabContent({ tab }: { tab?: WorkspaceTab }) {
       <div className="flex-1 min-h-0 min-w-0">
         <Suspense
           fallback={
-            <div className="h-full flex items-center justify-center gap-2 text-[11px] text-[var(--text-muted)]">
-              <Loader2 size={14} className="animate-spin" />
+            <div className="h-full flex items-center justify-center gap-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
+              <Loader2 size="calc(14px * var(--ui-factor))" className="animate-spin" />
               Loading editor…
             </div>
           }

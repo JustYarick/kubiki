@@ -30,6 +30,8 @@ import { useClusterStore } from '../../state/cluster_store';
 import { usePfStore } from '../../state/pf_store';
 import { useResourceStore } from '../../state/resource_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
+import { useUiStore } from '../../state/ui_store';
+import { uiPixels } from '../../core/appearance';
 import { IconButton } from '../ui/Button';
 import { Button } from '../ui/Button';
 import { Popover } from '../ui/Dropdown';
@@ -90,12 +92,12 @@ const ExpandedDock: React.FC = () => {
     return (
       <div
         className="shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] flex flex-col z-20 overflow-hidden font-sans"
-        style={{ height: dockHeight, maxHeight: '60vh' }}
+        style={{ height: uiPixels(dockHeight), maxHeight: '60vh' }}
       >
-        <div className="h-[32px] shrink-0 flex items-center justify-between px-3 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] select-none">
+        <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-center justify-between px-3 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] select-none">
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-            <TerminalIcon size={13} />
-            <span className="font-semibold uppercase tracking-wider text-[10px]">Bottom Drawer (No Open Sessions)</span>
+            <TerminalIcon size="calc(13px * var(--ui-factor))" />
+            <span className="font-semibold uppercase tracking-wider text-[length:calc(10px*var(--ui-factor))]">Bottom Drawer (No Open Sessions)</span>
           </div>
           <div className="flex items-center gap-1">
             <IconButton
@@ -115,17 +117,17 @@ const ExpandedDock: React.FC = () => {
           </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-xs text-[var(--text-muted)] bg-[var(--bg-canvas)]">
-          <Laptop size={32} className="text-[var(--text-muted)] mb-2 opacity-60" />
+          <Laptop size="calc(32px * var(--ui-factor))" className="text-[var(--text-muted)] mb-2 opacity-60" />
           <p className="mb-3 text-[var(--text-secondary)]">All bottom drawer tabs have been closed.</p>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="primary" onClick={() => openLocalTerminal()}>
-              <Laptop size={12} className="mr-1.5" /> Open Local Terminal (Host PC)
+              <Laptop size="calc(12px * var(--ui-factor))" className="mr-1.5" /> Open Local Terminal (Host PC)
             </Button>
             <Button size="sm" onClick={() => openPorts()}>
-              <ArrowRightLeft size={12} className="mr-1.5" /> Port Forwarding
+              <ArrowRightLeft size="calc(12px * var(--ui-factor))" className="mr-1.5" /> Port Forwarding
             </Button>
             <Button size="sm" onClick={() => openEvents()}>
-              <Bell size={12} className="mr-1.5" /> Cluster Events
+              <Bell size="calc(12px * var(--ui-factor))" className="mr-1.5" /> Cluster Events
             </Button>
           </div>
         </div>
@@ -158,10 +160,10 @@ const ExpandedDock: React.FC = () => {
   return (
     <div
       className="shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] flex flex-col z-20 overflow-hidden font-sans"
-      style={{ height: dockHeight, maxHeight: '60vh' }}
+      style={{ height: uiPixels(dockHeight), maxHeight: '60vh' }}
     >
       {/* Lens-Grade Multi-Session Tab Strip */}
-      <div className="h-[32px] shrink-0 flex items-stretch px-1 gap-0.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-x-auto overflow-y-hidden kubiki-scrollbar select-none">
+      <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-stretch px-1 gap-0.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-x-auto overflow-y-hidden kubiki-scrollbar select-none">
         {sessions.map((s) => {
           const isActive = s.id === activeSessionId;
           const Icon = getSessionIcon(s);
@@ -172,7 +174,7 @@ const ExpandedDock: React.FC = () => {
               key={s.id}
               onClick={() => setActiveSession(s.id)}
               className={cx(
-                'group relative flex items-center gap-1.5 px-3 min-w-[130px] max-w-[240px] h-full border-r border-[var(--border-default)] cursor-pointer transition-colors',
+                'group relative flex items-center gap-1.5 px-3 min-w-[calc(130px*var(--ui-factor))] max-w-[calc(240px*var(--ui-factor))] h-full border-r border-[var(--border-default)] cursor-pointer transition-colors',
                 isActive
                   ? 'bg-[var(--bg-canvas)] text-[var(--text-primary)] font-medium'
                   : 'bg-[var(--bg-inactive-tab)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
@@ -180,25 +182,25 @@ const ExpandedDock: React.FC = () => {
               title={`${s.title} (${s.subtitle || ''})`}
             >
               {isActive && (
-                <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--accent)]" />
+                <div className="absolute bottom-0 left-0 right-0 h-[calc(2px*var(--ui-factor))] bg-[var(--accent)]" />
               )}
 
               <Icon
-                size={12}
+                size="calc(12px * var(--ui-factor))"
                 className={cx('shrink-0', iconColor)}
               />
 
               <div className="flex flex-col min-w-0 flex-1 leading-tight text-left">
-                <span className="truncate text-[11.5px]">{s.title}</span>
+                <span className="truncate text-[length:calc(11.5px*var(--ui-factor))]">{s.title}</span>
                 {s.subtitle && (
-                  <span className="truncate text-[9.5px] font-mono text-[var(--text-muted)]">
+                  <span className="truncate text-[length:calc(9.5px*var(--ui-factor))] font-mono text-[var(--text-muted)]">
                     {s.subtitle}
                   </span>
                 )}
               </div>
 
               {s.type === 'ports' && pfCount > 0 && (
-                <span className="text-[9.5px] font-mono px-1 rounded-full bg-[var(--status-ok)]/20 text-[var(--status-ok)]">
+                <span className="text-[length:calc(9.5px*var(--ui-factor))] font-mono px-1 rounded-full bg-[var(--status-ok)]/20 text-[var(--status-ok)]">
                   {pfCount}
                 </span>
               )}
@@ -215,7 +217,7 @@ const ExpandedDock: React.FC = () => {
                 )}
                 title="Close Session"
               >
-                <X size={11} />
+                <X size="calc(11px * var(--ui-factor))" />
               </button>
             </div>
           );
@@ -238,8 +240,8 @@ const ExpandedDock: React.FC = () => {
             )}
           >
             {(close) => (
-              <div className="py-1 max-h-[380px] overflow-y-auto kubiki-scrollbar">
-                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
+              <div className="py-1 max-h-[calc(380px*var(--ui-factor))] overflow-y-auto kubiki-scrollbar">
+                <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
                   Workstation &amp; Cluster Tools
                 </div>
                 <button
@@ -247,12 +249,12 @@ const ExpandedDock: React.FC = () => {
                     openLocalTerminal();
                     close();
                   }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 >
-                  <Laptop size={13} className="text-sky-400" />
+                  <Laptop size="calc(13px * var(--ui-factor))" className="text-sky-400" />
                   <div className="flex flex-col text-left">
                     <span className="font-medium">Local Terminal (Host PC)</span>
-                    <span className="text-[9.5px] text-[var(--text-muted)]">demo@localhost (~)</span>
+                    <span className="text-[length:calc(9.5px*var(--ui-factor))] text-[var(--text-muted)]">demo@localhost (~)</span>
                   </div>
                 </button>
                 <button
@@ -260,9 +262,9 @@ const ExpandedDock: React.FC = () => {
                     openPorts();
                     close();
                   }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 >
-                  <ArrowRightLeft size={13} className="text-amber-400" />
+                  <ArrowRightLeft size="calc(13px * var(--ui-factor))" className="text-amber-400" />
                   <span>Port Forwarding Manager</span>
                 </button>
                 <button
@@ -270,19 +272,19 @@ const ExpandedDock: React.FC = () => {
                     openEvents();
                     close();
                   }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                 >
-                  <Bell size={13} className="text-purple-400" />
+                  <Bell size="calc(13px * var(--ui-factor))" className="text-purple-400" />
                   <span>Cluster Event Stream</span>
                 </button>
 
                 {/* Node Shells */}
                 <div className="my-1 h-px bg-[var(--border-subtle)]" />
-                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Node Shells (Cluster Nodes)
                 </div>
                 {allNodes.length === 0 ? (
-                  <div className="px-3 py-2 text-[11px] text-[var(--text-muted)]">No loaded nodes</div>
+                  <div className="px-3 py-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No loaded nodes</div>
                 ) : (
                   allNodes.slice(0, 6).map((node) => (
                     <button
@@ -291,13 +293,13 @@ const ExpandedDock: React.FC = () => {
                         openNodeShell(node.name);
                         close();
                       }}
-                      className="w-full flex items-center justify-between px-2.5 py-1 text-[11.5px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                      className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <Server size={12} className="text-amber-400 shrink-0" />
-                        <span className="font-mono text-[11px] truncate">{node.name}</span>
+                        <Server size="calc(12px * var(--ui-factor))" className="text-amber-400 shrink-0" />
+                        <span className="font-mono text-[length:calc(11px*var(--ui-factor))] truncate">{node.name}</span>
                       </div>
-                      <span className="text-[9.5px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)]">
+                      <span className="text-[length:calc(9.5px*var(--ui-factor))] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)]">
                         Shell
                       </span>
                     </button>
@@ -306,22 +308,22 @@ const ExpandedDock: React.FC = () => {
 
                 {/* Attach to Pod */}
                 <div className="my-1 h-px bg-[var(--border-subtle)]" />
-                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Attach to Running Pod
                 </div>
                 {allPods.length === 0 ? (
-                  <div className="px-2.5 py-1 text-[10.5px] text-[var(--text-muted)]">No pods found</div>
+                  <div className="px-2.5 py-1 text-[length:calc(10.5px*var(--ui-factor))] text-[var(--text-muted)]">No pods found</div>
                 ) : (
                   allPods.slice(0, 8).map((p) => (
-                    <div key={p.uid} className="flex items-center justify-between px-2.5 py-1 hover:bg-[var(--bg-hover)] text-[11px]">
-                      <span className="font-mono truncate max-w-[130px] text-[var(--text-secondary)]">{p.name}</span>
+                    <div key={p.uid} className="flex items-center justify-between px-2.5 py-1 hover:bg-[var(--bg-hover)] text-[length:calc(11px*var(--ui-factor))]">
+                      <span className="font-mono truncate max-w-[calc(130px*var(--ui-factor))] text-[var(--text-secondary)]">{p.name}</span>
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => {
                             openTerminal(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
                             close();
                           }}
-                          className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[10px]"
+                          className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[length:calc(10px*var(--ui-factor))]"
                         >
                           Shell
                         </button>
@@ -330,7 +332,7 @@ const ExpandedDock: React.FC = () => {
                             openLogs(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
                             close();
                           }}
-                          className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[10px]"
+                          className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[length:calc(10px*var(--ui-factor))]"
                         >
                           Logs
                         </button>
@@ -386,6 +388,7 @@ export function TerminalSessionPane({ session, visible = true }: { session: Dock
 }
 
 function DemoTerminalSessionPane({ session, visible }: { session: DockSession; visible: boolean }) {
+  const fontSize = useUiStore((state) => state.terminalFontSize);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -410,7 +413,7 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
     if (!containerRef.current) return;
     const term = new XTerm({
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', Consolas, monospace",
-      fontSize: 12,
+      fontSize: useUiStore.getState().terminalFontSize,
       lineHeight: 1.25,
       theme: {
         background: '#1e1f22',
@@ -447,6 +450,12 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
       termRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!termRef.current) return;
+    termRef.current.options.fontSize = fontSize;
+    if (visible && containerRef.current?.offsetHeight) fitRef.current?.fit();
+  }, [fontSize, visible]);
 
   useEffect(() => { if (visible && containerRef.current?.offsetHeight) { fitRef.current?.fit(); termRef.current?.focus(); } }, [visible]);
 
@@ -535,24 +544,24 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
           <span className="text-[var(--text-muted)]">Target:</span>
           {isLocal && (
             <div className="flex items-center gap-1 font-mono font-medium text-sky-400">
-              <Laptop size={12} />
+              <Laptop size="calc(12px * var(--ui-factor))" />
               <span>Local PC (localhost)</span>
             </div>
           )}
           {isNode && (
             <div className="flex items-center gap-1 font-mono font-medium text-amber-400">
-              <Server size={12} />
+              <Server size="calc(12px * var(--ui-factor))" />
               <span>Node Shell: {session.resourceName}</span>
             </div>
           )}
           {isPod && (
             <div className="flex items-center gap-1 font-mono font-medium text-[var(--text-primary)]">
-              <Box size={12} className="text-emerald-400" />
+              <Box size="calc(12px * var(--ui-factor))" className="text-emerald-400" />
               <span>{session.resourceName}</span>
             </div>
           )}
           {session.namespace && isPod && (
-            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
+            <span className="text-[length:calc(10px*var(--ui-factor))] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
               ns: {session.namespace}
             </span>
           )}
@@ -567,20 +576,20 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
             trigger={({ open }) => (
               <button
                 className={cx(
-                  'flex items-center gap-1 h-[22px] px-2 rounded-[3px] border text-[11px] font-mono transition-colors',
+                  'flex items-center gap-1 h-[calc(22px*var(--ui-factor))] px-2 rounded-[calc(3px*var(--ui-factor))] border text-[length:calc(11px*var(--ui-factor))] font-mono transition-colors',
                   open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
                 )}
                 title="Select Container"
               >
-                <Box size={11} className="text-blue-400" />
+                <Box size="calc(11px * var(--ui-factor))" className="text-blue-400" />
                 <span>{activeContainer}</span>
-                <ChevronDown size={10} className="opacity-60" />
+                <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-60" />
               </button>
             )}
           >
             {(close) => (
               <div className="py-1">
-                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Select Container
                 </div>
                 {containers.map((c) => (
@@ -591,10 +600,10 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
                       toast.info(`Switched to container: ${c}`);
                       close();
                     }}
-                    className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                    className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                   >
                     <span className="font-mono">{c}</span>
-                    {activeContainer === c && <Check size={11} className="text-[var(--accent)]" />}
+                    {activeContainer === c && <Check size="calc(11px * var(--ui-factor))" className="text-[var(--accent)]" />}
                   </button>
                 ))}
               </div>
@@ -608,13 +617,13 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
           trigger={({ open }) => (
             <button
               className={cx(
-                'flex items-center gap-1 h-[22px] px-1.5 rounded-[3px] border text-[10.5px] font-mono transition-colors',
+                'flex items-center gap-1 h-[calc(22px*var(--ui-factor))] px-1.5 rounded-[calc(3px*var(--ui-factor))] border text-[length:calc(10.5px*var(--ui-factor))] font-mono transition-colors',
                 open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)]'
               )}
               title="Shell Binary"
             >
               <span>{shellBinary}</span>
-              <ChevronDown size={10} className="opacity-60" />
+              <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-60" />
             </button>
           )}
         >
@@ -627,10 +636,10 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
                     setShellBinary(sh);
                     close();
                   }}
-                  className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                  className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
                 >
                   <span className="font-mono">{sh}</span>
-                  {shellBinary === sh && <Check size={11} className="text-[var(--accent)]" />}
+                  {shellBinary === sh && <Check size="calc(11px * var(--ui-factor))" className="text-[var(--accent)]" />}
                 </button>
               ))}
             </div>
@@ -744,17 +753,17 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       {error && <div role="alert" className="px-3 py-1 text-[var(--status-danger)] text-xs">{error}</div>}
-      <div className="px-3 py-0.5 text-[10px] text-[var(--text-muted)]">{k8s.demo ? 'Simulated logs' : 'Latest 500 lines · refresh every 3s'}</div>
+      <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? 'Simulated logs' : 'Latest 500 lines · refresh every 3s'}</div>
       {/* Logs Target Header Bar */}
       <div className="h-8 shrink-0 flex items-center gap-2 px-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50 text-xs">
         <div className="flex items-center gap-1.5">
-          <ArrowDownToLine size={13} className="text-blue-400 shrink-0" />
+          <ArrowDownToLine size="calc(13px * var(--ui-factor))" className="text-blue-400 shrink-0" />
           <span className="text-[var(--text-muted)]">Logs:</span>
           <span className="font-mono font-medium text-[var(--text-primary)]">
             {session.resourceName}
           </span>
           {session.namespace && (
-            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
+            <span className="text-[length:calc(10px*var(--ui-factor))] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
               ns: {session.namespace}
             </span>
           )}
@@ -768,20 +777,20 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
           trigger={({ open }) => (
             <button
               className={cx(
-                'flex items-center gap-1 h-[22px] px-2 rounded-[3px] border text-[11px] font-mono transition-colors',
+                'flex items-center gap-1 h-[calc(22px*var(--ui-factor))] px-2 rounded-[calc(3px*var(--ui-factor))] border text-[length:calc(11px*var(--ui-factor))] font-mono transition-colors',
                 open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
               )}
               title="Select Container"
             >
-              <Box size={11} className="text-blue-400" />
+              <Box size="calc(11px * var(--ui-factor))" className="text-blue-400" />
               <span>{activeContainer}</span>
-              <ChevronDown size={10} className="opacity-60" />
+              <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-60" />
             </button>
           )}
         >
           {(close) => (
             <div className="py-1">
-              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Select Container
               </div>
               {containers.map((c) => (
@@ -792,10 +801,10 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
                     toast.info(`Switched logs to container: ${c}`);
                     close();
                   }}
-                  className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                 >
                   <span className="font-mono">{c}</span>
-                  {activeContainer === c && <Check size={11} className="text-[var(--accent)]" />}
+                  {activeContainer === c && <Check size="calc(11px * var(--ui-factor))" className="text-[var(--accent)]" />}
                 </button>
               ))}
             </div>
@@ -806,7 +815,7 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
           value={filter}
           onChange={setFilter}
           placeholder="Filter log lines…"
-          className="w-[180px] h-[22px]"
+          className="w-[calc(180px*var(--ui-factor))] h-[calc(22px*var(--ui-factor))]"
         />
 
         <div className="flex-1" />
@@ -867,11 +876,11 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
       {/* Log Output Body */}
       <div className="flex-1 min-h-0 overflow-auto kubiki-scrollbar bg-[var(--bg-canvas)] px-3 py-2 select-text">
         {shown.length === 0 ? (
-          <div className="text-[11px] text-[var(--text-muted)] font-mono py-4 text-center">
+          <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] font-mono py-4 text-center">
             No logs matching filter “{filter}” for {session.resourceName}
           </div>
         ) : (
-          <div className="font-mono text-[11px] leading-[1.5]">
+          <div className="font-mono text-[length:calc(11px*var(--ui-factor))] leading-[1.5]">
             {shown.map((l) => (
               <div
                 key={l.seq}
@@ -1044,15 +1053,15 @@ function PortsPane() {
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       <div className="h-8 shrink-0 flex items-center justify-between px-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50">
-        <span className="text-[11.5px] font-semibold text-[var(--text-secondary)]">Active Port Forwarding Tunnels ({sessions.length})</span>
+        <span className="text-[length:calc(11.5px*var(--ui-factor))] font-semibold text-[var(--text-secondary)]">Active Port Forwarding Tunnels ({sessions.length})</span>
         <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>
-          <Plus size={12} /> Add Tunnel
+          <Plus size="calc(12px * var(--ui-factor))" /> Add Tunnel
         </Button>
       </div>
 
       <div className="flex-1 overflow-auto kubiki-scrollbar p-2">
         {sessions.length === 0 ? (
-          <div className="text-center py-8 text-[11px] text-[var(--text-muted)]">
+          <div className="text-center py-8 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
             No active port forward sessions. Forward ports from Pods/Services or click Add Tunnel above.
           </div>
         ) : (
@@ -1065,7 +1074,7 @@ function PortsPane() {
                 <th className="datagrip-th text-right">Target Port</th>
                 <th className="datagrip-th text-right">Traffic (TX/RX)</th>
                 <th className="datagrip-th text-right">Uptime</th>
-                <th className="datagrip-th w-[60px]" />
+                <th className="datagrip-th w-[calc(60px*var(--ui-factor))]" />
               </tr>
             </thead>
             <tbody>
@@ -1086,7 +1095,7 @@ function PortsPane() {
                     </a>
                   </td>
                   <td className="datagrip-cell font-mono text-right">{s.remotePort}</td>
-                  <td className="datagrip-cell font-mono text-right text-[10.5px]">
+                  <td className="datagrip-cell font-mono text-right text-[length:calc(10.5px*var(--ui-factor))]">
                     {fmtBytes(s.bytesOut)} / {fmtBytes(s.bytesIn)}
                   </td>
                   <td className="datagrip-cell text-right text-[var(--text-muted)] font-mono">
@@ -1095,7 +1104,7 @@ function PortsPane() {
                   <td className="datagrip-cell text-right">
                     <button
                       onClick={() => remove(s.id)}
-                      className="px-1.5 py-0.5 rounded text-[10.5px] text-[var(--status-danger)] hover:bg-[var(--status-danger)]/15"
+                      className="px-1.5 py-0.5 rounded text-[length:calc(10.5px*var(--ui-factor))] text-[var(--status-danger)] hover:bg-[var(--status-danger)]/15"
                     >
                       Stop
                     </button>
@@ -1237,7 +1246,7 @@ function EventsPane() {
               key={t}
               onClick={() => setTypeFilter(t)}
               className={cx(
-                'px-2 py-0.5 rounded text-[10.5px]',
+                'px-2 py-0.5 rounded text-[length:calc(10.5px*var(--ui-factor))]',
                 typeFilter === t ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
               )}
             >
@@ -1245,20 +1254,20 @@ function EventsPane() {
             </button>
           ))}
         </div>
-        <SearchInput value={filter} onChange={setFilter} placeholder="Filter events…" className="w-[180px] h-[22px]" />
+        <SearchInput value={filter} onChange={setFilter} placeholder="Filter events…" className="w-[calc(180px*var(--ui-factor))] h-[calc(22px*var(--ui-factor))]" />
       </div>
 
-      {loadError && <div role="alert" className="p-2 text-[var(--status-warn)] text-xs">{loadError}</div>}
+      {loadError && <div role="alert" className="p-2 text-[var(--status-warn)] text-xs">{loadError.message}</div>}
       <div className="flex-1 overflow-auto kubiki-scrollbar p-2">
         <table className="datagrip-grid w-full">
           <thead>
             <tr>
-              <th className="datagrip-th w-[90px]">Type</th>
-              <th className="datagrip-th w-[130px]">Reason</th>
-              <th className="datagrip-th w-[240px]">Resource</th>
+              <th className="datagrip-th w-[calc(90px*var(--ui-factor))]">Type</th>
+              <th className="datagrip-th w-[calc(130px*var(--ui-factor))]">Reason</th>
+              <th className="datagrip-th w-[calc(240px*var(--ui-factor))]">Resource</th>
               <th className="datagrip-th">Message</th>
-              <th className="datagrip-th w-[60px] text-right">Count</th>
-              <th className="datagrip-th w-[80px] text-right">Age</th>
+              <th className="datagrip-th w-[calc(60px*var(--ui-factor))] text-right">Count</th>
+              <th className="datagrip-th w-[calc(80px*var(--ui-factor))] text-right">Age</th>
             </tr>
           </thead>
           <tbody>
@@ -1267,7 +1276,7 @@ function EventsPane() {
                 <td className="datagrip-cell">
                   <span
                     className={cx(
-                      'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded',
+                      'text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase px-1.5 py-0.5 rounded',
                       e.type === 'Warning' ? 'bg-[var(--status-warn)]/15 text-[var(--status-warn)]' : 'bg-[var(--status-ok)]/15 text-[var(--status-ok)]'
                     )}
                   >
@@ -1291,7 +1300,7 @@ function EventsPane() {
 export function BottomDock() {
   const { dockCollapsed, toggleDock, sessions } = useDockStore();
   return <div className="shrink-0 min-h-0">
-    {dockCollapsed && <button onClick={toggleDock} className="w-full h-7 flex items-center gap-2 px-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" aria-label="Expand bottom panel"><TerminalIcon size={12} /><span>Terminal & services</span><span className="text-[var(--text-muted)]">{sessions.length} open tabs</span><span className="ml-auto text-[10px]">Ctrl/⌘ J</span></button>}
+    {dockCollapsed && <button onClick={toggleDock} className="w-full h-7 flex items-center gap-2 px-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" aria-label="Expand bottom panel"><TerminalIcon size="calc(12px * var(--ui-factor))" /><span>Terminal & services</span><span className="text-[var(--text-muted)]">{sessions.length} open tabs</span><span className="ml-auto text-[length:calc(10px*var(--ui-factor))]">Ctrl/⌘ J</span></button>}
     <div hidden={dockCollapsed}><ExpandedDock /></div>
   </div>;
 }

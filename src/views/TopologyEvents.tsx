@@ -14,18 +14,18 @@ export const TopologyEvents = memo(function TopologyEvents({ scope, graph }: { s
   const { entries, total, warnings } = useMemo(() => topologyEvents(resources.Event.values(), scope, graph, resources), [resources, scope, graph]);
   return <aside aria-label="Topology events" className="topology-events" data-testid="topology-events">
     <button className="flex items-center gap-2 w-full px-3 py-2 text-left text-xs font-medium" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded((value) => !value)}>
-      <Clock3 size={13} className="text-[var(--text-secondary)]" /><span className="flex-1">Recent events <span className="text-[var(--text-muted)]">({total})</span></span>
-      {warnings > 0 && <span className="text-[10px] text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size={11} />{warnings}</span>}
-      {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      <Clock3 size="calc(13px * var(--ui-factor))" className="text-[var(--text-secondary)]" /><span className="flex-1">Recent events <span className="text-[var(--text-muted)]">({total})</span></span>
+      {warnings > 0 && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size="calc(11px * var(--ui-factor))" />{warnings}</span>}
+      {expanded ? <ChevronUp size="calc(12px * var(--ui-factor))" /> : <ChevronDown size="calc(12px * var(--ui-factor))" />}
     </button>
     {expanded && <div id={id} className="border-t border-[var(--border-default)]">
-      {error && <p className="p-3 text-[11px] text-[var(--status-warn)]">Events unavailable: {error}</p>}
-      {!entries.length && !error && <p className="p-3 text-[11px] text-[var(--text-muted)]">No events in the loaded snapshot for this scope.</p>}
-      {!!entries.length && <ol className="topology-events-list">{entries.map((entry) => <li key={entry.event.uid} className="px-3 py-2 border-b last:border-0 border-[var(--border-subtle)] text-[11px]">
+      {error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Events unavailable: {error.message}</p>}
+      {!entries.length && !error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No events in the loaded snapshot for this scope.</p>}
+      {!!entries.length && <ol className="topology-events-list">{entries.map((entry) => <li key={entry.event.uid} className="px-3 py-2 border-b last:border-0 border-[var(--border-subtle)] text-[length:calc(11px*var(--ui-factor))]">
         <div className="flex items-center gap-1.5">
-          {entry.warning ? <TriangleAlert size={12} className="text-[var(--status-warn)] shrink-0" aria-label="Warning" /> : <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] shrink-0" />}
-          <span className="font-medium truncate" title={entry.reason}>{entry.reason}</span>{entry.count > 1 && <span className="text-[10px] text-[var(--text-muted)]">×{entry.count}</span>}
-          <time dateTime={entry.timestamp} title={entry.timestamp ? new Date(entry.timestamp).toLocaleString() : 'Time unavailable'} className="ml-auto shrink-0 text-[10px] text-[var(--text-muted)]">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : entry.event.age ?? '—'}</time>
+          {entry.warning ? <TriangleAlert size="calc(12px * var(--ui-factor))" className="text-[var(--status-warn)] shrink-0" aria-label="Warning" /> : <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] shrink-0" />}
+          <span className="font-medium truncate" title={entry.reason}>{entry.reason}</span>{entry.count > 1 && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">×{entry.count}</span>}
+          <time dateTime={entry.timestamp} title={entry.timestamp ? new Date(entry.timestamp).toLocaleString() : 'Time unavailable'} className="ml-auto shrink-0 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : entry.event.age ?? '—'}</time>
         </div>
         {entry.target ? <button className="text-[var(--accent)] hover:underline max-w-full truncate mt-1 font-mono text-left" title={entry.objectLabel} onClick={() => {
           useResourceStore.getState().selectItem(entry.target!);
@@ -33,8 +33,8 @@ export const TopologyEvents = memo(function TopologyEvents({ scope, graph }: { s
         }}>{entry.objectLabel}</button> : <div title={entry.objectLabel} className="text-[var(--text-secondary)] truncate mt-1 font-mono">{entry.objectLabel} · not loaded</div>}
         <p className="mt-0.5 text-[var(--text-secondary)] line-clamp-2 break-words" title={entry.message}>{entry.message}</p>
       </li>)}</ol>}
-      {total > entries.length && <p className="px-3 py-1.5 text-[10px] text-[var(--text-muted)]">Latest {entries.length} of {total} events</p>}
-      <p className="px-3 py-1.5 text-[10px] text-[var(--text-muted)]">Loaded snapshot · click a resource for its events</p>
+      {total > entries.length && <p className="px-3 py-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">Latest {entries.length} of {total} events</p>}
+      <p className="px-3 py-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">Loaded snapshot · click a resource for its events</p>
     </div>}
   </aside>;
 });

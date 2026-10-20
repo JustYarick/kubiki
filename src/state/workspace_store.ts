@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useClusterStore } from './cluster_store';
-import { resourceTabId } from '../core/resources/identity';
+import { resourceRef, resourceTabId } from '../core/resources/identity';
+import type { ResourceRef } from '../core/resources/resource_types';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 
 export type WorkspaceTabType =
@@ -22,9 +23,11 @@ export interface WorkspaceTab {
   name?: string;
   namespace?: string;
   uid?: string;
+  apiVersion?: string;
   pinned?: boolean;
   dirty?: boolean;
   item?: ResourceItem;
+  resource?: ResourceRef;
   container?: string;
 }
 
@@ -87,7 +90,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           t.id === id ||
           (t.type === tabInput.type &&
             t.kind === tabInput.kind &&
-            (tabInput.type === 'resource-list' || (t.name === tabInput.name && t.namespace === tabInput.namespace && t.context === tabInput.context && t.container === tabInput.container)))
+            (tabInput.type === 'resource-list' || (t.name === tabInput.name && t.namespace === tabInput.namespace && t.context === tabInput.context && t.container === tabInput.container && t.uid === tabInput.uid && t.apiVersion === tabInput.apiVersion)))
         );
 
         if (existing) {
@@ -131,31 +134,36 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       openYamlEditor: (item) => get().openTab({
         id: resourceTabId('yaml', useClusterStore.getState().currentContext, item),
         type: 'yaml-editor', title: `${item.name}.yaml`, subtitle: `${item.kind} · ${item.namespace || 'cluster'}`,
-        kind: item.kind, name: item.name, namespace: item.namespace, uid: item.uid, item,
+        resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
+        kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
       }),
       openResourceDetail: (item) => get().openTab({
         id: resourceTabId('detail', useClusterStore.getState().currentContext, item),
         type: 'resource-detail', title: item.name, subtitle: `${item.kind} · ${item.namespace || 'cluster'}`,
-        kind: item.kind, name: item.name, namespace: item.namespace, uid: item.uid, item,
+        resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
+        kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
       }),
       openLogsTab: (item, container) => get().openTab({
         id: resourceTabId('logs', useClusterStore.getState().currentContext, item, container),
         type: 'logs', title: `Logs: ${item.name}`, subtitle: `${item.namespace} · ${container || 'default container'}`,
-        kind: item.kind, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
+        resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
+        kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
         context: useClusterStore.getState().currentContext,
       }),
       openTerminalTab: (item, container) => get().openTab({
         id: resourceTabId('terminal', useClusterStore.getState().currentContext, item, container),
         type: 'terminal', title: `Terminal: ${item.name}`, subtitle: item.namespace,
-        kind: item.kind, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
+        resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
+        kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
         context: useClusterStore.getState().currentContext,
       }),
       openTopology: (item, namespace) => get().openTab({
         id: JSON.stringify(['topology', useClusterStore.getState().currentContext, item?.uid, namespace]),
         type: 'topology', title: item ? `Topology: ${item.name}` : namespace ? `Topology: ${namespace}` : 'Cluster topology',
-        kind: item?.kind, name: item?.name, uid: item?.uid, namespace: item?.namespace ?? namespace,
+        resource: item ? resourceRef(useClusterStore.getState().currentContext ?? '', item) : undefined,
+        kind: item?.kind, apiVersion: item?.apiVersion, name: item?.name, uid: item?.uid, namespace: item?.namespace ?? namespace,
         context: useClusterStore.getState().currentContext,
       }),
 

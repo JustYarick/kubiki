@@ -40,6 +40,8 @@ import { PFDialog } from '../components/dialogs/PFDialog';
 import { ScaleDialog, ConfirmDialog, RestartDialog } from '../components/dialogs/ActionDialogs';
 import { toast } from '../state/notifications_store';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
+import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
+import { uiFactor, uiPixels } from '../core/appearance';
 import { resourceTabId } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
 import { compareCreation, issuePriority } from '../core/resources/resource_sort';
@@ -228,13 +230,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   } = useResourceStore();
   const { selectedNamespace, selectNamespace, isConnected, isLoading } = useClusterStore();
   const {
-    density, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidth, resetColumnWidths,
+    density, uiScale, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidth, resetColumnWidths,
     setRightTab, activePerspective, inspectorCollapsed, toggleInspector,
   } = useUiStore();
   const { openYamlEditor, openResourceDetail, openLogsTab, toggleSplit } = useWorkspaceStore();
 
   const effectiveKind = explicitKind || activeKind;
   const tableRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
+  const [compactFilters, setCompactFilters] = useState(true);
   const currentContext = useClusterStore((s) => s.currentContext);
   const loadError = useResourceStore((s) => s.loadErrors[effectiveKind]);
 
@@ -258,6 +262,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
 
   const perspective = kindsFor(activePerspective);
   const noKinds = perspective.length === 0;
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const update = () => setCompactFilters(pane.clientWidth / uiFactor(uiScale) < 760);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [uiScale, noKinds]);
 
   useEffect(() => {
     const dk = defaultKindFor(activePerspective);
@@ -411,7 +424,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
-      const w = Math.min(MAX_COL, Math.max(MIN_COL, startW + ev.clientX - startX));
+      const w = Math.min(MAX_COL, Math.max(MIN_COL, startW + (ev.clientX - startX) / uiFactor(useUiStore.getState().uiScale)));
       setColumnWidth(effectiveKind, colId, w);
     };
     const up = (ev: PointerEvent) => {
@@ -472,7 +485,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
       if (useClusterStore.getState().currentContext !== currentContext) return;
       useResourceStore.getState().setResourcesForKind(effectiveKind, items);
     } catch (error) {
-      if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setLoadError(effectiveKind, String(error));
+      if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setLoadError(effectiveKind, error);
       toast.error('Refresh failed', String(error));
     } finally { setSpinning(false); }
   };
@@ -569,7 +582,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm">
-          <Boxes size={40} strokeWidth={1.2} className="mx-auto text-[var(--text-muted)] mb-3" />
+          <Boxes size="calc(40px * var(--ui-factor))" strokeWidth={1.2} className="mx-auto text-[var(--text-muted)] mb-3" />
           <div className="text-sm font-medium text-[var(--text-primary)]">Nothing here yet</div>
           <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
             This perspective is a stub in the current milestone — Helm releases arrive in phase UI-8.
@@ -580,21 +593,43 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   }
 
   const KindIcon = KIND_ICONS[effectiveKind] || Boxes;
-  const rowH = density === 'compact' ? 'h-[25px]' : 'h-[30px]';
+  const rowH = density === 'compact' ? 'h-[calc(25px*var(--ui-factor))]' : 'h-[calc(30px*var(--ui-factor))]';
   const hiddenForKind = new Set(hiddenColumns[effectiveKind] ?? []);
+  const activeFilters = Number(healthFilter !== 'all') + Number(Boolean(statusFilter)) + Number(order !== 'default');
+  const filterControls = (
+        <div className={cx('resource-filter-controls', compactFilters && 'resource-filter-controls-popup')}>
+          <label className="resource-filter-field">{compactFilters && <span>Health</span>}<select aria-label="Resource health filter" className="ide-select max-w-full" value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)}>
+            <option value="all">All resources</option><option value="issues">With issues only</option>
+          </select></label>
+          {(statuses.length > 1 || statusFilter) && <label className="resource-filter-field">{compactFilters && <span>Status</span>}<select aria-label="Resource status filter" className="ide-select max-w-full" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="">All statuses</option>
+            {(statusFilter && !statuses.includes(statusFilter) ? [...statuses, statusFilter] : statuses).map((status) => <option key={status} value={status}>{status}</option>)}
+          </select></label>}
+          <label className="resource-filter-field">{compactFilters && <span>Order</span>}<select aria-label="Resource order" className="ide-select max-w-full" value={order} onChange={(event) => {
+            const value = event.target.value;
+            setSortId(value === 'issues' ? '__issues' : ['newest', 'oldest'].includes(value) ? '__created' : value.startsWith('name-') ? 'name' : null);
+            setSortDir(value === 'newest' || value === 'name-desc' ? -1 : 1);
+          }}>
+            <option value="default">Sort: default</option><option value="issues">Issues first</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option>
+            <option value="name-asc">Name: A–Z</option><option value="name-desc">Name: Z–A</option>
+            {order === 'column' && <option value="column">Sort: {columnsFor(effectiveKind).find((column) => column.id === sortId)?.label}</option>}
+          </select></label>
+          {compactFilters && <Button size="sm" onClick={() => { setHealthFilter('all'); setStatusFilter(''); setSortId(null); }}>Reset filters and order</Button>}
+        </div>
+  );
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-[var(--bg-canvas)]">
+    <div ref={paneRef} className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-[var(--bg-canvas)]">
       {/* JetBrains DataGrip-Grade Toolbar */}
       <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-b border-[var(--border-default)] bg-[var(--bg-canvas)]">
-        <KindIcon size={15} strokeWidth={1.75} className="text-blue-400 shrink-0" />
-        <span className="text-[13px] font-semibold text-[var(--text-primary)]">{effectiveKind}s</span>
-        <span className="text-[11px] font-mono text-[var(--text-muted)] px-1.5 py-[1px] rounded-full bg-[var(--bg-surface)]/70">
+        <KindIcon size="calc(15px * var(--ui-factor))" strokeWidth={1.75} className="text-blue-400 shrink-0" />
+        <span className="text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">{effectiveKind}s</span>
+        <span className="text-[length:calc(11px*var(--ui-factor))] font-mono text-[var(--text-muted)] px-1.5 py-[1px] rounded-full bg-[var(--bg-surface)]/70">
           {rows.list.length}{rows.list.length !== allItems.length && <span className="opacity-70"> of {allItems.length}</span>}
         </span>
 
         {selectedUids.size > 0 && (
-          <span className="text-[11px] font-mono text-[var(--accent)] px-2 py-[1px] rounded bg-[var(--accent-subtle)] font-medium">
+          <span className="text-[length:calc(11px*var(--ui-factor))] font-mono text-[var(--accent)] px-2 py-[1px] rounded bg-[var(--accent-subtle)] font-medium">
             {selectedUids.size} selected
           </span>
         )}
@@ -621,7 +656,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         >
           {(close) => (
             <>
-              <div className="px-2.5 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]">
+              <div className="px-2.5 pt-1 pb-1.5 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]">
                 Columns · {effectiveKind}
               </div>
               <MenuList
@@ -649,7 +684,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                 ]}
                 onSelect={(item) => { item.onSelect?.(); close(); }}
               />
-              <div className="px-2.5 pb-1 pt-1.5 text-[10px] text-[var(--text-muted)] leading-relaxed">
+              <div className="px-2.5 pb-1 pt-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] leading-relaxed">
                 Drag column borders to resize · right-click headers to sort or hide
               </div>
             </>
@@ -661,37 +696,22 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         </Tooltip>
 
         <Button variant="primary" size="sm" disabled={!k8s.demo} title={k8s.demo ? "Create demo resource" : "Live creation is not connected yet"} onClick={() => setNewOpen(true)}>
-          <Plus size={13} />
+          <Plus size="calc(13px * var(--ui-factor))" />
           New
         </Button>
       </div>
 
       <div className="resource-search-row border-b border-[var(--border-default)]" data-testid="resource-search-toolbar">
         <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder={`Filter ${effectiveKind.toLowerCase()}s…`} className="resource-search-field" />
-        <div className="resource-filter-controls">
-          <select aria-label="Resource health filter" className="ide-select max-w-full" value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)}>
-            <option value="all">All resources</option><option value="issues">With issues only</option>
-          </select>
-          {(statuses.length > 1 || statusFilter) && <select aria-label="Resource status filter" className="ide-select max-w-full" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="">All statuses</option>
-            {(statusFilter && !statuses.includes(statusFilter) ? [...statuses, statusFilter] : statuses).map((status) => <option key={status} value={status}>{status}</option>)}
-          </select>}
-          <select aria-label="Resource order" className="ide-select max-w-full" value={order} onChange={(event) => {
-            const value = event.target.value;
-            setSortId(value === 'issues' ? '__issues' : ['newest', 'oldest'].includes(value) ? '__created' : value.startsWith('name-') ? 'name' : null);
-            setSortDir(value === 'newest' || value === 'name-desc' ? -1 : 1);
-          }}>
-            <option value="default">Sort: default</option><option value="issues">Issues first</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option>
-            <option value="name-asc">Name: A–Z</option><option value="name-desc">Name: Z–A</option>
-            {order === 'column' && <option value="column">Sort: {columnsFor(effectiveKind).find((column) => column.id === sortId)?.label}</option>}
-          </select>
-        </div>
+        {compactFilters ? <Popover align="end" width={280} trigger={({ open }) => <button aria-label="Resource filters and sorting" aria-expanded={open} className={cx('resource-filter-trigger', open && 'border-[var(--accent)]')}>
+          <SlidersHorizontal size="calc(13px * var(--ui-factor))" /><span>Filters</span>{activeFilters > 0 && <span className="text-[var(--accent)]">{activeFilters}</span>}
+        </button>}>{() => <div role="group" aria-label="Resource filter options" className="p-3">{filterControls}</div>}</Popover> : filterControls}
       </div>
 
       {/* JetBrains DataGrip Data Table */}
       <div ref={tableRef} tabIndex={0} aria-label={`${effectiveKind} resource table`} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-text" data-testid="resource-table">
-        {loadError && <div role="alert" className="p-3 text-xs text-[var(--status-warn)] border-b border-[var(--border-default)]">{loadError}<button className="ml-3 text-[var(--accent)]" onClick={() => void refresh()}>Retry</button></div>}
-        {rows.list.length === 0 ? (
+        {loadError && <RequestErrorNotice error={loadError} onRetry={() => void refresh()} retainedData={allItems.length > 0} />}
+        {rows.list.length === 0 ? !loadError && (
           <EmptyState
             kind={effectiveKind}
             filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery || healthFilter !== 'all' || !!statusFilter}
@@ -704,18 +724,18 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
             <thead>
               <tr>
                 {/* Index & Selection Column */}
-                <th className="datagrip-th w-[38px] text-center p-0">
+                <th className="datagrip-th w-[calc(38px*var(--ui-factor))] text-center p-0">
                   <div
                     onClick={toggleSelectAll}
                     className="w-full h-full flex items-center justify-center cursor-pointer text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                     title={selectedUids.size === rows.list.length ? 'Deselect all' : 'Select all'}
                   >
                     {selectedUids.size === 0 ? (
-                      <Square size={12} />
+                      <Square size="calc(12px * var(--ui-factor))" />
                     ) : selectedUids.size === rows.list.length ? (
-                      <CheckSquare size={12} className="text-[var(--accent)]" />
+                      <CheckSquare size="calc(12px * var(--ui-factor))" className="text-[var(--accent)]" />
                     ) : (
-                      <MinusSquare size={12} className="text-[var(--accent)]" />
+                      <MinusSquare size="calc(12px * var(--ui-factor))" className="text-[var(--accent)]" />
                     )}
                   </div>
                 </th>
@@ -725,7 +745,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                   return (
                     <th
                       key={c.id}
-                      style={{ width: widthFor(c.id) }}
+                      style={{ width: uiPixels(widthFor(c.id)) }}
                       onClick={() => {
                         if (active && sortDir === -1) { setSortId(null); }
                         else if (active) { setSortDir(-1); }
@@ -742,7 +762,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                     >
                       <span className="inline-flex items-center gap-1">
                         {c.label}
-                        {active && (sortDir === 1 ? <ArrowUp size={10} className="text-[var(--accent)]" /> : <ArrowDown size={10} className="text-[var(--accent)]" />)}
+                        {active && (sortDir === 1 ? <ArrowUp size="calc(10px * var(--ui-factor))" className="text-[var(--accent)]" /> : <ArrowDown size="calc(10px * var(--ui-factor))" className="text-[var(--accent)]" />)}
                       </span>
                       {/* Drag handle for resizing column */}
                       <span
@@ -753,7 +773,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                           setColumnWidth(effectiveKind, c.id, DEFAULT_COL_SIZE[c.id] ?? 120);
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors"
+                        className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors"
                       />
                     </th>
                   );
@@ -794,8 +814,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                       isRowActive && !isSelected && 'bg-[var(--bg-elevated)]/60'
                     )}
                   >
-                    <td className="datagrip-cell text-center p-0 text-[10px] font-mono text-[var(--text-muted)] select-none">
-                      {isSelected ? <CheckSquare size={12} className="inline-block text-[var(--accent)]" /> : idx + 1}
+                    <td className="datagrip-cell text-center p-0 text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)] select-none">
+                      {isSelected ? <CheckSquare size="calc(12px * var(--ui-factor))" className="inline-block text-[var(--accent)]" /> : idx + 1}
                     </td>
 
                     {rows.cols.map((c) => (
@@ -804,7 +824,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                         className={cx(
                           'datagrip-cell px-2.5',
                           c.align === 'right' && 'text-right',
-                          c.mono && 'font-mono text-[11px]'
+                          c.mono && 'font-mono text-[length:calc(11px*var(--ui-factor))]'
                         )}
                       >
                         <CellValue col={c} item={item} />
@@ -881,7 +901,7 @@ function CellValue({
   const v = col.get(item);
   if (v === undefined || v === '') return <span className="text-[var(--text-disabled)]">—</span>;
 
-  if (col.id === 'name') return <span className="inline-flex items-center gap-2 max-w-full align-middle"><ResourceWarnings item={item} /><span className="truncate text-[var(--text-primary)] font-mono text-[11.5px] font-medium" title={v}>{v}</span></span>;
+  if (col.id === 'name') return <span className="inline-flex items-center gap-2 max-w-full align-middle"><ResourceWarnings item={item} /><span className="truncate text-[var(--text-primary)] font-mono text-[length:calc(11.5px*var(--ui-factor))] font-medium" title={v}>{v}</span></span>;
   if (col.id === 'namespace') return <span className="text-[var(--text-secondary)]">{v}</span>;
   if (col.id === 'status' || col.id === 'conditions') return <StatusBadge status={v} />;
 
@@ -907,7 +927,7 @@ function CellValue({
           </div>
           <span
             className={cx(
-              'font-mono text-[11px] font-semibold tabular-nums',
+              'font-mono text-[length:calc(11px*var(--ui-factor))] font-semibold tabular-nums',
               isOk ? 'text-[var(--status-ok)]' : isZero ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'
             )}
           >
@@ -916,19 +936,19 @@ function CellValue({
         </div>
       );
     }
-    return <span className="font-mono text-[11px]">{v}</span>;
+    return <span className="font-mono text-[length:calc(11px*var(--ui-factor))]">{v}</span>;
   }
 
-  if (col.id === 'replicas') return <span className="font-mono text-[11px] tabular-nums text-[var(--text-primary)]">{v}</span>;
+  if (col.id === 'replicas') return <span className="font-mono text-[length:calc(11px*var(--ui-factor))] tabular-nums text-[var(--text-primary)]">{v}</span>;
 
   if (col.id === 'ready') {
     const m = /^(\d+)\/(\d+)$/.exec(v);
     const danger = m && m[1] !== m[2] && m[1] === '0';
-    return <span className={cx('font-mono text-[11px]', danger ? 'text-[var(--status-danger)]' : m && m[1] === m[2] ? 'text-[var(--status-ok)]' : 'text-[var(--text-primary)]')}>{v}</span>;
+    return <span className={cx('font-mono text-[length:calc(11px*var(--ui-factor))]', danger ? 'text-[var(--status-danger)]' : m && m[1] === m[2] ? 'text-[var(--status-ok)]' : 'text-[var(--text-primary)]')}>{v}</span>;
   }
   if (col.id === 'restarts') {
     const n = Number(v);
-    return <span className={cx('font-mono text-[11px]', n > 10 ? 'text-[var(--status-danger)]' : n > 0 ? 'text-[var(--status-warn)]' : 'text-[var(--text-secondary)]')}>{v}</span>;
+    return <span className={cx('font-mono text-[length:calc(11px*var(--ui-factor))]', n > 10 ? 'text-[var(--status-danger)]' : n > 0 ? 'text-[var(--status-warn)]' : 'text-[var(--text-secondary)]')}>{v}</span>;
   }
   if (col.id === 'age') return <span className="text-[var(--text-secondary)]">{v}</span>;
   return <span className="text-[var(--text-secondary)]">{v}</span>;
@@ -937,9 +957,9 @@ function CellValue({
 function EmptyState({ kind, filtered, onClear, isNew, onNew }: { kind: string; filtered: boolean; onClear: () => void; isNew: boolean; onNew: () => void }) {
   const Icon = KIND_ICONS[kind as ResourceKind] ?? Boxes;
   return (
-    <div className="h-full min-h-[220px] flex items-center justify-center">
+    <div className="h-full min-h-[calc(220px*var(--ui-factor))] flex items-center justify-center">
       <div className="text-center max-w-sm px-6">
-        <Icon size={36} strokeWidth={1.2} className="mx-auto text-[var(--text-muted)] mb-3" />
+        <Icon size="calc(36px * var(--ui-factor))" strokeWidth={1.2} className="mx-auto text-[var(--text-muted)] mb-3" />
         <div className="text-sm font-medium text-[var(--text-primary)]">
           {filtered ? `No ${kind.toLowerCase()}s match your filters` : `No ${kind.toLowerCase()}s found`}
         </div>
@@ -949,12 +969,12 @@ function EmptyState({ kind, filtered, onClear, isNew, onNew }: { kind: string; f
         <div className="flex items-center justify-center gap-2 mt-4">
           {filtered && (
             <Button size="sm" onClick={onClear}>
-              <XCircle size={12} /> Clear filters
+              <XCircle size="calc(12px * var(--ui-factor))" /> Clear filters
             </Button>
           )}
           {isNew && (
             <Button size="sm" variant="primary" onClick={onNew}>
-              <Plus size={12} /> Create {kind}
+              <Plus size="calc(12px * var(--ui-factor))" /> Create {kind}
             </Button>
           )}
         </div>
@@ -1004,7 +1024,7 @@ function NewResourceDialog({
           <div className="flex flex-col gap-1.5">
             <Label>Name (DNS-1123)</Label>
             <Input value={name} onChange={(e) => { setName(e.target.value); setYaml(templateFor(kind, e.target.value || '…', ns)); }} />
-            {!/^[a-z0-9][a-z0-9-]*$/.test(name) && <span className="text-[10px] text-[var(--status-danger)]">lowercase letters, digits and “-” only</span>}
+            {!/^[a-z0-9][a-z0-9-]*$/.test(name) && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-danger)]">lowercase letters, digits and “-” only</span>}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Namespace</Label>
@@ -1017,10 +1037,10 @@ function NewResourceDialog({
             value={yaml}
             onChange={(e) => setYaml(e.target.value)}
             spellCheck={false}
-            className="flex-1 min-h-[220px] resize-none bg-[var(--bg-canvas)] border border-[var(--border-default)] rounded-[6px] p-3 font-mono text-[11.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors kubiki-scrollbar"
+            className="flex-1 min-h-[calc(220px*var(--ui-factor))] resize-none bg-[var(--bg-canvas)] border border-[var(--border-default)] rounded-[calc(6px*var(--ui-factor))] p-3 font-mono text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors kubiki-scrollbar"
           />
         </div>
-        <p className="text-[11px] text-[var(--text-muted)]">
+        <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
           Demo mode — manifest will be stored in local memory store.
         </p>
       </div>

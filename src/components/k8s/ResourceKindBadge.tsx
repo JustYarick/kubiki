@@ -31,12 +31,12 @@ export function ResourceKindBadge({ kind }: { kind: string }) {
     <span
       data-resource-kind={kind}
       className={cx(
-        'inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none shrink-0',
+        'inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[length:calc(10px*var(--ui-factor))] font-medium leading-none shrink-0',
         KIND_COLORS[kind as ResourceKind] ?? 'text-slate-300 bg-slate-500/15 border-slate-400/40',
       )}
       title={kind}
     >
-      <Icon size={11} strokeWidth={1.8} className="shrink-0" />
+      <Icon size="calc(11px * var(--ui-factor))" strokeWidth={1.8} className="shrink-0" />
       <span className="truncate">{kind}</span>
     </span>
   );

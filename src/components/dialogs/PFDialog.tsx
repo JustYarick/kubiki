@@ -56,7 +56,7 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
       width={440}
       title={
         <span className="flex items-center gap-2">
-          <ArrowRightLeft size={14} className="text-[var(--accent)]" />
+          <ArrowRightLeft size="calc(14px * var(--ui-factor))" className="text-[var(--accent)]" />
           Create port-forward
         </span>
       }
@@ -70,11 +70,11 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
       }
     >
       <div className="flex flex-col gap-3">
-        <div className="rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2">
-          <div className="text-[12px] font-mono text-[var(--text-primary)]">
+        <div className="rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2">
+          <div className="text-[length:calc(12px*var(--ui-factor))] font-mono text-[var(--text-primary)]">
             {item.kind}/{item.name}
           </div>
-          <div className="text-[11px] text-[var(--text-muted)] mt-0.5">namespace: {item.namespace ?? '-'}</div>
+          <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mt-0.5">namespace: {item.namespace ?? '-'}</div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -87,7 +87,7 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
               placeholder="80"
               autoFocus
             />
-            {remoteInvalid && <span className="text-[10px] text-[var(--status-danger)]">1–65535</span>}
+            {remoteInvalid && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-danger)]">1–65535</span>}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Local port (0 = auto)</Label>
@@ -97,11 +97,11 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
               invalid={localInvalid}
               placeholder="auto"
             />
-            {localInvalid && <span className="text-[10px] text-[var(--status-danger)]">1024–65534 or empty</span>}
+            {localInvalid && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-danger)]">1024–65534 or empty</span>}
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)] cursor-pointer select-none">
+        <label className="flex items-center gap-2 text-[length:calc(12px*var(--ui-factor))] text-[var(--text-secondary)] cursor-pointer select-none">
           <input
             type="checkbox"
             checked={browser}
@@ -111,7 +111,7 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
           Open browser after forward is ready
         </label>
 
-        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+        <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] leading-relaxed">
           Demo mode: a session will appear in the Ports panel with simulated traffic. Live port-forwarding is not connected yet.
         </p>
       </div>

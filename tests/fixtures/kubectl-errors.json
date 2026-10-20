@@ -1,0 +1,15 @@
+[
+  { "message": "Error from server (Forbidden): pods is forbidden", "code": "forbidden", "status": 403, "retryable": false },
+  { "message": "Error from server (Unauthorized): authentication required", "code": "unauthorized", "status": 401, "retryable": false },
+  { "message": "Error from server (NotFound): pods web not found", "code": "not_found", "status": 404, "retryable": false },
+  { "message": "Error from server (Conflict): object has been modified", "code": "conflict", "status": 409, "retryable": false },
+  { "message": "Error from server (AlreadyExists): deployment exists", "code": "conflict", "status": 409, "retryable": false },
+  { "message": "Error from server (Invalid): invalid replicas", "code": "invalid_request", "status": 422, "retryable": false },
+  { "message": "Error from server (TooManyRequests): back off", "code": "rate_limited", "status": 429, "retryable": true },
+  { "message": "Error from server (ServiceUnavailable): server is starting", "code": "unavailable", "status": 503, "retryable": true },
+  { "message": "Error from server (Timeout): request timed out", "code": "timeout", "status": 504, "retryable": true },
+  { "message": "Unable to connect to the server: dial tcp: i/o timeout", "code": "timeout", "status": 504, "retryable": true },
+  { "message": "The connection to the server localhost:6443 was refused - connection refused", "code": "unavailable", "status": 503, "retryable": true },
+  { "message": "failed to load config for context named forbidden", "code": "internal", "status": 500, "retryable": false },
+  { "message": "error executing auth plugin: executable not found", "code": "internal", "status": 500, "retryable": false }
+]

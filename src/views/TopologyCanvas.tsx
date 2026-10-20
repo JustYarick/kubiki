@@ -18,7 +18,7 @@ type GraphNode = ResourceNode | NamespaceNode;
 const ResourceGraphNode = memo(function ResourceGraphNode({ data }: NodeProps<ResourceNode>) {
   return <div className="topology-node">
     <Handle type="target" position={data.direction === 'RIGHT' ? Position.Left : Position.Top} isConnectable={false} />
-    <div className="topology-node-details flex items-center gap-1.5 text-[var(--text-secondary)] text-[10px]"><ResourceKindBadge kind={data.item.kind} /><ResourceWarnings item={data.item} /><span className="ml-auto truncate">{data.item.namespace || 'cluster'}</span></div>
+    <div className="topology-node-details flex items-center gap-1.5 text-[var(--text-secondary)] text-[length:calc(10px*var(--ui-factor))]"><ResourceKindBadge kind={data.item.kind} /><ResourceWarnings item={data.item} /><span className="ml-auto truncate">{data.item.namespace || 'cluster'}</span></div>
     <div className="font-mono text-xs truncate mt-1" title={data.item.name}>{data.item.name}</div>
     {data.item.status && <div className="topology-node-details mt-1"><StatusBadge status={data.item.status} size="sm" /></div>}
     <Handle type="source" position={data.direction === 'RIGHT' ? Position.Right : Position.Bottom} isConnectable={false} />
@@ -26,7 +26,7 @@ const ResourceGraphNode = memo(function ResourceGraphNode({ data }: NodeProps<Re
 }, (previous, next) => previous.data === next.data);
 const NamespaceGraphNode = memo(function NamespaceGraphNode({ data }: NodeProps<NamespaceNode>) {
   return <div className="topology-namespace" data-namespace-group={data.name}>
-    <div className="flex items-center gap-2 px-3 py-2 h-10"><ResourceKindBadge kind="Namespace" /><span className="font-mono text-xs truncate">{data.name}</span><span className="text-[10px] text-[var(--text-muted)] ml-auto">{data.count} resources</span></div>
+    <div className="flex items-center gap-2 px-3 py-2 h-10"><ResourceKindBadge kind="Namespace" /><span className="font-mono text-xs truncate">{data.name}</span><span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] ml-auto">{data.count} resources</span></div>
     <Handle type="target" position={data.direction === 'RIGHT' ? Position.Left : Position.Top} isConnectable={false} className="!opacity-0" />
     <Handle type="source" position={data.direction === 'RIGHT' ? Position.Right : Position.Bottom} isConnectable={false} className="!opacity-0" />
   </div>;
@@ -121,7 +121,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       onNodeClick={inspectNode} onNodeDoubleClick={focusNode}>
       <Background gap={20} size={1} /><Controls showInteractive={false} /><MiniMap pannable zoomable nodeColor={nodeColor} />
     </ReactFlow>
-    {busy && <div role="status" className="absolute top-3 left-3 flex items-center gap-2 bg-[var(--bg-secondary)] rounded border border-[var(--border-default)] px-3 py-2"><Loader2 size={13} className="animate-spin" /> Arranging topology…</div>}
+    {busy && <div role="status" className="absolute top-3 left-3 flex items-center gap-2 bg-[var(--bg-secondary)] rounded border border-[var(--border-default)] px-3 py-2"><Loader2 size="calc(13px * var(--ui-factor))" className="animate-spin" /> Arranging topology…</div>}
     {error && <div role="alert" className="absolute top-3 left-3 p-3 bg-[var(--bg-secondary)] text-[var(--status-danger)]">{error}</div>}
     {!busy && !graph.items.size && <div className="absolute inset-0 pointer-events-none flex items-center justify-center text-[var(--text-muted)]">No loaded resources in this scope.</div>}
   </div>;

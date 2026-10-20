@@ -13,7 +13,7 @@ export function Input({ className, invalid, icon, ...rest }: InputProps) {
       {icon && <span className="absolute left-2 text-[var(--text-muted)] pointer-events-none">{icon}</span>}
       <input
         className={cx(
-          'h-[26px] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[4px] border outline-none transition-colors',
+          'h-[calc(26px*var(--ui-factor))] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border outline-none transition-colors',
           'placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]',
           invalid ? 'border-[var(--status-danger)]' : 'border-[var(--border-default)] hover:border-[var(--border-strong)]',
           icon ? 'pl-7 pr-2' : 'px-2'
@@ -35,7 +35,7 @@ interface SearchInputProps {
 export function SearchInput({ value, onChange, placeholder, className, refCb }: SearchInputProps) {
   return (
     <div className={cx('relative flex items-center', className)}>
-      <Search size={13} className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
+      <Search size="calc(13px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
       <input
         ref={refCb}
         value={value}
@@ -43,14 +43,14 @@ export function SearchInput({ value, onChange, placeholder, className, refCb }: 
         onKeyDown={(e) => e.key === 'Escape' && onChange('')}
         placeholder={placeholder}
         className={cx(
-          'h-[26px] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[4px] border outline-none transition-colors',
+          'h-[calc(26px*var(--ui-factor))] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border outline-none transition-colors',
           'border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)]',
           'placeholder:text-[var(--text-muted)] pl-7 pr-6'
         )}
       />
       {value && (
         <button onClick={() => onChange('')} className="absolute right-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 rounded">
-          <X size={12} />
+          <X size="calc(12px * var(--ui-factor))" />
         </button>
       )}
     </div>
@@ -58,5 +58,5 @@ export function SearchInput({ value, onChange, placeholder, className, refCb }: 
 }
 
 export function Label({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cx('text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]', className)}>{children}</div>;
+  return <div className={cx('text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]', className)}>{children}</div>;
 }

@@ -1,10 +1,11 @@
 import { create } from 'zustand';
 import { ResourceDeltaPayload, ResourceItem, ResourceKind } from '../types/k8s';
 import { useClusterStore } from './cluster_store';
+import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
 
 interface ResourceState {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
-  loadErrors: Partial<Record<ResourceKind, string>>;
+  loadErrors: Partial<Record<ResourceKind, K8sRequestError>>;
   activeKind: ResourceKind;
   searchQuery: string;
   selectedItem: ResourceItem | null;
@@ -13,7 +14,7 @@ interface ResourceState {
 
   setActiveKind: (kind: ResourceKind) => void;
   reset: () => void;
-  setLoadError: (kind: ResourceKind, error: string | undefined) => void;
+  setLoadError: (kind: ResourceKind, error: unknown) => void;
   setSearchQuery: (query: string) => void;
   selectItem: (item: ResourceItem | null) => void;
   setResourcesForKind: (kind: ResourceKind, items: ResourceItem[]) => void;
@@ -53,7 +54,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
   selectionHistory: [],
   goBack: () => set((state) => ({ selectedItem: state.selectionHistory[state.selectionHistory.length - 1] ?? state.selectedItem, selectionHistory: state.selectionHistory.slice(0, -1) })),
   reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], loadErrors: {}, searchQuery: '' }),
-  setLoadError: (kind, error) => set((state) => ({ loadErrors: { ...state.loadErrors, [kind]: error } })),
+  setLoadError: (kind, error) => set((state) => ({ loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
 
   setActiveKind: (activeKind) => set({ activeKind }),
 

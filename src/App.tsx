@@ -20,6 +20,8 @@ import { k8s } from './providers/k8s_provider';
 import { startMockWatchEngine, stopMockWatchEngine } from './providers/mock/mock_watch_engine';
 import { toast } from './state/notifications_store';
 import type { ResourceKind } from './types/k8s';
+import { errorHint } from './providers/errors';
+import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 
 export default function App() {
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
@@ -31,6 +33,7 @@ export default function App() {
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth,
     inspectorWidth, inspectorCollapsed, setInspectorWidth,
+    uiScale,
   } = useUiStore();
 
   const {
@@ -73,7 +76,7 @@ export default function App() {
           const items = await k8s.getResources(contextName, kind, 'all');
           if (current()) setResourcesForKind(kind, items);
         } catch (error) {
-          if (current()) useResourceStore.getState().setLoadError(kind, String(error));
+          if (current()) useResourceStore.getState().setLoadError(kind, error);
           throw error;
         }
       }));
@@ -83,7 +86,7 @@ export default function App() {
       if (k8s.demo) startMockWatchEngine();
     } catch (error) {
       if (!current()) return;
-      useClusterStore.getState().setError(String(error));
+      useClusterStore.getState().setError(error);
       toast.error('Connection failed', String(error));
     } finally {
       if (current()) setLoading(false);
@@ -101,7 +104,7 @@ export default function App() {
         if (current) await connectToContext(current);
         else useClusterStore.getState().setError('No Kubernetes contexts found in kubeconfig.');
       } catch (error) {
-        if (!cancelled) useClusterStore.getState().setError(String(error));
+        if (!cancelled) useClusterStore.getState().setError(error);
       }
     }
     void initCluster();
@@ -118,7 +121,14 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
-      if (key === 'k') {
+      if (!e.altKey && ['=', '+', '-', '0'].includes(key)) {
+        e.preventDefault();
+        const ui = useUiStore.getState();
+        ui.setUiScale(key === '0' ? DEFAULT_APPEARANCE.uiScale : ui.uiScale + (key === '-' ? -10 : 10));
+      } else if (key === ',') {
+        e.preventDefault();
+        useUiStore.getState().setSettingsOpen(true);
+      } else if (key === 'k') {
         e.preventDefault();
         useUiStore.getState().setPaletteOpen(!useUiStore.getState().paletteOpen);
       } else if (key === 'b') {
@@ -139,8 +149,10 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleDock]);
 
-  const showSidebar = !sidebarCollapsed && (inspectorCollapsed || viewportWidth >= 1200);
-  const detailWidth = Math.min(inspectorWidth, Math.max(340, viewportWidth - 40 - 320 - (showSidebar ? sidebarWidth : 0)));
+  const factor = uiFactor(uiScale);
+  const logicalViewportWidth = viewportWidth / factor;
+  const showSidebar = !sidebarCollapsed && (inspectorCollapsed || logicalViewportWidth >= 1200);
+  const detailWidth = Math.min(inspectorWidth, Math.max(280, logicalViewportWidth - 40 - 280 - (showSidebar ? sidebarWidth : 0)));
 
   const onSelectContext = (name: string) => {
     connectToContext(name);
@@ -163,10 +175,10 @@ export default function App() {
         {/* Left Tool Window (Cluster Explorer) */}
         {showSidebar && (
           <>
-            <div style={{ width: sidebarWidth }} className="shrink-0 min-h-0">
+            <div style={{ width: uiPixels(sidebarWidth) }} className="shrink-0 min-h-0">
               <Sidebar />
             </div>
-            <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d)} />
+            <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d / factor)} />
           </>
         )}
 
@@ -174,15 +186,15 @@ export default function App() {
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
           <WorkspaceArea onSelectContext={onSelectContext} />
 
-          {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d)} />}
+          {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d / factor)} />}
           <BottomDock />
         </main>
 
         {/* Right Tool Window (Inspector / Details) */}
         {!inspectorCollapsed && (
           <>
-            <Resizer orientation="vertical" onDelta={(d) => setInspectorWidth(inspectorWidth - d)} />
-            <div style={{ width: detailWidth }} className="shrink-0 border-l border-[var(--border-default)] min-h-0">
+            <Resizer orientation="vertical" onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />
+            <div style={{ width: uiPixels(detailWidth) }} className="shrink-0 border-l border-[var(--border-default)] min-h-0">
               <InspectorPanel />
             </div>
           </>
@@ -205,7 +217,7 @@ function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
   const loading = useClusterStore((s) => s.isLoading);
   if (!error && !k8s.demo) return null;
   return <div role="status" className="flex items-center gap-3 px-3 py-1.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] text-xs">
-    <span className={error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'}>{error || 'Demo cluster · simulated resources and sessions'}</span>
+    <span className={error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'}>{error ? <>{error.message}{errorHint(error) && <span className="ml-2 text-[var(--text-secondary)]">{errorHint(error)}</span>}</> : 'Demo cluster · simulated resources and sessions'}</span>
     {error && <button disabled={loading} onClick={onRetry} className="text-[var(--accent)] shrink-0">Reconnect</button>}
     {error && <a href="?demo=1" className="text-[var(--accent)] shrink-0">Explore demo</a>}
   </div>;

@@ -1,6 +1,7 @@
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import type { ResourceGraph } from './relationships';
-import { resourceKey } from './identity';
+import { matchesResourceRef, resourceKey } from './identity';
+import { RESOURCE_TYPES, apiVersionFor } from './resource_types';
 
 export const MAX_TOPOLOGY_EVENTS = 10;
 const CLUSTER_KINDS = new Set(['Node', 'Namespace', 'PersistentVolume', 'StorageClass', 'CustomResourceDefinition']);
@@ -26,11 +27,13 @@ export function topologyEvents(events: Iterable<ResourceItem>, scope: string, gr
     const raw = event.raw ?? {};
     const ref = raw.involvedObject ?? raw.regarding ?? {};
     const namespace = ref.namespace ?? (CLUSTER_KINDS.has(ref.kind) ? undefined : event.namespace);
-    const key = JSON.stringify([ref.kind, namespace ?? '', ref.name]);
+    const builtin = RESOURCE_TYPES.find((type) => type.kind === ref.kind);
+    const reference = { ...ref, namespace, apiVersion: ref.apiVersion ?? (builtin ? apiVersionFor(builtin) : '') };
+    const key = resourceKey(reference);
     const candidate = scope === 'resource' ? ref.uid ? byUid.get(ref.uid) : graph.items.get(key)
       : ref.uid ? resources[ref.kind as ResourceKind]?.get(ref.uid)
         : lookupByName(ref.kind, key);
-    const target = candidate && candidate.kind === ref.kind && candidate.name === ref.name && candidate.namespace === namespace ? candidate : undefined;
+    const target = candidate && matchesResourceRef(candidate, reference) ? candidate : undefined;
     if (scope === 'resource' ? !target : !scope.startsWith('namespace:') || (event.namespace ?? namespace) !== scope.slice('namespace:'.length)) continue;
     const warning = raw.type === 'Warning';
     total++;

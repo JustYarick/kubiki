@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
 import { IconButton } from './Button';
+import { uiPixels } from '../../core/appearance';
 
 interface ModalProps {
   open: boolean;
@@ -28,15 +29,15 @@ export function Modal({ open, onClose, title, width = 480, children, footer, pad
     <div className="fixed inset-0 z-[90] flex items-start justify-center pt-[12vh]" role="dialog" aria-modal>
       <div className="absolute inset-0 bg-black/45 kub-fade" onClick={onClose} />
       <div
-        style={{ width }}
+        style={{ width: uiPixels(width), maxWidth: 'calc(100vw - 24px)' }}
         className={cx(
-          'relative max-h-[76vh] flex flex-col rounded-[8px] border border-[var(--border-default)]',
+          'relative max-h-[76vh] flex flex-col rounded-[calc(8px*var(--ui-factor))] border border-[var(--border-default)]',
           'bg-[var(--bg-overlay)] shadow-[var(--shadow-dialog)] kub-pop'
         )}
       >
         {title !== undefined && (
           <div className="flex items-center justify-between px-4 h-11 border-b border-[var(--border-subtle)] shrink-0">
-            <span className="text-[13px] font-semibold text-[var(--text-primary)] truncate">{title}</span>
+            <span className="text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)] truncate">{title}</span>
             <IconButton icon={X} onClick={onClose} aria-label="Close" />
           </div>
         )}

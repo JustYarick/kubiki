@@ -66,7 +66,7 @@ export function Resizer({
       }}
       className={cx(
         'group relative shrink-0 z-20',
-        orientation === 'vertical' ? 'w-[5px] -mx-[2px] cursor-col-resize' : 'h-[5px] -my-[2px] cursor-row-resize',
+        orientation === 'vertical' ? 'w-[calc(5px*var(--ui-factor))] -mx-[calc(2px*var(--ui-factor))] cursor-col-resize' : 'h-[calc(5px*var(--ui-factor))] -my-[calc(2px*var(--ui-factor))] cursor-row-resize',
         className
       )}
     >

@@ -34,9 +34,9 @@ export const ActivityBar: React.FC = () => {
             aria-label="Cluster Explorer"
             className={cxRail(!sidebarCollapsed)}
           >
-            <FolderOpen size={16} strokeWidth={1.75} />
+            <FolderOpen size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
             {!sidebarCollapsed && (
-              <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+              <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
             )}
           </button>
         </Tooltip>
@@ -47,12 +47,12 @@ export const ActivityBar: React.FC = () => {
             aria-label="Search Everywhere"
             className={cxRail(false)}
           >
-            <Search size={16} strokeWidth={1.75} />
+            <Search size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
           </button>
         </Tooltip>
       </div>
 
-      <Tooltip label="Cluster topology" side="bottom" delay={300}><button className={cxRail(false)} aria-label="Cluster topology" onClick={() => useWorkspaceStore.getState().openTopology()}><GitBranch size={16} /></button></Tooltip>
+      <Tooltip label="Cluster topology" side="bottom" delay={300}><button className={cxRail(false)} aria-label="Cluster topology" onClick={() => useWorkspaceStore.getState().openTopology()}><GitBranch size="calc(16px * var(--ui-factor))" /></button></Tooltip>
       {/* Bottom tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full mt-auto">
         <Tooltip label={dockCollapsed ? 'Terminal & Services (⌘J)' : 'Hide Terminal & Services (⌘J)'} side="top" delay={300}>
@@ -61,9 +61,9 @@ export const ActivityBar: React.FC = () => {
             aria-label="Toggle Terminal & Services"
             className={cxRail(!dockCollapsed)}
           >
-            <Terminal size={16} strokeWidth={1.75} />
+            <Terminal size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
             {!dockCollapsed && (
-              <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+              <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
             )}
           </button>
         </Tooltip>
@@ -74,9 +74,9 @@ export const ActivityBar: React.FC = () => {
             aria-label="Toggle Inspector"
             className={cxRail(!inspectorCollapsed)}
           >
-            <PanelRight size={16} strokeWidth={1.75} />
+            <PanelRight size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
             {!inspectorCollapsed && (
-              <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+              <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
             )}
           </button>
         </Tooltip>
@@ -89,7 +89,7 @@ export const ActivityBar: React.FC = () => {
             aria-label="Settings"
             className={cxRail(false)}
           >
-            <Settings size={16} strokeWidth={1.75} />
+            <Settings size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
           </button>
         </Tooltip>
       </div>
@@ -99,7 +99,7 @@ export const ActivityBar: React.FC = () => {
 
 const cxRail = (active: boolean): string =>
   cx(
-    'relative w-8 h-8 flex items-center justify-center rounded-[4px] transition-all',
+    'relative w-8 h-8 flex items-center justify-center rounded-[calc(4px*var(--ui-factor))] transition-all',
     active
       ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-2xs'
       : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'

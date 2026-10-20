@@ -6,6 +6,27 @@
 
 ---
 
+## Последний блок — 2026-10-20: DATA-01A/B, масштаб UI и адаптивные фильтры
+
+- **DATA-01A/B — готово:** общий каталог GVK TS/Rust/browser bridge, ResourceQuery/ResourceRef и group/UID identity вкладок. Вкладка не переключается на пересозданный одноимённый объект, owner references и Events острова учитывают API group. Оба транспорта нормализуют ошибки в единый payload: code/status/retryable/operation/context/resource. Сохраняются настоящие API status kube-rs; ограниченная классификация stderr kubectl проверяется общими fixtures.
+- **Ошибки UI:** 403/404/timeout и auth отображаются с понятными подсказками, Retry восстанавливает список; ошибка refresh оставляет последний snapshot с явной пометкой об устаревании. Неверный success payload не становится пустым кластером или ложным Connected. Browser requests/body ограничены 20 с; kubectl и desktop health/namespaces — 15 с. Scale переведён на общий timeout/kill-on-drop helper.
+- **DATA-01 остаётся PARTIAL:** переход named operations на ResourceRef/UID preconditions — DATA-01C; произвольные CRD instances/discovery, watch/unwatch, relist и streams не объявлены готовыми. Следующий блок — DATA-02, затем DATA-03.
+- **UX-07 — готово:** ориентир JetBrains UI 13, база Kubiki 13 CSS px при 100%, default 110%; Settings → Appearance содержит масштаб 80–200%, presets/reset и отдельные editor/terminal fonts 10–24 px (default 14). Настройки сохраняются, старые/ошибочные значения нормализуются. Панели, иконки, controls и body portals используют размеры с общим коэффициентом; resizers корректируют delta на масштаб. Ctrl/⌘ +/−/0 и Ctrl/⌘ ,; команды есть в палитре. Открытые Monaco/xterm обновляют font без пересоздания модели/сессии.
+- **UX-08 — готово:** поиск и health/status/order в одной строке. На узкой панели (в том числе с inspector или увеличенным UI) фильтры переходят в `Filters` menu с подписями и счётчиком активных настроек. Поиск занимает оставшуюся ширину, значения не сбрасываются при resize. Высота toolbar неизменна при переключении режимов: первый click не сдвигает строку перед double-click. Глобальный Search Everywhere скрывается, если в title bar недостаточно места; ActivityBar/Ctrl-K остаются доступны.
+- **YAML-03 — исправлено и проверено:** новый посимвольный test воспроизвёл потерю символов при быстром вводе. Причина — echo устаревшего React draft обратно в Monaco. Пользовательский ввод теперь принадлежит модели, программная замена выполняется явно; Copy/Download/Apply/Ctrl-S читают актуальный ref. Тест сохраняет черновик после смены шрифта. Отдельная YAML-01 (native dispatcher crash) остаётся открытой.
+- Settings больше не называет приложение «mock-only», версия сервера не получает двойной префикс `v`. `pnpm typecheck` проверяет app, Node bridge/config и исходники тестов; `pnpm build` запускает его автоматически. `.tsbuildinfo` исключён из Git.
+- Документация/roadmap/status обновлены; контракт и размеры описаны в [12](12-DATA-CONTRACT-AND-APPEARANCE.md). Графические WebKit flags и отложенные renderer-эксперименты не менялись. Масштаб внутри React Flow viewport остаётся 1; граф использует собственный zoom и прежнюю геометрию ELK.
+
+Проверки финального состояния:
+
+- `pnpm test`: **98 unit/contract tests**, 10 файлов; включены HTTP server с fake executor, parity HTTP/Tauri, Rust/TS fixtures, stalled request timeout и identity regressions.
+- `pnpm typecheck`, `pnpm build`: успешно. Сохраняется предупреждение о крупных Monaco/main chunks; новых config-loader warnings нет.
+- **29 browser scenarios на финальном production preview пройдены** (33,8 с), включая все прежние основные сценарии, 4 appearance tests, 5 error/recreation tests и адаптивный toolbar. До последнего изменения toolbar полный dev-прогон дал 28/28; после адаптации отдельный dev-прогон YAML/search/filter дал 4/4.
+- `cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline`: **9 Rust tests** (6 unit + 3 integration); `cargo check --manifest-path src-tauri/Cargo.toml --offline`: успешно.
+- Проверены скриншоты default UI и узкой панели. Browser tests и fake executor не заменяют live Kubernetes/native Tauri приёмку; native clarity, исходный YAML dispatcher crash и native pan performance остаются отдельно открыты/отложены.
+
+---
+
 ## 2026-10-20: лицензия и ветка разработки
 
 - **Готово:** по выбору владельца добавлен официальный текст Apache License 2.0 в `LICENSE`; SPDX `Apache-2.0` указан в npm/Rust manifests, README содержит ссылку на лицензию.
@@ -15,7 +36,7 @@
 
 ---
 
-## Последний блок — 2026-10-20: Events island, Namespace containers, фильтры и откат graphics
+## Предыдущий блок — 2026-10-20: Events island, Namespace containers, фильтры и откат graphics
 
 - **GRAPH-EVENTS — готово:** Event не попадает в узлы, лимиты или ELK. Справа отдельный сворачиваемый прямоугольный остров: последние 10 событий выбранной области, Warning/reason/message/count/time; переход к Events ресурса. Поддерживаются involvedObject и regarding/series; UID защищает от перехода к пересозданному объекту. Обновление только Events не перезапускает layout и не сбрасывает ручные позиции/viewport.
 - **GRAPH-NS — готово:** Namespace показан рамкой с ресурсами внутри. ELK compound layout + React Flow parentId, Node/PV/StorageClass снаружи; child extent удерживает ресурсы внутри. Проверены RIGHT/DOWN, относительные координаты, внешний Node и переходы. Namespace scope остаётся плоским по workload — их subgroups ещё TODO.

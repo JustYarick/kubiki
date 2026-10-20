@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRightLeft, Boxes, Braces, Command, FileText, Layout, Maximize2, PanelBottom, PanelLeft, PanelRight, Palette, RefreshCw, Rocket, Settings, Terminal, Trash2, Columns2, X } from 'lucide-react';
+import { ArrowRightLeft, Boxes, Braces, Command, FileText, Layout, Maximize2, Minimize2, PanelBottom, PanelLeft, PanelRight, Palette, RefreshCw, Rocket, Settings, Terminal, Trash2, Columns2, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PERSPECTIVES, defaultKindFor, kindsFor } from '../core/perspectives';
 import { useResourceStore } from '../state/resource_store';
@@ -14,6 +14,7 @@ import { fuzzyScore, fuzzyRanges } from '../core/utils/fuzzy';
 import { k8s } from '../providers/k8s_provider';
 import { cx } from '../core/utils/cx';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
+import { DEFAULT_APPEARANCE } from '../core/appearance';
 
 interface Command {
   id: string;
@@ -98,6 +99,9 @@ export const CommandPalette: React.FC = () => {
 
   // View toggles
   commands.push(
+    { id: 'ui-zoom-in', label: 'Increase interface scale', section: 'View', icon: Maximize2, kbd: 'Ctrl/⌘ +', run: () => ui.setUiScale(ui.uiScale + 10) },
+    { id: 'ui-zoom-out', label: 'Decrease interface scale', section: 'View', icon: Minimize2, kbd: 'Ctrl/⌘ −', run: () => ui.setUiScale(ui.uiScale - 10) },
+    { id: 'ui-zoom-reset', label: 'Reset interface scale', section: 'View', icon: Layout, kbd: 'Ctrl/⌘ 0', run: () => ui.setUiScale(DEFAULT_APPEARANCE.uiScale) },
     { id: 'side', label: 'Toggle sidebar', section: 'View', icon: PanelLeft, kbd: '⌘B', run: ui.toggleSidebar },
     { id: 'insp', label: 'Toggle details pane', section: 'View', icon: PanelRight, run: ui.toggleInspector },
     { id: 'dock', label: 'Toggle bottom panel', section: 'View', icon: PanelBottom, kbd: '⌘J', run: useDockStore.getState().toggleDock },
@@ -198,28 +202,28 @@ export const CommandPalette: React.FC = () => {
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[10vh]" onKeyDown={onKeyDown}>
       <div className="absolute inset-0 bg-black/40 kub-fade" onClick={() => setOpen(false)} />
-      <div className="relative w-[560px] max-w-[92vw] max-h-[60vh] flex flex-col rounded-[6px] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-dialog)] kub-pop overflow-hidden">
+      <div className="relative w-[calc(560px*var(--ui-factor))] max-w-[92vw] max-h-[60vh] flex flex-col rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-dialog)] kub-pop overflow-hidden">
         {/* input */}
         <div className="flex items-center gap-2 px-3 h-10 border-b border-[var(--border-subtle)] shrink-0">
-          <Command size={14} className="text-[var(--text-muted)]" />
+          <Command size="calc(14px * var(--ui-factor))" className="text-[var(--text-muted)]" />
           <input
             autoFocus
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSel(0); }}
             placeholder="Search resources, run commands…"
-            className="flex-1 bg-transparent outline-none text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+            className="flex-1 bg-transparent outline-none text-[length:calc(13px*var(--ui-factor))] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
           />
-          <kbd className="text-[10px] font-mono border border-[var(--border-default)] rounded px-1 py-px text-[var(--text-muted)] bg-[var(--bg-surface)]">esc</kbd>
+          <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-default)] rounded px-1 py-px text-[var(--text-muted)] bg-[var(--bg-surface)]">esc</kbd>
         </div>
 
         {/* results */}
         <div ref={listRef} className="flex-1 overflow-y-auto kubiki-scrollbar py-1">
           {flat.length === 0 && (
-            <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">No matches — try fewer characters</div>
+            <div className="px-4 py-8 text-center text-[length:calc(12px*var(--ui-factor))] text-[var(--text-muted)]">No matches — try fewer characters</div>
           )}
           {grouped.map((g) => (
             <div key={g.section}>
-              <div className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.07em] text-[var(--text-muted)]">{g.section}</div>
+              <div className="px-3 pt-1.5 pb-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-[0.07em] text-[var(--text-muted)]">{g.section}</div>
               {g.items.map((c) => {
                 const idx = flat.indexOf(c);
                 const isActive = idx === sel;
@@ -231,16 +235,16 @@ export const CommandPalette: React.FC = () => {
                     onMouseEnter={() => setSel(idx)}
                     onClick={() => exec(c)}
                     className={cx(
-                      'w-full flex items-center gap-2.5 px-3 h-[28px] text-left transition-colors',
+                      'w-full flex items-center gap-2.5 px-3 h-[calc(28px*var(--ui-factor))] text-left transition-colors',
                       isActive ? 'bg-[var(--bg-hover)]' : 'hover:bg-[var(--bg-hover)]/60'
                     )}
                   >
-                    <Icon size={13} className={cx('shrink-0', isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]')} strokeWidth={1.75} />
-                    <span className="text-[12px] text-[var(--text-primary)] flex-1 truncate">
+                    <Icon size="calc(13px * var(--ui-factor))" className={cx('shrink-0', isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]')} strokeWidth={1.75} />
+                    <span className="text-[length:calc(12px*var(--ui-factor))] text-[var(--text-primary)] flex-1 truncate">
                       <TextWithRanges text={c.label} query={query} />
                     </span>
-                    {c.hint && <span className="text-[10px] text-[var(--text-muted)]">{c.hint}</span>}
-                    {c.kbd && <kbd className="text-[10px] font-mono border border-[var(--border-subtle)] rounded px-1 text-[var(--text-muted)] bg-[var(--bg-surface)]">{c.kbd}</kbd>}
+                    {c.hint && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{c.hint}</span>}
+                    {c.kbd && <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-subtle)] rounded px-1 text-[var(--text-muted)] bg-[var(--bg-surface)]">{c.kbd}</kbd>}
                   </button>
                 );
               })}
@@ -249,7 +253,7 @@ export const CommandPalette: React.FC = () => {
         </div>
 
         {/* footer */}
-        <div className="h-6 shrink-0 border-t border-[var(--border-subtle)] flex items-center gap-3 px-3 text-[10px] text-[var(--text-muted)] font-mono">
+        <div className="h-6 shrink-0 border-t border-[var(--border-subtle)] flex items-center gap-3 px-3 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
           <span>↑↓ navigate</span>
           <span>↵ run</span>
           <span className="ml-auto">{flat.length} results</span>

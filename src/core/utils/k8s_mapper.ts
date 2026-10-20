@@ -1,5 +1,6 @@
 import type { ResourceItem, ResourceKind, ResourceContainer } from '../../types/k8s';
 import { stringify } from 'yaml';
+import { apiVersionFor, resourceType } from '../resources/resource_types';
 
 /**
  * Maps raw Kubernetes API JSON objects (from kube-rs / kubectl) into normalized ResourceItem objects.
@@ -17,7 +18,7 @@ export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
     name: meta.name || 'unnamed',
     namespace: meta.namespace,
     kind,
-    apiVersion: raw.apiVersion || 'v1',
+    apiVersion: raw.apiVersion || apiVersionFor(resourceType(kind)),
     creationTimestamp,
     labels,
     metadata: meta,

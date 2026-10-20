@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { KubeContextInfo } from '../types/k8s';
+import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
 
 interface ClusterState {
   contexts: KubeContextInfo[];
@@ -9,7 +10,7 @@ interface ClusterState {
   isConnected: boolean;
   clusterVersion: string | null;
   isLoading: boolean;
-  error: string | null;
+  error: K8sRequestError | null;
 
   setContexts: (contexts: KubeContextInfo[]) => void;
   selectContext: (contextName: string) => void;
@@ -17,7 +18,7 @@ interface ClusterState {
   setAvailableNamespaces: (namespaces: string[]) => void;
   setConnected: (connected: boolean, version?: string) => void;
   setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
+  setError: (error: unknown) => void;
 }
 
 export const useClusterStore = create<ClusterState>((set) => ({
@@ -59,5 +60,5 @@ export const useClusterStore = create<ClusterState>((set) => ({
 
   setLoading: (isLoading) => set({ isLoading }),
 
-  setError: (error) => set({ error, isConnected: false }),
+  setError: (error) => set((state) => ({ error: error == null ? null : normalizeK8sError(error, { operation: 'connect', context: state.currentContext ?? undefined }), isConnected: false })),
 }));

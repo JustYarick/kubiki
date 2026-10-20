@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildResourceGraph, GraphLimitError } from '../../src/core/resources/relationships';
+import { resourceKey } from '../../src/core/resources/identity';
 import { buildTopology, EMPTY_GRAPH, MAX_TOPOLOGY_EDGES } from '../../src/core/resources/topology';
 import { useResourceStore } from '../../src/state/resource_store';
 import type { ResourceItem } from '../../src/types/k8s';
@@ -71,7 +72,7 @@ describe('Bounded topology construction', () => {
   it('supports Namespace membership in Related without building unrelated Service/Pod joins', () => {
     const resources = emptyResources(); const item = pod(0); resources.Pod.set(item.uid, item);
     const namespace: ResourceItem = { uid: 'ns', name: 'busy', kind: 'Namespace', apiVersion: 'v1' }; resources.Namespace.set(namespace.uid, namespace);
-    const graph = buildResourceGraph(resources, { adjacentTo: new Set(['["Namespace","","busy"]']) });
+    const graph = buildResourceGraph(resources, { adjacentTo: new Set([resourceKey(namespace)]) });
     expect(graph.relations).toHaveLength(1); expect(graph.relations[0].type).toBe('contains');
   });
 });

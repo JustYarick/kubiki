@@ -62,14 +62,14 @@ export const MainTabBar: React.FC = () => {
   };
 
   const getTabIcon = (tab: WorkspaceTab) => {
-    if (tab.type === 'yaml-editor') return <FileCode size={13} className="text-amber-400 shrink-0" />;
-    if (tab.type === 'terminal') return <TermIcon size={13} className="text-emerald-400 shrink-0" />;
-    if (tab.type === 'logs') return <FileText size={13} className="text-blue-400 shrink-0" />;
+    if (tab.type === 'yaml-editor') return <FileCode size="calc(13px * var(--ui-factor))" className="text-amber-400 shrink-0" />;
+    if (tab.type === 'terminal') return <TermIcon size="calc(13px * var(--ui-factor))" className="text-emerald-400 shrink-0" />;
+    if (tab.type === 'logs') return <FileText size="calc(13px * var(--ui-factor))" className="text-blue-400 shrink-0" />;
     if (tab.kind && KIND_ICONS[tab.kind]) {
       const Icon = KIND_ICONS[tab.kind];
-      return <Icon size={13} className="text-[var(--text-secondary)] shrink-0" />;
+      return <Icon size="calc(13px * var(--ui-factor))" className="text-[var(--text-secondary)] shrink-0" />;
     }
-    return <Boxes size={13} className="text-[var(--text-muted)] shrink-0" />;
+    return <Boxes size="calc(13px * var(--ui-factor))" className="text-[var(--text-muted)] shrink-0" />;
   };
 
   const contextMenuItems: MenuItem[] = contextMenu
@@ -126,7 +126,7 @@ export const MainTabBar: React.FC = () => {
   ];
 
   return (
-    <div className="h-[34px] bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-stretch select-none shrink-0 overflow-hidden relative">
+    <div className="h-[calc(34px*var(--ui-factor))] bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-stretch select-none shrink-0 overflow-hidden relative">
       {/* Scrollable Tabs */}
       <div className="flex-1 flex items-stretch overflow-x-auto overflow-y-hidden kubiki-scrollbar min-w-0">
         {tabs.map((tab) => {
@@ -140,7 +140,7 @@ export const MainTabBar: React.FC = () => {
               onContextMenu={(e) => handleContextMenu(e, tab)}
               onAuxClick={(e) => handleAuxClick(e, tab)}
               className={cx(
-                'group relative flex items-center gap-1.5 px-3 min-w-[120px] max-w-[220px] h-full border-r border-[var(--border-default)] cursor-pointer transition-colors',
+                'group relative flex items-center gap-1.5 px-3 min-w-[calc(120px*var(--ui-factor))] max-w-[calc(220px*var(--ui-factor))] h-full border-r border-[var(--border-default)] cursor-pointer transition-colors',
                 isActive
                   ? 'bg-[var(--bg-canvas)] text-[var(--text-primary)] font-medium'
                   : isSplitActive
@@ -151,19 +151,19 @@ export const MainTabBar: React.FC = () => {
             >
               {/* Active Tab bottom accent line */}
               {isActive && (
-                <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--accent)]" />
+                <div className="absolute bottom-0 left-0 right-0 h-[calc(2px*var(--ui-factor))] bg-[var(--accent)]" />
               )}
 
               {/* Pin indicator */}
               {tab.pinned && (
-                <Pin size={10} className="text-[var(--accent)] rotate-45 shrink-0" />
+                <Pin size="calc(10px * var(--ui-factor))" className="text-[var(--accent)] rotate-45 shrink-0" />
               )}
 
               {/* Icon */}
               {getTabIcon(tab)}
 
               {/* Title & Dirty indicator */}
-              <span className="truncate text-[11.5px] flex-1 text-left">
+              <span className="truncate text-[length:calc(11.5px*var(--ui-factor))] flex-1 text-left">
                 {tab.title}
               </span>
 
@@ -185,7 +185,7 @@ export const MainTabBar: React.FC = () => {
                   title="Close Tab (⌘W)"
                   aria-label="Close tab"
                 >
-                  <X size={12} />
+                  <X size="calc(12px * var(--ui-factor))" />
                 </button>
               )}
             </div>
@@ -221,7 +221,7 @@ export const MainTabBar: React.FC = () => {
         >
           {(close) => (
             <div className="py-1">
-              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Open Resource Table
               </div>
               {newTabKinds.map(({ kind, group }) => {
@@ -233,11 +233,11 @@ export const MainTabBar: React.FC = () => {
                       openResourceList(kind);
                       close();
                     }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1 text-[11.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+                    className="w-full flex items-center gap-2 px-2.5 py-1 text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
                   >
-                    <Icon size={12} className="text-blue-400 shrink-0" />
+                    <Icon size="calc(12px * var(--ui-factor))" className="text-blue-400 shrink-0" />
                     <span className="flex-1 text-left">{kind}s</span>
-                    <span className="text-[10px] text-[var(--text-muted)] font-mono">{group}</span>
+                    <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">{group}</span>
                   </button>
                 );
               })}

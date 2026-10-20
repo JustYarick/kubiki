@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
+import { uiPixels } from '../../core/appearance';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'sm' | 'md';
@@ -21,8 +22,8 @@ const variantCls: Record<Variant, string> = {
 };
 
 const sizeCls: Record<Size, string> = {
-  sm: 'h-[22px] px-2 text-[11px] gap-1.5 rounded-[4px]',
-  md: 'h-[26px] px-2.5 text-xs gap-1.5 rounded-[4px]',
+  sm: 'h-[calc(22px*var(--ui-factor))] px-2 text-[length:calc(11px*var(--ui-factor))] gap-1.5 rounded-[calc(4px*var(--ui-factor))]',
+  md: 'h-[calc(26px*var(--ui-factor))] px-2.5 text-xs gap-1.5 rounded-[calc(4px*var(--ui-factor))]',
 };
 
 export const Button = React.forwardRef<
@@ -90,9 +91,9 @@ export function Tooltip({
         <span
           role="tooltip"
           className={cx(
-            'pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] border border-[var(--border-default)]',
-            'bg-[var(--bg-overlay)] px-2 py-1 text-[11px] text-[var(--text-primary)] shadow-[var(--shadow-popup)] z-[80]',
-            side === 'bottom' ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]'
+            'pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)]',
+            'bg-[var(--bg-overlay)] px-2 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-primary)] shadow-[var(--shadow-popup)] z-[80]',
+            side === 'bottom' ? 'top-[calc(100%+calc(6px*var(--ui-factor)))]' : 'bottom-[calc(100%+calc(6px*var(--ui-factor)))]'
           )}
         >
           {label}
@@ -117,7 +118,7 @@ export const IconButton = ({ icon: Icon, size = 'md', active, danger, tooltip, t
   const btn = (
     <button
       className={cx(
-        'inline-flex items-center justify-center rounded-[4px] transition-colors shrink-0',
+        'inline-flex items-center justify-center rounded-[calc(4px*var(--ui-factor))] transition-colors shrink-0',
         'hover:bg-[var(--bg-hover)] active:bg-[var(--bg-elevated)]',
         'text-[var(--text-muted)] hover:text-[var(--text-primary)]',
         active && 'text-[var(--text-primary)] bg-[var(--bg-surface)]',
@@ -127,7 +128,7 @@ export const IconButton = ({ icon: Icon, size = 'md', active, danger, tooltip, t
       )}
       {...rest}
     >
-      <Icon size={size === 'sm' ? 13 : 15} strokeWidth={1.75} />
+      <Icon size={uiPixels(size === 'sm' ? 13 : 15)} strokeWidth={1.75} />
     </button>
   );
   return tooltip ? <Tooltip label={tooltip} side={tooltipSide}>{btn}</Tooltip> : btn;

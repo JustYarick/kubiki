@@ -1,5 +1,6 @@
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
-import { resourceKey } from './identity';
+import { matchesResourceRef, resourceKey } from './identity';
+import { RESOURCE_TYPES, apiVersionFor } from './resource_types';
 
 export type RelationType = 'owns' | 'selects' | 'routes' | 'schedules' | 'uses' | 'binds' | 'contains';
 export interface ResourceRelation {
@@ -8,7 +9,7 @@ export interface ResourceRelation {
   target: string;
   type: RelationType;
   label: string;
-  missing?: { kind: string; name: string; namespace?: string };
+  missing?: { kind: string; name: string; namespace?: string; apiVersion: string };
 }
 export interface ResourceGraph { items: Map<string, ResourceItem>; relations: ResourceRelation[] }
 export interface GraphBuildOptions {
@@ -77,14 +78,16 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     }
     relations.set(id, { id, source, target, type, label, missing });
   };
-  const reference = (from: ResourceItem, kind: string, name: string | undefined, namespace: string | null = from.namespace ?? null, type: RelationType = 'uses', reverse = false, uid?: string) => {
+  const reference = (from: ResourceItem, kind: string, name: string | undefined, namespace: string | null = from.namespace ?? null, type: RelationType = 'uses', reverse = false, uid?: string, apiVersion?: string) => {
     if (!name || name === '-') return;
-    const key = JSON.stringify([kind, namespace ?? '', name]);
+    const builtin = RESOURCE_TYPES.find((resource) => resource.kind === kind);
+    const reference = { kind, name, namespace: namespace ?? undefined, uid, apiVersion: apiVersion ?? (builtin ? apiVersionFor(builtin) : '') };
+    const key = resourceKey(reference);
     const target = uid ? byUid.get(uid) : items.get(key);
     // A recreated object with the same name is not the owner referenced by the old UID.
-    const valid = target && target.kind === kind && target.name === name && (target.namespace ?? null) === namespace;
+    const valid = target && matchesResourceRef(target, reference);
     const targetKey = valid ? resourceKey(target) : key;
-    const missing = valid ? undefined : { kind, name, namespace: namespace ?? undefined };
+    const missing = valid ? undefined : reference;
     link(reverse ? targetKey : resourceKey(from), reverse ? resourceKey(from) : targetKey, type, type, missing);
   };
 
@@ -93,7 +96,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     const spec: any = raw.spec ?? {};
     const metadata: any = raw.metadata ?? {};
     for (const owner of metadata.ownerReferences ?? []) {
-      reference(item, owner.kind, owner.name, item.namespace, 'owns', true, owner.uid);
+      reference(item, owner.kind, owner.name, item.namespace, 'owns', true, owner.uid, owner.apiVersion);
     }
     if (item.namespace) reference(item, 'Namespace', item.namespace, null, 'contains', true);
     if (item.kind === 'Pod') {

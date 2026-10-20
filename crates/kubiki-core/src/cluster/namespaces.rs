@@ -34,9 +34,7 @@ impl NamespaceService {
     /// List all namespaces accessible in the cluster
     pub async fn list_namespaces(client: &Client) -> Result<Vec<NamespaceInfo>, KubikiError> {
         let api: Api<Namespace> = Api::all(client.clone());
-        let list = api.list(&ListParams::default()).await.map_err(|e| {
-            KubikiError::KubeApiError(format!("Failed to list namespaces: {e}"))
-        })?;
+        let list = api.list(&ListParams::default()).await.map_err(KubikiError::from)?;
 
         let result = list
             .into_iter()
@@ -83,9 +81,7 @@ impl NamespaceService {
             metadata: Default::default(),
         };
 
-        let response = api.create(&PostParams::default(), &review).await.map_err(|e| {
-            KubikiError::KubeApiError(format!("Failed to execute SelfSubjectAccessReview: {e}"))
-        })?;
+        let response = api.create(&PostParams::default(), &review).await.map_err(KubikiError::from)?;
 
         let status = response.status.unwrap_or_default();
         Ok(CanIResponse {

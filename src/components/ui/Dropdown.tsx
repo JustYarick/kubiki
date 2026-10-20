@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
+import { uiPixels } from '../../core/appearance';
 
 /* ============================================================= */
 /* Floating layer rendered into document.body, anchored to the    */
@@ -84,9 +85,9 @@ export function Popover({ trigger, children, align = 'start', width, className }
         createPortal(
           <div
             ref={panelRef}
-            style={{ top: pos.top, left: pos.left, width: width }}
+            style={{ top: pos.top, left: pos.left, width: width ? uiPixels(width) : undefined, maxWidth: 'calc(100vw - 16px)' }}
             className={cx(
-              'fixed z-[70] min-w-[180px] rounded-[6px] border border-[var(--border-default)] bg-[var(--bg-overlay)]',
+              'fixed z-[70] min-w-[calc(180px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)]',
               'shadow-[var(--shadow-popup)] py-1 max-h-[70vh] overflow-y-auto kubiki-scrollbar kub-pop',
               className
             )}
@@ -145,7 +146,7 @@ export function MenuList({ items, onSelect }: { items: MenuItem[]; onSelect: (it
               onSelect(item);
             }}
             className={cx(
-              'flex w-full items-center gap-2 px-2.5 h-[24px] text-[12px] transition-colors text-left',
+              'flex w-full items-center gap-2 px-2.5 h-[calc(24px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] transition-colors text-left',
               item.disabled
                 ? 'text-[var(--text-disabled)] cursor-not-allowed'
                 : item.danger
@@ -153,11 +154,11 @@ export function MenuList({ items, onSelect }: { items: MenuItem[]; onSelect: (it
                   : 'text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
             )}
           >
-            {item.icon && <item.icon size={14} strokeWidth={1.75} className="text-[var(--text-muted)] shrink-0" />}
+            {item.icon && <item.icon size="calc(14px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-muted)] shrink-0" />}
             <span className="flex-1 truncate">{item.label}</span>
-            {item.checked === true && <Check size={13} className="text-[var(--accent)]" />}
-            {item.kbd && <span className="text-[10px] text-[var(--text-muted)]">{item.kbd}</span>}
-            {item.items && <ChevronRight size={12} className="text-[var(--text-muted)]" />}
+            {item.checked === true && <Check size="calc(13px * var(--ui-factor))" className="text-[var(--accent)]" />}
+            {item.kbd && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{item.kbd}</span>}
+            {item.items && <ChevronRight size="calc(12px * var(--ui-factor))" className="text-[var(--text-muted)]" />}
           </button>
         )
       )}
@@ -166,7 +167,7 @@ export function MenuList({ items, onSelect }: { items: MenuItem[]; onSelect: (it
         createPortal(
           <div
             style={{ top: Math.min(subPos.y, window.innerHeight - 260), left: Math.min(subPos.x, window.innerWidth - 200) }}
-            className="fixed z-[71] min-w-[170px] rounded-[6px] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1"
+            className="fixed z-[71] min-w-[calc(170px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1"
           >
             <MenuList
               items={subRef.current}
@@ -222,7 +223,7 @@ export function FixedMenu({
     <div
       ref={panelRef}
       style={{ top: pos.top, left: pos.left }}
-      className="fixed z-[85] min-w-[200px] rounded-[6px] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1 kub-pop kubiki-scrollbar max-h-[70vh] overflow-y-auto"
+      className="fixed z-[85] min-w-[calc(200px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1 kub-pop kubiki-scrollbar max-h-[70vh] overflow-y-auto"
     >
       <MenuList items={items} onSelect={(item) => onClose(item)} />
     </div>,

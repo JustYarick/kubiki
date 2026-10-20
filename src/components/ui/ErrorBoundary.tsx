@@ -31,7 +31,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="h-full w-full flex flex-col items-center justify-center bg-[var(--bg-canvas)] text-[var(--text-primary)] p-6 select-text">
           <div className="max-w-md w-full bg-[var(--bg-surface)] border border-[var(--status-danger)]/40 rounded-lg p-5 shadow-2xl">
             <div className="flex items-center gap-3 text-[var(--status-danger)] mb-3">
-              <AlertTriangle size={24} />
+              <AlertTriangle size="calc(24px * var(--ui-factor))" />
               <h2 className="text-sm font-semibold uppercase tracking-wider">
                 {this.props.fallbackTitle || 'Component Error'}
               </h2>
@@ -39,7 +39,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-xs text-[var(--text-secondary)] mb-3">
               An unexpected runtime error occurred. The application remains running.
             </p>
-            <pre className="bg-[var(--bg-canvas)] p-3 rounded text-[11px] font-mono text-[var(--status-danger)] overflow-x-auto border border-[var(--border-default)] mb-4">
+            <pre className="bg-[var(--bg-canvas)] p-3 rounded text-[length:calc(11px*var(--ui-factor))] font-mono text-[var(--status-danger)] overflow-x-auto border border-[var(--border-default)] mb-4">
               {this.state.error?.message || 'Unknown error'}
             </pre>
             <button
@@ -49,7 +49,7 @@ export class ErrorBoundary extends Component<Props, State> {
               }}
               className="flex items-center justify-center gap-2 w-full py-2 px-3 rounded bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium cursor-pointer"
             >
-              <RefreshCw size={13} />
+              <RefreshCw size="calc(13px * var(--ui-factor))" />
               <span>Reload Interface</span>
             </button>
           </div>

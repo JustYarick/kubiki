@@ -16,6 +16,9 @@
 | UX-04 | P1 | Namespace Related и большие списки связей | DONE | Восстановлены contains-связи; построение только при открытии Related; поиск по имени/kind/namespace/типу связи; первые 50 и следующие порции по 50 |
 | UX-05 | P1 | Единый глобальный выбор namespace с поиском | DONE | По последнему запросу выбор только рядом с кластером; в таблице и breadcrumbs дубли убраны. Поиск без учёта регистра, keyboard selection, порции по 50. Diagram scope остаётся локальной областью диаграммы |
 | UX-06 | P1 | Фильтры, порядок и широкий поиск ресурсов | DONE | Health/status/search + глобальный namespace совместимы; ошибки → предупреждения → здоровые, newest/oldest по timestamp, name A–Z/Z–A, column sort. Неизвестные даты в конце. Широкий поиск, фильтры слева; высота панели стабильна при открытии inspector |
+| UX-07 | P1 | Читаемый базовый размер UI и настройки масштаба/шрифтов | DONE | База 13 CSS px, default 110%, диапазон 80–200%; panels/controls/icons/portals; отдельно editor/terminal 14 px и 10–24 px. Persistence, invalid storage, hotkeys/reset, small window, живые Monaco/xterm без потери draft/session проверяются в appearance.spec.ts |
+| UX-08 | P1 | Адаптивная одна строка поиска/фильтров | DONE | На широкой панели — растягиваемый поиск и фильтры в одной строке; на узкой — поиск + Filters menu с теми же значениями и индикатором активных настроек. Проверены resize 1440→1800→900, отсутствие overflow, стабильная высота/позиция строки при inspector и double-click YAML |
+| YAML-03 | P0 | Потеря символов при быстром вводе в Monaco | DONE | Воспроизведено посимвольным browser test; устранён echo старого React draft обратно в модель. Copy/Download/Apply читают актуальный ref; смена шрифта сохраняет черновик. Не закрывает отдельную YAML-01 |
 | GRAPH-SAFE | P0 | Безопасный выбор области и бюджеты диаграммы | DONE | Нет автоматического графа всего кластера; namespace/resource scope; cluster summary только counts. До layout проверяются 250 узлов / 1000 рёбер; worker отменяется через 10 с и освобождается; Pod не расширяется через общий Node/ConfigMap на всех потребителей; тест 5000 ресурсов |
 | GRAPH-EVENTS | P1 | Отдельный остров событий вместо узлов Event | DONE | Event исключён до бюджетов и layout; последние 10 событий области, Warning/count/time, collapse, переход к ресурсу; события не сбрасывают позиции |
 | GRAPH-NS | P1 | Namespace как контейнер | DONE | Compound ELK layout и React Flow parentId: namespaced ресурсы внутри рамки, Node/PV/StorageClass снаружи; оба направления, drag остаётся внутри |
@@ -23,13 +26,17 @@
 | NATIVE-01 | P0 | WebKitGTK/NVIDIA renderer | DEFERRED | A/B системного WebKit показал ~19 → ~60 FPS при отказе от forced DMABUF disable, но владелец предпочёл прежнюю чёткость и потребовал откат. Оба старых назначения flags восстановлены. Не продолжать без нового запроса; см. 11 |
 | QA-01 | P1 | Регрессии и документация этого блока | DONE | 35 unit и 16 browser tests на dev/production пройдены; production build и diff check пройдены. WebKit не запустился из-за системных зависимостей; YAML-01 остаётся открытым, подробности в 07 |
 | QA-02 | P1 | Приёмка Events/Namespace/filters и отката graphics | DONE | 45 unit, 19 production browser tests, build/offline cargo check/diff check пройдены. Native A/B и откат отдельно записаны в 11; performance-задачи не закрыты |
+| QA-03 | P1 | Data contract, масштаб UI, YAML input и адаптивные фильтры | DONE | 98 unit/contract, 29 production browser, 9 Rust tests; typecheck app/server/tests, build/offline cargo check/diff check. Полный dev до последнего toolbar — 28/28, целевые dev после адаптации — 4/4; live/native ограничения записаны в 07/12 |
 
 ## Следующий milestone: живой диагностический MVP
 
 | ID | Связь с планом | Задача | Статус | Зависимости / приёмка |
 |---|---|---|---|---|
-| DATA-01 | UI-1/4 | Typed ResourceRef/GVK и IPC ошибки | TODO | Явные context/group/version/kind/namespace/uid, 403/404/timeout, общий provider contract |
-| DATA-02 | UI-4 | Исправить atomic snapshot/relist в Rust informer | TODO | DATA-01; удалённые во время disconnect объекты не остаются; namespace watchers не стирают соседние snapshots |
+| DATA-01 | UI-1/4 | Typed ResourceRef/GVK и IPC ошибки | PARTIAL | DATA-01A/B готовы; переход существующих named operations на ResourceRef и UID/resourceVersion preconditions остаётся DATA-01C/OPS/MUT. Контракт и ограничения — [12](12-DATA-CONTRACT-AND-APPEARANCE.md) |
+| DATA-01A | UI-1/4 | Общие GVK/query/ref и идентичность вкладок/ссылок | DONE | Общий каталог 18 kinds TS/Rust/bridge; context/group/version/kind/namespace/name/nullable uid; UID не даёт вкладке привязаться к пересозданному объекту; owner/Event group validation |
+| DATA-01B | UI-1/4 | Единый контракт ошибок HTTP/Tauri и provider | DONE | 403/404/409/timeout/rate limit/bridge failures; status kube-rs сохраняется, stderr kubectl ограниченно классифицируется; malformed responses, bounded requests, stale snapshot/Retry и transport parity покрыты тестами |
+| DATA-01C | UI-5/6 | Named operations через ResourceRef с preconditions | TODO | OPS-01/02 и MUT-01; перенести старые context/name/namespace arguments, обязательный UID там, где нужен запрет операции над пересозданным объектом; атомарные preconditions и конфликтный ответ |
+| DATA-02 | UI-4 | Исправить atomic snapshot/relist в Rust informer | TODO | Следующий блок после DATA-01A/B: удалённые во время disconnect объекты не остаются; namespace watchers не стирают соседние snapshots; context/GVK/scope isolation, отменённый initial list не публикует частичный snapshot |
 | DATA-03 | UI-4 | Watch/unwatch IPC и batching в UI | TODO | DATA-02; reconnect/backoff/first-sync/stale; context isolation |
 | OPS-01 | UI-5 | Настоящий log stream | TODO | DATA-01; follow/tail/previous/since, контейнеры, cancel/reconnect |
 | OPS-02 | UI-5 | Pod exec + host PTY: start/write/resize/close | TODO | DATA-01; многосессионность, exit/error, освобождение backend при закрытии |
@@ -44,7 +51,7 @@
 | DOMAIN-02 | UI-8/9 | Metrics и Helm с явным context | TODO | Отдельные IPC/UI/live tests, отсутствие фиктивной телеметрии |
 | RELEASE-01 | UI-11 | CI, desktop smoke, нагрузка и длительные сессии | TODO | Все MVP сценарии; Linux WebKit + macOS/Windows; измеренные бюджеты |
 
-Порядок исполнения: текущий блок → DATA-01…03 → OPS-01/02/04 → OPS-03 и MUT-01/02 → PERF/GRAPH/DOMAIN → release QA. Для каждого рабочего блока в 07 записываются изменения, выполненные проверки и незавершённые пункты. Демо/подставленный API и настоящий кластер учитываются отдельно.
+Порядок исполнения: текущий блок → DATA-01A/B (готовы) → DATA-02/03 → OPS-01/02/04 с DATA-01C → OPS-03 и MUT-01/02 → PERF/GRAPH/DOMAIN → release QA. Для каждого рабочего блока в 07 записываются изменения, выполненные проверки и незавершённые пункты. Демо/подставленный API и настоящий кластер учитываются отдельно.
 
 ## Диаграммы: отдельный план по уровням
 

@@ -6,13 +6,17 @@ pub enum KubikiError {
     KubeconfigError(String),
 
     #[error("Cluster connection failed for context '{context}': {message}")]
-    ClusterConnectionFailed {
-        context: String,
-        message: String,
-    },
+    ClusterConnectionFailed { context: String, message: String },
 
     #[error("Kubernetes API error: {0}")]
     KubeApiError(String),
+
+    #[error("Kubernetes API error ({code} {reason}): {message}")]
+    KubeApiResponse {
+        code: u16,
+        reason: String,
+        message: String,
+    },
 
     #[error("Resource not found: {kind}/{name} in namespace '{namespace}'")]
     NotFound {
@@ -33,6 +37,13 @@ pub enum KubikiError {
 
 impl From<kube::Error> for KubikiError {
     fn from(err: kube::Error) -> Self {
-        KubikiError::KubeApiError(err.to_string())
+        match err {
+            kube::Error::Api(response) => KubikiError::KubeApiResponse {
+                code: response.code,
+                reason: response.reason,
+                message: response.message,
+            },
+            error => KubikiError::KubeApiError(error.to_string()),
+        }
     }
 }

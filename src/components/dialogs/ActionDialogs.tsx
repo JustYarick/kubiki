@@ -41,7 +41,7 @@ export function ScaleDialog({
       }
     >
       <div className="flex flex-col gap-4">
-        <div className="rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-[12px] font-mono">
+        <div className="rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-[length:calc(12px*var(--ui-factor))] font-mono">
           {item.kind}/{item.name}
           <span className="text-[var(--text-muted)]"> · {item.namespace}</span>
         </div>
@@ -50,7 +50,7 @@ export function ScaleDialog({
           <Label>Replicas</Label>
           <div className="flex items-center gap-2">
             <Button onClick={() => setReplicas(Math.max(0, replicas - 1))} className="!w-8 !px-0 justify-center">
-              <Minus size={13} />
+              <Minus size="calc(13px * var(--ui-factor))" />
             </Button>
             <Input
               value={String(replicas)}
@@ -61,7 +61,7 @@ export function ScaleDialog({
               className="flex-1"
             />
             <Button onClick={() => setReplicas(Math.min(64, replicas + 1))} className="!w-8 !px-0 justify-center">
-              <Plus size={13} />
+              <Plus size="calc(13px * var(--ui-factor))" />
             </Button>
           </div>
           <div className="flex gap-1 mt-1">
@@ -74,8 +74,8 @@ export function ScaleDialog({
         </div>
 
         {value === 0 && (
-          <div className="flex items-center gap-2 text-[11px] text-[var(--status-warn)]">
-            <TriangleAlert size={13} />
+          <div className="flex items-center gap-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">
+            <TriangleAlert size="calc(13px * var(--ui-factor))" />
             Scaling to 0 will remove all pods from service.
           </div>
         )}
@@ -116,8 +116,8 @@ export function ConfirmDialog({
         </>
       }
     >
-      <div className="flex items-start gap-3 text-[12px] text-[var(--text-secondary)] leading-relaxed">
-        <TriangleAlert size={16} className="text-[var(--status-warn)] shrink-0 mt-0.5" />
+      <div className="flex items-start gap-3 text-[length:calc(12px*var(--ui-factor))] text-[var(--text-secondary)] leading-relaxed">
+        <TriangleAlert size="calc(16px * var(--ui-factor))" className="text-[var(--status-warn)] shrink-0 mt-0.5" />
         <div>{message}</div>
       </div>
     </Modal>
@@ -134,7 +134,7 @@ export function RestartDialog({ item, onClose, onConfirm }: { item: ResourceItem
       width={400}
       title={
         <span className="flex items-center gap-2">
-          <RotateCw size={14} className="text-[var(--accent)]" />
+          <RotateCw size="calc(14px * var(--ui-factor))" className="text-[var(--accent)]" />
           Restart rollout
         </span>
       }
@@ -147,7 +147,7 @@ export function RestartDialog({ item, onClose, onConfirm }: { item: ResourceItem
         </>
       }
     >
-      <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
+      <p className="text-[length:calc(12px*var(--ui-factor))] text-[var(--text-secondary)] leading-relaxed">
         A rolling restart of <span className="font-mono text-[var(--text-primary)]">{item.kind}/{item.name}</span> will replace
         all pods one by one (demo: the workload status becomes Running).
       </p>

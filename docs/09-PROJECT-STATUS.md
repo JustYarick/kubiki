@@ -31,11 +31,13 @@
 
 ## Сверка документов
 
+Дополнено (DATA-01A/B, UX-07/08, YAML-03): общий каталог GVK и типизированные ошибки HTTP/Tauri, подсказки RBAC/timeout и stale snapshot/Retry; group/UID identity защищает вкладки от пересоздания объекта. Масштаб UI 80–200% с default 110%, независимые editor/terminal fonts и persistence подключены. Поиск/фильтры адаптивны и занимают одну строку; на узкой панели фильтры в меню. Воспроизведённая потеря символов Monaco исправлена. DATA-01 целиком остаётся PARTIAL: named operations ещё требуют миграции на ResourceRef/preconditions. Watch/relist/streaming остаются следующими задачами. Подробности — [12](12-DATA-CONTRACT-AND-APPEARANCE.md).
+
 | Файл | Что это на самом деле | Расхождения и исправления |
 |---|---|---|
 | `README.md` | Был неизменённый Tauri template | Заменён описанием реального запуска, demo/live и ограничений |
 | `01-RESEARCH-ANALYSIS.md` | Исследование и продуктовые ориентиры | Количества stars, состояния сторонних проектов и оценки RAM привязаны ко времени; не результаты измерения Kubiki. Не использовать как свидетельство готовности |
-| `02-ARCHITECTURE-AND-DESIGN.md` | Целевая архитектура | Показаны несуществующие директории `src-tauri/src/terminal`, `ipc`, `plugin`; фактически домен вынесен в `crates/kubiki-core`, IPC в `src-tauri/src/lib.rs`. Promises no-polling/type-safe IPC/10–15× RAM ещё не выполнены/не измерены |
+| `02-ARCHITECTURE-AND-DESIGN.md` | Целевая архитектура | Показаны несуществующие директории `src-tauri/src/terminal`, `ipc`, `plugin`; домен находится в `crates/kubiki-core`, IPC команды в `src-tauri/src/k8s_commands.rs`, регистрация в `lib.rs`. Общие query/error contracts добавлены, но генерация IPC типов/no-polling/10–15× RAM ещё не выполнены/не измерены |
 | `03-KUBERNETES-SPECIFICATION.md` | Целевой каталог функциональности | Фраза «покрывает 100%» неверна для реализации: RBAC/HPA/NetworkPolicy/EndpointSlice и операции отсутствуют. Добавлено явное указание, что это план |
 | `04-ROADMAP.md` | Порядок работ и задачи | Нет фактических статусов; таблица выше сопоставляет фазы с кодом. Дополнена ссылкой на status report |
 | `05-HEADLESS-CORE-API.md` | API существующих сервисов | «100% готов, протестирован» завышено: исходно 2 unit + 3 integration tests, причём integration проверяют bus/store/serialization, не кластер. Exec default был заведомо невалиден для TTY; PF/watch/Helm имеют открытые lifecycle/context риски |

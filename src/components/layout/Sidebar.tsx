@@ -123,7 +123,7 @@ export const Sidebar: React.FC = () => {
     <nav className="h-full flex flex-col bg-[var(--bg-sidebar)] select-none overflow-hidden font-sans border-r border-[var(--border-default)]">
       {/* Header — JetBrains Tool Window Header */}
       <div className="h-9 px-2.5 flex items-center justify-between border-b border-[var(--border-subtle)] shrink-0 bg-[var(--bg-secondary)]/50">
-        <span className="text-[11.5px] font-semibold text-[var(--text-secondary)] tracking-wide uppercase">
+        <span className="text-[length:calc(11.5px*var(--ui-factor))] font-semibold text-[var(--text-secondary)] tracking-wide uppercase">
           Cluster Explorer
         </span>
         <div className="flex items-center gap-0.5">
@@ -139,20 +139,20 @@ export const Sidebar: React.FC = () => {
       {/* Filter as you type */}
       <div className="px-2 py-1.5 shrink-0 border-b border-[var(--border-subtle)]/60">
         <div className="relative flex items-center">
-          <SearchIcon size={12} className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
+          <SearchIcon size="calc(12px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             onKeyDown={(e) => e.key === 'Escape' && setFilter('')}
             placeholder="Filter tree (e.g. pods, cm)…"
-            className="w-full h-[24px] bg-[var(--bg-canvas)] text-[11.5px] text-[var(--text-primary)] rounded-[4px] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] pl-7 pr-6"
+            className="w-full h-[calc(24px*var(--ui-factor))] bg-[var(--bg-canvas)] text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] pl-7 pr-6"
           />
           {filter && (
             <button
               onClick={() => setFilter('')}
               className="absolute right-1 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             >
-              <X size={11} />
+              <X size="calc(11px * var(--ui-factor))" />
             </button>
           )}
         </div>
@@ -171,16 +171,16 @@ export const Sidebar: React.FC = () => {
               <button
                 onClick={() => { if (!searching) toggleGroup(cat.id); }}
                 className={cx(
-                  'w-full flex items-center gap-1.5 px-2 h-[24px] text-[11.5px] font-medium transition-colors',
+                  'w-full flex items-center gap-1.5 px-2 h-[calc(24px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] font-medium transition-colors',
                   catOpen ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]',
                   'hover:bg-[var(--bg-hover)]'
                 )}
               >
-                {catOpen ? <ChevronDown size={11} className="opacity-60 shrink-0" /> : <ChevronRight size={11} className="opacity-60 shrink-0" />}
-                <CatIcon size={13} strokeWidth={1.75} className="text-[var(--text-secondary)] shrink-0" />
+                {catOpen ? <ChevronDown size="calc(11px * var(--ui-factor))" className="opacity-60 shrink-0" /> : <ChevronRight size="calc(11px * var(--ui-factor))" className="opacity-60 shrink-0" />}
+                <CatIcon size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-secondary)] shrink-0" />
                 <span className="truncate text-left flex-1">{cat.label}</span>
                 {catCount > 0 && (
-                  <span className="text-[10px] font-mono text-[var(--text-muted)] tabular-nums px-1 rounded bg-[var(--bg-canvas)]/50">
+                  <span className="text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)] tabular-nums px-1 rounded bg-[var(--bg-canvas)]/50">
                     {catCount}
                   </span>
                 )}
@@ -195,21 +195,21 @@ export const Sidebar: React.FC = () => {
                     {g.label && (
                       <button
                         onClick={() => { if (!searching) toggleGroup(key(cat.id, g.id)); }}
-                        className="w-full flex items-center gap-1.5 pl-[22px] pr-2 h-[22px] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                        className="w-full flex items-center gap-1.5 pl-[calc(22px*var(--ui-factor))] pr-2 h-[calc(22px*var(--ui-factor))] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
                       >
                         {gOpen
-                          ? <ChevronDown size={10} className="opacity-50 shrink-0" />
-                          : <ChevronRight size={10} className="opacity-50 shrink-0" />}
+                          ? <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-50 shrink-0" />
+                          : <ChevronRight size="calc(10px * var(--ui-factor))" className="opacity-50 shrink-0" />}
                         <span className="truncate text-left flex-1">{g.label}</span>
                         {!gOpen && gCount > 0 && (
-                          <span className="text-[10px] font-mono text-[var(--text-muted)] tabular-nums">{gCount}</span>
+                          <span className="text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)] tabular-nums">{gCount}</span>
                         )}
                       </button>
                     )}
 
                     {gOpen && g.placeholder && (
-                      <div className="flex items-center gap-1.5 pl-[34px] pr-2 h-[22px] text-[11px] text-[var(--text-disabled)] italic cursor-default">
-                        <Lock size={10} className="shrink-0" />
+                      <div className="flex items-center gap-1.5 pl-[calc(34px*var(--ui-factor))] pr-2 h-[calc(22px*var(--ui-factor))] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-disabled)] italic cursor-default">
+                        <Lock size="calc(10px * var(--ui-factor))" className="shrink-0" />
                         <span className="truncate">{g.placeholder}</span>
                       </div>
                     )}
@@ -227,20 +227,20 @@ export const Sidebar: React.FC = () => {
                               onClick={() => handleSelectKind(entry.kind)}
                               onContextMenu={(e) => handleContextMenu(e, entry.kind)}
                               className={cx(
-                                'group relative w-full flex items-center gap-2 h-[24px] pl-[32px] pr-2 text-[11.5px] transition-colors',
+                                'group relative w-full flex items-center gap-2 h-[calc(24px*var(--ui-factor))] pl-[calc(32px*var(--ui-factor))] pr-2 text-[length:calc(11.5px*var(--ui-factor))] transition-colors',
                                 selected
                                   ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-medium shadow-2xs'
                                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                               )}
                             >
                               {selected && (
-                                <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)] rounded-r" />
+                                <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
                               )}
-                              <Icon size={13} strokeWidth={1.75} className={cx('shrink-0', entry.hue)} />
+                              <Icon size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className={cx('shrink-0', entry.hue)} />
                               <span className="truncate flex-1 text-left">{entry.label}</span>
                               {total > 0 && (
                                 <span className={cx(
-                                  'text-[10px] font-mono tabular-nums px-1 rounded',
+                                  'text-[length:calc(10px*var(--ui-factor))] font-mono tabular-nums px-1 rounded',
                                   selected ? 'bg-[var(--bg-canvas)] text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
                                 )}>
                                   {total}
@@ -258,7 +258,7 @@ export const Sidebar: React.FC = () => {
           );
         })}
         {filtered.length === 0 && (
-          <div className="px-3 py-8 text-[11px] text-[var(--text-muted)] text-center">
+          <div className="px-3 py-8 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] text-center">
             No matching resources found for “{filter}”
           </div>
         )}

@@ -1,10 +1,13 @@
 import type { KubeContextInfo, ResourceItem, ResourceKind } from '../types/k8s';
 import { mapK8sResourceList } from '../core/utils/k8s_mapper';
 import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
+import { parseApiVersion, resourceQuery } from '../core/resources/resource_types';
+import type { KubernetesProvider } from './contract';
+import { normalizeK8sError, requestError, type RequestInfo } from './errors';
 
 export const DEMO_CONTEXT = 'kubiki-demo';
 
-export class K8sProvider {
+export class K8sProvider implements KubernetesProvider {
   readonly demo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
   private mock: ReturnType<typeof buildMockResources> | undefined;
 
@@ -13,18 +16,39 @@ export class K8sProvider {
   }
 
   private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown): Promise<T> {
-    if (this.isTauriEnv()) {
-      const { invoke } = await import('@tauri-apps/api/core');
-      return invoke<T>(command, args);
-    }
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
-    const response = await fetch(`/api/k8s/${path}?${query}`, body === undefined ? undefined : {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    const data = await response.json().catch(() => { throw new Error('Kubernetes bridge unavailable. Start the desktop app or development server; use ?demo=1 for a demo.'); });
-    if (!response.ok) throw new Error(data.error || `Kubernetes request failed (${response.status})`);
-    return data as T;
+    const info: RequestInfo = { operation: path, context: args.context as string | undefined,
+      resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
+        ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
+    try {
+      if (path !== 'contexts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
+      if (this.isTauriEnv()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        return await invoke<T>(command, args);
+      }
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
+      let response: Response;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      try {
+        // A signal also bounds reading the response body.
+        response = await fetch(`/api/k8s/${path}?${query}`, { signal: controller.signal, ...(body === undefined ? {} : {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        }) });
+        let data: unknown;
+        try { data = await response.json(); }
+        catch {
+          if (controller.signal.aborted) throw requestError('timeout', 'Kubernetes bridge request timed out', info, 504);
+          throw requestError('bridge_unavailable', 'Kubernetes bridge unavailable. Start the desktop app or development server; use ?demo=1 for a demo.', info, response.status);
+        }
+        if (!response.ok) throw normalizeK8sError(data, info, response.status);
+        return data as T;
+      } catch (error) {
+        if (controller.signal.aborted) throw requestError('timeout', 'Kubernetes bridge request timed out', info, 504);
+        if (error instanceof TypeError) throw requestError('unavailable', error.message, info);
+        throw error;
+      } finally { clearTimeout(timer); }
+    } catch (error) { throw normalizeK8sError(error, info); }
   }
 
   async getContexts(): Promise<KubeContextInfo[]> {
@@ -35,8 +59,10 @@ export class K8sProvider {
   async pingCluster(context: string): Promise<{ status: string; version?: string }> {
     if (this.demo) return { status: 'demo' };
     const data = await this.request<any>('ping_cluster', 'ping', { context });
-    const version = data.version ?? data;
-    return { status: 'connected', version: version.gitVersion ?? version.git_version };
+    const version = data?.version ?? data;
+    const gitVersion = version?.gitVersion ?? version?.git_version;
+    if (typeof gitVersion !== 'string' || !gitVersion) throw requestError('internal', 'The API server did not return a valid version', { operation: 'ping', context });
+    return { status: 'connected', version: gitVersion };
   }
 
   async getNamespaces(context: string): Promise<string[]> {
@@ -49,18 +75,23 @@ export class K8sProvider {
       this.mock ??= buildMockResources();
       return (this.mock[kind] ?? []).filter((item) => !namespace || namespace === 'all' || !item.namespace || item.namespace === namespace);
     }
-    const raw = await this.request('get_resources', 'resources', { context, kind, namespace: namespace && namespace !== 'all' ? namespace : null });
+    const query = resourceQuery(context, kind, namespace);
+    const raw = await this.request<any>('get_resources', 'resources', { ...query });
+    if (!raw || !Array.isArray(raw.items) || raw.items.some((item: any) => !item || typeof item.metadata?.name !== 'string' || !item.metadata.name || item.kind && item.kind !== kind || item.apiVersion && (typeof item.apiVersion !== 'string' || parseApiVersion(item.apiVersion).group !== query.group))) {
+      throw requestError('internal', 'Invalid resource list returned by Kubernetes bridge', { operation: 'resources', context, resource: query });
+    }
     return mapK8sResourceList(raw, kind);
   }
 
   async getLogs(context: string, name: string, namespace: string, container?: string): Promise<string> {
     if (this.demo) return '';
-    return this.request('get_pod_logs', 'logs', { context, name, namespace, container });
+    return this.request('get_pod_logs', 'logs', { ...resourceQuery(context, 'Pod', namespace), name, container });
   }
 
   async scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number): Promise<boolean> {
     if (this.demo) return true;
-    const args = { context, kind, name, namespace, replicas };
+    if (!['Deployment', 'StatefulSet'].includes(kind)) throw requestError('unsupported', 'Only Deployment and StatefulSet can be scaled', { context, operation: 'scale' }, 400);
+    const args = { ...resourceQuery(context, kind as ResourceKind, namespace), name, replicas };
     await this.request('scale_workload', 'scale', args, args);
     return true;
   }

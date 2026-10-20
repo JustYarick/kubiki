@@ -53,13 +53,13 @@ function IssueIndicator({ issues, showSummary }: { issues: ResourceIssue[]; show
       className={cx('inline-flex items-center gap-1.5 min-w-0 align-middle', error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]')}
       onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
       onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false); }}>
-      <TriangleAlert size={13} strokeWidth={2} className="shrink-0" />
-      {showSummary && <span className="text-[11px] truncate">{issues[0].summary}{issues.length > 1 ? ` (+${issues.length - 1})` : ''}</span>}
+      <TriangleAlert size="calc(13px * var(--ui-factor))" strokeWidth={2} className="shrink-0" />
+      {showSummary && <span className="text-[length:calc(11px*var(--ui-factor))] truncate">{issues[0].summary}{issues.length > 1 ? ` (+${issues.length - 1})` : ''}</span>}
     </span>
     {open && createPortal(<div ref={tooltip} id={tooltipId} role="tooltip" style={{ ...position, width: 'min(380px, calc(100vw - 16px))' }} className="pointer-events-none fixed z-[110] rounded-md border border-[var(--border-strong)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] p-3 text-left whitespace-normal max-h-[70vh] overflow-hidden">
       <div className={cx('font-medium text-xs mb-2', error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]')}>{issues.length === 1 ? 'Resource issue' : `${issues.length} resource issues`}</div>
-      <ul className="space-y-2">{issues.slice(0, 8).map((issue) => <li key={issue.id}><div className="text-[11px] text-[var(--text-primary)] break-words">{issue.summary}</div>{issue.message && <div className="mt-0.5 text-[11px] text-[var(--text-secondary)] break-words whitespace-pre-wrap">{issue.message}</div>}</li>)}</ul>
-      {issues.length > 8 && <div className="text-[10px] text-[var(--text-muted)] mt-2">Open resource conditions for more details.</div>}
+      <ul className="space-y-2">{issues.slice(0, 8).map((issue) => <li key={issue.id}><div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-primary)] break-words">{issue.summary}</div>{issue.message && <div className="mt-0.5 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] break-words whitespace-pre-wrap">{issue.message}</div>}</li>)}</ul>
+      {issues.length > 8 && <div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mt-2">Open resource conditions for more details.</div>}
     </div>, document.body)}
   </>;
 }

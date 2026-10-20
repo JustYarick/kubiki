@@ -62,7 +62,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           const items = await k8s.getResources(currentContext, kind, 'all');
           if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setResourcesForKind(kind, items);
         } catch (error) {
-          if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setLoadError(kind, String(error));
+          if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setLoadError(kind, error);
           throw error;
         }
       }));
@@ -168,19 +168,19 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           trigger={({ open }) => (
             <button
               className={cx(
-                'w-7 h-7 flex items-center justify-center rounded-[4px] transition-colors',
+                'w-7 h-7 flex items-center justify-center rounded-[calc(4px*var(--ui-factor))] transition-colors',
                 open ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
               )}
               title="Main Menu"
               aria-label="Main Menu"
             >
-              <Menu size={15} />
+              <Menu size="calc(15px * var(--ui-factor))" />
             </button>
           )}
         >
           {(close) => (
             <>
-              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
+              <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
                 Kubiki IDE Menu
               </div>
               <MenuList items={mainMenuSections} onSelect={(item) => { item.onSelect?.(); close(); }} />
@@ -190,13 +190,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
 
         {/* Kubiki Brand Logo */}
         <div className="flex items-center gap-1.5 px-1">
-          <span className="w-5 h-5 rounded-[4px] bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-[11px] font-bold shadow-xs shrink-0">
+          <span className="w-5 h-5 rounded-[calc(4px*var(--ui-factor))] bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-[length:calc(11px*var(--ui-factor))] font-bold shadow-xs shrink-0">
             ⎈
           </span>
-          <span className="font-semibold text-[12.5px] tracking-tight text-[var(--text-primary)]">
+          <span className="font-semibold text-[length:calc(12.5px*var(--ui-factor))] tracking-tight text-[var(--text-primary)]">
             Kubiki
           </span>
-          <span className="text-[9px] font-mono font-medium px-1 py-0.2 rounded bg-blue-500/15 text-blue-400 border border-blue-500/25">
+          <span className="text-[length:calc(9px*var(--ui-factor))] font-mono font-medium px-1 py-0.2 rounded bg-blue-500/15 text-blue-400 border border-blue-500/25">
             IDE
           </span>
         </div>
@@ -209,7 +209,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           trigger={({ open }) => (
             <button
               className={cx(
-                'flex items-center gap-1.5 h-[25px] px-2 rounded-[4px] text-[12px] font-medium transition-colors max-w-[210px]',
+                'flex items-center gap-1.5 h-[calc(25px*var(--ui-factor))] px-2 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] font-medium transition-colors max-w-[calc(210px*var(--ui-factor))]',
                 open
                   ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
@@ -217,24 +217,24 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
               title="Switch Kubernetes Cluster Context"
             >
               <Circle
-                size={8}
+                size="calc(8px * var(--ui-factor))"
                 strokeWidth={0}
                 className={cx(
                   isConnected ? 'fill-[var(--status-ok)]' : 'fill-[var(--status-warn)]',
                   isConnected && 'animate-pulse'
                 )}
               />
-              <span className="truncate font-mono text-[11.5px]">{currentContext ?? 'No Context'}</span>
-              <span className="text-[10px] text-[var(--text-muted)] font-mono">
+              <span className="truncate font-mono text-[length:calc(11.5px*var(--ui-factor))]">{currentContext ?? 'No Context'}</span>
+              <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
                 {clusterVersion ? clusterVersion.replace(/^v?/, 'v') : ''}
               </span>
-              <ChevronDown size={11} className="opacity-50 shrink-0 ml-0.5" />
+              <ChevronDown size="calc(11px * var(--ui-factor))" className="opacity-50 shrink-0 ml-0.5" />
             </button>
           )}
         >
           {(close) => (
             <>
-              <div className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <div className="px-2.5 pt-1.5 pb-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Active Kubernetes Context
               </div>
               <MenuList items={ctxItems} onSelect={(item) => { item.onSelect?.(); close(); }} />
@@ -243,24 +243,24 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         </Popover>
 
         {/* Namespace Picker */}
-        <SearchableSelect label="Namespace Scope" value={selectedNamespace} onChange={selectNamespace} icon={Layers} className="max-w-[170px] font-mono" options={[
+        <SearchableSelect label="Namespace Scope" value={selectedNamespace} onChange={selectNamespace} icon={Layers} className="max-w-[calc(170px*var(--ui-factor))] font-mono" options={[
           { value: 'all', label: 'All Namespaces' },
           ...availableNamespaces.map((name) => ({ value: name, label: name })),
         ]} />
       </div>
 
       {/* Center: JetBrains "Search Everywhere" Widget */}
-      <div className="flex-1 flex justify-center min-w-0 px-4">
+      <div className="titlebar-search flex-1 flex justify-center min-w-0 px-4">
         <button
           onClick={() => setPaletteOpen(true)}
-          className="group flex items-center gap-2 h-[26px] w-[380px] max-w-full px-2.5 rounded-[5px] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-all shadow-xs"
+          className="group flex items-center gap-2 h-[calc(26px*var(--ui-factor))] w-[calc(380px*var(--ui-factor))] max-w-full px-2.5 rounded-[calc(5px*var(--ui-factor))] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-all shadow-xs"
           title="Search Everywhere (Ctrl/⌘ K)"
         >
-          <Command size={13} className="text-[var(--accent)] shrink-0" />
+          <Command size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />
           <span className="text-xs flex-1 text-left truncate">
             Search resources, YAML, actions…
           </span>
-          <kbd className="text-[10px] font-mono border border-[var(--border-default)] rounded px-1.5 py-0.5 bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-2xs">
+          <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-default)] rounded px-1.5 py-0.5 bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-2xs">
             ⌘K
           </kbd>
         </button>
@@ -273,16 +273,16 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           <button
             onClick={handleRefresh}
             className={cx(
-              'flex items-center gap-1 h-[25px] px-2 rounded-[4px] text-[11.5px] transition-colors',
+              'flex items-center gap-1 h-[calc(25px*var(--ui-factor))] px-2 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] transition-colors',
               'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
             )}
             aria-label="Refresh"
           >
             <RefreshCw
-              size={12}
+              size="calc(12px * var(--ui-factor))"
               className={cx('shrink-0', isRefreshing && 'animate-spin text-[var(--accent)]')}
             />
-            <span className="text-[11px] hidden md:inline">Sync</span>
+            <span className="text-[length:calc(11px*var(--ui-factor))] hidden md:inline">Sync</span>
           </button>
         </Tooltip>
 
@@ -292,20 +292,20 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           trigger={({ open }) => (
             <button
               className={cx(
-                'flex items-center gap-1 h-[25px] px-1.5 rounded-[4px] text-[10.5px] font-mono transition-colors',
+                'flex items-center gap-1 h-[calc(25px*var(--ui-factor))] px-1.5 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(10.5px*var(--ui-factor))] font-mono transition-colors',
                 open ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
               )}
               title="Auto-refresh interval"
             >
-              <Clock size={11} />
+              <Clock size="calc(11px * var(--ui-factor))" />
               <span>{autoRefreshInterval === 0 ? 'Manual' : `${autoRefreshInterval}s`}</span>
-              <ChevronDown size={10} className="opacity-50" />
+              <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-50" />
             </button>
           )}
         >
           {(close) => (
             <div className="py-1">
-              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Auto Sync
               </div>
               {refreshOptions.map((opt) => (
@@ -316,10 +316,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
                     if (opt.val > 0) toast.info(`Auto-sync set to ${opt.label}`);
                     close();
                   }}
-                  className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                 >
                   <span>{opt.label}</span>
-                  {autoRefreshInterval === opt.val && <Check size={11} className="text-[var(--accent)]" />}
+                  {autoRefreshInterval === opt.val && <Check size="calc(11px * var(--ui-factor))" className="text-[var(--accent)]" />}
                 </button>
               ))}
             </div>
@@ -329,17 +329,17 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         <div className="h-4 w-px bg-[var(--border-default)] mx-1" />
 
         {/* JetBrains Layout Switcher: Left, Bottom, Right Tool Windows */}
-        <div className="flex items-center bg-[var(--bg-primary)] p-0.5 rounded-[4px] border border-[var(--border-default)]">
+        <div className="flex items-center bg-[var(--bg-primary)] p-0.5 rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)]">
           <Tooltip label={sidebarCollapsed ? 'Show Explorer (⌘B)' : 'Hide Explorer (⌘B)'} delay={300}>
             <button
               onClick={toggleSidebar}
               className={cx(
-                'w-5 h-5 flex items-center justify-center rounded-[3px] transition-colors',
+                'w-5 h-5 flex items-center justify-center rounded-[calc(3px*var(--ui-factor))] transition-colors',
                 !sidebarCollapsed ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               )}
               aria-label="Toggle Explorer"
             >
-              <PanelLeft size={12} />
+              <PanelLeft size="calc(12px * var(--ui-factor))" />
             </button>
           </Tooltip>
 
@@ -347,12 +347,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
             <button
               onClick={toggleDock}
               className={cx(
-                'w-5 h-5 flex items-center justify-center rounded-[3px] transition-colors',
+                'w-5 h-5 flex items-center justify-center rounded-[calc(3px*var(--ui-factor))] transition-colors',
                 !dockCollapsed ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               )}
               aria-label="Toggle Bottom Panel"
             >
-              <PanelBottom size={12} />
+              <PanelBottom size="calc(12px * var(--ui-factor))" />
             </button>
           </Tooltip>
 
@@ -360,12 +360,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
             <button
               onClick={toggleInspector}
               className={cx(
-                'w-5 h-5 flex items-center justify-center rounded-[3px] transition-colors',
+                'w-5 h-5 flex items-center justify-center rounded-[calc(3px*var(--ui-factor))] transition-colors',
                 !inspectorCollapsed ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               )}
               aria-label="Toggle Details Panel"
             >
-              <PanelRight size={12} />
+              <PanelRight size="calc(12px * var(--ui-factor))" />
             </button>
           </Tooltip>
         </div>

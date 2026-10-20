@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useDockStore } from './dock_store';
 import type { Perspective } from '../core/perspectives';
+import { DEFAULT_APPEARANCE, appearanceValue, normalizeAppearance } from '../core/appearance';
 
 export type Density = 'compact' | 'comfortable';
 export type RightTab = 'overview' | 'yaml' | 'related' | 'events';
@@ -9,6 +10,9 @@ export type RightTab = 'overview' | 'yaml' | 'related' | 'events';
 interface UIState {
   /* appearance */
   density: Density;
+  uiScale: number;
+  editorFontSize: number;
+  terminalFontSize: number;
   /* panels geometry */
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -27,6 +31,10 @@ interface UIState {
   activePerspective: Perspective;
 
   setDensity: (d: Density) => void;
+  setUiScale: (value: number) => void;
+  setEditorFontSize: (value: number) => void;
+  setTerminalFontSize: (value: number) => void;
+  resetAppearance: () => void;
   setSidebarWidth: (w: number) => void;
   toggleSidebar: () => void;
   setInspectorWidth: (w: number) => void;
@@ -55,6 +63,7 @@ export const useUiStore = create<UIState>()(
   persist(
     (set) => ({
       density: 'compact',
+      ...DEFAULT_APPEARANCE,
       sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
       sidebarCollapsed: false,
       inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
@@ -70,6 +79,10 @@ export const useUiStore = create<UIState>()(
       activePerspective: 'workloads' as Perspective,
 
       setDensity: (density) => set({ density }),
+      setUiScale: (value) => set({ uiScale: appearanceValue('uiScale', value) }),
+      setEditorFontSize: (value) => set({ editorFontSize: appearanceValue('editorFontSize', value) }),
+      setTerminalFontSize: (value) => set({ terminalFontSize: appearanceValue('terminalFontSize', value) }),
+      resetAppearance: () => set({ ...DEFAULT_APPEARANCE }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 420), sidebarCollapsed: false }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       setInspectorWidth: (w) => set({ inspectorWidth: clamp(w, 340, 800), inspectorCollapsed: false }),
@@ -104,8 +117,12 @@ export const useUiStore = create<UIState>()(
     }),
     {
       name: 'kubiki.settings.v3',
+      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, ...normalizeAppearance(persisted as Partial<UIState> | undefined) }),
       partialize: (s) => ({
         density: s.density,
+        uiScale: s.uiScale,
+        editorFontSize: s.editorFontSize,
+        terminalFontSize: s.terminalFontSize,
         sidebarWidth: s.sidebarWidth,
         sidebarCollapsed: s.sidebarCollapsed,
         inspectorWidth: s.inspectorWidth,
