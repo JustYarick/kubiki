@@ -1,5 +1,6 @@
 mod k8s_commands;
 mod terminal_commands;
+mod node_commands;
 mod host_terminal_commands;
 mod log_commands;
 mod watch_commands;
@@ -11,6 +12,8 @@ use kubiki_core::pod_ops::terminal::PodTerminalManager;
 use kubiki_core::{InformerManager, ResourceStore};
 use tauri::Manager;
 use terminal_commands::*;
+use node_commands::*;
+use kubiki_core::pod_ops::node_debug::NodeDebugManager;
 use host_terminal_commands::*;
 use kubiki_core::pod_ops::host_terminal::HostTerminalManager;
 use log_commands::*;
@@ -29,6 +32,7 @@ pub fn run() {
         .manage(ClusterClientPool::new(KubeConfigManager::new()))
         .manage(InformerManager::new(ResourceStore::new()))
         .manage(PodTerminalManager::default())
+        .manage(NodeDebugManager::default())
         .manage(HostTerminalManager::default())
         .manage(PodLogManager::default())
         .plugin(tauri_plugin_opener::init())
@@ -39,6 +43,7 @@ pub fn run() {
             get_namespaces,
             get_resources,
             scale_workload,
+            update_secret_data,
             get_pod_logs,
             watch_resources,
             stop_resource_watch,
@@ -54,6 +59,17 @@ pub fn run() {
             ack_host_terminal,
             close_host_terminal,
             stop_host_terminals,
+            prepare_node_debug,
+            node_debug_status,
+            stop_node_debug,
+            stop_node_debugs,
+            list_other_debug_pods,
+            remove_other_debug_pod,
+            start_node_exec,
+            write_node_exec,
+            resize_node_exec,
+            ack_node_exec,
+            close_node_exec,
             start_pod_exec,
             write_pod_exec,
             resize_pod_exec,
@@ -67,10 +83,12 @@ pub fn run() {
                 let terminals = window.state::<PodTerminalManager>().inner().clone();
                 let logs = window.state::<PodLogManager>().inner().clone();
                 let hosts = window.state::<HostTerminalManager>().inner().clone();
+                let nodes = window.state::<NodeDebugManager>().inner().clone();
                 let owner = window.label().to_owned();
                 tauri::async_runtime::spawn(async move {
                     manager.stop_owner(&owner).await;
                     terminals.stop_owner(&owner).await;
+                    nodes.stop_owner(&owner).await;
                     hosts.stop_owner(&owner).await;
                     logs.stop_owner(&owner).await;
                 });

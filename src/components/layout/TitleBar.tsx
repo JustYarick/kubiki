@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   ChevronDown,
   Circle,
@@ -11,8 +11,6 @@ import {
   PanelLeft,
   PanelBottom,
   PanelRight,
-  Check,
-  Clock,
 } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -50,7 +48,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
   const { openResourceList, toggleSplit } = useWorkspaceStore();
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(0); // 0 = off
 
   const refreshing = useRef(false);
   const handleRefresh = useCallback(async () => {
@@ -79,12 +76,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
       setIsRefreshing(false);
     }
   }, [currentContext]);
-
-  useEffect(() => {
-    if (!autoRefreshInterval || !isConnected) return;
-    const timer = window.setInterval(() => { void handleRefresh(); }, autoRefreshInterval * 1000);
-    return () => window.clearInterval(timer);
-  }, [autoRefreshInterval, handleRefresh, isConnected]);
 
   const ctxItems: MenuItem[] = contexts.length
     ? contexts.map((c) => ({
@@ -154,13 +145,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
       kbd: '⌘,',
       onSelect: () => setSettingsOpen(true),
     },
-  ];
-
-  const refreshOptions = [
-    { label: 'Off', val: 0 },
-    { label: 'Every 3s', val: 3 },
-    { label: 'Every 5s', val: 5 },
-    { label: 'Every 15s', val: 15 },
   ];
 
   return (
@@ -293,46 +277,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
             <span className="text-[length:calc(11px*var(--ui-factor))] hidden md:inline">Sync</span>
           </button>
         </Tooltip>
-
-        {/* Auto-refresh interval popover */}
-        <Popover
-          width={150}
-          trigger={({ open }) => (
-            <button
-              className={cx(
-                'flex items-center gap-1 h-[calc(25px*var(--ui-factor))] px-1.5 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(10.5px*var(--ui-factor))] font-mono transition-colors',
-                open ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
-              )}
-              title="Auto-refresh interval"
-            >
-              <Clock size="calc(11px * var(--ui-factor))" />
-              <span>{autoRefreshInterval === 0 ? 'Manual' : `${autoRefreshInterval}s`}</span>
-              <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-50" />
-            </button>
-          )}
-        >
-          {(close) => (
-            <div className="py-1">
-              <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Auto Sync
-              </div>
-              {refreshOptions.map((opt) => (
-                <button
-                  key={opt.val}
-                  onClick={() => {
-                    setAutoRefreshInterval(opt.val);
-                    if (opt.val > 0) toast.info(`Auto-sync set to ${opt.label}`);
-                    close();
-                  }}
-                  className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                >
-                  <span>{opt.label}</span>
-                  {autoRefreshInterval === opt.val && <Check size="calc(11px * var(--ui-factor))" className="text-[var(--accent)]" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </Popover>
 
         <div className="h-4 w-px bg-[var(--border-default)] mx-1" />
 

@@ -6,7 +6,23 @@
 
 ---
 
-## Последний блок — 2026-10-20: OPS-02B, настоящий local host terminal
+## Последний блок — 2026-10-20: Secret data editor, Columns, Node shell и статусы
+
+- **MUT-03A — готово:** Secret data редактируется построчно: ключ/значение, Add/Remove, Unicode/empty/binary без потери байтов. Общий компактный Text/Base64 рядом с Reveal работает при просмотре и редактировании; dropdown на строках убраны по обратной связи. Текст автоматически кодируется при Save; immutable/неверные/повторные ключи/base64/1 MiB проверяются до записи. Desktop kube-rs и browser dev stdin replace подключены; UID/resourceVersion проверяются, API PUT защищён optimistic concurrency. Ошибки сохраняют draft; watch updates не затирают ввод и блокируют устаревшую запись. Значения не попадают в URL/argv/localStorage/уведомления. Детали и границы — [17](17-SECRET-EDITOR.md).
+- **UX-15 — готово:** исправлен noop `onSelect` меню Columns. Видимость действительно переключается и сохраняется; Name остаётся обязательным. Колонка номеров получила resize, double-click reset и сохранение ширины отдельно по kind. Перетаскивание учитывает фактическую ширину/UI scale, отмена pointer очищает обработчики. Resize не выбирает строки.
+- **UX-13/14 — готово:** Completed/Complete серые, Pending/startup синие, Warning жёлтые, ошибки красные; единые индикаторы таблицы/details/container pickers. Удалён переключатель auto-refresh/manual вместе с interval timer; Sync сохранён, при watch пересоздаёт subscriptions и игнорирует старые callbacks.
+- **OPS-03A — готово:** реальный desktop Node shell через управляемый privileged debug Pod, явный Start с выбором namespace/image, Node UID/Linux/RBAC checks, readiness/cancel, host chroot exec/ACK/xterm, удаление с UID precondition и подтверждением, cleanup retry/manual orphan recovery. Транспорт проверен локальным Kubernetes HTTP/WS API и browser IPC, а не созданием privileged Pod в пользовательском кластере. Остатки после crash/неопределённого POST возможны; activeDeadline останавливает контейнер, но не удаляет Pod. Детали — [16](16-NODE-SHELL.md).
+- **Roadmap:** UX-13/14/15 и MUT-03A/OPS-03A DONE; OPS-03 PARTIAL, native/live задачи OPS-03B и MUT-03B TODO. Общий YAML dry-run/diff/apply, port-forward, dynamic CRD discovery и многоуровневые агрегированные диаграммы остаются открыты. Следующий интеграционный блок — OPS-04 (port-forward lifecycle/UI); приёмка native GUI/cross-platform ведётся отдельно. Graphics flags/SVG/отложенный native pan не менялись.
+
+Проверки этого блока:
+
+- `pnpm test`: **153/153** в 20 файлах (кодеки, HTTP/IPC identity/ошибки, watch, контейнеры, Node prepare/cancel/cleanup, exec ACK).
+- `cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline`: **38/38**; после финальных изменений Node/Secret повторены целевые 8/8.
+- `pnpm build` (включает app/server/tests typecheck) и `cargo check --manifest-path src-tauri/Cargo.toml --offline`: пройдены. Прежний warning больших JS chunks остаётся.
+- `PLAYWRIGHT_BASE_URL=http://127.0.0.1:1422 pnpm test:e2e`: финальный production прогон **58/58**, 1,1 мин. Новые сценарии покрывают общий Text/Base64 и byte preservation, add/remove/save, 403/409 с сохранением draft, immutable, обновление Secret во время редактирования, Columns hide/show/reset/persistence и resize/reset колонки номеров без выбора строк. Прежние watch/Pod/host/Node/logs/topology/workspace регрессии сохранены. Ошибки тестовых locator Sync/доступного имени header, найденные в промежуточных прогонах, исправлены; финальный прогон полностью зелёный. `git diff --check` пройден.
+- Реальные пользовательские Secret не изменялись; native GUI/admission/live mutation/длительная и cross-platform QA остаются TODO. Финальные скриншоты редактора Secret и Node shell при 900 px просмотрены; поля и controls доступны, общий toggle расположен в header Secret data.
+
+## 2026-10-20: OPS-02B, настоящий local host terminal
 
 - **OPS-02B — готово:** Local Terminal теперь portable-pty → Tauri Channel → xterm, общий renderer/JS transport с Pod exec. Настоящий interactive shell, домашняя папка, наследуемое окружение, stdin/UTF-8/Ctrl-C/resize/exit code, явные Reconnect/Disconnect и Clear. Локальный терминал доступен без kubeconfig и Kubernetes context. Demo остаётся симулированным, browser явно требует desktop.
 - **Shell/metadata:** backend сообщает доступные shell/default/home; Unix учитывает SHELL и bash/zsh/fish/sh, Windows — COMSPEC/PowerShell. В local header нет контейнерного dropdown и Kubernetes target. Выбор shell создаёт новый процесс. Ошибка metadata нормализуется в читаемое сообщение; Reconnect повторно запрашивает metadata. Исправление проверено после воспроизведения `[object Object]` в первом browser прогоне.

@@ -76,6 +76,17 @@ describe.each(['HTTP', 'Tauri'] as const)('%s provider transport', (transport) =
     if (transport === 'Tauri') { if (status >= 400) invoke.mockRejectedValue(data); else invoke.mockResolvedValue(data); }
     else vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(data), { status }))));
   }
+  it('sends Secret values only in the request body and preserves the exact IPC identity', async () => {
+    const request = { resource: { ...resourceQuery('production', 'Secret', 'backend'), name: 'credentials', uid: 'original' }, resource_version: '10', data: { password: 'c2VjcmV0' } };
+    respond({ metadata: { uid: 'original' } });
+    await new K8sProvider().updateSecretData(request);
+    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('update_secret_data', { request });
+    else {
+      const [url, init] = vi.mocked(fetch).mock.calls[0];
+      expect(String(url)).not.toContain('password'); expect(String(url)).not.toContain('c2VjcmV0');
+      expect(JSON.parse(init!.body as string)).toEqual(request);
+    }
+  });
   it('passes a qualified list query and maps the manifest', async () => {
     respond({ items: [{ apiVersion: 'apps/v1', metadata: { name: 'web', namespace: 'backend', uid: 'dep' }, spec: { replicas: 0 } }] });
     const result = await new K8sProvider().getResources('production', 'Deployment', 'backend');

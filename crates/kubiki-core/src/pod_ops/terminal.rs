@@ -178,6 +178,21 @@ impl PodTerminalManager {
     where
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
     {
+        let command = vec![request.shell.clone()];
+        self.start_with_command(owner, id, request, command, client)
+            .await
+    }
+    pub(crate) async fn start_with_command<F>(
+        &self,
+        owner: &str,
+        id: &str,
+        request: ExecRequest,
+        command: Vec<String>,
+        client: F,
+    ) -> Result<ExecSubscription, ApiError>
+    where
+        F: Future<Output = Result<Client, ApiError>> + Send + 'static,
+    {
         validate_request(&request)?;
         if id.is_empty()
             || id.len() > 128
@@ -201,7 +216,7 @@ impl PodTerminalManager {
             let mut sequence = 0;
             let result = tokio::select! {
                 _=output.closed()=>return,
-                result=run(&target,client,controls,&output,&mut sequence)=>result,
+                result=run(&target,command,client,controls,&output,&mut sequence)=>result,
             };
             if let Err(error) = result {
                 emit(&output, &mut sequence, ExecEvent::Failed { error }).await;
@@ -317,6 +332,7 @@ impl Drop for AbortProcess {
 
 async fn run<F>(
     request: &ExecRequest,
+    command: Vec<String>,
     client: F,
     mut controls: mpsc::Receiver<Control>,
     tx: &mpsc::Sender<ExecMessage>,
@@ -362,7 +378,7 @@ where
             max_stdout_buf_size: Some(65536),
             ..Default::default()
         };
-        pods.exec(&request.resource.name, vec![request.shell.clone()], &params)
+        pods.exec(&request.resource.name, command, &params)
             .await
             .map_err(|e| api_error(request, e))
     };

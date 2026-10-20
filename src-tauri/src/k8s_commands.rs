@@ -247,3 +247,16 @@ pub async fn get_pod_logs(
     }
     kubectl(&args, "logs", &context).await
 }
+
+#[tauri::command]
+pub async fn update_secret_data(
+    request: kubiki_core::core::secret_data::SecretDataRequest,
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<k8s_openapi::api::core::v1::Secret, ApiError> {
+    request.validate()?;
+    let context = request.resource.query.context.clone();
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let client = pool.get_client(&context).await.map_err(|_| ApiError::from_status(503, "Cannot connect to Secret context", "secret_data", Some(&context)))?;
+        kubiki_core::core::secret_data::update_secret_data(client, request).await
+    }).await.map_err(|_| ApiError::from_status(504, "Secret update timed out. Refresh to verify the saved state", "secret_data", Some(&context)))?
+}

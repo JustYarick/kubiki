@@ -64,3 +64,8 @@ it('browser host shell reports desktop requirement without attempting native com
   vi.stubGlobal('window', {});await expect(getHostTerminalInfo()).rejects.toMatchObject({ code: 'unsupported' });
   await expect(connectHostTerminal({ shell: '/bin/sh', cols: 80, rows: 24 }, vi.fn(), new AbortController().signal)).rejects.toMatchObject({ code: 'unsupported' });expect(mock.invoke).not.toHaveBeenCalled();
 });
+it('routes Node exec input and ACK using its managed debug session ID', async () => {
+  const { connectNodeExec } = await import('../../src/providers/tauri_exec');const conn = await connectNodeExec({ debug_session_id: 'debug-id', shell: '/bin/sh', cols: 80, rows: 24 }, vi.fn(), new AbortController().signal);
+  const id = mock.invoke.mock.calls[0][1].sessionId;conn.write('ls\r');await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('write_node_exec', { sessionId: id, debugSessionId: 'debug-id', data: 'ls\r' }));
+  mock.channels[0].onmessage({ session_id: id, messages: [{ sequence: 1, event: { type: 'Exited', payload: { code: 0 } } }] });await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('ack_node_exec', { sessionId: id, debugSessionId: 'debug-id', sequence: 1 }));
+});

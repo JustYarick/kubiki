@@ -3,7 +3,7 @@ import type { ResourceContainer } from '../../types/k8s';
 import { canExecContainer, containerSummary, containerTone, CONTAINER_ROLE_LABEL } from '../../core/resources/containers';
 import { Popover } from '../ui/Dropdown';
 
-const tones = { ok: 'text-[var(--status-ok)]', warn: 'text-[var(--status-warn)]', danger: 'text-[var(--status-danger)]', muted: 'text-[var(--text-muted)]', info: 'text-blue-400' };
+const tones = { ok: 'text-[var(--status-ok)]', warn: 'text-[var(--status-warn)]', danger: 'text-[var(--status-danger)]', muted: 'text-[var(--text-muted)]', info: 'text-[var(--status-pending)]' };
 export function ContainerStatusIcon({ container }: { container: ResourceContainer }) {
   const label = containerSummary(container);
   return <span role="img" aria-label={label} title={label} data-container-status={container.state ?? 'unknown'} className={`inline-flex shrink-0 ${tones[containerTone(container)]}`}><Circle size="calc(8px * var(--ui-factor))" fill="currentColor" strokeWidth={0} /></span>;

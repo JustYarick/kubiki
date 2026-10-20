@@ -52,3 +52,20 @@ describe('HTTP bridge without a real cluster', () => {
     expect(run).toHaveBeenCalledWith(['--context', 'test', 'scale', 'deployments.apps', 'web', '-n', 'backend', '--replicas=0']);
   });
 });
+
+it('updates Secret data through stdin with UID/version, and redacts mutation errors', async () => {
+  const target = { resource: { context: 'test', group: '', version: 'v1', kind: 'Secret', namespace: 'backend', name: 'credentials', uid: 'uid' }, resource_version: '10', data: { password: 'c2VjcmV0' } };
+  const current = { apiVersion: 'v1', kind: 'Secret', metadata: { name: 'credentials', namespace: 'backend', uid: 'uid', resourceVersion: '10', labels: { keep: 'yes' } }, data: { old: 'b2xk' } };
+  const post = (data = target) => fetch(`${base}secrets?context=test`, { method: 'POST', body: JSON.stringify(data) });
+  run.mockResolvedValueOnce(JSON.stringify(current)).mockResolvedValueOnce(JSON.stringify({ ...current, data: target.data }));
+  expect((await post()).status).toBe(200);
+  const call = run.mock.calls[1] as unknown as [string[], string];
+  expect(call[0]).toEqual(['--context', 'test', 'replace', '-f', '-', '-o', 'json']);
+  expect(JSON.parse(call[1])).toEqual({ ...current, data: target.data });
+  run.mockReset().mockResolvedValue(JSON.stringify({ ...current, metadata: { ...current.metadata, resourceVersion: '11' } }));
+  expect((await post()).status).toBe(409); expect(run).toHaveBeenCalledTimes(1);
+  run.mockReset().mockResolvedValueOnce(JSON.stringify(current)).mockRejectedValueOnce({ stderr: 'Error from server (Forbidden): c2VjcmV0' });
+  const denied = await post(); expect(denied.status).toBe(403); expect(await denied.text()).not.toContain('c2VjcmV0');
+  run.mockReset(); expect((await post({ ...target, data: { password: '!' } })).status).toBe(400); expect(run).not.toHaveBeenCalled();
+  expect((await fetch(`${base}secrets?context=test`, { method: 'POST', headers: { origin: 'http://untrusted.invalid' }, body: JSON.stringify(target) })).status).toBe(403);
+});

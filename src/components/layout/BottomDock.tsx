@@ -23,6 +23,7 @@ import { LogBuffer, type LogLine } from '../../core/utils/log_buffer';
 import { connectPodLogs } from '../../providers/tauri_logs';
 import { resourceRef } from '../../core/resources/identity';
 import { LogsToolbar } from '../k8s/LogsToolbar';
+import { NodeShellPane } from '../k8s/NodeShellPane';
 import { LiveTerminalPane } from '../k8s/LiveTerminalPane';
 import { ContainerSelect } from '../k8s/ContainerSelect';
 import { useSessionContainers } from '../k8s/useSessionContainers';
@@ -383,6 +384,7 @@ const ExpandedDock: React.FC = () => {
 /* ------------------------------------------------------------------ */
 
 export function TerminalSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
+  if (!k8s.demo && session.targetType === 'node') return <NodeShellPane session={session} visible={visible} />;
   if (!k8s.demo && (session.targetType === 'pod' || session.targetType === 'local')) return <LiveTerminalPane session={session} visible={visible} onContainerChange={onContainerChange} />;
   if (!k8s.demo) return <div className="p-5 text-xs text-[var(--text-secondary)]">{session.targetType === 'node' ? 'Node debug shell requires a managed debug Pod; this transport is not connected yet.' : 'Local host PTY is not connected yet. Open Shell from a Pod to use Kubernetes exec.'}</div>;
   return <DemoTerminalSessionPane session={session} visible={visible} onContainerChange={onContainerChange} />;

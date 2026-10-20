@@ -96,6 +96,7 @@ export const useDockStore = create<DockState>()(
           id,
           type: 'terminal',
           context: useClusterStore.getState().currentContext,
+          uid: [...useResourceStore.getState().resources.Node.values()].find((node) => node.name === nodeName)?.uid,
           title: `Node Shell: ${nodeName}`,
           subtitle: 'Cluster Node',
           targetType: 'node',

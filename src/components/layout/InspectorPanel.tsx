@@ -1,3 +1,4 @@
+import { SecretDataEditor } from '../k8s/SecretDataEditor';
 import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, ArrowRightLeft, Boxes, Copy, FileText, GitBranch, Loader2, Terminal, X, ExternalLink } from 'lucide-react';
 import { useResourceStore } from '../../state/resource_store';
@@ -114,7 +115,6 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
 
 function Overview({ item, onNavigate, onLogs, onShell }: { item: ResourceItem; onNavigate: (item: ResourceItem) => void; onLogs: (container?: string) => void; onShell: (container?: string) => void }) {
   const resources = useResourceStore((s) => s.resources);
-  const [reveal, setReveal] = useState(false);
   const raw = item.raw ?? {};
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};
@@ -143,10 +143,10 @@ function Overview({ item, onNavigate, onLogs, onShell }: { item: ResourceItem; o
       ]} /></div>;
     })}</Card>}
     {!!spec.volumes?.length && <Card title="Volumes">{spec.volumes.map((v: any) => <div key={v.name} className="py-1 text-[length:calc(11px*var(--ui-factor))]"><span className="font-mono">{v.name}</span><span className="ml-2 text-[var(--text-muted)]">{Object.keys(v).filter((key) => key !== 'name').join(', ')}</span></div>)}</Card>}
-    {['ConfigMap', 'Secret'].includes(item.kind) && <Card title={item.kind === 'Secret' ? 'Secret data' : 'Configuration data'}>
-      {item.kind === 'Secret' && <Button size="sm" onClick={() => setReveal(!reveal)}>{reveal ? 'Hide values' : 'Reveal values'}</Button>}
-      {!Object.keys(data).length && <span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No data keys</span>}
-      {Object.entries(data).map(([key, value]) => <div key={key} className="mt-2"><div className="text-[length:calc(11px*var(--ui-factor))] font-mono text-[var(--text-secondary)]">{key}</div><pre className="text-[length:calc(11px*var(--ui-factor))] whitespace-pre-wrap break-all mt-1">{item.kind === 'Secret' ? reveal ? decodeSecret(String(value)) : '••••••••' : String(value)}</pre></div>)}
+    {item.kind === 'Secret' && <SecretDataEditor key={item.uid} item={item} />}
+    {item.kind === 'ConfigMap' && <Card title="Configuration data">
+      {!Object.keys(data).length && <span className="text-xs text-[var(--text-muted)]">No data keys</span>}
+      {Object.entries(data).map(([key, value]) => <div key={key} className="mt-2"><div className="text-xs font-mono text-[var(--text-secondary)]">{key}</div><pre className="text-xs whitespace-pre-wrap break-all mt-1">{String(value)}</pre></div>)}
     </Card>}
     <Card title="Labels"><KeyValues values={item.labels ?? metadata.labels ?? {}} /></Card>
     {!!Object.keys(metadata.annotations ?? {}).length && <Card title={`Annotations (${Object.keys(metadata.annotations).length})`}><ResourceAnnotations values={metadata.annotations} /></Card>}
@@ -180,7 +180,6 @@ function ResourceEvents({ item }: { item: ResourceItem }) {
     </Card>
   </div>;
 }
-function decodeSecret(value: string) { try { return new TextDecoder().decode(Uint8Array.from(atob(value), (c) => c.charCodeAt(0))); } catch { return '(invalid base64)'; } }
 function ResourceLink({ item, onClick }: { item: ResourceItem; onClick: (item: ResourceItem) => void }) { return <button className="text-[var(--accent)] hover:underline text-left break-all" onClick={() => onClick(item)}>{item.name}</button>; }
 function KeyValues({ values }: { values: Record<string, unknown> }) { return Object.keys(values).length ? <div className="space-y-2">{Object.entries(values).map(([key, value]) => <div key={key} className="text-[length:calc(11px*var(--ui-factor))] break-all"><span className="text-[var(--text-secondary)]">{key}</span><div className="font-mono mt-0.5 whitespace-pre-wrap">{String(value)}</div></div>)}</div> : <span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">None</span>; }
 function Card({ title, children }: { title: string; children: React.ReactNode }) { return <section aria-label={title} className="shrink-0 border border-[var(--border-default)] rounded-md overflow-hidden"><div className="px-3 py-2 text-[length:calc(11px*var(--ui-factor))] font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)]">{title}</div><div className="p-3">{children}</div></section>; }

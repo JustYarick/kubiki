@@ -1,12 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { RESOURCE_TYPES, type ResourceQuery } from '../src/core/resources/resource_types.ts';
+import { encodeSecretRows } from '../src/core/resources/secret_data.ts';
+import { RESOURCE_TYPES, isValidNamespaceName, type ResourceQuery } from '../src/core/resources/resource_types.ts';
 import { kubectlError, normalizeK8sError, requestError, type RequestInfo } from '../src/providers/errors.ts';
 
-const execFileAsync = promisify(execFile);
-export type KubectlExecutor = (args: string[]) => Promise<string>;
-const execute: KubectlExecutor = async (args) => (await execFileAsync('kubectl', [...args, '--request-timeout=10s'], { timeout: 15000, maxBuffer: 16 * 1024 * 1024 })).stdout;
+export type KubectlExecutor = (args: string[], input?: string) => Promise<string>;
+const execute: KubectlExecutor = (args, input) => new Promise((resolve, reject) => {
+  const child = execFile('kubectl', [...args, '--request-timeout=10s'], { timeout: 15000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    if (error) { Object.assign(error, { stderr }); reject(error); } else resolve(stdout);
+  });
+  child.stdin?.on('error', () => {});
+  child.stdin?.end(input);
+});
 
 /** Injectable executor lets HTTP contract tests run without contacting a cluster. */
 export function createK8sMiddleware(run: KubectlExecutor = execute) {
@@ -24,7 +29,7 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
     };
     const invalid = (message: string) => requestError('invalid_request', message, info, 400);
     try {
-      const methods: Record<string, string> = { contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', logs: 'GET', scale: 'POST' };
+      const methods: Record<string, string> = { contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', logs: 'GET', scale: 'POST', secrets: 'POST' };
       if (!methods[operation]) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== methods[operation]) throw requestError('invalid_request', 'Method not allowed', info, 405);
       if (operation === 'contexts') {
@@ -60,6 +65,28 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
         const container = url.searchParams.get('container');
         if (!name || !namespace) throw invalid('Pod name and namespace are required');
         return send(await kubectl([...contextArgs, 'logs', `pod/${name}`, '-n', namespace, ...(container ? ['-c', container] : []), '--tail=500', '--timestamps=true']));
+      }
+      if (operation === 'secrets') {
+        if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw requestError('forbidden', 'Cross-origin mutations are forbidden', info, 403);
+        let body = '';
+        for await (const chunk of req) { body += chunk; if (body.length > 2 * 1024 * 1024) throw invalid('Request body too large'); }
+        let request: any;
+        try { request = JSON.parse(body); } catch { throw invalid('Invalid JSON request body'); }
+        const { resource, resource_version, data } = request ?? {};
+        if (!resource || resource.context !== context || resource.kind !== 'Secret' || resource.group !== '' || resource.version !== 'v1' || typeof resource.name !== 'string' || !resource.name || resource.name.length > 253 || !resource.name.split('.').every((label: string) => isValidNamespaceName(label)) || typeof resource.namespace !== 'string' || !isValidNamespaceName(resource.namespace) || resource.namespace === 'all' || typeof resource.uid !== 'string' || !resource.uid || typeof resource_version !== 'string' || !resource_version || !data || typeof data !== 'object' || Array.isArray(data) || Object.values(data).some(v => typeof v !== 'string')) throw invalid('An exact Secret identity, version and base64 data are required');
+        try { encodeSecretRows(Object.entries(data).map(([key, value], id) => ({ id, key, value: value as string, mode: 'base64' }))); }
+        catch { throw invalid('Invalid Secret keys, base64 values or data exceeds 1 MiB'); }
+        const target = [...contextArgs, 'get', 'secret', resource.name, '-n', resource.namespace, '-o', 'json'];
+        const current = JSON.parse(await kubectl(target));
+        if (current.metadata?.uid !== resource.uid || current.metadata?.resourceVersion !== resource_version) throw requestError('conflict', 'Secret changed or was recreated. Reload before editing again', info, 409);
+        if (current.immutable) throw invalid('This Secret is immutable');
+        current.data = data;
+        delete current.stringData;
+        try { return send(JSON.parse(await run([...contextArgs, 'replace', '-f', '-', '-o', 'json'], JSON.stringify(current)))); }
+        catch (error) {
+          const failure = kubectlError(error, info);
+          throw requestError(failure.code, 'Secret update failed; check permissions, connectivity and object version. Refresh to verify saved state', info, failure.status);
+        }
       }
       if (operation === 'scale') {
         if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw requestError('forbidden', 'Cross-origin mutations are forbidden', info, 403);

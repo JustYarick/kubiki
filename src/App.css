@@ -42,13 +42,13 @@
 
   /* Status Tokens (JetBrains Diagnostics Palette) */
   --status-running: #59a869;      /* OK / Running (Emerald Green)                   */
-  --status-pending: #e5b742;      /* Warning / Pending (Amber)                      */
+  --status-pending: #60a5fa;      /* Pending / Startup (Blue)                      */
   --status-failed: #e05555;       /* Error / CrashLoopBackOff / Failed (Coral Red)  */
   --status-neutral: #8c9099;      /* Completed / Terminated                         */
   --status-info: #3574f0;         /* Informational Blue                             */
 
   --status-ok: var(--status-running);
-  --status-warn: var(--status-pending);
+  --status-warn: #e5b742;
   --status-danger: var(--status-failed);
 
   /* Scrollbar */

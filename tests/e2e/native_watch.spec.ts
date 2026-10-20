@@ -27,7 +27,7 @@ async function nativeApi(page: Page, holdPod = false, restricted = false) {
       unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
         if (command === 'stop_pod_execs' || command === 'stop_pod_logs') return;
-        if (command === 'stop_host_terminals') return;
+        if (command === 'stop_host_terminals' || command === 'stop_node_debugs') return;
         if (command === 'get_kube_contexts') return [{ name: 'native-test', is_current: true }, { name: 'native-other', is_current: false }];
         if (command === 'ping_cluster') return { git_version: 'v1.34.0' };
         if (command === 'get_namespaces') { if (restricted) throw { code: 'forbidden', status: 403, message: 'namespaces list forbidden', retryable: false }; return ['backend', 'other']; }
@@ -75,6 +75,7 @@ test('native watch updates the table/inspector, retains stale data, then recover
 test('Sync replaces subscriptions, ignores old messages, and pagehide releases callbacks and watches', async ({ page }) => {
   await nativeApi(page); await page.goto('/');
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await expect(page.getByTitle('Auto-refresh interval')).toHaveCount(0);
   await page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(36);
   await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.stops)).toBe(18);

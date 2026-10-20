@@ -31,7 +31,7 @@ export class K8sProvider implements KubernetesProvider {
     return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
   }
 
-  private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown): Promise<T> {
+  private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown, nativeArgs?: Record<string, unknown>): Promise<T> {
     const info: RequestInfo = { operation: path, context: args.context as string | undefined,
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
@@ -39,7 +39,7 @@ export class K8sProvider implements KubernetesProvider {
       if (path !== 'contexts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
       if (this.isTauriEnv()) {
         const { invoke } = await import('@tauri-apps/api/core');
-        return await invoke<T>(command, args);
+        return await invoke<T>(command, nativeArgs ?? args);
       }
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
@@ -102,6 +102,11 @@ export class K8sProvider implements KubernetesProvider {
   async getLogs(context: string, name: string, namespace: string, container?: string): Promise<string> {
     if (this.demo) return '';
     return this.request('get_pod_logs', 'logs', { ...resourceQuery(context, 'Pod', namespace), name, container });
+  }
+
+  async updateSecretData(request: import('./secret_data').SecretDataRequest): Promise<Record<string, any>> {
+    if (this.demo) throw new Error('Demo updates are handled in memory');
+    return this.request('update_secret_data', 'secrets', { ...request.resource }, request, { request });
   }
 
   async scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number): Promise<boolean> {

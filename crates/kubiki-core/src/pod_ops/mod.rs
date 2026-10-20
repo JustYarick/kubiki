@@ -2,6 +2,7 @@
 
 pub mod exec;
 pub mod terminal;
+pub mod node_debug;
 pub mod host_terminal;
 pub mod logs;
 pub mod log_sessions;

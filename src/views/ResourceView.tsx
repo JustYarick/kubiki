@@ -65,6 +65,7 @@ interface ColumnDef {
 }
 
 const DEFAULT_COL_SIZE: Record<string, number> = {
+  __index: 38,
   containers: 112, name: 240, namespace: 130, ready: 66, restarts: 84, status: 132, ip: 112, node: 96, age: 64,
   ports: 132, type: 112, clusterIP: 120, image: 220, keys: 74, volume: 132, claim: 168,
   storageclass: 132, reclaim: 92, roles: 152, version: 98, cpu: 112, mem: 172, pods: 130, replicas: 125,
@@ -330,7 +331,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     if (statusFilter) list = list.filter((item) => item.status === statusFilter);
 
     const hidden = new Set(hiddenColumns[effectiveKind] ?? []);
-    const cols = columnsFor(effectiveKind).filter((c) => !hidden.has(c.id));
+    const cols = columnsFor(effectiveKind).filter((c) => c.id === 'name' || !hidden.has(c.id));
     if (sortId === '__issues') {
       list = [...list].sort((a, b) => (issueRanks.get(b.uid) ?? 0) - (issueRanks.get(a.uid) ?? 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
     } else if (sortId === '__created' || sortId === 'age') {
@@ -425,21 +426,25 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   const startColResize = (e: React.PointerEvent, colId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const startW = widthFor(colId);
+    const startW = (e.currentTarget.closest('th')?.getBoundingClientRect().width ?? widthFor(colId) * uiFactor(uiScale)) / uiFactor(uiScale);
     const startX = e.clientX;
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
-      const w = Math.min(MAX_COL, Math.max(MIN_COL, startW + (ev.clientX - startX) / uiFactor(useUiStore.getState().uiScale)));
+      const w = Math.min(MAX_COL, Math.max(colId === '__index' ? 28 : MIN_COL, startW + (ev.clientX - startX) / uiFactor(useUiStore.getState().uiScale)));
       setColumnWidth(effectiveKind, colId, w);
     };
     const up = (ev: PointerEvent) => {
-      el.releasePointerCapture(ev.pointerId);
+      if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+      el.removeEventListener('lostpointercapture', up);
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('lostpointercapture', up);
   };
 
   const buildHeaderMenu = (colId: string): MenuItem[] => {
@@ -671,7 +676,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                 items={columnsFor(effectiveKind).map((c) => ({
                   id: c.id,
                   label: c.label,
-                  checked: !hiddenForKind.has(c.id),
+                  checked: c.id === 'name' || !hiddenForKind.has(c.id),
+                  disabled: c.id === 'name',
                   onSelect: () => {
                     const cur = new Set(hiddenColumns[effectiveKind] ?? []);
                     if (cur.has(c.id)) cur.delete(c.id);
@@ -682,7 +688,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                     setHiddenColumns(effectiveKind, Array.from(cur));
                   },
                 }))}
-                onSelect={() => {}}
+                onSelect={(item) => item.onSelect?.()}
               />
               <div className="my-1 h-px bg-[var(--border-subtle)]" />
               <MenuList
@@ -733,7 +739,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
             <thead>
               <tr>
                 {/* Index & Selection Column */}
-                <th className="datagrip-th w-[calc(38px*var(--ui-factor))] text-center p-0">
+                <th aria-label="Row numbers" className="datagrip-th text-center p-0" style={{ width: uiPixels(widthFor('__index')) }}>
                   <div
                     onClick={toggleSelectAll}
                     className="w-full h-full flex items-center justify-center cursor-pointer text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -747,6 +753,11 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                       <MinusSquare size="calc(12px * var(--ui-factor))" className="text-[var(--accent)]" />
                     )}
                   </div>
+                  <span role="separator" aria-label="Resize row numbers column" aria-orientation="vertical" title="Drag to resize · double-click to reset"
+                    onPointerDown={(e) => startColResize(e, '__index')}
+                    onDoubleClick={(e) => { e.stopPropagation(); setColumnWidth(effectiveKind, '__index', DEFAULT_COL_SIZE.__index); }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)]" />
                 </th>
 
                 {rows.cols.map((c) => {
@@ -754,6 +765,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                   return (
                     <th
                       key={c.id}
+                      aria-label={c.label}
                       style={{ width: uiPixels(widthFor(c.id)) }}
                       onClick={() => {
                         if (active && sortDir === -1) { setSortId(null); }
@@ -775,6 +787,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                       </span>
                       {/* Drag handle for resizing column */}
                       <span
+                        role="separator" aria-label={`Resize ${c.label} column`} aria-orientation="vertical"
                         title="Drag to resize · double-click to reset"
                         onPointerDown={(e) => startColResize(e, c.id)}
                         onDoubleClick={(e) => {
@@ -782,7 +795,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
                           setColumnWidth(effectiveKind, c.id, DEFAULT_COL_SIZE[c.id] ?? 120);
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors"
+                        className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors"
                       />
                     </th>
                   );

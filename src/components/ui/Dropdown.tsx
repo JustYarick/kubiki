@@ -134,6 +134,7 @@ export function MenuList({ items, onSelect }: { items: MenuItem[]; onSelect: (it
           <button
             key={item.id}
             disabled={item.disabled}
+            aria-pressed={item.checked}
             onMouseEnter={(e) => {
               if (!item.items) return setSubmenu(null);
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();

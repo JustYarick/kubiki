@@ -4,7 +4,7 @@
 
 ## Стадия
 
-**Early alpha / pre-MVP.** UI-прототип переходит к частичной интеграции с Kubernetes. Это уже больше, чем статичный макет, но до рабочего аналога Lens не завершён базовый диагностический цикл: connect → watch → inspect → real logs/exec → cleanup.
+**Early alpha / pre-MVP.** UI-прототип переходит к частичной интеграции с Kubernetes. Базовый desktop цикл connect → watch → inspect → real logs/exec → cleanup подключён. До рабочего аналога Lens остаются native/live приёмка этого цикла, port-forward, общий mutation pipeline, dynamic discovery и производительность больших наборов.
 
 Архитектурные заготовки Rust не эквивалентны готовому приложению. Наличие пакета в `package.json` не доказывает интеграцию: dockview и TanStack Table/Virtual установлены, но текущая рабочая область/таблицы их не используют.
 
@@ -16,8 +16,8 @@
 | 1. Core/Kubeconfig | Сервисы и CLI есть; клиентский пул и базовый health; полноценный multi-cluster session lifecycle не завершён |
 | 2. IDE shell | Дерево/табы/split/inspector/dock есть; только dark, полноценный dockview не интегрирован |
 | 3. Watch/таблицы | Desktop watch подключён через Tauri Channels; atomic relist, bounded batching, reconnect/stale, lifecycle и context isolation покрыты локальным HTTP/API и browser IPC tests. Browser — snapshots; namespace-scoped UI и ручной ввод при RBAC подключены; native/live QA, lazy subscriptions и virtualization ещё открыты |
-| 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Desktop logs подключены потоком с tail/since/previous/cancel/reconnect; browser logs пока snapshots. Host PTY подключён (portable-pty/Tauri/xterm, реальные Linux PTY tests); node debug/PF остаются в плане |
-| 5. Config/Network/Storage/RBAC | Часть фиксированных списков и деталей есть; RBAC UI, NetworkPolicy, quotas/HPA/EndpointSlice отсутствуют |
+| 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Desktop logs подключены потоком с tail/since/previous/cancel/reconnect; browser logs пока snapshots. Host PTY подключён (portable-pty/Tauri/xterm, реальные Linux PTY tests); Node debug подключён (privileged helper/host chroot/UID cleanup/retry), live/native QA остаётся; PF в плане |
+| 5. Config/Network/Storage/RBAC | Часть фиксированных списков и деталей есть; построчное live редактирование Secret data с Text/Base64 и UID/resourceVersion подключено, контролируемая live/native QA остаётся. RBAC UI, NetworkPolicy, quotas/HPA/EndpointSlice отсутствуют |
 | 6. YAML/CRD | Monaco, просмотр/экспорт и demo edit; live apply/diff/schema и dynamic CRD explorer отсутствуют |
 | 7. Helm | Есть Rust wrapper вокруг helm; нет UI/IPC, context в API wrapper пока не передаётся |
 | 8. Метрики | Есть Rust запросы Metrics API; нет подключённых UI/истории/Prometheus |
@@ -58,3 +58,6 @@ Pod-сессии дополнены: [13](13-POD-SESSIONS.md). Общая мод
 Desktop log stream (OPS-01A) подключён: follow/tail/since/previous, остановка и явный reconnect, bounded UTF-8/history/IPC, общий container picker; [14](14-POD-LOG-STREAMS.md). OPS-01 остаётся PARTIAL: browser stream и native GUI/длительная QA ещё открыты.
 
 Host terminal (OPS-02B) подключён: без kubeconfig/кластера, доступные системные shell, home directory, stdin/UTF-8/Ctrl-C/TTY resize/exit, независимые сессии и cleanup; [15](15-HOST-TERMINAL.md). OPS-02 остаётся PARTIAL: нативная GUI/длительная/cross-platform приёмка OPS-02C ещё открыта.
+
+
+Последний блок: завершившиеся контейнеры серые, Pending синий, Warning жёлтый; переключатель интервалов синхронизации удалён, ручной Sync сохранён. Меню Columns действительно переключает видимость; Name обязателен, колонка номеров имеет сохраняемую ширину/resize/reset. В Secret data общий работающий Text/Base64 рядом с Reveal; строки редактируются/добавляются/удаляются, ошибки и обновления watch сохраняют draft. Детали контрактов и границ: [16 — Node shell](16-NODE-SHELL.md), [17 — Secret editor](17-SECRET-EDITOR.md).

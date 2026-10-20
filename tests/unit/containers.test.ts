@@ -10,8 +10,18 @@ describe('Container identity, roles and status', () => {
   it('joins status by name and includes regular/init/native sidecar/ephemeral without relabelling legacy sidecars', () => {
     const containers = podContainers(mapK8sResource(raw, 'Pod'));
     expect(containers.map((c) => [c.name, c.role, c.state])).toEqual([['app','application','running'], ['proxy','application','waiting'], ['setup','init','terminated'], ['shipper','sidecar','running'], ['debug','ephemeral','running']]);
-    expect(containers.map(containerTone)).toEqual(['ok','danger','info','warn','info']);
+    expect(containers.map(containerTone)).toEqual(['ok','danger','muted','warn','ok']);
     expect(containers.map(canExecContainer)).toEqual([true,false,false,true,true]);
+  });
+  it('uses grey for Completed, blue for normal startup, yellow for warnings and red for errors', () => {
+    const [running, , completed] = podContainers(mapK8sResource(raw, 'Pod'));
+    expect(containerTone(completed)).toBe('muted');
+    const pending = podContainers(mapK8sResource({ ...raw, status: { phase: 'Pending' } }, 'Pod'));
+    expect(pending.every((c) => c.state === 'waiting' && containerTone(c) === 'info')).toBe(true);
+    for (const reason of [undefined, 'Pending', 'ContainerCreating', 'PodInitializing']) expect(containerTone({ ...running, state: 'waiting', ready: false, reason })).toBe('info');
+    expect(containerTone({ ...running, ready: false })).toBe('warn');
+    expect(containerTone({ ...running, state: 'waiting', ready: false, reason: 'Warning' })).toBe('warn');
+    expect(containerTone({ ...completed, exitCode: 1 })).toBe('danger');
   });
   it('does not borrow another container status when status arrays are incomplete', () => {
     const containers = podContainers(mapK8sResource({ ...raw, status: { containerStatuses: [raw.status.containerStatuses[0]] } }, 'Pod'));

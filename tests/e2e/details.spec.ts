@@ -283,3 +283,24 @@ test('Related excludes notifications; each object has its own searchable and pag
   await expect(inspector.getByRole('article')).toHaveCount(1);
   await expect(inspector.getByRole('article')).toContainText('Application restarting');
 });
+
+test('container colors agree across table, details and picker: Completed grey, Pending blue, warning yellow', async ({ page }) => {
+  const states = [{ name: 'done', ready: false, state: { terminated: { reason: 'Completed', exitCode: 0 } } }, { name: 'pending', ready: false, state: { waiting: { reason: 'ContainerCreating' } } }, { name: 'warning', ready: false, state: { running: {} } }];
+  await mockResourceLists(page, { Pod: [{ metadata: { uid: 'colors', name: 'status-colors', namespace: 'backend' }, spec: { containers: states.map(({ name }) => ({ name, image: 'app' })) }, status: { phase: 'Running', containerStatuses: states } }] });
+  await page.route('**/api/k8s/logs?*', (route) => route.fulfill({ json: '2026-10-20T00:00:00Z log\n' }));
+  await page.goto('/');const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'status-colors' });
+  const color = async (locator: import('@playwright/test').Locator) => locator.evaluate((el) => getComputedStyle(el).color);
+  const tokenColor = async (variable: string) => page.evaluate((variable) => { const probe = document.createElement('span');probe.style.color = `var(${variable})`;document.body.append(probe);const color = getComputedStyle(probe).color;probe.remove();return color; }, variable);
+  const completed = row.locator('[data-container-status="terminated"]');const pending = row.locator('[data-container-status="waiting"]');const warning = row.locator('[data-container-status="running"]');
+  await expect(completed).toBeVisible();
+  expect(await color(completed)).toBe(await tokenColor('--text-muted'));
+  expect(await color(warning)).toBe(await tokenColor('--status-warn'));
+  expect(await color(pending)).toBe(await tokenColor('--status-pending'));expect(await color(pending)).not.toBe(await color(warning));expect(await color(pending)).not.toBe(await color(completed));
+  await row.click();const inspector = page.getByTestId('resource-details');
+  expect(await color(inspector.locator('[data-container-status="terminated"]'))).toBe(await color(completed));
+  expect(await color(inspector.locator('[data-container-status="waiting"]'))).toBe(await color(pending));
+  await inspector.getByRole('button', { name: 'Logs for done', exact: true }).click();await page.getByTestId('logs-toolbar').getByRole('button', { name: 'Select Container' }).click();
+  expect(await color(page.getByRole('option', { name: /done/ }).locator('[data-container-status]'))).toBe(await color(completed));
+  expect(await color(page.getByRole('option', { name: /pending/ }).locator('[data-container-status]'))).toBe(await color(pending));
+  expect(await color(page.getByRole('option', { name: /warning/ }).locator('[data-container-status]'))).toBe(await color(warning));
+});

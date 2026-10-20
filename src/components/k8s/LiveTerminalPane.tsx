@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Eraser, RotateCw, Unplug } from 'lucide-react';
-import { connectPodExec, connectHostTerminal, getHostTerminalInfo, type HostTerminalInfo, type ExecConnection } from '../../providers/tauri_exec';
+import { connectPodExec, connectHostTerminal, connectNodeExec, getHostTerminalInfo, type HostTerminalInfo, type ExecConnection } from '../../providers/tauri_exec';
 import { errorHint, normalizeK8sError } from '../../providers/errors';
 import { resourceQuery } from '../../core/resources/resource_types';
 import { useUiStore } from '../../state/ui_store';
@@ -12,7 +12,7 @@ import { ContainerSelect } from './ContainerSelect';
 import { useSessionContainers } from './useSessionContainers';
 import { IconButton } from '../ui/Button';
 
-export function LiveTerminalPane({ session, visible, onContainerChange }: { session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
+export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebug }: { nodeDebug?: { id: string; node: string; shell: string; onReconnect: () => void; onShellChange: (shell: string) => void }; session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
   const { containers, container, context, uid } = useSessionContainers(session, true);
   const fontSize = useUiStore((s) => s.terminalFontSize);
   const local = session.targetType === 'local';
@@ -22,14 +22,14 @@ export function LiveTerminalPane({ session, visible, onContainerChange }: { sess
   const [phase, setPhase] = useState('Connecting'); const [error, setError] = useState('');
   const box = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | null>(null); const fit = useRef<FitAddon | null>(null);
   const connection = useRef<ExecConnection | null>(null); const live = useRef(false); const cancellation = useRef<AbortController | null>(null);
-  const selectedShell = shell || hostInfo?.default_shell || '';
+  const selectedShell = nodeDebug?.shell ?? (shell || hostInfo?.default_shell || '');
   useEffect(() => {
     if (!local) return;
     let cancelled = false; setHostError('');
     void getHostTerminalInfo().then((info) => { if (!cancelled) setHostInfo(info); }).catch((error) => { if (!cancelled) setHostError(normalizeK8sError(error, { operation: 'host_terminal' }).message); });
     return () => { cancelled = true; };
   }, [local, attempt]);
-  const target = JSON.stringify([local, session.id, hostInfo?.cwd, hostError, context, session.namespace, session.resourceName, uid, container, selectedShell, attempt]);
+  const target = JSON.stringify([nodeDebug?.id, local, session.id, hostInfo?.cwd, hostError, context, session.namespace, session.resourceName, uid, container, selectedShell, attempt]);
   useEffect(() => {
     if (local && !hostInfo) { setPhase(hostError ? 'Failed' : 'Loading shell'); setError(hostError); return; }
     if (!box.current) return;
@@ -56,14 +56,15 @@ export function LiveTerminalPane({ session, visible, onContainerChange }: { sess
           else if (event.type === 'Output') await write(new Uint8Array(event.payload.data));
           else { finished = true; live.current = false; term.options.disableStdin = true;
             if (event.type === 'Exited') { setPhase(`Exited (${event.payload.code})`); await write(`\r\n[Process exited with code ${event.payload.code}]\r\n`); }
-            else { const failure = normalizeK8sError(event.payload.error, { operation: local ? 'host_terminal' : 'exec', context: local ? undefined : context ?? undefined }); setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`); setPhase('Failed'); }
+            else { const failure = normalizeK8sError(event.payload.error, { operation: nodeDebug ? 'node_debug' : local ? 'host_terminal' : 'exec', context: local ? undefined : context ?? undefined }); setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`); setPhase('Failed'); }
           }
         };
         const conn = local
           ? await connectHostTerminal({ shell: selectedShell, cols: term.cols, rows: term.rows }, receive, abort.signal)
+          : nodeDebug ? await connectNodeExec({ debug_session_id: nodeDebug.id, shell: selectedShell, cols: term.cols, rows: term.rows }, receive, abort.signal)
           : await connectPodExec({ resource: { ...resourceQuery(context!, 'Pod', session.namespace), name: session.resourceName!, uid: uid! }, container, shell: selectedShell, cols: term.cols, rows: term.rows }, receive, abort.signal);
         if (abort.signal.aborted) conn.close(); else { connection.current = conn; acknowledged = true; enable(); fitNow(); if (box.current?.offsetParent) term.focus(); }
-      } catch (error) { if (!abort.signal.aborted) { const failure = normalizeK8sError(error, { operation: local ? 'host_terminal' : 'exec' }); setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`); setPhase('Failed'); } }
+      } catch (error) { if (!abort.signal.aborted) { const failure = normalizeK8sError(error, { operation: nodeDebug ? 'node_debug' : local ? 'host_terminal' : 'exec' }); setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`); setPhase('Failed'); } }
     }
     void start();
     return () => { live.current = false; abort.abort(); connection.current?.close(); connection.current = null; clearTimeout(resizeTimer); observer.disconnect(); data.dispose(); term.dispose(); terminal.current = null; fit.current = null; };
@@ -73,11 +74,11 @@ export function LiveTerminalPane({ session, visible, onContainerChange }: { sess
   useEffect(() => { if (visible) { const timer = setTimeout(() => { fit.current?.fit(); const term = terminal.current; if (term) { connection.current?.resize(term.cols, term.rows); term.focus(); } }, 0); return () => clearTimeout(timer); } }, [visible]);
   return <div className="h-full flex flex-col min-h-0 min-w-0" data-testid="live-terminal">
     <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-secondary)]">
-      <span className="flex-[1_1_160px] min-w-0 truncate font-mono text-xs" title={local ? hostInfo?.cwd : `${context} / ${session.namespace} / ${session.resourceName}`}>{local ? 'Local host' : session.resourceName}<span className="text-[var(--text-muted)] ml-2">{local ? hostInfo?.cwd : session.namespace}</span></span>
-      {!local && <div className="min-w-0 max-w-full"><ContainerSelect shell containers={containers} value={container} onChange={onContainerChange ?? ((name) => useDockStore.getState().updateSessionContainer(session.id, name))} /></div>}
-      <select aria-label="Shell binary" className="ide-select max-w-full" value={selectedShell} onChange={(e) => setShell(e.target.value)}>{(local ? hostInfo?.shells ?? [] : ['/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh']).map((value) => <option key={value}>{value}</option>)}</select>
+      <span className="flex-[1_1_160px] min-w-0 truncate font-mono text-xs" title={local ? hostInfo?.cwd : `${context} / ${session.namespace} / ${session.resourceName}`}>{nodeDebug ? `Node: ${nodeDebug.node}` : local ? 'Local host' : session.resourceName}<span className="text-[var(--text-muted)] ml-2">{local ? hostInfo?.cwd : session.namespace}</span></span>
+      {!local && !nodeDebug && <div className="min-w-0 max-w-full"><ContainerSelect shell containers={containers} value={container} onChange={onContainerChange ?? ((name) => useDockStore.getState().updateSessionContainer(session.id, name))} /></div>}
+      <select aria-label="Shell binary" className="ide-select max-w-full" value={selectedShell} onChange={(e) => nodeDebug ? nodeDebug.onShellChange(e.target.value) : setShell(e.target.value)}>{(local ? hostInfo?.shells ?? [] : ['/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh']).map((value) => <option key={value}>{value}</option>)}</select>
       <span role="status" className="text-xs text-[var(--text-secondary)]">{phase}</span>
-      <div className="flex gap-1 ml-auto"><IconButton icon={RotateCw} size="sm" aria-label="Reconnect shell" tooltip="Reconnect shell" onClick={() => setAttempt((n) => n + 1)} /><IconButton icon={Unplug} size="sm" aria-label="Disconnect shell" tooltip="Disconnect shell" onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} /><IconButton icon={Eraser} size="sm" aria-label="Clear terminal" tooltip="Clear terminal" onClick={() => terminal.current?.clear()} /></div>
+      <div className="flex gap-1 ml-auto"><IconButton icon={RotateCw} size="sm" aria-label="Reconnect shell" tooltip="Reconnect shell" onClick={() => nodeDebug ? nodeDebug.onReconnect() : setAttempt((n) => n + 1)} /><IconButton icon={Unplug} size="sm" aria-label="Disconnect shell" tooltip="Disconnect shell" onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} /><IconButton icon={Eraser} size="sm" aria-label="Clear terminal" tooltip="Clear terminal" onClick={() => terminal.current?.clear()} /></div>
     </div>
     {error && <div role="alert" className="shrink-0 px-3 py-2 text-xs text-[var(--status-danger)] break-words">{error}</div>}
     <div ref={box} className="flex-1 min-h-0 min-w-0 overflow-hidden pl-2 pt-1" />
