@@ -66,7 +66,7 @@ export const CommandPalette: React.FC = () => {
   const cluster = useClusterStore.getState();
 
   /* ------------------- command list ------------------- */
-  const commands: Command[] = [];
+  const commands: Command[] = [{ id: 'overview', label: 'Open Overview', section: 'Go to', icon: Layout, keywords: 'cluster namespace statistics summary', run: () => useWorkspaceStore.getState().openOverview() }];
 
   // Navigate: perspectives
   for (const p of PERSPECTIVES) {

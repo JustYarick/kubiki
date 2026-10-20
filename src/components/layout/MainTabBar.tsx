@@ -8,6 +8,7 @@ import {
   FileText,
   Boxes,
   Columns2,
+  LayoutDashboard,
 } from 'lucide-react';
 import { useWorkspaceStore, type WorkspaceTab } from '../../state/workspace_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -62,6 +63,7 @@ export const MainTabBar: React.FC = () => {
   };
 
   const getTabIcon = (tab: WorkspaceTab) => {
+    if (tab.type === 'overview') return <LayoutDashboard size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'yaml-editor') return <FileCode size="calc(13px * var(--ui-factor))" className="text-amber-400 shrink-0" />;
     if (tab.type === 'terminal') return <TermIcon size="calc(13px * var(--ui-factor))" className="text-emerald-400 shrink-0" />;
     if (tab.type === 'logs') return <FileText size="calc(13px * var(--ui-factor))" className="text-blue-400 shrink-0" />;
@@ -221,6 +223,7 @@ export const MainTabBar: React.FC = () => {
         >
           {(close) => (
             <div className="py-1">
+              <button className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-left hover:bg-[var(--bg-hover)]" onClick={() => { useWorkspaceStore.getState().openOverview(); close(); }}><LayoutDashboard size={14} />Overview</button>
               <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Open Resource Table
               </div>

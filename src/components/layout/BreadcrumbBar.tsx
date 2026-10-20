@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronRight, Server, Layers, Box, FileCode, Terminal as TermIcon, FileText } from 'lucide-react';
+import { ChevronRight, Server, Layers, Box, FileCode, Terminal as TermIcon, FileText, LayoutDashboard } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -59,6 +59,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
 
           {/* Kind or Category */}
           <div className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[var(--text-primary)] font-medium">
+            {activeTab.type === 'overview' && <LayoutDashboard size={11} className="text-[var(--accent)]" />}
             {activeTab.type === 'yaml-editor' && <FileCode size="calc(11px * var(--ui-factor))" className="text-amber-400" />}
             {activeTab.type === 'terminal' && <TermIcon size="calc(11px * var(--ui-factor))" className="text-emerald-400" />}
             {activeTab.type === 'logs' && <FileText size="calc(11px * var(--ui-factor))" className="text-blue-400" />}
@@ -70,7 +71,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
       )}
 
       {/* Resource Name if selected or viewing detail/yaml */}
-      {(activeTab?.name || selectedItem?.name) && (
+      {activeTab?.type !== 'overview' && (activeTab?.name || selectedItem?.name) && (
         <>
           <ChevronRight size="calc(11px * var(--ui-factor))" className="text-[var(--text-muted)] opacity-60 shrink-0" />
           <span className="font-mono text-[var(--text-primary)] min-w-0 truncate px-1 py-0.5 rounded bg-[var(--bg-surface)]/40 font-medium">

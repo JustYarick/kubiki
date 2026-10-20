@@ -9,6 +9,7 @@ import {
   FolderPlus,
   Columns2,
   ExternalLink,
+  LayoutDashboard,
 } from 'lucide-react';
 import { SIDEBAR_TREE, type KindEntry, type TreeGroup, type TreeCategory } from '../../core/perspectives';
 import { useResourceStore } from '../../state/resource_store';
@@ -27,7 +28,8 @@ export const Sidebar: React.FC = () => {
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   const groups = useUiStore((s) => s.sidebarGroups);
   const toggleGroup = useUiStore((s) => s.toggleGroup);
-  const { openResourceList, toggleSplit } = useWorkspaceStore();
+  const { openResourceList, toggleSplit, openOverview, tabs, activeTabId } = useWorkspaceStore();
+  const overviewActive = tabs.find(tab => tab.id === activeTabId)?.type === 'overview';
 
   const [filter, setFilter] = useState('');
   const [contextMenu, setContextMenu] = useState<{ kind: ResourceKind; x: number; y: number } | null>(null);
@@ -158,6 +160,8 @@ export const Sidebar: React.FC = () => {
         </div>
       </div>
 
+      {(!searching || 'overview'.includes(q)) && <button aria-label="Open Overview" aria-pressed={overviewActive} onClick={openOverview} className={cx('flex items-center gap-2 px-3 py-2 text-xs text-left shrink-0 border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]', overviewActive ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}><LayoutDashboard size={14} />Overview</button>}
+
       {/* Tree */}
       <div className="flex-1 overflow-y-auto kubiki-scrollbar py-1">
         {filtered.map((cat) => {
@@ -217,7 +221,7 @@ export const Sidebar: React.FC = () => {
                     {gOpen && (
                       <div className="py-0.5">
                         {g.kinds.map((entry) => {
-                          const selected = activeKind === entry.kind;
+                          const selected = !overviewActive && activeKind === entry.kind;
                           const total = countFor(entry.kind);
                           const Icon = entry.icon;
 

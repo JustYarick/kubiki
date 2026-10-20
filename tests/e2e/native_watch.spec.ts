@@ -195,3 +195,13 @@ test('a diagram outside the selected namespace explains missing data and loads i
   await expect(page.getByRole('button', { name: 'Namespace Scope', exact: true })).toHaveAttribute('data-value', 'other');
   await expect(page.locator('.react-flow__node-resource').getByText('other-web', { exact: true })).toBeVisible();
 });
+
+test('Overview derives live phase/issue counts from existing watches without adding subscriptions', async ({ page }) => {
+  await nativeApi(page);await page.goto('/');await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  const overview = page.getByTestId('cluster-overview');const phases = overview.getByRole('region', { name: 'Pod phases', exact: true });
+  await expect(overview.getByTestId('overview-count-Pod')).toHaveText('1');await expect(phases.getByText('Running', { exact: true }).locator('..')).toHaveText('Running1');
+  expect(await page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(18);
+  await page.evaluate(() => (window as any).__watchHarness.update('Failed'));await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed1');await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
+  await page.evaluate(() => (window as any).__watchHarness.reconnect());await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('1');
+  await page.evaluate(() => (window as any).__watchHarness.empty());await expect(overview.getByTestId('overview-count-Pod')).toHaveText('0');await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed0');
+});

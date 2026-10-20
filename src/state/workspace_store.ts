@@ -6,6 +6,7 @@ import type { ResourceRef } from '../core/resources/resource_types';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 
 export type WorkspaceTabType =
+  | 'overview'        // Follows the global cluster and namespace selection
   | 'resource-list'   // DataGrip-grade resource table (e.g. Pods, Deployments)
   | 'yaml-editor'     // Full-screen / split Monaco YAML editor
   | 'resource-detail' // Dedicated resource inspector overview
@@ -39,6 +40,7 @@ interface WorkspaceState {
 
   /* Actions */
   openTab: (tab: Omit<WorkspaceTab, 'id'> & { id?: string }) => void;
+  openOverview: () => void;
   openResourceList: (kind: ResourceKind, namespace?: string) => void;
   openYamlEditor: (item: ResourceItem) => void;
   openResourceDetail: (item: ResourceItem) => void;
@@ -74,6 +76,7 @@ const DEFAULT_TABS: WorkspaceTab[] = [
     subtitle: 'all namespaces',
     kind: 'Deployment',
   },
+  { id: 'tab-overview', type: 'overview', title: 'Overview' },
 ];
 
 export const useWorkspaceStore = create<WorkspaceState>()(
@@ -109,6 +112,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           activeTabId: id,
         });
       },
+
+      openOverview: () => get().openTab({ id: 'tab-overview', type: 'overview', title: 'Overview' }),
 
       openResourceList: (kind, namespace) => {
         const { tabs } = get();

@@ -50,3 +50,6 @@ Playwright автоматически использует `/usr/bin/google-chro
 ## Лицензия
 
 Kubiki распространяется под [Apache License 2.0](LICENSE). Лицензии сторонних зависимостей сохраняются за их правообладателями.
+
+
+Общая статистика: **Overview** в левом Cluster Explorer (или «+» у вкладок). При All Namespaces — сводка кластера, при выбранном namespace — только его ресурсы. Counts, Pod phases, restarts, проблемы и переходы к объектам используют текущие watch/snapshots; недоступные данные отмечены отдельно. CPU/RAM usage пока не подключён. См. [18](docs/18-OVERVIEW.md).

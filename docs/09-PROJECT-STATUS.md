@@ -61,3 +61,6 @@ Host terminal (OPS-02B) подключён: без kubeconfig/кластера, 
 
 
 Последний блок: завершившиеся контейнеры серые, Pending синий, Warning жёлтый; переключатель интервалов синхронизации удалён, ручной Sync сохранён. Меню Columns действительно переключает видимость; Name обязателен, колонка номеров имеет сохраняемую ширину/resize/reset. В Secret data общий работающий Text/Base64 рядом с Reveal; строки редактируются/добавляются/удаляются, ошибки и обновления watch сохраняют draft. Детали контрактов и границ: [16 — Node shell](16-NODE-SHELL.md), [17 — Secret editor](17-SECRET-EDITOR.md).
+
+
+Overview кластера/namespace подключён (UX-17): следует глобальному scope/context, агрегирует counts/Pod phases/restarts/diagnostics из текущих snapshots, выделяет partial/stale и позволяет открыть списки/объекты. Cluster-scoped ресурсы не попадают в namespace summary; Event не входит в общий object count. Дополнительных watches нет. Usage metrics/история/quotas пока не реализованы, DOMAIN-02 остаётся TODO. См. [18](18-OVERVIEW.md).

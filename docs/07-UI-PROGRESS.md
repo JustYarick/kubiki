@@ -6,7 +6,15 @@
 
 ---
 
-## Последний блок — 2026-10-20: UX-16, внутренний scroll больших data values
+## Последний блок — 2026-10-20: UX-17, cluster / namespace Overview
+
+- **DONE:** вкладка Overview в workspace, левом Cluster Explorer, New Tab menu и command palette. Повторное открытие активирует одну вкладку; существующие workspace могут открыть её через меню. Стандартная активная Pods не изменена. Overview следует глобальному context/namespace picker: All Namespaces — кластер, конкретный namespace — только его namespaced ресурсы. Cluster-scoped Nodes/Namespaces и прочие cluster kinds в namespace summary не попадают.
+- **Статистика:** resource counts, Pods по фазам с пропорциональной полосой, restarts application/init/ephemeral контейнеров, Workloads без повторного подсчёта ReplicaSet, Services, cluster Nodes/Ready и Namespaces. Inventory со ссылками на списки, diagnostics с переходом в объект (первые 10, ошибки выше warnings); Warning Events отдельно, Event исключён из общего object total.
+- **Источники:** существующий resource store/watch/snapshots, дополнительных API list/watch нет. Проверка покрытия snapshot по context/namespace не позволяет использовать данные чужой области при переключении. При отсутствии snapshot/403 показывается «—», при reconnect сохранённые counts отмечаются stale; partial banner раскрывает причины. Реально пустая область даёт нули. Usage CPU/RAM, история, quotas/requests/limits не подключены; DOMAIN-02 остаётся TODO. Контракт — [18](18-OVERVIEW.md).
+- **Проверки:** 158/158 unit/contract tests (21 файл); production build с app/server/tests typecheck, повторный typecheck после добавления native browser scenario, `git diff --check`. Общий production browser прогон **63/63**, 1,1 мин: новые scope/refresh/navigation/persistence/403/empty/narrow scenarios и native watch→Overview update/stale/empty без увеличения числа subscriptions (18). Прежние Secret/ConfigMap scroll, Columns, Pod/Node/host/logs/watch/topology/workspace регрессии сохранены. Скриншот Overview при 900 px просмотрен. Rust не менялся; native GUI/live/performance QA остаётся отдельной. Прежний warning крупных JS chunks остаётся.
+- **Roadmap:** UX-17 DONE; usage metrics DOMAIN-02, native/live QA и последующий интеграционный OPS-04 не закрывались. Graphics flags и отложенный native diagram pan не менялись.
+
+## 2026-10-20: UX-16, внутренний scroll больших data values
 
 - **DONE:** высота отдельного значения Secret/ConfigMap ограничена `min(280px × UI scale, 40vh)`; длинный текст и base64 прокручиваются внутри блока. Содержимое полностью сохраняется, ключи/следующие значения/действия не входят во внутреннюю прокрутку. Preview доступен с клавиатуры; textarea Secret сохраняет ограничение при ручном resize. Остальные Overview-разделы не менялись.
 - **Проверки:** production build с app/server/tests typecheck и `git diff --check` пройдены; 7/7 целевых production browser scenarios (5 прежних Secret + 2 новых Secret/ConfigMap с текстом более 10k символов). Проверены полный текст, внутренний scroll с клавиатуры, положение следующего ключа и cap при resize textarea. Rust не менялся. Прежний build warning о крупных chunks остаётся.

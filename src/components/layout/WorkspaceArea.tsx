@@ -1,6 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { MainTabBar } from './MainTabBar';
 import { BreadcrumbBar } from './BreadcrumbBar';
+import { OverviewView } from '../../views/OverviewView';
 import { ResourceView } from '../../views/ResourceView';
 import { useWorkspaceStore, type WorkspaceTab } from '../../state/workspace_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -67,6 +68,8 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
       </div>
     );
   }
+
+  if (tab.type === 'overview') return <OverviewView />;
 
   if (tab.type !== 'resource-list' && tab.context !== context) {
     return <div className="p-6 text-[var(--text-secondary)]">This tab belongs to context {tab.context || 'unknown'}. Switch back to that context to use it.</div>;

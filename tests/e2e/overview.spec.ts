@@ -1,0 +1,30 @@
+import { test, expect } from '@playwright/test';
+async function setup(page: import('@playwright/test').Page, partial = false) {
+  let extra = false;
+  await page.route('**/api/k8s/**', route => {
+    const url = new URL(route.request().url());const op = url.pathname.split('/').pop();const kind = url.searchParams.get('kind');
+    if (op === 'contexts') return route.fulfill({ json: [{ name: 'test', is_current: true }] });
+    if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
+    if (op === 'namespaces') return route.fulfill({ json: ['a', 'b', 'empty'] });
+    if (partial && kind === 'Secret') return route.fulfill({ status: 403, json: { error: { code: 'forbidden', status: 403, message: 'Secrets access denied', retryable: false } } });
+    const resource = (name: string, namespace?: string, status = {}) => ({ kind, metadata: { uid: name, name, namespace }, status });
+    const items = kind === 'Pod' ? [resource('good', 'a', { phase: 'Running', containerStatuses: [{ name: 'app', ready: true, restartCount: 2, state: { running: {} } }] }), resource('bad', 'b', { phase: 'Failed' }), ...(extra ? [resource('new', 'a', { phase: 'Pending' })] : [])]
+      : kind === 'Service' ? [resource('svc', 'a')] : kind === 'Node' ? [resource('worker', undefined, { conditions: [{ type: 'Ready', status: 'True' }] })] : [];
+    return route.fulfill({ json: { items } });
+  });
+  await page.goto('/');await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  return { overview: page.getByTestId('cluster-overview'), change: () => { extra = true; } };
+}
+test('Overview follows global namespace, refreshes counts, opens resources and persists as one tab', async ({ page }) => {
+  const { overview, change } = await setup(page);await expect(overview.getByRole('heading', { name: 'Cluster overview' })).toBeVisible();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('2');await expect(overview.getByRole('button', { name: 'Nodes: 1', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'a', exact: true }).click();await expect(overview.getByRole('heading', { name: 'Namespace overview' })).toBeVisible();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('1');await expect(overview.getByTestId('overview-count-Node')).toHaveCount(0);await expect(overview.getByRole('button', { name: 'Container restarts: 2', exact: true })).toBeVisible();
+  change();await page.getByRole('button', { name: 'Refresh', exact: true }).first().click();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('2');
+  await overview.getByRole('button', { name: 'Open Service resources', exact: true }).click();await expect(page.getByTestId('resource-table').getByTitle('svc', { exact: true })).toBeVisible();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  await page.reload();await expect(overview).toBeVisible();await expect(overview.getByRole('heading', { name: 'Cluster overview' })).toBeVisible();
+  await overview.getByRole('region', { name: 'Detected issues', exact: true }).getByRole('button').filter({ hasText: 'bad' }).click();await expect(page.locator('main').getByTestId('resource-details')).toContainText('bad');
+});
+test('Overview marks missing data, handles empty namespaces and fits narrow editor panes', async ({ page }) => {
+  const { overview } = await setup(page, true);await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByTestId('overview-count-Secret')).toHaveText('—');
+  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'empty', exact: true }).click();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('0');
+  await page.setViewportSize({ width: 900, height: 900 });expect(await overview.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);await page.screenshot({ path: 'test-results/overview.png' });
+});
