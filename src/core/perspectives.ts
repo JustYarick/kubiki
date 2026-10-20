@@ -81,6 +81,7 @@ export const KIND_ICONS: Record<ResourceKind, LucideIcon> = {
   RoleBinding: ShieldCheck,
   ClusterRole: ShieldCheck,
   ClusterRoleBinding: ShieldCheck,
+  HelmRelease: Anchor,
 };
 
 const k = (kind: ResourceKind, label: string, hue: string): KindEntry => ({ kind, label, icon: KIND_ICONS[kind], hue });

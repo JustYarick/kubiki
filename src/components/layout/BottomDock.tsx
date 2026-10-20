@@ -1,3 +1,4 @@
+import { ContainerChoices } from '../k8s/ContainerLaunchDialog';
 import { PFDialog } from '../dialogs/PFDialog';
 import { stopPortForward, openForwardUrl } from '../../providers/port_forward';
 import type { ResourceItem } from '../../types/k8s';
@@ -390,6 +391,8 @@ const ExpandedDock: React.FC = () => {
 /* ------------------------------------------------------------------ */
 
 export function TerminalSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
+  const choice = useSessionContainers(session, true);
+  if (choice.needsSelection) return <SessionContainerChoice session={session} shell onContainerChange={onContainerChange} />;
   if (!k8s.demo && session.targetType === 'node') return <NodeShellPane session={session} visible={visible} />;
   if (!k8s.demo && (session.targetType === 'pod' || session.targetType === 'local')) return <LiveTerminalPane session={session} visible={visible} onContainerChange={onContainerChange} />;
   if (!k8s.demo) return <div className="p-5 text-xs text-[var(--text-secondary)]">{session.targetType === 'node' ? 'Node debug shell requires a managed debug Pod; this transport is not connected yet.' : 'Local host PTY is not connected yet. Open Shell from a Pod to use Kubernetes exec.'}</div>;
@@ -651,7 +654,16 @@ const LOG_TEMPLATES = [
 ];
 
 
-export function LogsSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
+function SessionContainerChoice({ session, shell = false, onContainerChange }: { session: DockSession; shell?: boolean; onContainerChange?: (name: string) => void }) {
+  const { containers, recreated } = useSessionContainers(session, shell);
+  return <div className="p-4 max-w-lg overflow-auto"><h3 className="text-sm font-medium mb-3">Choose container · {shell ? 'Shell' : 'Logs'}</h3>{recreated ? <p>This Pod was recreated. Open a new session from the current resource.</p> : <ContainerChoices containers={containers} shell={shell} onChoose={name => onContainerChange ? onContainerChange(name) : useDockStore.getState().updateSessionContainer(session.id, name)} />}</div>;
+}
+export function LogsSessionPane(props: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
+  const { needsSelection } = useSessionContainers(props.session);
+  return needsSelection ? <SessionContainerChoice session={props.session} onContainerChange={props.onContainerChange} /> : <LogsSessionContent {...props} />;
+}
+
+function LogsSessionContent({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
   const [error, setError] = useState('');
   const { containers, container: activeContainer, context, recreated, uid } = useSessionContainers(session);
   const [lines, setLines] = useState<LogLine[]>([]);

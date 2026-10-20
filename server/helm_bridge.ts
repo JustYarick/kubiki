@@ -41,9 +41,15 @@ export function createHelmMiddleware(run: HelmExecutor = execute) {
     };
     const list = (text: string): unknown => text.trim() ? JSON.parse(text) ?? [] : [];
     try {
-      if (!['releases', 'repositories', 'history', 'content'].includes(operation)) throw requestError('not_found', 'Endpoint not found', info, 404);
+      if (operation === 'mutate') throw requestError('forbidden', 'Helm changes require desktop backend system confirmation. HTTP bridge is read-only.', info, 403);
+      if (!['releases', 'repositories', 'history', 'content', 'charts'].includes(operation)) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== 'GET') throw requestError('invalid_request', 'Method not allowed', info, 405);
       if (operation === 'repositories') return send(parseHelmRepositories(list(await helm(['repo', 'list', '--output=json'], true))));
+      if (operation === 'charts') {
+        const query = url.searchParams.get('query') ?? '';
+        if (query.length > 200 || query.startsWith('-') || /[\x00-\x1f\x7f]/.test(query)) throw invalid('Invalid chart search');
+        return send(list(await helm(['search', 'repo', query, '--output=json', '--versions'])));
+      }
       const namespace = url.searchParams.get('namespace');
       validateHelmTarget(context ?? '', namespace);
       const args = [`--kube-context=${context}`];

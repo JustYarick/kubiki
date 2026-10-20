@@ -23,6 +23,7 @@ import { matchesResourceRef } from '../../core/resources/identity';
 
 const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => ({ default: m.TopologyView })));
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
+const HelmReleaseWorkspace = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmReleaseWorkspace })));
 const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
 
 export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => void }> = ({ onSelectContext }) => {
@@ -76,6 +77,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   if (tab.type !== 'resource-list' && tab.context !== context) {
     return <div className="p-6 text-[var(--text-secondary)]">This tab belongs to context {tab.context || 'unknown'}. Switch back to that context to use it.</div>;
   }
+  if (tab.type === 'helm-release' && tab.item) return <Suspense fallback={<div>Loading Helm…</div>}><HelmReleaseWorkspace item={tab.item} /></Suspense>;
   if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<div className="p-4">Loading topology…</div>}><TopologyView namespace={tab.namespace} /></Suspense>;
 
   if (tab.type !== 'resource-list') {
@@ -85,7 +87,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
       : tab.name ? Array.from(resources[kind]?.values() || []).find((item) => matchesResourceRef(item, { ...tab, kind, name: tab.name! })) : undefined;
     const loaded = candidate && matchesResourceRef(candidate, tab.resource ?? { ...tab, kind, name: tab.name ?? candidate.name }) ? candidate : undefined;
     // An already open shell can keep its pinned target while namespace snapshots are unloaded.
-    const item = loaded ?? ((tab.type === 'terminal' || tab.type === 'logs') && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode) ? tab.item : undefined);
+    const item = loaded ?? (tab.item?.kind === 'HelmRelease' ? tab.item : undefined) ?? ((tab.type === 'terminal' || tab.type === 'logs') && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode) ? tab.item : undefined);
 
     if (!item && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
       return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;

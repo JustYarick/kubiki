@@ -36,7 +36,10 @@ test('CPU/RAM dashboard shows usage, budgets, source history, sorting and contai
   await page.getByTestId('cluster-overview').evaluate(el => el.scrollTop = 0);
   await page.screenshot({ path: 'test-results/overview-telemetry.png', fullPage: false });
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'alpha', exact: true }).click();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');await expect(telemetry.getByRole('button', { name: 'Rank Nodes', exact: true })).toHaveCount(0);await expect(telemetry.getByRole('row').filter({ hasText: 'web-beta' })).toHaveCount(0);
-  await page.setViewportSize({ width: 900, height: 900 });expect(await page.getByTestId('cluster-overview').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  for (const width of [900, 700]) {
+    await page.setViewportSize({ width, height: 900 });await expect.poll(() => page.getByTestId('cluster-overview').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    expect((await cpu.getByRole('img', { name: 'CPU usage history' }).boundingBox())!.height).toBeLessThan(125);
+  }
 });
 test('missing Metrics Server displays a reason and never turns unavailable usage into zero', async ({ page }) => {
   const { telemetry } = await fixture(page, true);await expect(telemetry.getByRole('status')).toContainText('Metrics Server unavailable');await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('—');await expect(telemetry.getByTestId('metric-memory-usage')).toHaveText('—');

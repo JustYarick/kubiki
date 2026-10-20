@@ -4,7 +4,7 @@
 
 ## Проверка
 
-Перезапустить `pnpm tauri dev` после обновления Rust. Nodes → объект → Node shell (либо соответствующий пункт ПКМ). Выбрать namespace для debug Pod и образ, нажать Start node shell. Подготовка начинается только после явного запуска. По умолчанию используется `docker.io/library/ubuntu:24.04`; образ должен иметь `/bin/sh`, `sleep`, `chroot`. Целевая нода должна быть Linux, host filesystem — содержать выбранный shell.
+Перезапустить `pnpm tauri dev` после обновления Rust. Nodes → объект → Node shell (либо соответствующий пункт ПКМ). Подготовка начинается автоматически при открытии Node shell и показывает backend system confirmation перед созданием helper. Начальный namespace — текущий выбранный namespace либо default при All namespaces; образ можно изменить в Configure. При ошибке/отмене повтор — только через Reconnect node shell, без автоматических retries. По умолчанию используется `docker.io/library/ubuntu:24.04`; образ должен иметь `/bin/sh`, `sleep`, `chroot`. Целевая нода должна быть Linux, host filesystem — содержать выбранный shell.
 
 Создаётся privileged Pod с hostPID/IPC/network и hostPath `/` → `/host`, без service account token. После readiness exec запускает `chroot /host /bin/sh` (либо выбранный shell). Это доступ к файловой системе ноды с высокими привилегиями. Подготовка проверяет Node UID и разрешения get Node / create,get,delete Pod / get pods/exec. kube-rs 0.98 использует GET WebSocket upgrade. Admission/Pod Security или image pull могут запретить запуск даже после успешной проверки RBAC.
 
@@ -20,7 +20,7 @@ Other debug Pods показывает помеченные Kubiki Pods выбр�
 
 ## Проверки и оставшиеся задачи
 
-5 Rust local HTTP/WS integration tests: реальная сериализация Pod, host chroot exec/stdin/output, отмена во время POST, RBAC/UID, retry cleanup, orphan deletion. 5 provider unit tests, Node routing/ACK test; 4 browser IPC tests: явный Start, ввод, reconnect/exit cleanup, cancel/late ready, отказ разрешений и ручное удаление.
+5 Rust local HTTP/WS integration tests: реальная сериализация Pod, host chroot exec/stdin/output, отмена во время POST, RBAC/UID, retry cleanup, orphan deletion. 5 provider unit tests, Node routing/ACK test; 4 browser IPC tests: автоматическое подключение при открытии (одна preparation), ввод, reconnect/exit cleanup, cancel/late ready, отказ разрешений и ручное удаление.
 
 OPS-03B: native GUI на тестовом кластере, admission/image pull/finalizers, реальные обрывы и длительные потоки, proxy/credentials, macOS/Windows transport. Browser IPC и локальный API этого не заменяют.
 

@@ -11,12 +11,12 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status = 'Unknown', cl
   const s = status.toLowerCase();
 
   let colorPair: [string, string] = ['bg-[var(--bg-surface)] text-[var(--text-secondary)] border-[var(--border-default)]', 'bg-[var(--status-neutral)]'];
-  if (s === 'running' || s === 'active' || s === 'ready' || s === 'bound' || s === 'available') {
+  if (s === 'running' || s === 'active' || s === 'ready' || s === 'bound' || s === 'available' || s === 'deployed') {
     colorPair = ['bg-[var(--status-ok)]/10 text-[var(--status-ok)] border-[var(--status-ok)]/30', 'bg-[var(--status-ok)]'];
   } else if (['pending', 'containercreating', 'podinitializing', 'waiting'].includes(s)) {
     colorPair = ['bg-[var(--status-pending)]/10 text-[var(--status-pending)] border-[var(--status-pending)]/30', 'bg-[var(--status-pending)] animate-pulse'];
   } else if (
-    s === 'warning' || s === 'terminating' ||
+    s === 'warning' || s === 'terminating' || s.startsWith('pending-') || s === 'uninstalling' ||
     s === 'progressing' || s === 'notready' || s === 'unavailable'
   ) {
     colorPair = ['bg-[var(--status-warn)]/10 text-[var(--status-warn)] border-[var(--status-warn)]/30', 'bg-[var(--status-warn)] animate-pulse'];

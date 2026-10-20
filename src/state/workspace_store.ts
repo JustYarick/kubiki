@@ -1,3 +1,4 @@
+import { useContainerLaunchStore } from './container_launch_store';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useClusterStore } from './cluster_store';
@@ -9,6 +10,7 @@ export type WorkspaceTabType =
   | 'overview'        // Follows the global cluster and namespace selection
   | 'helm-releases'
   | 'helm-repositories'
+  | 'helm-release'
   | 'resource-list'   // DataGrip-grade resource table (e.g. Pods, Deployments)
   | 'yaml-editor'     // Full-screen / split Monaco YAML editor
   | 'resource-detail' // Dedicated resource inspector overview
@@ -44,6 +46,7 @@ interface WorkspaceState {
   openTab: (tab: Omit<WorkspaceTab, 'id'> & { id?: string }) => void;
   openOverview: () => void;
   openHelm: (section: import('../providers/helm_types').HelmSection) => void;
+  openHelmRelease: (item: ResourceItem) => void;
   openResourceList: (kind: ResourceKind, namespace?: string) => void;
   openYamlEditor: (item: ResourceItem) => void;
   openResourceDetail: (item: ResourceItem) => void;
@@ -118,6 +121,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       openOverview: () => get().openTab({ id: 'tab-overview', type: 'overview', title: 'Overview' }),
       openHelm: (section) => get().openTab({ id: `tab-helm-${section}`, type: `helm-${section}`, title: section === 'releases' ? 'Helm Releases' : 'Helm Repositories' }),
+      openHelmRelease: item => get().openTab({ id: resourceTabId('helm', useClusterStore.getState().currentContext, item), type: 'helm-release', title: `Helm: ${item.name}`, name: item.name, namespace: item.namespace, context: useClusterStore.getState().currentContext, item }),
 
       openResourceList: (kind, namespace) => {
         const { tabs } = get();
@@ -148,7 +152,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
       }),
-      openResourceDetail: (item) => get().openTab({
+      openResourceDetail: (item) => item.kind === 'HelmRelease' ? get().openHelmRelease(item) : get().openTab({
         id: resourceTabId('detail', useClusterStore.getState().currentContext, item),
         type: 'resource-detail', title: item.name, subtitle: `${item.kind} · ${item.namespace || 'cluster'}`,
         resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
@@ -156,20 +160,26 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         context: useClusterStore.getState().currentContext,
       }),
       setTabContainer: (id, container) => set((state) => ({ tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, container, subtitle: `${tab.namespace} · ${container}` } : tab) })),
-      openLogsTab: (item, container) => get().openTab({
-        id: resourceTabId('logs', useClusterStore.getState().currentContext, item, container),
-        type: 'logs', title: `Logs: ${item.name}`, subtitle: `${item.namespace} · ${container || 'default container'}`,
-        resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
-        kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
-        context: useClusterStore.getState().currentContext,
-      }),
-      openTerminalTab: (item, container) => get().openTab({
-        id: resourceTabId('terminal', useClusterStore.getState().currentContext, item, container),
-        type: 'terminal', title: `Terminal: ${item.name}`, subtitle: item.namespace,
-        resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
-        kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
-        context: useClusterStore.getState().currentContext,
-      }),
+      openLogsTab: (item, container) => {
+        if (useContainerLaunchStore.getState().request(item, container, false, chosen => get().openLogsTab(item, chosen))) return;
+        get().openTab({
+          id: resourceTabId('logs', useClusterStore.getState().currentContext, item, container),
+          type: 'logs', title: `Logs: ${item.name}`, subtitle: `${item.namespace} · ${container || 'default container'}`,
+          resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
+          kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
+          context: useClusterStore.getState().currentContext,
+        });
+      },
+      openTerminalTab: (item, container) => {
+        if (useContainerLaunchStore.getState().request(item, container, true, chosen => get().openTerminalTab(item, chosen))) return;
+        get().openTab({
+          id: resourceTabId('terminal', useClusterStore.getState().currentContext, item, container),
+          type: 'terminal', title: `Terminal: ${item.name}`, subtitle: item.namespace,
+          resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
+          kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
+          context: useClusterStore.getState().currentContext,
+        });
+      },
       openTopology: (item, namespace) => get().openTab({
         id: JSON.stringify(['topology', useClusterStore.getState().currentContext, item?.uid, namespace]),
         type: 'topology', title: item ? `Topology: ${item.name}` : namespace ? `Topology: ${namespace}` : 'Cluster topology',

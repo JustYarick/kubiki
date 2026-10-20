@@ -20,7 +20,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe('Resource contract', () => {
   it('defines a complete catalog and normalizes namespace scope', () => {
     expect(new Set(RESOURCE_TYPES.map((type) => type.kind)).size).toBe(23);
-    expect(new Set(RESOURCE_TYPES.map((type) => type.kind))).toEqual(new Set(Object.keys(useResourceStore.getState().resources)));
+    expect(new Set(RESOURCE_TYPES.map((type) => type.kind))).toEqual(new Set(Object.keys(useResourceStore.getState().resources).filter(kind => kind !== 'HelmRelease')));
     expect(resourceQuery('production', 'Deployment', 'backend')).toEqual({ context: 'production', group: 'apps', version: 'v1', kind: 'Deployment', namespace: 'backend' });
     expect(resourceQuery('production', 'Pod', 'all').namespace).toBeNull();
     expect(resourceQuery('production', 'Node', 'backend').namespace).toBeNull();

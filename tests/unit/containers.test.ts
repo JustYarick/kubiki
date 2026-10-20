@@ -1,3 +1,5 @@
+import { useContainerLaunchStore } from '../../src/state/container_launch_store';
+import { useWorkspaceStore } from '../../src/state/workspace_store';
 import { describe, expect, it } from 'vitest';
 import { canExecContainer, containerTone, defaultContainer, podContainers } from '../../src/core/resources/containers';
 import { mapK8sResource } from '../../src/core/utils/k8s_mapper';
@@ -37,7 +39,7 @@ describe('Container identity, roles and status', () => {
   it('pins dock sessions to context and UID, switches in place and separates a recreated Pod', () => {
     useClusterStore.getState().selectContext('test'); useResourceStore.getState().reset(); useDockStore.getState().clearAllSessions();
     const item = mapK8sResource(raw, 'Pod'); useResourceStore.getState().setResourcesForKind('Pod', [item]);
-    const first = useDockStore.getState().openTerminal('web', 'backend');
+    const first = useDockStore.getState().openTerminal('web', 'backend', 'app');
     expect(useDockStore.getState().sessions[0]).toMatchObject({ uid: 'original', context: 'test', container: 'app', allContainers: ['app','proxy','setup','shipper','debug'] });
     useDockStore.getState().updateSessionContainer(first, 'shipper');
     expect(useDockStore.getState().sessions).toHaveLength(1);
@@ -45,4 +47,31 @@ describe('Container identity, roles and status', () => {
     useResourceStore.getState().setResourcesForKind('Pod', [{ ...item, uid: 'replacement' }]);
     expect(useDockStore.getState().openTerminal('web', 'backend', 'shipper')).not.toBe(first);
   });
+  it('requires a choice before any dock or workspace session and cancellation launches nothing', () => {
+    useClusterStore.getState().selectContext('test'); useResourceStore.getState().reset(); useDockStore.getState().clearAllSessions();
+    useWorkspaceStore.setState({ tabs: [], activeTabId: '' });
+    const item = mapK8sResource(raw, 'Pod'); useResourceStore.getState().setResourcesForKind('Pod', [item]);
+    expect(useDockStore.getState().openTerminal('web', 'backend')).toBe('');
+    expect(useDockStore.getState().sessions).toHaveLength(0);
+    useContainerLaunchStore.getState().choose('setup'); expect(useDockStore.getState().sessions).toHaveLength(0);
+    useContainerLaunchStore.getState().cancel(); expect(useDockStore.getState().sessions).toHaveLength(0);
+    useWorkspaceStore.getState().openLogsTab(item); expect(useWorkspaceStore.getState().tabs).toHaveLength(0);
+    useContainerLaunchStore.getState().choose('setup'); expect(useWorkspaceStore.getState().tabs[0]).toMatchObject({ type: 'logs', container: 'setup', uid: 'original' });
+    useDockStore.getState().openTerminal('web', 'backend'); useContainerLaunchStore.getState().choose('shipper');
+    expect(useDockStore.getState().sessions[0]).toMatchObject({ container: 'shipper', uid: 'original' });
+  });
+  it('discards a pending choice after context changes or Pod recreation', () => {
+    useClusterStore.getState().selectContext('test'); useResourceStore.getState().reset(); useDockStore.getState().clearAllSessions();
+    const item = mapK8sResource(raw, 'Pod'); useResourceStore.getState().setResourcesForKind('Pod', [item]);
+    useDockStore.getState().openLogs('web', 'backend'); useClusterStore.getState().selectContext('other');
+    expect(useContainerLaunchStore.getState().pending).toBeNull(); useContainerLaunchStore.getState().choose('app');
+    expect(useDockStore.getState().sessions).toHaveLength(0);
+    useClusterStore.getState().selectContext('test'); useDockStore.getState().openLogs('web', 'backend');
+    useResourceStore.getState().setResourcesForKind('Pod', [{ ...item, uid: 'new' }]);
+    useContainerLaunchStore.getState().choose('app'); expect(useDockStore.getState().sessions).toHaveLength(0);
+    useResourceStore.getState().setResourcesForKind('Pod', [item]); useDockStore.getState().openLogs('web', 'backend');
+    useResourceStore.getState().setResourcesForKind('Pod', []); useContainerLaunchStore.getState().choose('app');
+    expect(useDockStore.getState().sessions).toHaveLength(0);
+  });
+
 });

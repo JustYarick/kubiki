@@ -297,12 +297,12 @@ body {
 .topology-namespace > div { border-bottom: 1px solid #9271c140; background: var(--bg-secondary); border-radius: calc(8px * var(--ui-factor)) calc(8px * var(--ui-factor)) 0 0; }
 .topology-events {
   position: absolute;
-  top: calc(12px * var(--ui-factor));
+  top: calc(44px * var(--ui-factor));
   right: calc(12px * var(--ui-factor));
   z-index: 5;
   width: calc(280px * var(--ui-factor));
   max-width: calc(100% - calc(24px * var(--ui-factor)));
-  max-height: calc(100% - calc(24px * var(--ui-factor)));
+  max-height: calc(100% - calc(56px * var(--ui-factor)));
   overflow: auto;
   border: 1px solid var(--border-strong);
   border-radius: calc(6px * var(--ui-factor));
@@ -436,3 +436,36 @@ body {
 .telemetry-history-data th, .telemetry-history-data td { padding: 4px 8px; border-bottom: 1px solid var(--border-subtle); }
 
 .telemetry-chart-times { display: flex; justify-content: space-between; gap: 8px; color: var(--text-secondary); font-family: var(--font-mono); font-size: calc(10px * var(--ui-factor)); margin: -8px 0 10px; }
+
+/* Compact Overview follows the editor pane, including split panes and UI scaling. */
+.overview-page { container-type: inline-size; max-width: 100%; }
+.overview-page > * { min-width: 0; }
+.overview-page .telemetry-hero-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.overview-page .telemetry-card { padding: calc(12px * var(--ui-factor)); border-radius: 7px; }
+.overview-page .telemetry-current { margin: 8px 0 4px; gap: 8px; }
+.overview-page .telemetry-current > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.overview-page .telemetry-value { font-size: calc(23px * var(--ui-factor)); }
+.overview-page .telemetry-gauge { width: calc(64px * var(--ui-factor)); height: calc(64px * var(--ui-factor)); max-width: 35%; }
+.overview-page .telemetry-gauge strong { font-size: calc(14px * var(--ui-factor)); }
+.overview-page .telemetry-gauge span { font-size: calc(9px * var(--ui-factor)); }
+.overview-page .telemetry-chart svg { height: calc(100px * var(--ui-factor)); }
+.overview-page .telemetry-budget-grid { padding-top: 8px; gap: 8px; margin-top: 4px; }
+.overview-page .telemetry-capacity { padding-top: 6px; margin-top: 8px; gap: 4px 12px; }
+.overview-page .telemetry-ranking-header { padding: 9px 12px; }
+.overview-page .telemetry-table-scroll { max-height: 300px; }
+.overview-page .telemetry-table td, .overview-page .telemetry-table th { padding: 7px 12px; }
+.overview-health-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.overview-problems-list { max-height: min(340px, 45vh); overflow: auto; min-width: 0; }
+@container (min-width: 640px) { .overview-page .telemetry-hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (min-width: 700px) { .overview-health-grid { grid-template-columns: minmax(220px, .7fr) minmax(0, 1.3fr); } }
+
+.overview-main-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.overview-main-grid > .telemetry-section { min-width: 0; container-type: inline-size; }
+.overview-main-grid > .overview-health-grid { order: -1; align-content: start; }
+@container (min-width: 1000px) {
+  .overview-main-grid { grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); }
+  .overview-main-grid > .overview-health-grid { order: 0; grid-template-columns: minmax(0, 1fr); }
+}
+
+.overview-page .telemetry-chart-scale { height: calc(72px * var(--ui-factor)); }
+.overview-page .telemetry-chart-collecting { top: calc(35px * var(--ui-factor)); }

@@ -29,7 +29,8 @@ export type ResourceKind =
   | 'Role'
   | 'RoleBinding'
   | 'ClusterRole'
-  | 'ClusterRoleBinding';
+  | 'ClusterRoleBinding'
+  | 'HelmRelease';
 
 export interface ResourceContainer {
   role?: 'application' | 'sidecar' | 'init' | 'ephemeral';

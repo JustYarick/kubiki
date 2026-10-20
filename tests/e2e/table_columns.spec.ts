@@ -73,3 +73,18 @@ test('resize stops at the visible pane edge and cleans up its guide', async ({ p
   await page.mouse.up(); await expect(page.getByTestId('column-resize-guide')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+
+test('fresh tables fit the current workspace after window resize and hidden column changes', async ({ page }) => {
+  await page.setViewportSize({ width: 1900, height: 900 }); await page.goto('/?demo=1');
+  const table = page.getByTestId('resource-table');
+  const fits = () => table.evaluate(el => Math.abs(el.querySelector('table')!.getBoundingClientRect().width - el.clientWidth) < 5);
+  await expect(table.locator('tbody tr').first()).toBeVisible(); await expect.poll(fits).toBe(true);
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
+  await expect(table.getByRole('columnheader', { name: 'Replicas', exact: true })).toBeVisible(); await expect.poll(fits).toBe(true);
+  await page.getByRole('button', { name: 'Columns', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Namespace', exact: true }).click();
+  await expect.poll(fits).toBe(true); await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1500, height: 900 }); await expect.poll(fits).toBe(true);
+});

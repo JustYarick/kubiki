@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowDown,
   ArrowRightLeft,
@@ -46,9 +46,10 @@ import { resourceTabId } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
 import { compareCreation, issuePriority } from '../core/resources/resource_sort';
 import { ContainerIndicators } from '../components/k8s/ContainerSelect';
-import { defaultContainer, podContainers } from '../core/resources/containers';
+import { podContainers } from '../core/resources/containers';
 import { refreshResourceWatches } from '../state/resource_watch';
 import { cx } from '../core/utils/cx';
+import { fitTableColumns } from '../core/resources/table_fit';
 
 /* ------------------------------------------------------------------ */
 /* Column model                                                        */
@@ -436,8 +437,26 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
   };
 
   /* ------------------- Column widths (Lens-style) ------------------- */
+  const [autoWidths, setAutoWidths] = useState<Record<string, number>>({});
+  const visibleColumnIds = ['__index', ...rows.cols.map(column => column.id)];
+  const columnsSignature = visibleColumnIds.join('|');
+  const fitColumns = (force = false) => {
+    const pane = paneRef.current; if (!pane?.clientWidth) return;
+    const stored = useUiStore.getState().columnWidths;
+    const manual = Object.fromEntries(visibleColumnIds.filter(id => Number.isFinite(stored[`${effectiveKind}:${id}`])).map(id => [id, stored[`${effectiveKind}:${id}`]]));
+    if (!force && Object.keys(manual).length) return;
+    setAutoWidths(fitTableColumns(visibleColumnIds, pane.clientWidth / uiFactor(uiScale) - 2, DEFAULT_COL_SIZE, manual));
+  };
+  const fitRef = useRef(fitColumns); fitRef.current = fitColumns;
+  useLayoutEffect(() => {
+    fitRef.current(true);
+    if (!paneRef.current) return;
+    const observer = new ResizeObserver(() => fitRef.current()); observer.observe(paneRef.current);
+    return () => observer.disconnect();
+  }, [effectiveKind, columnsSignature, uiScale]);
+  const resetWidths = () => { resetColumnWidths(effectiveKind); fitRef.current(true); };
   const widthFor = (colId: string): number =>
-    Math.max(colId === '__index' ? 28 : MIN_COL, Math.min(MAX_COL, columnWidths[`${effectiveKind}:${colId}`] ?? DEFAULT_COL_SIZE[colId] ?? 120));
+    Math.max(colId === '__index' ? 28 : MIN_COL, Math.min(MAX_COL, columnWidths[`${effectiveKind}:${colId}`] ?? autoWidths[colId] ?? DEFAULT_COL_SIZE[colId] ?? 120));
 
   const startColResize = (e: React.PointerEvent, colId: string) => {
     e.preventDefault();
@@ -500,7 +519,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
         },
       },
       { id: 'sep-h2', label: '', separator: true, onSelect: () => {} },
-      { id: 'reset-widths', label: 'Reset column widths', onSelect: () => { resetColumnWidths(effectiveKind); toast.info('Column widths reset', effectiveKind); } },
+      { id: 'reset-widths', label: 'Reset column widths', onSelect: () => { resetWidths(); toast.info('Column widths reset', effectiveKind); } },
     ];
   };
 
@@ -583,13 +602,13 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
           id: 'dock-logs',
           label: 'Stream Logs in Bottom Drawer',
           icon: FileText,
-          onSelect: () => useDockStore.getState().openLogs(item.name, item.namespace, defaultContainer(item), podContainers(item).map((c) => c.name)),
+          onSelect: () => useDockStore.getState().openLogs(item.name, item.namespace, undefined, podContainers(item).map((c) => c.name)),
         },
         {
           id: 'dock-terminal',
           label: 'Terminal in Bottom Drawer',
           icon: Terminal,
-          onSelect: () => useDockStore.getState().openTerminal(item.name, item.namespace, defaultContainer(item, true), podContainers(item).map((c) => c.name)),
+          onSelect: () => useDockStore.getState().openTerminal(item.name, item.namespace, undefined, podContainers(item).map((c) => c.name)),
         },
         { id: 'logs', label: 'Stream Logs in Full Tab', icon: ExternalLink, onSelect: () => openLogsTab(item) },
         { id: 'terminal', label: 'Terminal in Full Tab', icon: ExternalLink, onSelect: () => openTerminalTab(item) },
@@ -730,7 +749,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
               <MenuList
                 items={[
                   { id: 'reset', label: 'Reset visibility', onSelect: () => setHiddenColumns(effectiveKind, []) },
-                  { id: 'reset-widths', label: 'Reset column widths', onSelect: () => resetColumnWidths(effectiveKind) },
+                  { id: 'reset-widths', label: 'Reset column widths', onSelect: resetWidths },
                 ]}
                 onSelect={(item) => { item.onSelect?.(); close(); }}
               />

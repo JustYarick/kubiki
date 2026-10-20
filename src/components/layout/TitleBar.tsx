@@ -1,3 +1,4 @@
+import { RESOURCE_TYPES } from '../../core/resources/resource_types';
 import { shortcutLabel } from '../../core/shortcuts';
 import React, { useState, useCallback, useRef } from 'react';
 import {
@@ -57,7 +58,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
     setIsRefreshing(true);
     try {
       if (await refreshResourceWatches()) return;
-      const kinds = Object.keys(useResourceStore.getState().resources) as ResourceKind[];
+      const kinds = RESOURCE_TYPES.map(type => type.kind) as ResourceKind[];
       const results = await Promise.allSettled(kinds.map(async (kind) => {
         try {
           const items = await k8s.getResources(currentContext, kind, 'all');

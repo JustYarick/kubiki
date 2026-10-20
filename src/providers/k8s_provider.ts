@@ -14,6 +14,7 @@ export class K8sProvider implements KubernetesProvider {
   readonly demo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
   private mock: ReturnType<typeof buildMockResources> | undefined;
   get supportsResourceWatch(): boolean { return !this.demo && this.isTauriEnv(); }
+  get supportsHelmMutations(): boolean { return !this.demo && this.isTauriEnv(); }
 
   async resetResourceWatches(): Promise<void> {
     if (!this.supportsResourceWatch) return;
@@ -37,7 +38,7 @@ export class K8sProvider implements KubernetesProvider {
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
     try {
-      if (path !== 'contexts' && path !== 'helm/repositories' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
+      if (path !== 'contexts' && path !== 'helm/repositories' && path !== 'helm/charts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
       if (this.isTauriEnv()) {
         const { invoke } = await import('@tauri-apps/api/core');
         return await invoke<T>(command, nativeArgs ?? args);
@@ -151,6 +152,20 @@ export class K8sProvider implements KubernetesProvider {
   async getHelmRepositories(signal?: AbortSignal) {
     if (this.demo) return [{ name: 'kubiki-demo', url: 'https://charts.example.com' }];
     return parseHelmRepositories(await this.request('list_helm_repositories', 'helm/repositories', {}, undefined, undefined, signal));
+  }
+
+  async searchHelmCharts(query: string): Promise<import('./helm_types').HelmChart[]> {
+    if (this.demo) return [];
+    const charts = await this.request<unknown>('search_helm_charts', 'helm/charts', { query });
+    if (!Array.isArray(charts) || charts.some(chart => !chart || ['name', 'version', 'app_version', 'description'].some(key => typeof chart[key] !== 'string'))) throw requestError('internal', 'Invalid Helm chart response', { operation: 'helm' });
+    return charts;
+  }
+
+  async mutateHelm(request: import('./helm_types').HelmMutation): Promise<{ message: string }> {
+    if (!this.supportsHelmMutations) throw requestError('forbidden', 'Helm changes require the desktop app and backend system confirmation.', { operation: 'helm_mutation' }, 403);
+    const { invoke } = await import('@tauri-apps/api/core');
+    try { return await invoke('mutate_helm', { request }); }
+    catch (error) { throw normalizeK8sError(error, { operation: 'helm_mutation', context: 'context' in request ? request.context : undefined }); }
   }
 
   async scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number, uid: string, resourceVersion: string): Promise<boolean> {

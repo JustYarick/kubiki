@@ -49,6 +49,10 @@ export function resourceIssues(item: ResourceItem, context: DiagnosticContext = 
     if (item.kind !== 'Namespace') return [...issues.values()];
   }
   if (completed) return [];
+  if (item.kind === 'HelmRelease') {
+    if (item.status === 'failed') add('helm-failed', 'error', 'Helm release failed', 'Open the release history and inspect its managed resources.');
+    else if (item.status?.startsWith('pending-') || item.status === 'uninstalling') add('helm-pending', 'warning', `Helm release ${item.status}`, 'A Helm operation is in progress or may require attention.');
+  }
 
   // Conditions share a convention across kinds, but the unhealthy polarity differs by type.
   for (const condition of conditions) {

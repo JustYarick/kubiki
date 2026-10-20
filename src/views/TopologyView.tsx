@@ -15,6 +15,7 @@ import { NamespaceScopeNotice } from '../components/k8s/NamespaceScopeNotice';
 import { namespaceIsOutsideScope } from '../core/resources/resource_types';
 import { TopologyCanvas } from './TopologyCanvas';
 import { TopologyEvents } from './TopologyEvents';
+import { useHelmGraph } from '../providers/use_helm_graph';
 
 const NO_EVENTS = new Map<string, ResourceItem>();
 
@@ -34,6 +35,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const [scopeQuery, setScopeQuery] = useState('');
   const diagramNamespace = scope.startsWith('namespace:') ? scope.slice(10) : scope === 'resource' ? item?.namespace ?? (item?.kind === 'Namespace' ? item.name : undefined) : undefined;
   const outsideScope = namespaceIsOutsideScope(diagramNamespace, selectedNamespace, syncMode);
+  const helm = useHelmGraph(diagramNamespace, !outsideScope && !!scope && scope !== 'overview');
   const namespaceLoaded = (name: string) => !namespaceIsOutsideScope(name, selectedNamespace, syncMode);
   const synchronizing = syncMode === 'watch' && Object.values(watchStates).some((state) => state.phase === 'connecting' || state.phase === 'syncing');
   const summaries = useMemo(() => {
@@ -83,6 +85,8 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
       {warningCount > 0 && <span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size="calc(12px * var(--ui-factor))" />{warningCount} with issues</span>}
     </div>
     <NamespaceScopeNotice namespace={diagramNamespace} />
+    {helm.loading && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Loading Helm relationships…</p>}
+    {helm.error && <p className="px-3 py-1 text-xs text-[var(--status-warn)]">Helm relationships unavailable: {helm.error} Kubernetes resources are still shown.</p>}
     {synchronizing && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Resources are synchronizing. Counts and relationships may be incomplete.</p>}
     {!!Object.values(errors).filter(Boolean).length && <div className="px-3 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Some resource types are unavailable. This diagram shows loaded resources only.</div>}
     <div className="flex-1 min-h-0 relative overflow-hidden">

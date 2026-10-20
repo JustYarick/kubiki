@@ -1,3 +1,4 @@
+import { RESOURCE_TYPES } from '../core/resources/resource_types';
 import { k8s } from '../providers/k8s_provider';
 import { ResourceWatchSession } from '../providers/resource_watch_session';
 import type { ResourceKind } from '../types/k8s';
@@ -23,7 +24,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     }
   });
   useResourceStore.getState().setSyncMode('watch');
-  return next.start(Object.keys(useResourceStore.getState().resources) as ResourceKind[]);
+  return next.start(RESOURCE_TYPES.map(type => type.kind) as ResourceKind[]);
 }
 export async function refreshResourceWatches(kind?: ResourceKind): Promise<boolean> {
   if (!session) return false;

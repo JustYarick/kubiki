@@ -1,3 +1,4 @@
+import { useContainerLaunchStore } from './container_launch_store';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ResourceKind } from '../types/k8s';
@@ -125,6 +126,7 @@ export const useDockStore = create<DockState>()(
         const { sessions } = get();
         const context = useClusterStore.getState().currentContext;
         const pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        if (useContainerLaunchStore.getState().request(pod, container, true, chosen => get().openTerminal(resourceName, namespace, chosen, allContainers))) return '';
         container ??= defaultContainer(pod, true) ?? allContainers[0] ?? '';
         if (pod) allContainers = podContainers(pod).map((c) => c.name);
         const id = `dock-terminal-${crypto.randomUUID()}`;
@@ -162,6 +164,7 @@ export const useDockStore = create<DockState>()(
         const { sessions } = get();
         const context = useClusterStore.getState().currentContext;
         const pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        if (useContainerLaunchStore.getState().request(pod, container, false, chosen => get().openLogs(resourceName, namespace, chosen, allContainers))) return '';
         container ??= defaultContainer(pod, false) ?? allContainers[0] ?? '';
         if (pod) allContainers = podContainers(pod).map((c) => c.name);
         const id = `dock-logs-${crypto.randomUUID()}`;

@@ -47,6 +47,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_helm_releases,
+            mutate_helm,
+            search_helm_charts,
             get_helm_history,
             get_helm_content,
             list_helm_repositories,

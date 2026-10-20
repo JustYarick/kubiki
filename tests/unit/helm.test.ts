@@ -81,6 +81,11 @@ describe('Helm HTTP bridge', () => {
   it.each(['releases', 'content', 'history', 'repositories'])('rejects POST to %s', async operation => {
     expect((await fetch(base + operation, { method: 'POST' })).status).toBe(405); expect(run).not.toHaveBeenCalled();
   });
+  it.each(['GET', 'POST', 'PUT', 'DELETE'])('blocks %s mutations before executing any Helm command', async method => {
+    const response = await fetch(base + 'mutate', { method });
+    expect(response.status).toBe(403); expect(run).not.toHaveBeenCalled();
+    expect((await response.json()).error.message).toContain('system confirmation');
+  });
   it('does not hide repository permission failures or corrupt output behind an empty state', async () => {
     run.mockRejectedValueOnce({ stderr: 'Error: no repositories to show\n' });
     expect(await (await fetch(base + 'repositories')).json()).toEqual([]);

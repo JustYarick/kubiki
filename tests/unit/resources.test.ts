@@ -46,6 +46,7 @@ describe('Resource references', () => {
     store.setResourcesForKind('PersistentVolumeClaim', [mapK8sResource({ metadata: { name: 'data', namespace: 'default' }, spec: { storageClassName: 'fast', volumeName: 'disk' } }, 'PersistentVolumeClaim')]);
     store.setResourcesForKind('StorageClass', [mapK8sResource({ metadata: { name: 'fast' } }, 'StorageClass')]);
     store.setResourcesForKind('PersistentVolume', [mapK8sResource({ metadata: { name: 'disk' } }, 'PersistentVolume')]);
+    store.setResourcesForKind('ServiceAccount', [mapK8sResource({ metadata: { name: 'default', namespace: 'default' } }, 'ServiceAccount')]);
     const graph = buildResourceGraph(useResourceStore.getState().resources);
     expect(graph.relations.filter((e) => e.missing)).toHaveLength(0);
     expect(graph.relations.find((e) => e.type === 'schedules')?.target).toBe(resourceKey(child));

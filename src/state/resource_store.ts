@@ -53,6 +53,7 @@ const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => 
   RoleBinding: new Map(),
   ClusterRole: new Map(),
   ClusterRoleBinding: new Map(),
+  HelmRelease: new Map(),
 });
 
 export const useResourceStore = create<ResourceState>((set, get) => ({

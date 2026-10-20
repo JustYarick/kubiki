@@ -14,7 +14,7 @@ async function setup(page: import('@playwright/test').Page, mode = '') {
         if (command === 'ping_cluster') return { git_version: 'v1.34.0' };
         if (command === 'get_namespaces') return ['default','debug'];
         if (['stop_pod_execs','stop_host_terminals','stop_pod_logs','stop_node_debugs','stop_resource_watches','stop_resource_watch'].includes(command)) return;
-        if (command === 'watch_resources') { const items = args.query.kind === 'Node' ? [{ apiVersion: 'v1', kind: 'Node', metadata: { name: 'worker', uid: 'node-uid' }, status: { nodeInfo: { operatingSystem: 'linux' } } }] : [];queueMicrotask(() => args.onEvent.onmessage({ subscription_id: args.subscriptionId, query: args.query, messages: [{ sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items } } } }, { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } }] }));return; }
+        if (command === 'watch_resources') { const items = args.query.kind === 'Node' ? [{ apiVersion: 'v1', kind: 'Node', metadata: { name: 'worker', uid: 'node-uid' }, status: { nodeInfo: { operatingSystem: 'linux' } } }] : args.query.kind === 'Namespace' ? ['default', 'debug'].map(name => ({ apiVersion: 'v1', kind: 'Namespace', metadata: { name, uid: 'ns-' + name } })) : [];queueMicrotask(() => args.onEvent.onmessage({ subscription_id: args.subscriptionId, query: args.query, messages: [{ sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items } } } }, { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } }] }));return; }
         if (command === 'prepare_node_debug') { prepares.push(args);if (mode === 'denied') throw { code: 'forbidden', status: 403, operation: 'node_debug', message: 'Node shell requires delete pods in namespace debug', retryable: false };const resource = { context: 'test', group: '', version: 'v1', kind: 'Pod', namespace: args.request.namespace, name: `kubiki-node-debug-${args.sessionId}`, uid: `pod-${args.sessionId}` };leases.set(args.sessionId, { phase: 'ready', name: resource.name, namespace: resource.namespace, detail: 'Debug Pod ready' });if (mode === 'slow') await new Promise<void>((resolve) => { release = resolve; });return resource; }
         if (command === 'node_debug_status') return leases.get(args.sessionId) ?? null;
         if (command === 'stop_node_debug') { close(args.sessionId);return; }
@@ -28,12 +28,12 @@ async function setup(page: import('@playwright/test').Page, mode = '') {
       },
     };
   }, { mode });
-  await page.goto('/');await page.getByRole('button', { name: /^Nodes(?: \d+)?$/ }).click();await page.getByTestId('resource-table').getByTitle('worker', { exact: true }).click();await page.getByTestId('resource-details').getByRole('button', { name: 'Node shell', exact: true }).click();
-  await page.getByTestId('node-shell').getByRole('textbox', { name: 'Debug Pod namespace', exact: true }).fill('debug');
+  await page.goto('/');await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'debug', exact: true }).click();await page.getByRole('button', { name: /^Nodes(?: \d+)?$/ }).click();await page.getByTestId('resource-table').getByTitle('worker', { exact: true }).click();await page.getByTestId('resource-details').getByRole('button', { name: 'Node shell', exact: true }).click();
+
 }
-test('Node shell prepares only on Start, passes UID/scope, carries terminal input and deletes helper on exit', async ({ page }) => {
-  await setup(page);const node = page.getByTestId('node-shell');expect(await page.evaluate(() => (window as any).__nodeHarness.prepares.length)).toBe(0);
-  await node.getByRole('button', { name: 'Start node shell', exact: true }).click();const terminal = node.getByTestId('live-terminal');await expect(terminal.getByRole('status')).toHaveText('Connected');
+test('Node shell connects on open, passes UID/scope, carries terminal input and deletes helper on exit', async ({ page }) => {
+  await setup(page);const node = page.getByTestId('node-shell');await expect.poll(() => page.evaluate(() => (window as any).__nodeHarness.prepares.length)).toBe(1);
+const terminal = node.getByTestId('live-terminal');await expect(terminal.getByRole('status')).toHaveText('Connected');
   expect(await page.evaluate(() => (window as any).__nodeHarness.prepares[0].request)).toMatchObject({ resource: { context: 'test', kind: 'Node', namespace: null, name: 'worker', uid: 'node-uid' }, namespace: 'debug', image: 'docker.io/library/ubuntu:24.04' });
   await terminal.locator('.xterm').getByRole('textbox', { name: 'Terminal input' }).focus();await page.keyboard.type('hostname');await page.keyboard.press('Enter');await expect(terminal.locator('.xterm-rows')).toContainText('node-command-output');
   await page.keyboard.press('Control+j');await page.keyboard.press('Control+j');expect(await page.evaluate(() => (window as any).__nodeHarness.prepares.length)).toBe(1);
@@ -43,14 +43,14 @@ test('Node shell prepares only on Start, passes UID/scope, carries terminal inpu
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));await expect.poll(() => page.evaluate(() => (window as any).__nodeHarness.active())).toBe(0);await expect.poll(() => page.evaluate(() => (window as any).__nodeHarness.callbacks())).toBe(0);
 });
 test('Node cleanup failure stays visible, retry works and other helpers delete with a UID', async ({ page }) => {
-  await setup(page, 'cleanup');const node = page.getByTestId('node-shell');await node.getByRole('button', { name: 'Start node shell', exact: true }).click();await expect(node.getByTestId('live-terminal').getByRole('status')).toHaveText('Connected');
+  await setup(page, 'cleanup');const node = page.getByTestId('node-shell');await expect(node.getByTestId('live-terminal').getByRole('status')).toHaveText('Connected');
   await page.evaluate(() => (window as any).__nodeHarness.finish());await expect(node.getByRole('alert')).toContainText('delete debug Pod denied');await page.evaluate(() => (window as any).__nodeHarness.allowCleanup());await node.getByRole('button', { name: 'Retry cleanup', exact: true }).click();await expect(node.getByRole('alert')).toHaveCount(0);
   await node.getByRole('button', { name: 'Other debug Pods', exact: true }).click();await node.getByRole('button', { name: 'Delete debug Pod kubiki-node-debug-orphan', exact: true }).click();expect(await page.evaluate(() => (window as any).__nodeHarness.deleted[0])).toMatchObject({ uid: 'orphan-uid', namespace: 'debug', name: 'kubiki-node-debug-orphan' });
 });
 test('Node shell surfaces missing permissions before opening a terminal', async ({ page }) => {
-  await setup(page, 'denied');let node = page.getByTestId('node-shell');await node.getByRole('button', { name: 'Start node shell', exact: true }).click();await expect(node.getByRole('alert')).toContainText('requires delete pods');expect(await page.evaluate(() => (window as any).__nodeHarness.starts.length)).toBe(0);
+  await setup(page, 'denied');let node = page.getByTestId('node-shell');await expect(node.getByRole('alert')).toContainText('requires delete pods');expect(await page.evaluate(() => (window as any).__nodeHarness.starts.length)).toBe(0);
 });
 test('cancelling Node preparation never opens a terminal when readiness arrives late', async ({ page }) => {
-  await setup(page, 'slow');const node = page.getByTestId('node-shell');await node.getByRole('button', { name: 'Start node shell', exact: true }).click();await expect.poll(() => page.evaluate(() => (window as any).__nodeHarness.prepares.length)).toBe(1);await node.getByRole('button', { name: 'Cancel preparation', exact: true }).click();await page.evaluate(() => (window as any).__nodeHarness.release());
+  await setup(page, 'slow');const node = page.getByTestId('node-shell');await expect.poll(() => page.evaluate(() => (window as any).__nodeHarness.prepares.length)).toBe(1);await node.getByRole('button', { name: 'Cancel preparation', exact: true }).click();await page.evaluate(() => (window as any).__nodeHarness.release());
   await expect.poll(() => page.evaluate(() => (window as any).__nodeHarness.active())).toBe(0);await expect(node.getByTestId('live-terminal')).toHaveCount(0);await expect(node.getByRole('alert')).toHaveCount(0);expect(await page.evaluate(() => (window as any).__nodeHarness.starts.length)).toBe(0);
 });

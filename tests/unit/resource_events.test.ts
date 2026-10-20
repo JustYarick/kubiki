@@ -20,7 +20,7 @@ describe('Object notifications', () => {
     };
     const graph = buildResourceGraph(resources, { maxNodes: 2 });
     expect([...graph.items.values()].map((item) => item.kind)).toEqual(['Pod', 'Namespace']);
-    expect(graph.relations).toHaveLength(1);
+    expect(graph.relations.filter(edge => !edge.missing)).toHaveLength(1);
     expect(graph.relations[0]).toMatchObject({ source: resourceKey(namespace), target: resourceKey(pod), type: 'contains' });
   });
   it('rejects previous UID, wrong kind, namespace, name and API group even if UID matches', () => {

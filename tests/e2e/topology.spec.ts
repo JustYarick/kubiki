@@ -37,6 +37,8 @@ test('Events stay in a bounded collapsible island and never consume the namespac
   await expect(island.locator('li').first()).toContainText('×4');
   await expect(island.getByText('Latest 10 of 500 events')).toBeVisible();
   await expect(island.getByText('Wrong namespace message')).toHaveCount(0);
+  const typesBounds = (await page.getByRole('button', { name: 'Topology resource types', exact: true }).boundingBox())!;
+  expect((await island.boundingBox())!.y).toBeGreaterThan(typesBounds.y + typesBounds.height);
   const toggle = island.getByRole('button', { name: /Recent events/ });
   await toggle.click(); await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await expect(island.locator('li')).toHaveCount(0);

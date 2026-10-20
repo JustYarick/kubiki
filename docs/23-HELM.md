@@ -1,6 +1,6 @@
 # Helm: read-only интеграция
 
-Статус: DOMAIN-02C1 и DOMAIN-02C2 реализованы; UI-9 целиком остаётся PARTIAL. Upgrade/rollback/uninstall/install и изменения репозиториев ещё не подключены.
+Обновление: DOMAIN-02C1/C2 и основные операции C3 реализованы. Release ↔ resource links и диаграммы подключены; см. [24](24-HELM-OPERATIONS-AND-RBAC.md). UI-9 остаётся PARTIAL из-за расширенных сценариев и native/live/cross-platform приёмки. Ниже сохранён контракт первоначального read-only слоя; новые mutations имеют отдельный desktop-only IPC через backend consent.
 
 ## Как проверить
 
@@ -28,8 +28,8 @@
 - Rust executable fixtures: реальные subprocess, 100+1 pagination, pinned revision, local repo reads, invalid targets, missing binary, 403, output limit, timeout и уничтожение зависшего child.
 - Production Chromium: list/filter/pages/details/history/documents, scope/context switching и late responses, retained snapshot/retry, missing Helm, empty repositories, 10k-символьные/длинные документы в узкой панели; desktop IPC проверен browser harness.
 - Дополнительный smoke установленным Helm **3.16.2** против локального mock Kubernetes API прошёл: list/history/values старой ревизии/manifest/notes; специально невалидный current-context подтвердил явный context; все 10 Kubernetes запросов — GET. Пользовательский кластер не использовался.
-- TODO DOMAIN-02C3: install/upgrade/rollback/uninstall/repository changes с backend confirmation, preview/diff и revision guard.
+- DONE DOMAIN-02C3: основные операции подключены через backend confirmation; ограничения и проверки описаны в [24](24-HELM-OPERATIONS-AND-RBAC.md).
 - TODO DOMAIN-02C4: настоящий кластер, native Tauri GUI, Helm 4 и Windows/macOS PATH/kubeconfig/credentials. Совместимость флагов Helm 4 проверена по документации, реальный Helm 4 не запускался.
-- TODO DOMAIN-02C5: навигация из manifest/релиза к связанным Kubernetes-объектам; история свыше 256 ревизий и поиск по всем страницам.
+- PARTIAL DOMAIN-02C5: точные Helm ownership links и навигация из релиза/диаграммы подключены; история свыше 256 ревизий и поиск по всем страницам остаются TODO.
 
 Источники контракта CLI: [helm list](https://helm.sh/docs/helm/helm_list/), [helm get all](https://helm.sh/docs/helm/helm_get_all/), [helm repo list](https://helm.sh/docs/helm/helm_repo_list/).

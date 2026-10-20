@@ -32,7 +32,7 @@ export const Sidebar: React.FC = () => {
   const { openResourceList, toggleSplit, openOverview, openHelm, tabs, activeTabId } = useWorkspaceStore();
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const overviewActive = activeTab?.type === 'overview';
-  const helmActive = activeTab?.type === 'helm-releases' || activeTab?.type === 'helm-repositories';
+  const helmActive = activeTab?.type === 'helm-releases' || activeTab?.type === 'helm-repositories' || activeTab?.type === 'helm-release';
 
   const [filter, setFilter] = useState('');
   const [contextMenu, setContextMenu] = useState<{ kind: ResourceKind; x: number; y: number } | null>(null);

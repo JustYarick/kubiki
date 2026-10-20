@@ -54,7 +54,7 @@ async function setup(page: Page, denied = false) {
 }
 
 test('Pod shell carries real adapter input, resize, UTF-8 and exit; container switch closes the old connection', async ({ page }) => {
-  await setup(page); await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click();
+  await setup(page); await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open shell for app', exact: true }).click();
   const pane = page.getByTestId('live-terminal'); const terminal = pane.locator('.xterm');
   await expect(pane.getByRole('status')).toHaveText('Connected');
   expect(await page.evaluate(() => (window as any).__execHarness.starts[0])).toMatchObject({ resource: { context: 'test', namespace: 'backend', name, uid: 'pod-uid' }, container: 'app', shell: '/bin/sh' });
@@ -101,7 +101,7 @@ test('container indicators and responsive logs toolbar include init/sidecar/ephe
 });
 
 test('exec 403 is actionable and closing the UI releases backend sessions and callbacks', async ({ page }) => {
-  await setup(page, true); await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click();
+  await setup(page, true); await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open shell for app', exact: true }).click();
   const pane = page.getByTestId('live-terminal'); await expect(pane.getByRole('alert')).toContainText('pods/exec is forbidden'); await expect(pane.getByRole('status')).toHaveText('Failed');
   await expect.poll(() => page.evaluate(() => (window as any).__execHarness.active())).toBe(0);
   await page.keyboard.press('Control+j'); await page.keyboard.press('Control+j'); expect(await page.evaluate(() => (window as any).__execHarness.starts.length)).toBe(1);
@@ -111,7 +111,7 @@ test('exec 403 is actionable and closing the UI releases backend sessions and ca
 test('full editor tabs keep their terminal session and container selection across navigation', async ({ page }) => {
   await setup(page);
   await page.getByTestId('resource-table').getByText(name, { exact: true }).click({ button: 'right' });
-  await page.getByText('Terminal in Full Tab', { exact: true }).click();
+  await page.getByText('Terminal in Full Tab', { exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open shell for app', exact: true }).click();
   const pane = page.locator('main').getByTestId('live-terminal'); await expect(pane.getByRole('status')).toHaveText('Connected');
   await pane.locator('.xterm').getByRole('textbox', { name: 'Terminal input' }).focus(); await page.keyboard.type('echo persist'); await page.keyboard.press('Enter');
   await expect(pane.locator('.xterm-rows')).toContainText('remote-command-output');
@@ -129,14 +129,14 @@ test('full editor tabs keep their terminal session and container selection acros
   expect(await page.evaluate(() => (window as any).__execHarness.starts[1].container)).toBe('debug');
   await page.getByRole('button', { name: 'Close tab', exact: true }).last().click(); await expect.poll(() => page.evaluate(() => (window as any).__execHarness.active())).toBe(0);
   await page.getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
-  await page.getByTestId('resource-table').getByText(name, { exact: true }).click({ button: 'right' }); await page.getByText('Stream Logs in Full Tab', { exact: true }).click();
+  await page.getByTestId('resource-table').getByText(name, { exact: true }).click({ button: 'right' }); await page.getByText('Stream Logs in Full Tab', { exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
   const toolbar = page.locator('main').getByTestId('logs-toolbar'); await toolbar.getByRole('button', { name: 'Select Container' }).click(); await page.getByRole('option', { name: /setup/ }).click();
   await expect(page.locator('main').getByText('setup log output', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Expand bottom panel' })).toBeVisible();
 });
 
 test('live logs handle UTF-8, source options, stopped sessions, reconnect, errors and page cleanup', async ({ page }) => {
-  await setup(page);await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
+  await setup(page);await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
   const toolbar = page.getByTestId('logs-toolbar');
   await expect(page.getByText('app log output', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => (window as any).__execHarness.logRequests[0])).toMatchObject({ resource: { context: 'test', uid: 'pod-uid', namespace: 'backend', name }, container: 'app', follow: true, previous: false, tail_lines: 500 });
@@ -165,4 +165,24 @@ test('live logs handle UTF-8, source options, stopped sessions, reconnect, error
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await expect.poll(() => page.evaluate(() => (window as any).__execHarness.logsActive())).toBe(0);
   await expect.poll(() => page.evaluate(() => (window as any).__execHarness.callbacks())).toBe(0);
+});
+
+
+test('multi-container launches wait for an explicit choice; Cancel creates no terminal or log transport', async ({ page }) => {
+  await setup(page);
+  const details = page.getByTestId('resource-details');
+  await details.getByRole('button', { name: 'Shell', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Choose container · Shell' });
+  await expect(dialog.getByRole('button', { name: 'Open shell for setup', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Open shell for proxy', exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => (window as any).__execHarness.starts.length)).toBe(0);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).__execHarness.starts.length)).toBe(0);
+  await details.getByRole('button', { name: 'Logs', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).__execHarness.logRequests.length)).toBe(0);
+  await page.keyboard.press('Escape');
+  await details.getByRole('button', { name: 'Shell', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Open shell for shipper', exact: true }).click();
+  await expect(page.getByTestId('live-terminal').getByRole('status')).toHaveText('Connected');
+  expect(await page.evaluate(() => (window as any).__execHarness.starts.map((request: any) => request.container))).toEqual(['shipper']);
 });

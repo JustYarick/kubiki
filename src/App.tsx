@@ -1,3 +1,5 @@
+import { ContainerLaunchDialog } from './components/k8s/ContainerLaunchDialog';
+import { RESOURCE_TYPES } from './core/resources/resource_types';
 import { closePortForwards, resetPortForwards, listPortForwards } from './providers/port_forward';
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
@@ -85,7 +87,7 @@ export default function App() {
       }
       if (!current()) return;
       setConnected(true, ping.version);
-      const kinds = Object.keys(useResourceStore.getState().resources) as ResourceKind[];
+      const kinds = RESOURCE_TYPES.map(type => type.kind) as ResourceKind[];
       useResourceStore.getState().setSyncMode(k8s.demo ? 'demo' : k8s.supportsResourceWatch ? 'watch' : 'snapshot');
       const results = k8s.supportsResourceWatch ? await startResourceWatches(contextName) : await Promise.allSettled(kinds.map(async (kind) => {
         try {
@@ -193,7 +195,7 @@ export default function App() {
   }, [toggleDock]);
 
   const activeTabType = useWorkspaceStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.type);
-  const showInspector = !inspectorCollapsed && activeTabType !== 'helm-releases' && activeTabType !== 'helm-repositories';
+  const showInspector = !inspectorCollapsed && activeTabType !== 'helm-releases' && activeTabType !== 'helm-repositories' && activeTabType !== 'helm-release';
   useEffect(() => {
     if (activeTabType === 'overview' && !inspectorPinned) useUiStore.setState({ inspectorCollapsed: true });
   }, [activeTabType, inspectorPinned]);
@@ -262,6 +264,7 @@ export default function App() {
       {/* Global Modals & Overlays */}
       <CommandPalette />
       <SettingsDialog />
+      <ContainerLaunchDialog />
       <Toasts />
     </div>
   );

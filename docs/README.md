@@ -25,3 +25,5 @@ Kubiki — разрабатываемая desktop IDE для Kubernetes на Tau
 Централизованное подтверждение записи и границы гарантий: [22 — mutation safety ADR](22-MUTATION-SAFETY.md).
 
 Helm releases/repositories, история и документы ревизий, ограничения и план мутаций: [23 — Helm](23-HELM.md).
+
+Основные Helm operations, backend consent, RBAC/Helm links и фильтры типов диаграмм: [24](24-HELM-OPERATIONS-AND-RBAC.md).

@@ -4,7 +4,7 @@
 
 ## Стадия
 
-**Early alpha / pre-MVP.** UI-прототип переходит к частичной интеграции с Kubernetes. Базовый desktop цикл connect → watch → inspect → real logs/exec → cleanup подключён. До рабочего аналога Lens остаются native/live приёмка этого цикла, port-forward, общий mutation pipeline, dynamic discovery и производительность больших наборов.
+**Early alpha / pre-MVP.** UI-прототип переходит к частичной интеграции с Kubernetes. Базовый desktop цикл connect → watch → inspect → real logs/exec → cleanup подключён. До рабочего аналога Lens остаются native/live приёмка этого цикла и port-forward, общий mutation pipeline, dynamic discovery и производительность больших наборов.
 
 Архитектурные заготовки Rust не эквивалентны готовому приложению. Наличие пакета в `package.json` не доказывает интеграцию: dockview и TanStack Table/Virtual установлены, но текущая рабочая область/таблицы их не используют.
 
@@ -16,10 +16,10 @@
 | 1. Core/Kubeconfig | Сервисы и CLI есть; клиентский пул и базовый health; полноценный multi-cluster session lifecycle не завершён |
 | 2. IDE shell | Дерево/табы/split/inspector/dock есть; только dark, полноценный dockview не интегрирован |
 | 3. Watch/таблицы | Desktop watch подключён через Tauri Channels; atomic relist, bounded batching, reconnect/stale, lifecycle и context isolation покрыты локальным HTTP/API и browser IPC tests. Browser — snapshots; namespace-scoped UI и ручной ввод при RBAC подключены; native/live QA, lazy subscriptions и virtualization ещё открыты |
-| 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Desktop logs подключены потоком с tail/since/previous/cancel/reconnect; browser logs пока snapshots. Host PTY подключён (portable-pty/Tauri/xterm, реальные Linux PTY tests); Node debug подключён (privileged helper/host chroot/UID cleanup/retry), live/native QA остаётся; PF в плане |
-| 5. Config/Network/Storage/RBAC | Фиксированные списки и детали; ServiceAccount/Role/RoleBinding/ClusterRole/ClusterRoleBinding доступны read-only в Explorer через общий resource API. Построчное live редактирование Secret data с Text/Base64 и UID/resourceVersion подключено. RBAC relationships, NetworkPolicy, quotas/HPA/EndpointSlice и live/native QA остаются |
+| 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Desktop logs подключены потоком с tail/since/previous/cancel/reconnect; browser logs пока snapshots. Host PTY подключён (portable-pty/Tauri/xterm, реальные Linux PTY tests); Node debug подключён (privileged helper/host chroot/UID cleanup/retry), live/native QA остаётся; Pod/Service PF подключён с UID/context/listener cleanup и IPC/protocol tests; native PF QA остаётся |
+| 5. Config/Network/Storage/RBAC | Фиксированные списки и детали; ServiceAccount/Role/RoleBinding/ClusterRole/ClusterRoleBinding доступны read-only в Explorer через общий resource API. Построчное live редактирование Secret data с Text/Base64 и UID/resourceVersion подключено. RBAC graph links и cluster dependencies подключены; NetworkPolicy, quotas/HPA/EndpointSlice и live/native QA остаются |
 | 6. YAML/CRD | Monaco, просмотр/экспорт и demo edit; live apply/diff/schema и dynamic CRD explorer отсутствуют |
-| 7. Helm | Read-only UI/IPC/browser bridge подключены: paged releases, context/namespace, overview/history/values/manifest/notes и локальные repositories. Explicit context/revision, ошибки/лимиты и late responses покрыты тестами; mutations, связанные K8s-объекты и native/live/Helm 4 QA остаются. См. [23](23-HELM.md) |
+| 7. Helm | Read-only UI/IPC/browser bridge подключены: paged releases, context/namespace, overview/history/values/manifest/notes и локальные repositories. Explicit context/revision, ошибки/лимиты и late responses покрыты тестами; Основные desktop mutations через backend consent и связанные K8s-объекты/диаграммы подключены; native/live/Helm 4 QA и расширенные сценарии остаются. См. [24](24-HELM-OPERATIONS-AND-RBAC.md). См. [23](23-HELM.md) |
 | 8. Метрики | Metrics API подключён в desktop/browser Overview: CPU/RAM usage, configured requests/limits, capacity/allocatable, bounded SVG history/gauges и consumers/containers. Prometheus/history backfill/quotas/native QA остаются |
 | 9. Production | Некоторые настройки/палитра; плагины, release QA, CI, cross-platform tests не завершены |
 
@@ -69,3 +69,6 @@ Overview кластера/namespace подключён (UX-17): следует �
 
 
 Защита записи WRITE-GUARD-01: backend prepared mutation, точный diff, системное подтверждение, повторный GET и Kubernetes preconditions; 120-секундный одноразовый review, без автоматического retry. Node helper создаётся только после подтверждения privileged manifest; создание также разрешает UID-scoped cleanup этого временного Pod. Осиротевший helper требует отдельного подтверждения при ручном удалении. HTTP mutation endpoints отклоняются. Автоматические Rust/TS/browser-тесты проходят; native dialog acceptance на других ОС и live QA отдельны. См. [22](22-MUTATION-SAFETY.md).
+
+
+Актуальная очередь замечаний от 2026-10-20 реализована: RBAC/Helm relationships, compact Types popover (без потери ширины/позиций холста), единое название Topology, Node auto-connect через guarded helper, компактный adaptive Overview + Critical/Warning Problems, table fit по текущему pane и обязательный выбор контейнера перед Logs/Shell у multi-container Pod. 214 unit, 70 Rust, полный production browser suite 92/92; дополнительные targeted проверки после финальных уточнений — в [07](07-UI-PROGRESS.md). Native/live/Helm 4 QA и произвольные CR instances остаются открытыми; стадия проекта не повышается до release-ready.

@@ -27,6 +27,7 @@ const KIND_COLORS: Record<ResourceKind, string> = {
   RoleBinding: 'text-fuchsia-300 bg-fuchsia-500/15 border-fuchsia-400/40',
   ClusterRole: 'text-indigo-300 bg-indigo-500/15 border-indigo-400/40',
   ClusterRoleBinding: 'text-purple-300 bg-purple-500/15 border-purple-400/40',
+  HelmRelease: 'text-sky-300 bg-sky-500/15 border-sky-400/40',
 };
 
 /** Color supplements the kind text and icon; it never carries meaning alone. */

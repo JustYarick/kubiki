@@ -6,7 +6,7 @@
 
 Перезапустите desktop через `pnpm tauri dev`: добавлены новые Rust IPC-команды. Выберите Pod → Shell справа либо ПКМ → Terminal in Bottom Drawer / Terminal in Full Tab. В header доступны контейнер, shell binary, состояние, Reconnect, Disconnect и Clear. Стандартный shell — `/bin/sh`; можно выбрать `/bin/bash`, `/bin/ash`, `/bin/zsh`, если бинарник есть в образе. В distroless-образе наличие shell не гарантируется; ошибка открытия показывается пользователю.
 
-Dropdown логов включает все контейнеры. В shell завершившиеся и ожидающие контейнеры недоступны для выбора; backend отдельно проверяет реальное состояние. Временное отсутствие status в UI не считается доказательством работоспособности. Начальная цель учитывает `kubectl.kubernetes.io/default-container`; для shell приоритет получают работающие контейнеры, поэтому завершённый init не выбирается случайно.
+Dropdown логов включает все контейнеры. В shell завершившиеся и ожидающие контейнеры недоступны для выбора; backend отдельно проверяет реальное состояние. Временное отсутствие status в UI не считается доказательством работоспособности. При нескольких контейнерах начальная цель выбирается пользователем до открытия сессии; default-container annotation не пропускает этот шаг.
 
 Открытые terminal/log вкладки сохраняют своё состояние при переключении и сворачивании, в dock и основной рабочей области. Смена контейнера выполняется в текущей вкладке; прежний exec закрывается. Закрытие вкладки, Disconnect, смена context, pagehide и уничтожение окна освобождают транспорт. Reconnect всегда явный: введённые команды автоматически не повторяются. Ctrl-C/D/Z и обычные управляющие последовательности передаются shell; Ctrl-K/B/J/W при фокусе xterm не вызывают глобальные IDE-команды.
 
@@ -46,4 +46,11 @@ cargo run --manifest-path crates/kubiki-core/Cargo.toml --example terminal_smoke
 
 В этой сессии проверен существующий `chaos-lab/pod-with-init-container`, контейнер `main-application`: получен выполненный marker, exit 0, TTY 100×40, active_sessions=0. Это проверка живого Rust backend; полная приёмка GUI в Tauri и длительных сессий остаётся открытой.
 
-Browser preview не выполняет remote shell и показывает требование desktop; demo shell остаётся явно симулированным. Host PTY подключён, см. [15](15-HOST-TERMINAL.md); Node debug shell подключён с управляемым helper Pod, см. [16](16-NODE-SHELL.md). Следующие блоки: browser log streaming, port-forward, полная native/live/cross-platform QA.
+Browser preview не выполняет remote shell и показывает требование desktop; demo shell остаётся явно симулированным. Host PTY подключён, см. [15](15-HOST-TERMINAL.md); Node debug shell подключён с управляемым helper Pod, см. [16](16-NODE-SHELL.md). Следующие блоки: browser log streaming и полная native/live/cross-platform QA. Pod/Service port-forward подключён, см. [21](21-TERMINAL-AND-FORWARDING.md).
+
+
+## Обязательный выбор перед открытием — 2026-10-20
+
+Если у Pod несколько контейнеров (application/init/native sidecar/ephemeral), общий Logs/Shell action сначала показывает **Choose container**. Default-container annotation не обходит этот выбор. Транспорт и session/tab создаются только после выбора; Cancel/Escape не открывают ничего. Завершённые/waiting контейнеры недоступны для Shell с объяснением, их Logs доступны. Явная кнопка Logs/Shell у конкретного контейнера уже является выбором и открывает его сразу; один контейнер не требует дополнительного диалога.
+
+Gate общий для table context menu, inspector, dock launcher и полноэкранных вкладок. Context/Pod UID проверяются повторно при выборе; смена кластера/пересоздание Pod отменяют pending launch. Для восстановленных старых вкладок без выбранного контейнера показывается inline picker до создания transport; отсутствует fallback на первый контейнер при нескольких целях. Переключатель внутри действующей сессии остаётся.

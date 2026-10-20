@@ -24,3 +24,6 @@ CPU/RAM usage, короткая история наблюдений, configured 
 ## Проверки
 
 5 unit tests: cluster/namespace boundaries, phases/restarts/workloads, Events вне object totals, empty namespace, unavailable/stale/loading, namespace/context coverage watch и deduplication вкладки. Browser: scope switch, refresh, navigation, reload persistence, 403/empty/narrow pane; native IPC mock проверяет live phase/issue updates, stale reconnect, authoritative empty snapshot и неизменные 18 subscriptions. Результат общего прогона записан в [07](07-UI-PROGRESS.md).
+
+
+Обновление 2026-10-20: компактные compute cards/history/gauges адаптируются к реальной ширине workspace через container queries; CPU/RAM в две колонки только при достаточной ширине своего блока. Problems — отдельный блок Critical/Warning с counts, фильтром severity, причинами, переходом к details, локальным scroll и порциями по 50. Это диагностика загруженного snapshot, не полная проверка кластера; partial/stale показаны явно. Warning Events учитываются отдельно от проблем объектов.

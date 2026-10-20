@@ -9,6 +9,7 @@ export interface ResourceRef extends ResourceQuery { name: string; uid: string |
 export const RESOURCE_TYPES: readonly ResourceType[] = types;
 
 export function resourceType(kind: ResourceKind): ResourceType {
+  if (kind === 'HelmRelease') return { group: 'helm.sh', version: 'v1', kind, plural: 'releases', namespaced: true };
   const type = RESOURCE_TYPES.find((type) => type.kind === kind);
   if (!type) throw new Error(`Unsupported resource kind: ${kind}`);
   return type;

@@ -4,6 +4,22 @@
 
 Статусы: `TODO` — не начато, `IN PROGRESS` — выполняется, `PARTIAL` — реализована часть, `DONE` — реализовано и проверено, `DEFERRED` — отложено по запросу владельца. Наличие backend/UI само по себе не закрывает сквозной сценарий.
 
+## Актуальная очередь замечаний владельца — 2026-10-20
+
+Очередь реализована и проверена последовательно. Native GUI/live/cross-platform acceptance остаётся в отдельных QA задачах; её не заменяют subprocess/IPC fixtures. Критерии относятся к реальному поведению UI/backend; наличие заглушки не означает DONE.
+
+| Порядок / ID | Задача | Статус | Критерий приёмки |
+|---|---|---|---|
+| 1 · REQUEST-HELM | Основные Helm operations и зависимости на диаграммах | DONE | Install/upgrade/values/rollback/uninstall, repository CRUD/cache update, immutable chart/values preview и системное backend consent, conflicts/cancel/no automatic retries; Helm Release → реальные объекты по точным ownership annotations; открытие подробностей и диаграммы в обе стороны, ошибки/лимиты scopes, тесты |
+| 2 · REQUEST-RBAC | Исправить диаграммы Access Control из одного объекта/namespace | DONE | Pod/workload → ServiceAccount → RoleBinding/ClusterRoleBinding → Role/ClusterRole, namespace и apiGroup корректны, cluster dependencies загружаются только по ссылкам; User/Group не выдумываются как K8s objects, неполные данные объясняются; проверки каждого kind и cross-namespace references |
+| 3 · REQUEST-TOPOLOGY-FILTERS | Панель типов сущностей на топологии | DONE | Компактное всплывающее меню всех kinds исходной диаграммы с counts и переключателями; выключение скрывает узлы и инцидентные рёбра, не меняет scope/загруженные данные; включение восстанавливает, Show all/Hide all, keyboard access; не теряет позиции оставшихся узлов |
+| 4 · REQUEST-NODE-TERMINAL | Привести Node terminal к рабочему сценарию Pod terminal | DONE | Аудит текущего managed debug Pod → exec; автоматическое подключение при открытии с системным consent, connecting/live/error/reconnect, реальные stdin/output/resize, backend consent на helper, UID cleanup и права/RBAC. Нода сама не предоставляет Pod exec API; Node session должна использовать её managed helper, без фиктивного shell. Native/live acceptance отдельно |
+| 5 · REQUEST-OVERVIEW | Компактный адаптивный Overview и панель проблем | DONE | Все блоки и CPU/RAM charts адаптируются к ширине workspace/scale/split; компактные графики, локальный scroll без расползания страницы; отдельный список Critical/Warning с counts/фильтрами/причинами/переходом к объекту и partial/stale semantics |
+| 6 · REQUEST-TABLE-FIT | Подгонять новую таблицу к текущему размеру окна | DONE | Первое открытие списка рассчитывает ширины по текущему pane; после resize окна открытый новый kind выглядит оптимально; distinguish auto-fit от пользовательских widths, сохранять ручные изменения, не ломать limits/resizing/hidden columns; широкие/узкие/split tests |
+| 7 · REQUEST-CONTAINER-PICKER | Выбор контейнера до запуска Logs/Shell | DONE | Если у Pod более одного доступного контейнера, сначала выбор application/sidecar/init/ephemeral со статусами; ничего не запускается автоматически на первом контейнере; один контейнер открывается сразу; неработающие/completed exec цели отключены с причиной; выбор при открытии из таблицы/Related/inspector/вкладки/нижней панели; отмена не создаёт session |
+
+После каждого блока обновлять статусы этой очереди, DOMAIN/OPS/GRAPH/UX задачи ниже и [07](07-UI-PROGRESS.md), записывать выполненные проверки и оставшуюся native/live приёмку.
+
 ## Централизованная защита записи — 2026-10-20
 
 | ID | Приоритет | Задача | Статус | Критерий приёмки |
@@ -72,27 +88,27 @@
 | OPS-02B | UI-5 | Настоящий host PTY | DONE | portable-pty → Tauri → общий xterm; системный shell/home, stdin/resize/exit/ACK, независимые сессии, cancel/reap/owner limits; реальные Linux PTY tests и browser IPC/unsupported/retry. Native GUI и macOS/Windows остаются OPS-02C; см. [15](15-HOST-TERMINAL.md) |
 | OPS-02C | UI-5 | Native GUI и длительная приёмка terminal transports | TODO | Pod exec на живом кластере + host PTY в GUI Tauri: длительные/большие потоки, teardown/process trees, credentials/proxy edge cases и Linux/macOS/Windows, ConPTY final output/cancel. Rust PTY/HTTP smoke не заменяет эту приёмку |
 | OPS-03 | UI-5 | Управляемый Node debug shell | PARTIAL | OPS-03A реализована; native/live/admission QA остаётся OPS-03B |
-| OPS-03A | UI-5 | Debug Pod lifecycle и host shell | DONE | Явный Start, Node UID/Linux/RBAC, privileged helper, chroot /host, exec/ACK/owner/cancel, UID delete/retry/manual orphan recovery. Local HTTP/WS + browser IPC; [16](16-NODE-SHELL.md) |
+| OPS-03A | UI-5 | Debug Pod lifecycle и host shell | DONE | Auto-connect при открытии + backend consent, Node UID/Linux/RBAC, privileged helper, chroot /host, exec/ACK/owner/cancel, UID delete/retry/manual orphan recovery. Local HTTP/WS + browser IPC; [16](16-NODE-SHELL.md) |
 | OPS-03B | UI-5 | Native/live приёмка Node debug | TODO | Тестовый кластер, Pod Security/admission/image pull/finalizers, неопределённый POST/crash recovery, длительные потоки и cross-platform transport |
-| OPS-04 | UI-5 | Доработать PF lifecycle и подключить UI | TODO | Отмена listener и дочерних соединений; Starting/Active/Failed; context и Service resolution |
+| OPS-04 | UI-5 | PF lifecycle и UI | DONE | Реальный Pod/Service transport, listener/child cancellation, UID/context/owner, Starting/Active/Failed, counters/errors; PF-02/03 — native QA и saved configs; [21](21-TERMINAL-AND-FORWARDING.md) |
 | MUT-01 | UI-6 | YAML schema, dry-run, diff и live apply | TODO | DATA-01; 403/409/timeout не объявляются успехом; точная цель и conflict handling |
 | MUT-02 | UI-7 | Реальные create/delete/restart через единый action pipeline | TODO | WRITE-GUARD-01; context/ns/name и подтверждение операции; строки таблицы остаются без action buttons |
 | MUT-03A | UI-6 | Построчный Secret data editor | DONE | Text/Base64 общий toggle, UTF-8/binary/empty, add/remove keys, immutable/validation, desktop и browser stdin save, UID/resourceVersion conflicts и draft preservation. [17](17-SECRET-EDITOR.md) |
 | MUT-03B | UI-6 | Native/live приёмка Secret mutations | TODO | Отдельный test namespace, controlled Secret, admission/webhooks, реальные timeout outcomes и required type keys. Не закрывает MUT-01 live YAML apply |
 | PERF-01 | UI-3/10 | Виртуализация таблиц и фильтры по вкладкам | TODO | Измерение 10k строк; отсутствие перехвата клавиатуры чужих панелей |
 | GRAPH-00…12 | UI-3/7/10 | Многоуровневая интерактивная топология | PARTIAL | Подробные задачи и критерии ниже; базовые scopes уже реализованы |
-| DOMAIN-01 | UI-7 | Встроенные типы и relationships | PARTIAL | Базовая read-only навигация RBAC готова (DOMAIN-01A); endpoint slices/NetworkPolicy/HPA, ссылки subject/roleRef/serviceAccount и capability-aware UI остаются (DOMAIN-01B) |
+| DOMAIN-01 | UI-7 | Встроенные типы и relationships | PARTIAL | Базовая read-only навигация RBAC готова (DOMAIN-01A); RBAC relationships и topology готовы (REQUEST-RBAC); EndpointSlice/NetworkPolicy/HPA и capability-aware UI остаются (DOMAIN-01B) |
 | DOMAIN-03 | UI-7 | Dynamic discovery и экземпляры CRD на диаграммах | TODO | API discovery, typed GVK identity, загрузка произвольных resource plural/version/scope, RBAC/partial data, ownerReferences между custom и built-in объектами. Сейчас отображается только CustomResourceDefinition, произвольных custom instances нет |
 | DOMAIN-01A | UI-7 | Базовая навигация Access Control | DONE | Добавлены ServiceAccount, Role, RoleBinding, ClusterRole и ClusterRoleBinding в общий каталог TS/Rust, штатный list API и Explorer; CRUD не включён |
-| DOMAIN-01B | UI-7 | Остальные встроенные виды и RBAC relationships | TODO | EndpointSlice, NetworkPolicy, HPA и ссылки subject/roleRef/serviceAccount; capability-aware пустые/forbidden состояния, связанные объекты и тестовый кластер |
-| DOMAIN-02 | UI-8/9 | Metrics и Helm с явным context | PARTIAL | DOMAIN-02A и Helm read-only DOMAIN-02C1/C2 готовы; metrics history/quotas, Helm mutations и native QA остаются |
+| DOMAIN-01B | UI-7 | Остальные встроенные виды и capability-aware UI | TODO | EndpointSlice, NetworkPolicy, HPA; capability-aware пустые/forbidden состояния, связанные объекты и тестовый кластер. RBAC subject/roleRef/serviceAccount relationships выполнены в REQUEST-RBAC |
+| DOMAIN-02 | UI-8/9 | Metrics и Helm с явным context | PARTIAL | DOMAIN-02A и Helm read-only DOMAIN-02C1/C2 готовы; metrics history/quotas и native QA остаются |
 | DOMAIN-02A | UI-8 | Metrics API + CPU/RAM Overview | DONE | Desktop/browser read transport, scoped Pods/cluster Nodes, quantities, effective configured requests/limits, capacity/allocatable, SVG history/gauges, rankings/containers, bounded polling/cache, partial/stale. Local HTTP + browser + read-only live smoke; [19](19-OVERVIEW-TELEMETRY.md) |
 | DOMAIN-02B | UI-8 | Prometheus/history/quotas | TODO | История до открытия приложения, долгие интервалы, ResourceQuota, workload metrics, in-place allocations и discovery capabilities |
 | DOMAIN-02C1 | UI-9 | Helm releases read-only с явным context | DONE | IPC/UI/browser GET: pages 100+1, context/namespace, statuses/filters, details/history/values/manifest/notes, revision pinning, PATH/RBAC/timeout/output limits и late responses; unit/subprocess/browser IPC tests и реальный Helm 3 с mock API. [23](23-HELM.md) |
 | DOMAIN-02C2 | UI-9 | Helm repository browsing | DONE | IPC/UI списка локальных репозиториев, поиск и перечитывание конфигурации; ошибки не маскируются под пустой список; repo update/CRUD относятся к C3. [23](23-HELM.md) |
-| DOMAIN-02C3 | UI-9 | Helm mutations с backend consent | TODO | Upgrade/rollback/uninstall/repository changes: preview/diff/подтверждение на backend, повторная проверка release revision перед выполнением и тесты; не вызывать существующие mutating wrappers из UI напрямую |
+| DOMAIN-02C3 | UI-9 | Основные Helm mutations с backend consent | DONE | Install/upgrade с values/rollback/uninstall и repository add/edit/remove/cache update; private frozen archive/values, backend object/values/hook/CRD review, native consent через общий guard, повторные snapshot/render/input проверки, no automatic retry и HTTP 403. Ограничения CLI/external races, review size и native/live приёмка — [24](24-HELM-OPERATIONS-AND-RBAC.md) |
 | DOMAIN-02C4 | UI-9 | Helm live/native/cross-platform приёмка | TODO | Настоящий кластер и native Tauri GUI; реальный Helm 4, PATH/kubeconfig/credentials на Linux/Windows/macOS. Mock API и browser IPC не заменяют эту приёмку |
-| DOMAIN-02C5 | UI-9 | Helm resource links и расширенная история/поиск | TODO | Manifest/release → Kubernetes объекты по точной идентичности; история свыше 256, поиск по всем страницам без загрузки всего списка в UI |
+| DOMAIN-02C5 | UI-9 | Helm resource links и расширенная история/поиск | PARTIAL | Release ↔ Kubernetes ownership links и diagram/detail navigation реализованы; остаётся разбор Manifest для навигации по точной GVK identity; история свыше 256, поиск по всем страницам без загрузки всего списка в UI |
 | DOMAIN-02D | UI-8 | Native/cross-platform metrics QA | TODO | Tauri GUI FPS/animations при больших кластерах, credentials/proxy, длительный polling и memory QA |
 | RELEASE-01 | UI-11 | CI, desktop smoke, нагрузка и длительные сессии | TODO | Все MVP сценарии; Linux WebKit + macOS/Windows; измеренные бюджеты |
 

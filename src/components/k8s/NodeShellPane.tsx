@@ -31,6 +31,7 @@ export function NodeShellPane({ session, visible }: { session: DockSession; visi
   const [listing, setListing] = useState(false);
   const active = useRef<{ id: string; abort: AbortController } | undefined>(undefined);
   const mounted = useRef(true);
+  const autoStarted = useRef(false);
   const native = '__TAURI_INTERNALS__' in window;
   const busy = phase === 'preparing' || phase === 'closing';
   const fail = (error: unknown) => normalizeK8sError(error, { operation: 'node_debug' }).message;
@@ -49,6 +50,7 @@ export function NodeShellPane({ session, visible }: { session: DockSession; visi
   }, [native, id]);
   async function start(nextShell = shell) {
     if (!context || !session.resourceName || !uid || recreated || busy) return;
+    autoStarted.current = true;
     setError('');setPhase('preparing');setResource(undefined);setStatus(null);setShell(nextShell);
     let started: { id: string; abort: AbortController } | undefined;
     try {
@@ -60,6 +62,13 @@ export function NodeShellPane({ session, visible }: { session: DockSession; visi
       setResource(resource);setPhase('ready');setShowSetup(false);
     } catch (error) { if (mounted.current && !started?.abort.signal.aborted) { setError(fail(error));setPhase('failed'); } }
   }
+  const startRef = useRef(start); startRef.current = start;
+  useEffect(() => {
+    if (!native || !visible || !uid || recreated || autoStarted.current || phase !== 'idle') return;
+    // Defer until committed: StrictMode's discarded mount must not create a helper.
+    const timer = setTimeout(() => { if (!autoStarted.current) void startRef.current(); }, 0);
+    return () => clearTimeout(timer);
+  }, [native, visible, uid, recreated, phase]);
   async function stop() {
     const current = active.current;if (!current) return;
     setPhase('closing');current.abort.abort();
@@ -77,13 +86,13 @@ export function NodeShellPane({ session, visible }: { session: DockSession; visi
   return <div className="h-full flex flex-col min-h-0 min-w-0" data-testid="node-shell">
     <div className="shrink-0 px-3 py-2 space-y-2 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] max-h-[55%] overflow-auto">
       <div className="flex flex-wrap items-center gap-2 text-xs"><strong className="font-mono break-all">Node: {session.resourceName}</strong><span className="text-[var(--text-muted)]">{context} · {status?.phase ?? phase}{status?.detail ? ` · ${status.detail}` : ''}</span>{resource && <Button size="sm" onClick={() => setShowSetup((show) => !show)}>{showSetup ? 'Hide setup' : 'Configure'}</Button>}</div>
-      {(showSetup || !resource) && <p className="text-xs text-[var(--text-secondary)]">Creates a privileged debug Pod with host namespaces and filesystem access on this Linux node. Kubiki deletes it when the shell closes; cleanup failures are shown here.</p>}
+      {(showSetup || !resource) && <p className="text-xs text-[var(--text-secondary)]">Connecting through a managed debug Pod on this Linux node. A system dialog reviews its privileged host access before creation. Kubiki deletes the helper when the shell closes; cleanup failures are shown here.</p>}
       {!native && <p className="text-xs text-[var(--status-warn)]">Node shell is available in the desktop app.</p>}
       {(!uid || recreated) && <p className="text-xs text-[var(--status-warn)]">Reopen the current Node before starting a shell.</p>}
       <div className="flex flex-wrap items-end gap-2">
         {(showSetup || !resource) && <><label className="text-xs min-w-0 flex-[1_1_140px]">Debug Pod namespace<Input aria-label="Debug Pod namespace" value={namespace} onChange={(e) => { setNamespace(e.target.value);setOthers([]); }} disabled={busy} invalid={!isValidNamespaceName(namespace)} /></label>
         <label className="text-xs min-w-0 flex-[2_1_220px]">Debug image<Input aria-label="Debug image" value={image} onChange={(e) => setImage(e.target.value)} disabled={busy} /></label>
-        <Button size="sm" disabled={!native || !context || !uid || recreated || busy || !isValidNamespaceName(namespace) || !image.trim()} onClick={() => void start()}>Start node shell</Button></>}
+        <Button size="sm" disabled={!native || !context || !uid || recreated || busy || !isValidNamespaceName(namespace) || !image.trim()} onClick={() => void start()}>{phase === 'failed' || phase === 'closed' ? 'Reconnect node shell' : 'Start node shell'}</Button></>}
         {(id || busy) && <Button size="sm" onClick={() => void stop()}>{busy ? 'Cancel preparation' : 'Stop and delete Pod'}</Button>}
         {status?.phase === 'cleanup_failed' && <Button size="sm" onClick={() => void stop()}>Retry cleanup</Button>}
         <Button size="sm" disabled={!native || !context || listing || busy || !isValidNamespaceName(namespace)} onClick={() => void loadOthers()}>Other debug Pods</Button>

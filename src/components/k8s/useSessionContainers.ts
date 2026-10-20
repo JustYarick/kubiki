@@ -11,6 +11,7 @@ export function useSessionContainers(session: DockSession, shell = false) {
   const recreated = Boolean(session.uid && namedPod && namedPod.uid !== session.uid);
   const pod = !session.context || context === session.context ? [...pods.values()].find((p) => session.uid ? p.uid === session.uid : p.name === session.resourceName && p.namespace === session.namespace) : undefined;
   const containers = pod ? podContainers(pod) : (session.allContainers ?? (session.container ? [session.container] : [])).map((name): ResourceContainer => ({ name, image: '', ready: false, restarts: 0, port: '-', state: 'unknown' }));
-  const container = session.container ?? defaultContainer(pod, shell) ?? containers[0]?.name ?? '';
-  return { pod, recreated, containers, container, context: session.context ?? context, uid: session.uid ?? pod?.uid };
+  const needsSelection = session.targetType === 'pod' && !session.container && containers.length > 1;
+  const container = needsSelection ? '' : session.container ?? defaultContainer(pod, shell) ?? containers[0]?.name ?? '';
+  return { pod, recreated, needsSelection, containers, container, context: session.context ?? context, uid: session.uid ?? pod?.uid };
 }

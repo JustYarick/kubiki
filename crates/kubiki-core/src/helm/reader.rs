@@ -3,7 +3,10 @@ use super::model::{HelmRelease, HelmReleaseHistory, HelmRepo};
 use crate::core::api::{ApiError, ApiErrorCode};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, process::Stdio, time::Duration};
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 
 pub const RELEASE_PAGE_SIZE: usize = 100;
 const OUTPUT_LIMIT: u64 = 8 * 1024 * 1024;
@@ -56,18 +59,34 @@ impl HelmReader {
         }
     }
 
-    async fn run(
+    pub(crate) async fn run(
         &self,
         args: &[String],
         context: Option<&str>,
         empty_repositories: bool,
+    ) -> Result<String, ApiError> {
+        self.execute(args, context, empty_repositories, None, self.timeout)
+            .await
+    }
+
+    pub(crate) async fn execute(
+        &self,
+        args: &[String],
+        context: Option<&str>,
+        empty_repositories: bool,
+        input: Option<&str>,
+        timeout: Duration,
     ) -> Result<String, ApiError> {
         let operation = "helm";
         let mut command = Command::new(&self.program);
         command
             .args(args)
             .kill_on_drop(true)
-            .stdin(Stdio::null())
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = command.spawn().map_err(|error| {
@@ -77,6 +96,7 @@ impl HelmReader {
         })?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
+        let stdin = child.stdin.take();
         let read = async |stream: Box<dyn tokio::io::AsyncRead + Unpin + Send>, limit: u64| {
             let mut bytes = Vec::new();
             stream
@@ -102,7 +122,7 @@ impl HelmReader {
             Ok(bytes)
         };
         let task = async {
-            tokio::try_join!(
+            let (out, err, status, _) = tokio::try_join!(
                 read(Box::new(stdout), OUTPUT_LIMIT),
                 read(Box::new(stderr), 65536),
                 async {
@@ -114,20 +134,26 @@ impl HelmReader {
                             context,
                         )
                     })
+                },
+                async {
+                    if let (Some(mut stream), Some(input)) = (stdin, input) {
+                        // A child rejecting its arguments can close stdin immediately.
+                        let _ = stream.write_all(input.as_bytes()).await;
+                        let _ = stream.shutdown().await;
+                    }
+                    Ok::<(), ApiError>(())
                 }
-            )
+            )?;
+            Ok::<_, ApiError>((out, err, status))
         };
-        let (out, err, status) =
-            tokio::time::timeout(self.timeout, task)
-                .await
-                .map_err(|_| {
-                    ApiError::from_status(
-                        504,
-                        "Helm request timed out. Check cluster connectivity and retry.",
-                        operation,
-                        context,
-                    )
-                })??;
+        let (out, err, status) = tokio::time::timeout(timeout, task).await.map_err(|_| {
+            ApiError::from_status(
+                504,
+                "Helm request timed out. Check cluster connectivity and retry.",
+                operation,
+                context,
+            )
+        })??;
         if !status.success() {
             let message = String::from_utf8_lossy(&err).trim().to_owned();
             if empty_repositories
@@ -161,7 +187,7 @@ impl HelmReader {
         })
     }
 
-    fn context(context: &str) -> Result<String, ApiError> {
+    pub(crate) fn context(context: &str) -> Result<String, ApiError> {
         if context.trim().is_empty()
             || context.len() > 4096
             || context.chars().any(char::is_control)
@@ -176,7 +202,7 @@ impl HelmReader {
         Ok(format!("--kube-context={context}"))
     }
 
-    fn namespace(namespace: &str, context: &str) -> Result<(), ApiError> {
+    pub(crate) fn namespace(namespace: &str, context: &str) -> Result<(), ApiError> {
         if namespace.is_empty()
             || namespace.len() > 63
             || !namespace
@@ -195,7 +221,11 @@ impl HelmReader {
         Ok(())
     }
 
-    fn release(context: &str, namespace: &str, name: &str) -> Result<Vec<String>, ApiError> {
+    pub(crate) fn release(
+        context: &str,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Vec<String>, ApiError> {
         let ctx = Self::context(context)?;
         Self::namespace(namespace, context)?;
         if name.is_empty()
@@ -336,6 +366,76 @@ impl HelmReader {
                 .await?,
             None,
         )
+    }
+
+    pub async fn snapshot(
+        &self,
+        context: &str,
+        namespace: &str,
+        name: &str,
+        revision: Option<u32>,
+    ) -> Result<serde_json::Value, ApiError> {
+        let mut args = Self::release(context, namespace, name)?;
+        args.extend(["status".into(), name.into(), "--output=json".into()]);
+        if let Some(revision) = revision {
+            if revision == 0 {
+                return Err(ApiError::from_status(
+                    400,
+                    "Invalid revision",
+                    "helm",
+                    Some(context),
+                ));
+            }
+            args.push(format!("--revision={revision}"));
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&self.run(&args, Some(context), false).await?).map_err(|_| {
+                ApiError::from_status(500, "Invalid Helm release snapshot", "helm", Some(context))
+            })?;
+        if value["name"] != name
+            || value["namespace"] != namespace
+            || value["version"].as_u64().is_none()
+            || !value["info"].is_object()
+        {
+            return Err(ApiError::from_status(
+                500,
+                "Helm snapshot identity mismatch",
+                "helm",
+                Some(context),
+            ));
+        }
+        Ok(value)
+    }
+
+    pub async fn search_charts(&self, query: &str) -> Result<serde_json::Value, ApiError> {
+        if query.len() > 200 || query.starts_with('-') || query.chars().any(char::is_control) {
+            return Err(ApiError::from_status(
+                400,
+                "Invalid chart search",
+                "helm",
+                None,
+            ));
+        }
+        let args = vec![
+            "search".into(),
+            "repo".into(),
+            query.into(),
+            "--output=json".into(),
+            "--versions".into(),
+        ];
+        let value: serde_json::Value = serde_json::from_str(&self.run(&args, None, false).await?)
+            .map_err(|_| {
+            ApiError::from_status(500, "Invalid Helm chart search response", "helm", None)
+        })?;
+        if !value.is_array() {
+            return Err(ApiError::from_status(
+                500,
+                "Invalid Helm chart search response",
+                "helm",
+                None,
+            ));
+        }
+        Ok(value)
     }
 }
 

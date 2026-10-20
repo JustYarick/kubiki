@@ -2,7 +2,7 @@ import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { matchesResourceRef, resourceKey } from './identity';
 import { RESOURCE_TYPES, apiVersionFor } from './resource_types';
 
-export type RelationType = 'owns' | 'selects' | 'routes' | 'schedules' | 'uses' | 'binds' | 'contains';
+export type RelationType = 'owns' | 'selects' | 'routes' | 'schedules' | 'uses' | 'binds' | 'contains' | 'manages';
 export interface ResourceRelation {
   id: string;
   source: string;
@@ -100,7 +100,28 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
       reference(item, owner.kind, owner.name, item.namespace, 'owns', true, owner.uid, owner.apiVersion);
     }
     if (item.namespace) reference(item, 'Namespace', item.namespace, null, 'contains', true);
+    const annotations = metadata.annotations ?? {};
+    if (item.kind !== 'HelmRelease' && metadata.labels?.['app.kubernetes.io/managed-by'] === 'Helm' && annotations['meta.helm.sh/release-name'] && annotations['meta.helm.sh/release-namespace']) {
+      reference(item, 'HelmRelease', annotations['meta.helm.sh/release-name'], annotations['meta.helm.sh/release-namespace'], 'manages', true, undefined, 'helm.sh/v1');
+    }
+    if (item.kind === 'RoleBinding' || item.kind === 'ClusterRoleBinding') {
+      const role = raw.roleRef;
+      if (role?.apiGroup === 'rbac.authorization.k8s.io' && (role.kind === 'ClusterRole' || item.kind === 'RoleBinding' && role.kind === 'Role')) reference(item, role.kind, role.name, role.kind === 'ClusterRole' ? null : item.namespace, 'binds');
+      for (const subject of raw.subjects ?? []) if (subject.kind === 'ServiceAccount' && !subject.apiGroup) {
+        const namespace = subject.namespace || (item.kind === 'RoleBinding' ? item.namespace : undefined);
+        if (namespace) reference(item, 'ServiceAccount', subject.name, namespace, 'binds', true);
+      }
+    }
+    if (item.kind === 'ServiceAccount') {
+      for (const secret of [...(raw.secrets ?? []), ...(raw.imagePullSecrets ?? [])]) reference(item, 'Secret', secret.name);
+    }
+    if (item.kind === 'ClusterRole' && raw.aggregationRule?.clusterRoleSelectors?.length) {
+      for (const candidate of resources.ClusterRole.values()) if (candidate.uid !== item.uid && raw.aggregationRule.clusterRoleSelectors.some((selector: any) => Object.keys(selector).length === 0 || matchesSelector(candidate.labels ?? {}, selector))) link(resourceKey(item), resourceKey(candidate), 'uses', 'aggregates');
+    }
+    const template = item.kind === 'CronJob' ? spec.jobTemplate?.spec?.template?.spec : spec.template?.spec;
+    if (template) reference(item, 'ServiceAccount', template.serviceAccountName || 'default');
     if (item.kind === 'Pod') {
+      reference(item, 'ServiceAccount', spec.serviceAccountName || 'default');
       reference(item, 'Node', spec.nodeName ?? item.node, null, 'schedules', true);
       for (const secret of spec.imagePullSecrets ?? []) reference(item, 'Secret', secret.name);
       for (const volume of spec.volumes ?? []) {

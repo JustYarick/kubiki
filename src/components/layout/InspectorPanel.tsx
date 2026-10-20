@@ -8,10 +8,11 @@ import { useWorkspaceStore } from '../../state/workspace_store';
 import { useDockStore } from '../../state/dock_store';
 import { KIND_ICONS } from '../../core/perspectives';
 import { buildResourceGraph } from '../../core/resources/relationships';
+import { useHelmGraph } from '../../providers/use_helm_graph';
 import { resourceKey } from '../../core/resources/identity';
 import { resourceEvents } from '../../core/resources/resource_events';
 import { ContainerStatusIcon } from '../k8s/ContainerSelect';
-import { canExecContainer, defaultContainer, podContainers, CONTAINER_ROLE_LABEL } from '../../core/resources/containers';
+import { canExecContainer, podContainers, CONTAINER_ROLE_LABEL } from '../../core/resources/containers';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
 import { ResourceWarnings } from '../k8s/ResourceWarnings';
 import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
@@ -35,7 +36,7 @@ export const InspectorPanel: React.FC = () => {
   const resources = useResourceStore((s) => s.resources);
   const item = selected ? resources[selected.kind]?.get(selected.uid) : undefined;
   const close = () => useUiStore.setState({ inspectorCollapsed: true });
-  return <ResourceDetails inspector item={item} onClose={close} onNavigate={(next) => useResourceStore.getState().selectItem(next)}
+  return <ResourceDetails inspector item={item} onClose={close} onNavigate={(next) => next.kind === 'HelmRelease' ? useWorkspaceStore.getState().openHelmRelease(next) : useResourceStore.getState().selectItem(next)}
     onBack={history.length ? () => useResourceStore.getState().goBack() : undefined} />;
 };
 
@@ -48,6 +49,7 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
   const inspectorTab = useUiStore((s) => s.rightTab);
   const [localTab, setLocalTab] = useState<RightTab>('overview');
   const rightTab = inspector ? inspectorTab : localTab;
+  const helm = useHelmGraph(item?.namespace, rightTab === 'related');
   const setTab = inspector ? useUiStore.getState().setRightTab : setLocalTab;
   const resources = useResourceStore((s) => s.resources);
   const [relatedQuery, setRelatedQuery] = useState('');
@@ -67,8 +69,8 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
     return [target?.name ?? edge.missing?.name, target?.kind ?? edge.missing?.kind, target?.namespace ?? edge.missing?.namespace, edge.type].join(' ').toLowerCase().includes(relatedQuery.toLowerCase());
   });
   const containers = podContainers(item).map((c) => c.name);
-  const logs = (container = defaultContainer(item)) => useDockStore.getState().openLogs(item.name, item.namespace, container, containers);
-  const shell = (container = defaultContainer(item, true)) => item.kind === 'Node' ? useDockStore.getState().openNodeShell(item.name) : useDockStore.getState().openTerminal(item.name, item.namespace, container, containers);
+  const logs = (container?: string) => useDockStore.getState().openLogs(item.name, item.namespace, container, containers);
+  const shell = (container?: string) => item.kind === 'Node' ? useDockStore.getState().openNodeShell(item.name) : useDockStore.getState().openTerminal(item.name, item.namespace, container, containers);
   const navigate = (next: ResourceItem) => { setTab('overview'); onNavigate(next); };
   return <div className="h-full flex flex-col bg-[var(--bg-canvas)] min-h-0" data-testid="resource-details">
     <div className="shrink-0 bg-[var(--bg-secondary)] border-b border-[var(--border-default)]">
@@ -101,7 +103,7 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
         if (!k8s.demo) { toast.error('Live manifest apply is not connected yet'); return; }
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...mapK8sResource(parse(yaml), item.kind), uid: item.uid });
         toast.success('Manifest saved in demo memory');
-      }} /></Suspense> : rightTab === 'related' ? <div className="h-full overflow-auto p-3"><NamespaceScopeNotice namespace={item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined)} /><Card title="Resource relationships">
+      }} /></Suspense> : rightTab === 'related' ? <div className="h-full overflow-auto p-3"><NamespaceScopeNotice namespace={item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined)} />{helm.loading && <p role="status" className="text-xs mb-2">Loading Helm relationships…</p>}{helm.error && <p className="text-xs text-[var(--status-warn)] mb-2">Helm relationships unavailable: {helm.error}</p>}<Card title="Resource relationships">
         <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mb-2">Resolved from owner references, selectors and explicit API references. Unloaded targets may require additional permissions.</p>
         <SearchInput value={relatedQuery} onChange={(value) => { setRelatedQuery(value); setRelatedLimit(50); }} placeholder="Filter related resources…" className="mb-2 w-full" />
         <div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mb-2">{filteredRelated.length} matching · {related.length} relationships</div>
