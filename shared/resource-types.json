@@ -16,5 +16,10 @@
   { "group": "", "version": "v1", "kind": "Node", "plural": "nodes", "namespaced": false },
   { "group": "", "version": "v1", "kind": "Namespace", "plural": "namespaces", "namespaced": false },
   { "group": "", "version": "v1", "kind": "Event", "plural": "events", "namespaced": true },
-  { "group": "apiextensions.k8s.io", "version": "v1", "kind": "CustomResourceDefinition", "plural": "customresourcedefinitions", "namespaced": false }
+  { "group": "apiextensions.k8s.io", "version": "v1", "kind": "CustomResourceDefinition", "plural": "customresourcedefinitions", "namespaced": false },
+  { "group": "", "version": "v1", "kind": "ServiceAccount", "plural": "serviceaccounts", "namespaced": true },
+  { "group": "rbac.authorization.k8s.io", "version": "v1", "kind": "Role", "plural": "roles", "namespaced": true },
+  { "group": "rbac.authorization.k8s.io", "version": "v1", "kind": "RoleBinding", "plural": "rolebindings", "namespaced": true },
+  { "group": "rbac.authorization.k8s.io", "version": "v1", "kind": "ClusterRole", "plural": "clusterroles", "namespaced": false },
+  { "group": "rbac.authorization.k8s.io", "version": "v1", "kind": "ClusterRoleBinding", "plural": "clusterrolebindings", "namespaced": false }
 ]

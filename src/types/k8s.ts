@@ -24,7 +24,12 @@ export type ResourceKind =
   | 'Node'
   | 'Namespace'
   | 'Event'
-  | 'CustomResourceDefinition';
+  | 'CustomResourceDefinition'
+  | 'ServiceAccount'
+  | 'Role'
+  | 'RoleBinding'
+  | 'ClusterRole'
+  | 'ClusterRoleBinding';
 
 export interface ResourceContainer {
   role?: 'application' | 'sidecar' | 'init' | 'ephemeral';

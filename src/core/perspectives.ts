@@ -13,6 +13,7 @@ import {
   Network,
   Puzzle,
   Server,
+  ShieldCheck,
   Timer,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -71,6 +72,11 @@ export const KIND_ICONS: Record<ResourceKind, LucideIcon> = {
   Namespace: Globe,
   Event: Bell,
   CustomResourceDefinition: Puzzle,
+  ServiceAccount: Key,
+  Role: ShieldCheck,
+  RoleBinding: ShieldCheck,
+  ClusterRole: ShieldCheck,
+  ClusterRoleBinding: ShieldCheck,
 };
 
 const k = (kind: ResourceKind, label: string, hue: string): KindEntry => ({ kind, label, icon: KIND_ICONS[kind], hue });
@@ -140,7 +146,9 @@ export const SIDEBAR_TREE: TreeCategory[] = [
     label: 'Access Control',
     icon: Puzzle,
     groups: [
-      { id: 'access-soon', kinds: [], placeholder: 'Service Accounts, Roles, Bindings — phase UI-4' },
+      { id: 'access-service-accounts', label: 'Identity', kinds: [k('ServiceAccount', 'Service Accounts', 'text-amber-400')] },
+      { id: 'access-namespace-rbac', label: 'Namespace RBAC', kinds: [k('Role', 'Roles', 'text-violet-400'), k('RoleBinding', 'Role Bindings', 'text-fuchsia-400')] },
+      { id: 'access-cluster-rbac', label: 'Cluster RBAC', kinds: [k('ClusterRole', 'Cluster Roles', 'text-indigo-400'), k('ClusterRoleBinding', 'Cluster Role Bindings', 'text-purple-400')] },
     ],
   },
   {

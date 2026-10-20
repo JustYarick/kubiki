@@ -48,6 +48,11 @@ const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => 
   Namespace: new Map(),
   Event: new Map(),
   CustomResourceDefinition: new Map(),
+  ServiceAccount: new Map(),
+  Role: new Map(),
+  RoleBinding: new Map(),
+  ClusterRole: new Map(),
+  ClusterRoleBinding: new Map(),
 });
 
 export const useResourceStore = create<ResourceState>((set, get) => ({

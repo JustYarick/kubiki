@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn validates_group_version_scope_and_context_and_serializes_refs() {
-        assert_eq!(resource_types().len(), 18);
+        assert_eq!(resource_types().len(), 23);
         let mut query = ResourceQuery {
             context: "production".into(),
             group: "apps".into(),

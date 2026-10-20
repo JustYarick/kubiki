@@ -17,13 +17,15 @@
 | 2. IDE shell | Дерево/табы/split/inspector/dock есть; только dark, полноценный dockview не интегрирован |
 | 3. Watch/таблицы | Desktop watch подключён через Tauri Channels; atomic relist, bounded batching, reconnect/stale, lifecycle и context isolation покрыты локальным HTTP/API и browser IPC tests. Browser — snapshots; namespace-scoped UI и ручной ввод при RBAC подключены; native/live QA, lazy subscriptions и virtualization ещё открыты |
 | 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Desktop logs подключены потоком с tail/since/previous/cancel/reconnect; browser logs пока snapshots. Host PTY подключён (portable-pty/Tauri/xterm, реальные Linux PTY tests); Node debug подключён (privileged helper/host chroot/UID cleanup/retry), live/native QA остаётся; PF в плане |
-| 5. Config/Network/Storage/RBAC | Часть фиксированных списков и деталей есть; построчное live редактирование Secret data с Text/Base64 и UID/resourceVersion подключено, контролируемая live/native QA остаётся. RBAC UI, NetworkPolicy, quotas/HPA/EndpointSlice отсутствуют |
+| 5. Config/Network/Storage/RBAC | Фиксированные списки и детали; ServiceAccount/Role/RoleBinding/ClusterRole/ClusterRoleBinding доступны read-only в Explorer через общий resource API. Построчное live редактирование Secret data с Text/Base64 и UID/resourceVersion подключено. RBAC relationships, NetworkPolicy, quotas/HPA/EndpointSlice и live/native QA остаются |
 | 6. YAML/CRD | Monaco, просмотр/экспорт и demo edit; live apply/diff/schema и dynamic CRD explorer отсутствуют |
-| 7. Helm | Есть Rust wrapper вокруг helm; нет UI/IPC, context в API wrapper пока не передаётся |
+| 7. Helm | Есть Rust CLI wrapper для releases/history/values/repositories и mutating операции, но нет UI/IPC и выбранный kube-context пока не передаётся; wrappers нельзя считать готовым пользовательским функционалом |
 | 8. Метрики | Metrics API подключён в desktop/browser Overview: CPU/RAM usage, configured requests/limits, capacity/allocatable, bounded SVG history/gauges и consumers/containers. Prometheus/history backfill/quotas/native QA остаются |
 | 9. Production | Некоторые настройки/палитра; плагины, release QA, CI, cross-platform tests не завершены |
 
 Фазы не завершались последовательно. Корректнее говорить «части фаз 0–6 реализованы», чем «сейчас фаза 6, осталось 7–9».
+
+Events уже включён в общий каталог и Explorer: Cluster → Events (ресурсный список), а сводный поток доступен в нижней панели. Его также можно открыть через поиск дерева, если группа Cluster свёрнута. В этой итерации добавлены пять основных RBAC kinds; см. задачи DOMAIN-01A/B и DOMAIN-02C1–C3 в [10](10-IMPLEMENTATION-TASKS.md).
 
 Последний UX-блок: цветные kind badges, построчные annotations/last-applied, общие warning indicators, восстановленный Namespace Related с поиском и порциями по 50. Диаграммы открываются с выбором области; cluster summary — counts only. Namespace/resource графы проверяют бюджеты до layout (250 узлов / 1000 рёбер), worker ограничен 10 секундами. Агрегированные многоуровневые диаграммы пока остаются в плане. YAML использует Monaco напрямую, с cleanup моделей и fallback; точный заявленный React dispatcher crash в Chromium не воспроизведён, подтверждение в desktop/WebKit ещё требуется.
 

@@ -81,12 +81,16 @@
 | MUT-03B | UI-6 | Native/live приёмка Secret mutations | TODO | Отдельный test namespace, controlled Secret, admission/webhooks, реальные timeout outcomes и required type keys. Не закрывает MUT-01 live YAML apply |
 | PERF-01 | UI-3/10 | Виртуализация таблиц и фильтры по вкладкам | TODO | Измерение 10k строк; отсутствие перехвата клавиатуры чужих панелей |
 | GRAPH-00…12 | UI-3/7/10 | Многоуровневая интерактивная топология | PARTIAL | Подробные задачи и критерии ниже; базовые scopes уже реализованы |
-| DOMAIN-01 | UI-7 | EndpointSlice/ServiceAccount/RBAC/HPA relationships | TODO | DATA-01; проверка ссылок и namespace/group, capability-aware UI |
+| DOMAIN-01 | UI-7 | Встроенные типы и relationships | PARTIAL | Базовая read-only навигация RBAC готова (DOMAIN-01A); endpoint slices/NetworkPolicy/HPA, ссылки subject/roleRef/serviceAccount и capability-aware UI остаются (DOMAIN-01B) |
 | DOMAIN-03 | UI-7 | Dynamic discovery и экземпляры CRD на диаграммах | TODO | API discovery, typed GVK identity, загрузка произвольных resource plural/version/scope, RBAC/partial data, ownerReferences между custom и built-in объектами. Сейчас отображается только CustomResourceDefinition, произвольных custom instances нет |
+| DOMAIN-01A | UI-7 | Базовая навигация Access Control | DONE | Добавлены ServiceAccount, Role, RoleBinding, ClusterRole и ClusterRoleBinding в общий каталог TS/Rust, штатный list API и Explorer; CRUD не включён |
+| DOMAIN-01B | UI-7 | Остальные встроенные виды и RBAC relationships | TODO | EndpointSlice, NetworkPolicy, HPA и ссылки subject/roleRef/serviceAccount; capability-aware пустые/forbidden состояния, связанные объекты и тестовый кластер |
 | DOMAIN-02 | UI-8/9 | Metrics и Helm с явным context | PARTIAL | DOMAIN-02A готова; history/quotas/Helm/native QA остаются |
 | DOMAIN-02A | UI-8 | Metrics API + CPU/RAM Overview | DONE | Desktop/browser read transport, scoped Pods/cluster Nodes, quantities, effective configured requests/limits, capacity/allocatable, SVG history/gauges, rankings/containers, bounded polling/cache, partial/stale. Local HTTP + browser + read-only live smoke; [19](19-OVERVIEW-TELEMETRY.md) |
 | DOMAIN-02B | UI-8 | Prometheus/history/quotas | TODO | История до открытия приложения, долгие интервалы, ResourceQuota, workload metrics, in-place allocations и discovery capabilities |
-| DOMAIN-02C | UI-9 | Helm с явным context | TODO | IPC/UI, context wrapper, реальные list/upgrade/rollback tests |
+| DOMAIN-02C1 | UI-9 | Helm releases read-only с явным context | TODO | Передавать выбранный kube-context во все helm-команды; IPC/UI для списка и деталей релиза, values/history/manifest, тесты бинарника отсутствует/ошибка/context namespace |
+| DOMAIN-02C2 | UI-9 | Helm repository browsing | TODO | IPC/UI списка репозиториев и безопасный refresh; репозиторий хранится на машине пользователя и не привязывается к kube-context |
+| DOMAIN-02C3 | UI-9 | Helm mutations с backend consent | TODO | Upgrade/rollback/uninstall/repository changes: preview/diff/подтверждение на backend, повторная проверка release revision перед выполнением и тесты; не вызывать существующие mutating wrappers из UI напрямую |
 | DOMAIN-02D | UI-8 | Native/cross-platform metrics QA | TODO | Tauri GUI FPS/animations при больших кластерах, credentials/proxy, длительный polling и memory QA |
 | RELEASE-01 | UI-11 | CI, desktop smoke, нагрузка и длительные сессии | TODO | Все MVP сценарии; Linux WebKit + macOS/Windows; измеренные бюджеты |
 

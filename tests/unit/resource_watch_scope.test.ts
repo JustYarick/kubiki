@@ -18,12 +18,12 @@ it('subscribes to selected namespace, preserves cluster watches and removes the 
     return vi.fn();
   });
   const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(50); await ready;
-  expect(queries).toHaveLength(18);
+  expect(queries).toHaveLength(23);
   for (const query of queries) expect(query.namespace).toBe(resourceType(query.kind as any).namespaced ? 'backend' : null);
   const cluster = queries.filter((query) => !resourceType(query.kind as any).namespaced);
   useClusterStore.getState().selectNamespace('other'); await vi.advanceTimersByTimeAsync(50);
-  expect(queries.slice(18).every((query) => query.namespace === 'other')).toBe(true);
-  for (let i = 0; i < 18; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced);
+  expect(queries.slice(23).every((query) => query.namespace === 'other')).toBe(true);
+  for (let i = 0; i < 23; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced);
   expect(queries.filter((query) => query.namespace === null)).toHaveLength(cluster.length);
   stopResourceWatches(); const count = queries.length;
   useClusterStore.getState().selectNamespace('backend'); await vi.advanceTimersByTimeAsync(50);
