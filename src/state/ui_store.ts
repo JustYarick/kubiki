@@ -1,3 +1,4 @@
+import { DEFAULT_TERMINAL_FONT, normalizeTerminalFont, normalizeTerminalLineHeight } from '../core/terminal_appearance';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useDockStore } from './dock_store';
@@ -13,6 +14,8 @@ interface UIState {
   uiScale: number;
   editorFontSize: number;
   terminalFontSize: number;
+  terminalFontFamily: string;
+  terminalLineHeight: number;
   /* panels geometry */
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -35,6 +38,8 @@ interface UIState {
   setUiScale: (value: number) => void;
   setEditorFontSize: (value: number) => void;
   setTerminalFontSize: (value: number) => void;
+  setTerminalFontFamily: (value: string) => void;
+  setTerminalLineHeight: (value: number) => void;
   resetAppearance: () => void;
   setSidebarWidth: (w: number) => void;
   toggleSidebar: () => void;
@@ -65,6 +70,8 @@ export const useUiStore = create<UIState>()(
     (set) => ({
       density: 'compact',
       ...DEFAULT_APPEARANCE,
+      terminalFontFamily: DEFAULT_TERMINAL_FONT,
+      terminalLineHeight: 1.2,
       sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
       sidebarCollapsed: false,
       inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
@@ -84,7 +91,9 @@ export const useUiStore = create<UIState>()(
       setUiScale: (value) => set({ uiScale: appearanceValue('uiScale', value) }),
       setEditorFontSize: (value) => set({ editorFontSize: appearanceValue('editorFontSize', value) }),
       setTerminalFontSize: (value) => set({ terminalFontSize: appearanceValue('terminalFontSize', value) }),
-      resetAppearance: () => set({ ...DEFAULT_APPEARANCE }),
+      setTerminalFontFamily: (value) => set({ terminalFontFamily: normalizeTerminalFont(value) }),
+      setTerminalLineHeight: (value) => set({ terminalLineHeight: normalizeTerminalLineHeight(value) }),
+      resetAppearance: () => set({ ...DEFAULT_APPEARANCE, terminalFontFamily: DEFAULT_TERMINAL_FONT, terminalLineHeight: 1.2 }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 420), sidebarCollapsed: false }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       setInspectorWidth: (w) => set({ inspectorWidth: clamp(w, 340, 800), inspectorCollapsed: false }),
@@ -120,12 +129,14 @@ export const useUiStore = create<UIState>()(
     }),
     {
       name: 'kubiki.settings.v3',
-      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, ...normalizeAppearance(persisted as Partial<UIState> | undefined) }),
+      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, ...normalizeAppearance(persisted as Partial<UIState> | undefined), terminalFontFamily: normalizeTerminalFont((persisted as Partial<UIState> | undefined)?.terminalFontFamily), terminalLineHeight: normalizeTerminalLineHeight((persisted as Partial<UIState> | undefined)?.terminalLineHeight) }),
       partialize: (s) => ({
         density: s.density,
         uiScale: s.uiScale,
         editorFontSize: s.editorFontSize,
         terminalFontSize: s.terminalFontSize,
+        terminalFontFamily: s.terminalFontFamily,
+        terminalLineHeight: s.terminalLineHeight,
         sidebarWidth: s.sidebarWidth,
         sidebarCollapsed: s.sidebarCollapsed,
         inspectorWidth: s.inspectorWidth,

@@ -10,6 +10,7 @@ async function setup(page: import('@playwright/test').Page, failInfo = false) {
     };
     w.__TAURI_INTERNALS__ = { transformCallback: (fn: any) => { callbacks.set(++callback, fn);return callback; }, unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
+        if (command === 'stop_port_forwards') return;
         if (command === 'get_kube_contexts') return [];
         if (command === 'get_host_terminal_info') { if (infoFailure) { infoFailure = false;throw { code: 'internal', operation: 'host_terminal', message: 'Cannot discover local shells' }; }return { shells: ['/bin/zsh','/bin/sh'], default_shell: '/bin/zsh', cwd: '/home/test' }; }
         if (command === 'start_host_terminal') { const s = { id: args.sessionId, channel: args.onEvent, sequence: 0 };active.set(s.id, s);starts.push(args.request);queueMicrotask(() => send(s, [{ type: 'Started' }, output('local-shell-ready\r\n')]));return; }
@@ -55,4 +56,31 @@ test('browser local terminal explains desktop requirement and does not simulate 
   await page.getByRole('button', { name: 'Expand bottom panel', exact: true }).click();await page.getByRole('button', { name: 'Open Local Terminal (Host PC)', exact: true }).click();
   await expect(page.getByTestId('live-terminal').getByRole('alert')).toContainText('Local shell is available in the desktop app');
   await expect(page.getByTestId('live-terminal').getByRole('status')).toHaveText('Failed');
+});
+
+test('custom typography updates a connected host PTY without losing output or starting another shell', async ({ page }) => {
+  await setup(page);
+  const pane = page.getByTestId('live-terminal');
+  await expect(pane.getByRole('status')).toHaveText('Connected');
+  await page.keyboard.press('Control+,');
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Terminal font family', { exact: true }).fill("'DejaVu Sans Mono', monospace");
+  await dialog.getByRole('button', { name: 'Apply terminal font' }).click();
+  await dialog.getByLabel('Terminal line height', { exact: true }).fill('1.4');
+  await expect.poll(() => page.evaluate(() => document.fonts.check('14px "Kubiki Nerd Symbols"', '\ue0b0\uf120'))).toBe(true);
+  await expect(dialog.getByLabel('Terminal font preview')).toContainText('');
+  await dialog.getByLabel('Terminal font preview').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'test-results/terminal-font-preview.png' });
+  await page.keyboard.press('Escape');
+  await expect.poll(() => pane.locator('.xterm-rows').evaluate(el => getComputedStyle(el).fontFamily)).toContain('DejaVu Sans Mono');
+  await expect(pane.locator('.xterm-rows')).toContainText('local-shell-ready');
+  expect(await page.evaluate(() => (window as any).__hostHarness.starts.length)).toBe(1);
+  await pane.locator('.xterm').getByRole('textbox', { name: 'Terminal input' }).focus();
+  await page.keyboard.type('echo fontstillworks'); await page.keyboard.press('Enter');
+  await expect(pane.locator('.xterm-rows')).toContainText('local-command-result');
+  await page.reload(); await page.keyboard.press('Control+,');
+  await expect(dialog.getByLabel('Terminal font family', { exact: true })).toHaveValue("'DejaVu Sans Mono', monospace");
+  await expect(dialog.getByLabel('Terminal line height', { exact: true })).toHaveValue('1.4');
+  await dialog.getByRole('button', { name: 'Reset appearance', exact: true }).click();
+  await expect(dialog.getByLabel('Terminal font family', { exact: true })).toHaveValue("'JetBrains Mono Variable'");
 });

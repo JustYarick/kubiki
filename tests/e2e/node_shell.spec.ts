@@ -9,6 +9,7 @@ async function setup(page: import('@playwright/test').Page, mode = '') {
     w.__nodeHarness = { prepares, starts, stops, input, deleted, active: () => leases.size, callbacks: () => callbacks.size, release: () => release?.(), allowCleanup: () => { deniedCleanup = false; }, finish: () => { for (const s of execs.values()) send(s, [{ type: 'Exited', payload: { code: 0 } }]); } };
     w.__TAURI_INTERNALS__ = { transformCallback: (fn: any) => { callbacks.set(++callback, fn);return callback; }, unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
+        if (command === 'stop_port_forwards') return;
         if (command === 'get_kube_contexts') return [{ name: 'test', is_current: true }];
         if (command === 'ping_cluster') return { git_version: 'v1.34.0' };
         if (command === 'get_namespaces') return ['default','debug'];

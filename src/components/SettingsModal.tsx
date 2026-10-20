@@ -1,3 +1,4 @@
+import { TerminalFontSettings } from './TerminalFontSettings';
 import React from 'react';
 import { Cpu, KeyRound, Layout, Maximize2, Minimize2, Monitor, RotateCcw, Server } from 'lucide-react';
 import { Modal } from './ui/Modal';
@@ -59,7 +60,8 @@ export const SettingsDialog: React.FC = () => {
         <Row title="Terminal font" description="Independent of the interface scale; preserves open sessions.">
           <input aria-label="Terminal font size" type="number" min={10} max={24} value={terminalFontSize} onChange={(event) => { if (event.target.value) setTerminalFontSize(Number(event.target.value)); }} className="ide-select w-20" />
         </Row>
-        <Row title="Reset appearance" description="Restore 110% interface scale and 14px editor/terminal text.">
+        <TerminalFontSettings />
+        <Row title="Reset appearance" description="Restore 110% scale, 14px editor/terminal text and default terminal typeface.">
           <Button size="sm" onClick={resetAppearance} aria-label="Reset appearance"><RotateCcw size="calc(12px * var(--ui-factor))" /> Reset</Button>
         </Row>
         <Row title="Row density" description="Affects table rows across all resource views.">

@@ -1,3 +1,5 @@
+import { loadTerminalFonts, terminalFontStack } from '../../core/terminal_appearance';
+import { useTerminalAppearance } from './useTerminalAppearance';
 import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -14,7 +16,6 @@ import { IconButton } from '../ui/Button';
 
 export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebug }: { nodeDebug?: { id: string; node: string; shell: string; onReconnect: () => void; onShellChange: (shell: string) => void }; session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
   const { containers, container, context, uid } = useSessionContainers(session, true);
-  const fontSize = useUiStore((s) => s.terminalFontSize);
   const local = session.targetType === 'local';
   const [hostInfo, setHostInfo] = useState<HostTerminalInfo>();
   const [hostError, setHostError] = useState('');
@@ -34,7 +35,7 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
     if (local && !hostInfo) { setPhase(hostError ? 'Failed' : 'Loading shell'); setError(hostError); return; }
     if (!box.current) return;
     const abort = new AbortController(); cancellation.current = abort; let finished = false; let started = false; let acknowledged = false; let resizeTimer: ReturnType<typeof setTimeout>;
-    const term = new Terminal({ fontFamily: "'JetBrains Mono Variable', monospace", fontSize: useUiStore.getState().terminalFontSize, cursorBlink: true, disableStdin: true, scrollback: 5000,
+    const term = new Terminal({ fontFamily: terminalFontStack(useUiStore.getState().terminalFontFamily), lineHeight: useUiStore.getState().terminalLineHeight, fontSize: useUiStore.getState().terminalFontSize, cursorBlink: true, disableStdin: true, scrollback: 5000,
       theme: { background: '#1e1f22', foreground: '#dfe1e5', cursor: '#3574f0', selectionBackground: '#3574f055' } });
     const addon = new FitAddon(); term.loadAddon(addon); term.open(box.current); terminal.current = term; fit.current = addon;
     const fitNow = () => { if (!abort.signal.aborted && box.current?.clientWidth && box.current.clientHeight) { addon.fit(); connection.current?.resize(term.cols, term.rows); } };
@@ -49,6 +50,11 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
     const data = term.onData((data) => { if (live.current) connection.current?.write(data); });
     async function start() {
       try {
+        const appearance = useUiStore.getState();
+        // A missing custom face still uses the bundled/system fallbacks.
+        await loadTerminalFonts(appearance.terminalFontFamily, appearance.terminalFontSize).catch(() => {});
+        if (abort.signal.aborted) return;
+        fitNow();
         if (!local && (!context || !session.namespace || !session.resourceName || !uid || !container)) throw new Error('Open the current Pod and select a container before connecting.');
         const receive = async (event: import('../../providers/tauri_exec').ExecEvent) => {
           if (abort.signal.aborted) return;
@@ -70,7 +76,7 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
     return () => { live.current = false; abort.abort(); connection.current?.close(); connection.current = null; clearTimeout(resizeTimer); observer.disconnect(); data.dispose(); term.dispose(); terminal.current = null; fit.current = null; };
     // A new container/shell/reconnect owns a fresh backend session and xterm decoder.
   }, [target]);
-  useEffect(() => { const term = terminal.current; if (term) { term.options.fontSize = fontSize; if (box.current?.clientWidth) { fit.current?.fit(); connection.current?.resize(term.cols, term.rows); } } }, [fontSize]);
+  useTerminalAppearance(terminal, () => { const term = terminal.current; if (term && box.current?.clientWidth) { fit.current?.fit(); connection.current?.resize(term.cols, term.rows); } }, visible, target);
   useEffect(() => { if (visible) { const timer = setTimeout(() => { fit.current?.fit(); const term = terminal.current; if (term) { connection.current?.resize(term.cols, term.rows); term.focus(); } }, 0); return () => clearTimeout(timer); } }, [visible]);
   return <div className="h-full flex flex-col min-h-0 min-w-0" data-testid="live-terminal">
     <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-secondary)]">

@@ -2,6 +2,14 @@
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
 
+@font-face {
+  font-family: 'Kubiki Nerd Symbols';
+  src: url('./assets/fonts/SymbolsNerdFontMono-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+}
+
 :root {
   --ui-factor: 1.1916666667; /* 13px base at the default 110% scale. */
   /* ================= JetBrains Fleet & IntelliJ New UI Design System ================= */

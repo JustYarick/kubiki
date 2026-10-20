@@ -243,6 +243,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
 
   const effectiveKind = explicitKind || activeKind;
   const tableRef = useRef<HTMLDivElement>(null);
+  const resizeCleanup = useRef<() => void>(() => {});
+  useEffect(() => () => resizeCleanup.current(), []);
   const paneRef = useRef<HTMLDivElement>(null);
   const [compactFilters, setCompactFilters] = useState(true);
   const currentContext = useClusterStore((s) => s.currentContext);
@@ -361,7 +363,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     event.preventDefault(); event.stopPropagation();
     const width = event.key === 'Home' ? DEFAULT_COL_SIZE[id] ?? 120
       : widthFor(id) + (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 40 : 10);
-    setColumnWidth(effectiveKind, id, Math.max(id === '__index' ? 28 : 48, Math.min(1200, width)));
+    setColumnWidth(effectiveKind, id, Math.max(id === '__index' ? 28 : MIN_COL, Math.min(MAX_COL, (tableRef.current?.clientWidth ?? MAX_COL * uiFactor(uiScale)) / uiFactor(uiScale), width)));
   };
 
   /* ------------------- Keyboard Navigation ------------------- */
@@ -435,26 +437,43 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
 
   /* ------------------- Column widths (Lens-style) ------------------- */
   const widthFor = (colId: string): number =>
-    columnWidths[`${effectiveKind}:${colId}`] ?? DEFAULT_COL_SIZE[colId] ?? 120;
+    Math.max(colId === '__index' ? 28 : MIN_COL, Math.min(MAX_COL, columnWidths[`${effectiveKind}:${colId}`] ?? DEFAULT_COL_SIZE[colId] ?? 120));
 
   const startColResize = (e: React.PointerEvent, colId: string) => {
     e.preventDefault();
     e.stopPropagation();
+    resizeCleanup.current();
+    const pane = tableRef.current;
+    if (!pane) return;
+    const bounds = pane.getBoundingClientRect();
+    const guide = document.createElement('div');
+    guide.dataset.testid = 'column-resize-guide';
+    guide.setAttribute('aria-hidden', 'true');
+    Object.assign(guide.style, { position: 'fixed', width: '2px', background: 'var(--accent-text)', top: `${bounds.top}px`, height: `${pane.clientHeight}px`, pointerEvents: 'none', zIndex: '65' });
+    document.body.append(guide);
+    const headerLeft = e.currentTarget.closest('th')?.getBoundingClientRect().left ?? bounds.left;
     const startW = (e.currentTarget.closest('th')?.getBoundingClientRect().width ?? widthFor(colId) * uiFactor(uiScale)) / uiFactor(uiScale);
     const startX = e.clientX;
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
+    guide.style.left = `${Math.min(bounds.right - 2, headerLeft + startW * uiFactor(uiScale))}px`;
+    el.style.background = 'var(--accent-text)';
     const move = (ev: PointerEvent) => {
-      const w = Math.min(MAX_COL, Math.max(colId === '__index' ? 28 : MIN_COL, startW + (ev.clientX - startX) / uiFactor(useUiStore.getState().uiScale)));
+      const scale = uiFactor(useUiStore.getState().uiScale);
+      const pointer = Math.max(bounds.left + 2, Math.min(bounds.left + pane.clientWidth - 2, ev.clientX));
+      const w = Math.min(MAX_COL, pane.clientWidth / scale, Math.max(colId === '__index' ? 28 : MIN_COL, (bounds.left + pane.clientWidth - 2 - headerLeft) / scale), Math.max(colId === '__index' ? 28 : MIN_COL, startW + (pointer - startX) / scale));
+      guide.style.left = `${Math.max(bounds.left, Math.min(bounds.left + pane.clientWidth - 2, headerLeft + w * scale))}px`;
       setColumnWidth(effectiveKind, colId, w);
     };
-    const up = (ev: PointerEvent) => {
-      if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+    const up = () => {
+      guide.remove(); el.style.background = '';
+      if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
       el.removeEventListener('pointercancel', up);
       el.removeEventListener('lostpointercapture', up);
     };
+    resizeCleanup.current = up;
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
@@ -749,7 +768,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
             onNew={() => setNewOpen(true)}
           />
         ) : (
-          <table className="datagrip-grid w-full table-fixed" onClick={() => tableRef.current?.focus({ preventScroll: true })}>
+          <table style={{ width: uiPixels(widthFor('__index') + rows.cols.reduce((sum, col) => sum + widthFor(col.id), 0)) }} className="datagrip-grid table-fixed" onClick={() => tableRef.current?.focus({ preventScroll: true })}>
             <thead>
               <tr>
                 {/* Index & Selection Column */}

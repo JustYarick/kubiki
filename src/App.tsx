@@ -1,3 +1,4 @@
+import { closePortForwards, resetPortForwards, listPortForwards } from './providers/port_forward';
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { ActivityBar } from './components/layout/ActivityBar';
@@ -59,6 +60,7 @@ export default function App() {
     closeExecConnections();
     closeLogConnections();
     closeNodeDebugConnections();
+    closePortForwards();
     useClusterStore.getState().selectContext(contextName);
     useResourceStore.getState().reset();
     useDockStore.getState().clearAllSessions();
@@ -69,6 +71,7 @@ export default function App() {
       await k8s.resetResourceWatches();
       await resetExecSessions();
       await resetLogSessions();
+      await resetPortForwards();
       if (!current()) return;
       const ping = await k8s.pingCluster(contextName);
       if (!current()) return;
@@ -129,14 +132,30 @@ export default function App() {
       closeExecConnections();
       closeLogConnections();
       closeNodeDebugConnections();
+      closePortForwards();
     };
   }, [connectToContext, setContexts]);
 
   useEffect(() => {
-    const onPageHide = () => { stopResourceWatches(); closeExecConnections(); closeLogConnections(); closeNodeDebugConnections(); };
+    const onPageHide = () => { stopResourceWatches(); closeExecConnections(); closeLogConnections(); closeNodeDebugConnections(); closePortForwards(); };
     window.addEventListener('pagehide', onPageHide);
     return () => window.removeEventListener('pagehide', onPageHide);
   }, []);
+
+  const forwardCount = usePfStore(state => state.sessions.filter(session => session.live).length);
+  const forwardContext = useClusterStore(state => state.currentContext);
+  useEffect(() => {
+    if (!forwardCount || !forwardContext || k8s.demo) return;
+    let cancelled = false; let reported = false; let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      const ids = usePfStore.getState().sessions.filter(session => session.live).map(session => session.id);
+      try { const sessions = await listPortForwards(); reported = false; if (!cancelled && useClusterStore.getState().currentContext === forwardContext) usePfStore.getState().syncLive(sessions, forwardContext, ids); }
+      catch (error) { if (!cancelled && !reported) { reported = true; toast.warn('Tunnel status unavailable', String(error)); } }
+      if (!cancelled) timer = setTimeout(poll, 2000);
+    };
+    timer = setTimeout(poll, 2000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [forwardCount, forwardContext]);
 
   /* JetBrains Global Shortcuts */
   useEffect(() => {

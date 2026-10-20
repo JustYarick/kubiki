@@ -1,3 +1,6 @@
+mod port_forward_commands;
+use port_forward_commands::*;
+use kubiki_core::pod_ops::port_forward::PortForwardManager;
 mod k8s_commands;
 mod terminal_commands;
 mod node_commands;
@@ -35,8 +38,13 @@ pub fn run() {
         .manage(NodeDebugManager::default())
         .manage(HostTerminalManager::default())
         .manage(PodLogManager::default())
+        .manage(PortForwardManager::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            start_port_forward,
+            list_port_forwards,
+            stop_port_forward,
+            stop_port_forwards,
             get_kube_contexts,
             get_current_context,
             ping_cluster,
@@ -85,6 +93,7 @@ pub fn run() {
                 let logs = window.state::<PodLogManager>().inner().clone();
                 let hosts = window.state::<HostTerminalManager>().inner().clone();
                 let nodes = window.state::<NodeDebugManager>().inner().clone();
+                let forwards = window.state::<PortForwardManager>().inner().clone();
                 let owner = window.label().to_owned();
                 tauri::async_runtime::spawn(async move {
                     manager.stop_owner(&owner).await;
@@ -92,6 +101,7 @@ pub fn run() {
                     nodes.stop_owner(&owner).await;
                     hosts.stop_owner(&owner).await;
                     logs.stop_owner(&owner).await;
+                    forwards.stop_owner(&owner).await;
                 });
             }
         })

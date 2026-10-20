@@ -129,3 +129,14 @@
 | DS-10 | P2 | Overview hierarchy/reference lines | TODO | Health/scope/load выше inventory, request/limit reference lines и понятная легенда; фиксированная шкала без неверного смысла процентов |
 | DS-11 | P2 | Остальные visual tokens | TODO | Общие spacing/radius/motion tokens; убрать повторяющиеся локальные значения без изменения native graphics settings |
 | DS-12 | P2 | Native accessibility/visual acceptance | TODO | WebKit desktop, клавиатура и screen reader, Windows/macOS/Linux shortcuts, низкие окна/200%, ручная проверка графиков без изменения отложенных native FPS flags |
+
+## Терминал, resize и реальные туннели — 2026-10-20
+
+| ID | Приоритет | Задача | Статус | Приёмка |
+|---|---|---|---|---|
+| TERM-FONT | P1 | Системные шрифты и Nerd/Powerline fallback | DONE | Настраиваемый font family/fallback list, presets/system monospace, размер и line height; bundled Nerd Fonts Symbols Only Mono v3.4.0 + MIT license, offline glyph preview; font load/refit без пересоздания PTY. Локальная оболочка уже использует SHELL и login/interactive startup files |
+| TABLE-RESIZE | P1 | Изолированная ширина столбца и границы resize | DONE | Суммарная ширина таблицы вместо 100% redistribution; ширины соседей сохраняются. Pointer bounds по visible pane, min/max и guide, внутренний horizontal scroll, cleanup pointercancel/unmount; browser regression |
+| PF-01 | P1 | Реальный Pod/Service port forwarding | DONE | UI → Tauri → kube-rs; 127.0.0.1, local auto-port, Service targetPort/Pod resolution, UID/context/owner isolation, отмена старта/остановка, видимые ошибки/статистика, cleanup контекста/окна, mock protocol/IPC/browser tests. Desktop real transport подключён; browser объясняет ограничение, demo отделён. Проверки TCP/WebSocket + IPC/browser; [21](21-TERMINAL-AND-FORWARDING.md) |
+
+| PF-02 | P2 | Native / real-cluster acceptance | TODO | Ручной Desktop/WebKit прогон Pod/Service, RBAC, reverse proxy, выход/перезапуск приложения на Windows/macOS/Linux; реальные HTTP/TCP endpoints. Автотесты используют mock API с настоящими локальными TCP/WebSocket соединениями |
+| PF-03 | P2 | Сохранение конфигураций туннелей | TODO | Сохранённые target/port presets, явный restart/новый выбор Pod; HTTPS opening/scheme и расширенный UX ошибок. Автоматический reconnect/смена Pod без участия пользователя не включены |

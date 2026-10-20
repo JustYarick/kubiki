@@ -1,120 +1,68 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightLeft } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input, Label } from '../ui/Input';
 import { usePfStore } from '../../state/pf_store';
 import { useDockStore } from '../../state/dock_store';
+import { useClusterStore } from '../../state/cluster_store';
 import { k8s } from '../../providers/k8s_provider';
+import { startPortForward, openForwardUrl } from '../../providers/port_forward';
+import { normalizeK8sError, errorHint } from '../../providers/errors';
+import { resourceRef } from '../../core/resources/identity';
 import { toast } from '../../state/notifications_store';
 import type { ResourceItem } from '../../types/k8s';
 
-/** Port-forward launcher for a pod/service/ingress-like item. */
 export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose: () => void }) {
-  const add = usePfStore((s) => s.add);
-  const openDock = useDockStore((s) => s.openPorts);
-
-  const suggested = item?.containers?.[0]?.port ?? item?.ready?.split(':')[0]?.split('/')[0] ?? '80';
-  const [remote, setRemote] = useState('');
-  const [local, setLocal] = useState('');
-  const [browser, setBrowser] = useState(true);
-
+  const context = useClusterStore(state => state.currentContext);
+  const openedContext = useRef(context);
+  useEffect(() => { if (context !== openedContext.current) { controller.current?.abort(); onClose(); } }, [context]);
+  const controller = useRef<AbortController | null>(null);
+  const [remote, setRemote] = useState(''); const [local, setLocal] = useState('');
+  const [browser, setBrowser] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const ports = useMemo(() => {
+    const source = item?.kind === 'Service' ? item.raw?.spec?.ports ?? [] : (item?.raw?.spec?.containers ?? []).flatMap((c: any) => c.ports ?? []);
+    return source.filter((p: any) => (p.protocol ?? 'TCP') === 'TCP').map((p: any) => ({ port: p.port ?? p.containerPort, name: p.name }));
+  }, [item]);
   useEffect(() => {
-    if (item) {
-      setRemote(String(suggested ?? '80'));
-      setLocal('');
-    }
-  }, [item?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
-
+    const suggested = Number(ports[0]?.port ?? item?.containers?.[0]?.port);
+    setRemote(String(Number.isInteger(suggested) && suggested > 0 && suggested <= 65535 ? suggested : 80)); setLocal(''); setError(''); setBusy(false);
+    return () => controller.current?.abort();
+    // Status updates must not reset a user's draft or cancel an in-flight start.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.uid, context]);
   if (!item) return null;
-
   const remoteInvalid = !/^\d+$/.test(remote) || +remote < 1 || +remote > 65535;
-  const localInvalid = local !== '' && local !== '0' && (!/^\d+$/.test(local) || +local < 1024 || +local > 65534);
-
-  const start = () => {
-    if (!k8s.demo) { toast.error('Port-forward transport is not connected yet'); return; }
-    const session = add({
-      targetKind: item.kind,
-      targetName: item.name,
-      namespace: item.namespace ?? '-',
-      remotePort: Number(remote),
-      localPort: local === '' ? 0 : Number(local),
-      openBrowser: browser,
-    });
-    openDock();
-    toast.success(
-      `Demo port-forward created`,
-      `${session.targetKind}/${session.targetName} → localhost:${session.localPort}${browser ? ' (browser would open)' : ''}`
-    );
-    onClose();
+  const localInvalid = local !== '' && (!/^\d+$/.test(local) || +local < 0 || +local > 65535);
+  const close = () => { controller.current?.abort(); onClose(); };
+  const start = async () => {
+    if (busy || remoteInvalid || localInvalid || !context || context !== openedContext.current) return;
+    const abort = new AbortController(); controller.current = abort; setBusy(true); setError('');
+    try {
+      let session;
+      if (k8s.demo) session = usePfStore.getState().add({ targetKind: item.kind, targetName: item.name, namespace: item.namespace ?? '-', remotePort: Number(remote), localPort: Number(local) || 0, openBrowser: false });
+      else {
+        const native = await startPortForward({ resource: resourceRef(context, item), remote_port: Number(remote), local_port: Number(local) || 0 }, abort.signal);
+        if (abort.signal.aborted || useClusterStore.getState().currentContext !== context) return;
+        session = usePfStore.getState().upsertLive(native);
+      }
+      useDockStore.getState().openPorts();
+      toast.success(k8s.demo ? 'Demo tunnel created' : 'Port forward listening', `127.0.0.1:${session.localPort} → ${item.kind}/${item.name}:${remote}`);
+      onClose();
+      if (browser && !k8s.demo) void openForwardUrl(session.localPort).catch(failure => toast.warn('Tunnel is ready; browser could not open', String(failure)));
+    } catch (failure) {
+      if (!abort.signal.aborted) { const error = normalizeK8sError(failure, { operation: 'port_forward', context }); setError(`${error.message} ${errorHint(error)}`); }
+    } finally { if (!abort.signal.aborted) setBusy(false); }
   };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      width={440}
-      title={
-        <span className="flex items-center gap-2">
-          <ArrowRightLeft size="calc(14px * var(--ui-factor))" className="text-[var(--accent)]" />
-          Create port-forward
-        </span>
-      }
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!k8s.demo || remoteInvalid || localInvalid} onClick={start}>
-            Start forward
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-3">
-        <div className="rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2">
-          <div className="text-[length:calc(12px*var(--ui-factor))] font-mono text-[var(--text-primary)]">
-            {item.kind}/{item.name}
-          </div>
-          <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mt-0.5">namespace: {item.namespace ?? '-'}</div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label>Remote port</Label>
-            <Input
-              value={remote}
-              onChange={(e) => setRemote(e.target.value.replace(/[^\d]/g, ''))}
-              invalid={remoteInvalid}
-              placeholder="80"
-              autoFocus
-            />
-            {remoteInvalid && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-danger)]">1–65535</span>}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Local port (0 = auto)</Label>
-            <Input
-              value={local}
-              onChange={(e) => setLocal(e.target.value.replace(/[^\d]/g, ''))}
-              invalid={localInvalid}
-              placeholder="auto"
-            />
-            {localInvalid && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-danger)]">1024–65534 or empty</span>}
-          </div>
-        </div>
-
-        <label className="flex items-center gap-2 text-[length:calc(12px*var(--ui-factor))] text-[var(--text-secondary)] cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={browser}
-            onChange={(e) => setBrowser(e.target.checked)}
-            className="accent-[var(--accent)]"
-          />
-          Open browser after forward is ready
-        </label>
-
-        <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] leading-relaxed">
-          Demo mode: a session will appear in the Ports panel with simulated traffic. Live port-forwarding is not connected yet.
-        </p>
-      </div>
-    </Modal>
-  );
+  return <Modal open onClose={close} width={460} title={<span className="flex items-center gap-2"><ArrowRightLeft size={14} />Create port-forward</span>}
+    footer={<><Button onClick={close}>{busy ? 'Cancel start' : 'Cancel'}</Button><Button variant="primary" disabled={busy || remoteInvalid || localInvalid || !context} onClick={() => void start()}>{busy ? 'Connecting…' : 'Start forward'}</Button></>}>
+    <div className="flex flex-col gap-3 text-xs">
+      <div className="rounded border border-[var(--border-default)] bg-[var(--bg-surface)] p-3"><p className="font-mono break-all">{item.kind}/{item.name}</p><p className="text-[var(--text-secondary)] mt-1">{context} · {item.namespace}</p></div>
+      {ports.length > 0 && <label>Declared TCP ports<select aria-label="Declared TCP ports" className="ide-select w-full mt-1" value={ports.some((p: any) => String(p.port) === remote) ? remote : ''} disabled={busy} onChange={event => { if (event.target.value) setRemote(event.target.value); }}><option value="">Custom port</option>{ports.map((p: any, index: number) => <option key={index} value={p.port}>{p.name ? `${p.name} · ` : ''}{p.port}/TCP</option>)}</select></label>}
+      <div className="grid grid-cols-2 gap-3"><div><Label>{item.kind === 'Service' ? 'Service port' : 'Pod port'}</Label><Input aria-label="Remote port" value={remote} disabled={busy} onChange={event => setRemote(event.target.value)} invalid={remoteInvalid} inputMode="numeric" autoFocus />{remoteInvalid && <p className="text-[var(--status-danger)]">1–65535</p>}</div><div><Label>Local port (0 = auto)</Label><Input aria-label="Local port" value={local} disabled={busy} onChange={event => setLocal(event.target.value)} invalid={localInvalid} placeholder="auto" inputMode="numeric" />{localInvalid && <p className="text-[var(--status-danger)]">0–65535 or empty</p>}</div></div>
+      <label className="flex items-center gap-2"><input type="checkbox" disabled={busy} checked={browser} onChange={event => setBrowser(event.target.checked)} />Open HTTP URL after the tunnel is ready</label>
+      <p className="text-[var(--text-secondary)]">{k8s.demo ? 'Demo only · simulated traffic, no listener is opened.' : 'TCP · listens on 127.0.0.1 only. An empty local port selects a free port.'}{item.kind === 'Service' && ' Service port is mapped to targetPort on a selected Running Pod; restart the tunnel if that Pod changes.'}</p>
+      {error && <p role="alert" className="text-[var(--status-danger)] break-words">{error}</p>}
+    </div>
+  </Modal>;
 }

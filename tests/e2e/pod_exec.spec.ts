@@ -22,6 +22,7 @@ async function setup(page: Page, denied = false) {
     w.__TAURI_INTERNALS__ = {
       transformCallback: (callback: unknown) => { callbacks.set(++callbackId, callback); return callbackId; }, unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
+        if (command === 'stop_port_forwards') return;
         if (command === 'stop_host_terminals' || command === 'stop_node_debugs') return;
         if (command === 'get_kube_contexts') return [{ name: 'test', is_current: true }];
         if (command === 'ping_cluster') return { git_version: 'v1.34.0' };

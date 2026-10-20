@@ -1,3 +1,8 @@
+import { PFDialog } from '../dialogs/PFDialog';
+import { stopPortForward, openForwardUrl } from '../../providers/port_forward';
+import type { ResourceItem } from '../../types/k8s';
+import { terminalFontStack } from '../../core/terminal_appearance';
+import { useTerminalAppearance } from '../k8s/useTerminalAppearance';
 import { shortcutLabel } from '../../core/shortcuts';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -38,7 +43,7 @@ import { IconButton } from '../ui/Button';
 import { Button } from '../ui/Button';
 import { Popover } from '../ui/Dropdown';
 import { Modal } from '../ui/Modal';
-import { Input, SearchInput, Label } from '../ui/Input';
+import { SearchInput } from '../ui/Input';
 import { toast } from '../../state/notifications_store';
 import { fmtBytes, fmtElapsed } from '../../core/utils/fmt';
 import { cx } from '../../core/utils/cx';
@@ -392,7 +397,6 @@ export function TerminalSessionPane({ session, visible = true, onContainerChange
 }
 
 function DemoTerminalSessionPane({ session, visible, onContainerChange }: { session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
-  const fontSize = useUiStore((state) => state.terminalFontSize);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -414,9 +418,9 @@ function DemoTerminalSessionPane({ session, visible, onContainerChange }: { sess
   useEffect(() => {
     if (!containerRef.current) return;
     const term = new XTerm({
-      fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', Consolas, monospace",
+      fontFamily: terminalFontStack(useUiStore.getState().terminalFontFamily),
       fontSize: useUiStore.getState().terminalFontSize,
-      lineHeight: 1.25,
+      lineHeight: useUiStore.getState().terminalLineHeight,
       theme: {
         background: '#1e1f22',
         foreground: '#dfe1e5',
@@ -453,11 +457,7 @@ function DemoTerminalSessionPane({ session, visible, onContainerChange }: { sess
     };
   }, []);
 
-  useEffect(() => {
-    if (!termRef.current) return;
-    termRef.current.options.fontSize = fontSize;
-    if (visible && containerRef.current?.offsetHeight) fitRef.current?.fit();
-  }, [fontSize, visible]);
+  useTerminalAppearance(termRef, () => { if (containerRef.current?.offsetHeight) fitRef.current?.fit(); }, visible);
 
   useEffect(() => { if (visible && containerRef.current?.offsetHeight) { fitRef.current?.fit(); termRef.current?.focus(); } }, [visible]);
 
@@ -922,8 +922,12 @@ function terminalExec(
 function PortsPane() {
   const sessions = usePfStore((s) => s.sessions);
   const remove = usePfStore((s) => s.remove);
-  const add = usePfStore((s) => s.add);
+  const resources = useResourceStore(state => state.resources);
   const [addOpen, setAddOpen] = useState(false);
+  const [targetSearch, setTargetSearch] = useState('');
+  const [target, setTarget] = useState<ResourceItem | null>(null);
+  const [stopping, setStopping] = useState<string>();
+  const candidates = [...resources.Pod.values(), ...resources.Service.values()].filter(item => item.name.toLowerCase().includes(targetSearch.trim().toLowerCase()) || (item.namespace ?? '').toLowerCase().includes(targetSearch.trim().toLowerCase()));
 
   useEffect(() => {
     if (!k8s.demo) return;
@@ -934,7 +938,7 @@ function PortsPane() {
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       <div className="h-8 shrink-0 flex items-center justify-between px-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50">
-        <span className="text-[length:calc(11.5px*var(--ui-factor))] font-semibold text-[var(--text-secondary)]">Active Port Forwarding Tunnels ({sessions.length})</span>
+        <span className="text-[length:calc(11.5px*var(--ui-factor))] font-semibold text-[var(--text-secondary)]">Port forwarding ({sessions.length})</span>
         <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>
           <Plus size="calc(12px * var(--ui-factor))" /> Add Tunnel
         </Button>
@@ -946,16 +950,12 @@ function PortsPane() {
             No active port forward sessions. Forward ports from Pods/Services or click Add Tunnel above.
           </div>
         ) : (
-          <table className="datagrip-grid w-full">
+          <table className="datagrip-grid w-full table-fixed" aria-label="Port forward sessions">
             <thead>
               <tr>
-                <th className="datagrip-th">Target Resource</th>
-                <th className="datagrip-th">Namespace</th>
-                <th className="datagrip-th">Local URL</th>
-                <th className="datagrip-th text-right">Target Port</th>
-                <th className="datagrip-th text-right">Traffic (TX/RX)</th>
-                <th className="datagrip-th text-right">Uptime</th>
-                <th className="datagrip-th w-[calc(60px*var(--ui-factor))]" />
+                <th className="datagrip-th">Target / selected Pod</th>
+                <th className="datagrip-th">Local URL / traffic</th>
+                <th className="datagrip-th" style={{ width: uiPixels(58) }}><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -963,28 +963,19 @@ function PortsPane() {
                 <tr key={s.id} className="datagrip-row">
                   <td className="datagrip-cell font-mono text-[var(--text-primary)] font-medium">
                     {s.targetKind}/{s.targetName}
+                    <span className="block text-xs text-[var(--text-secondary)] whitespace-normal break-all">{s.namespace} · {s.context ?? 'Demo'}</span>
+                    <span className="block text-xs text-[var(--text-secondary)] whitespace-normal break-all">{s.live ? `${s.phase} · ${s.podName}:${s.podPort}` : 'Demo · simulated'} · requested :{s.remotePort}</span>
+                    {s.error && <span role="status" className="block text-xs text-[var(--status-warn)] whitespace-normal max-w-80">{s.error}</span>}
                   </td>
-                  <td className="datagrip-cell text-[var(--text-secondary)]">{s.namespace}</td>
                   <td className="datagrip-cell font-mono">
-                    <a
-                      href={`http://localhost:${s.localPort}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[var(--accent)] hover:underline flex items-center gap-1"
-                    >
-                      <span>http://localhost:{s.localPort}</span>
-                    </a>
-                  </td>
-                  <td className="datagrip-cell font-mono text-right">{s.remotePort}</td>
-                  <td className="datagrip-cell font-mono text-right text-[length:calc(10.5px*var(--ui-factor))]">
-                    {fmtBytes(s.bytesOut)} / {fmtBytes(s.bytesIn)}
-                  </td>
-                  <td className="datagrip-cell text-right text-[var(--text-muted)] font-mono">
-                    {fmtElapsed(s.startedAt)}
+                    <button className="text-[var(--accent)] hover:underline whitespace-normal break-all text-left" onClick={() => { if (!s.live) toast.info('Demo tunnel', 'No real listener is open'); else void openForwardUrl(s.localPort).catch(failure => toast.error('Could not open URL', String(failure))); }}>http://127.0.0.1:{s.localPort}</button>
+                    <span className="block text-xs text-[var(--text-secondary)] whitespace-normal mt-1">TX {fmtBytes(s.bytesOut)} · RX {fmtBytes(s.bytesIn)}</span>
+                    <span className="block text-xs text-[var(--text-secondary)]">{fmtElapsed(Math.max(0, Date.now() - s.startedAt))}</span>
                   </td>
                   <td className="datagrip-cell text-right">
                     <button
-                      onClick={() => remove(s.id)}
+                      disabled={stopping === s.id} aria-label={`Stop forward ${s.targetName}`}
+                      onClick={() => { setStopping(s.id); void (s.live ? stopPortForward(s.id) : Promise.resolve()).then(() => remove(s.id)).catch(failure => toast.error('Could not stop tunnel', String(failure))).finally(() => setStopping(undefined)); }}
                       className="px-1.5 py-0.5 rounded text-[length:calc(10.5px*var(--ui-factor))] text-[var(--status-danger)] hover:bg-[var(--status-danger)]/15"
                     >
                       Stop
@@ -997,80 +988,13 @@ function PortsPane() {
         )}
       </div>
 
-      <AddPfModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onCreate={(name, ns, targetPort, localPort) => {
-          add({
-            targetKind: 'Pod',
-            targetName: name,
-            namespace: ns,
-            remotePort: targetPort,
-            localPort,
-            openBrowser: false,
-          });
-          toast.success('Port forward started', `http://localhost:${localPort} -> ${name}:${targetPort}`);
-          setAddOpen(false);
-        }}
-      />
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Choose a port-forward target" width={500}>
+        <p className="text-xs text-[var(--text-secondary)] mb-3">Select a loaded Pod or Service in the current context. Use resource search and namespace scope to load another target.</p>
+        <SearchInput value={targetSearch} onChange={setTargetSearch} placeholder="Find Pod or Service…" className="mb-2" /><p className="text-xs text-[var(--text-secondary)] mb-2">Showing {Math.min(100, candidates.length)} of {candidates.length}</p>
+        <div className="max-h-80 overflow-auto kubiki-scrollbar">{candidates.slice(0, 100).map(item => <button key={`${item.kind}/${item.uid}`} className="w-full text-left px-2 py-2 hover:bg-[var(--bg-hover)] text-xs" onClick={() => { setTarget(item); setAddOpen(false); }}><span className="text-[var(--text-secondary)]">{item.kind} · {item.namespace}</span><span className="block font-mono break-all">{item.name}</span></button>)}{!candidates.length && <p className="text-xs">No Pod or Service snapshots loaded.</p>}</div>
+      </Modal>
+      {target && <PFDialog item={target} onClose={() => setTarget(null)} />}
     </div>
-  );
-}
-
-function AddPfModal({
-  open,
-  onClose,
-  onCreate,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onCreate: (name: string, ns: string, targetPort: number, localPort: number) => void;
-}) {
-  const [name, setName] = useState('api-gateway');
-  const [ns, setNs] = useState('default');
-  const [target, setTarget] = useState('8080');
-  const [local, setLocal] = useState('8080');
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Add Port Forward"
-      width={420}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            disabled={!k8s.demo}
-            onClick={() => onCreate(name, ns, Number(target) || 8080, Number(local) || 8080)}
-          >
-            Start demo tunnel
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-3 text-xs">
-        <div>
-          <Label>Resource Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <Label>Namespace</Label>
-          <Input value={ns} onChange={(e) => setNs(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label>Target Container Port</Label>
-            <Input value={target} onChange={(e) => setTarget(e.target.value)} />
-          </div>
-          <div>
-            <Label>Local Port</Label>
-            <Input value={local} onChange={(e) => setLocal(e.target.value)} />
-          </div>
-        </div>
-      </div>
-    </Modal>
   );
 }
 

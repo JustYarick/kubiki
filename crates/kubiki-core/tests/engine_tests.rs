@@ -1,6 +1,6 @@
 use kubiki_core::core::events::{EventBus, KubikiEvent};
 use kubiki_core::informer::delta::{ResourceDelta, WatchScope};
-use kubiki_core::core::api::ResourceQuery;
+use kubiki_core::core::api::{ResourceQuery, ResourceRef};
 use kubiki_core::informer::store::ResourceStore;
 use kubiki_core::pod_ops::port_forward::{ForwardStatus, ForwardTargetKind, PortForwardSession};
 use serde_json::json;
@@ -47,7 +47,9 @@ async fn resource_snapshots_are_isolated_by_context_namespace_and_subscription()
 #[test]
 fn test_port_forward_session_serialization() {
     let session = PortForwardSession {
-        id: "default:nginx:80".into(),
+        id: "default-nginx-80".into(),
+        resource: ResourceRef { query: ResourceQuery { context: "test".into(), group: "".into(), version: "v1".into(), kind: "Pod".into(), namespace: Some("default".into()) }, name: "nginx".into(), uid: Some("uid".into()) },
+        pod_name: "nginx".into(), pod_uid: "uid".into(), pod_port: 80, last_error: None, started_at: 0,
         target_kind: ForwardTargetKind::Pod,
         namespace: "default".into(),
         name: "nginx".into(),
