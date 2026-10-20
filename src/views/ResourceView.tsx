@@ -45,6 +45,8 @@ import { uiFactor, uiPixels } from '../core/appearance';
 import { resourceTabId } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
 import { compareCreation, issuePriority } from '../core/resources/resource_sort';
+import { ContainerIndicators } from '../components/k8s/ContainerSelect';
+import { defaultContainer, podContainers } from '../core/resources/containers';
 import { refreshResourceWatches } from '../state/resource_watch';
 import { cx } from '../core/utils/cx';
 
@@ -63,7 +65,7 @@ interface ColumnDef {
 }
 
 const DEFAULT_COL_SIZE: Record<string, number> = {
-  name: 240, namespace: 130, ready: 66, restarts: 84, status: 132, ip: 112, node: 96, age: 64,
+  containers: 112, name: 240, namespace: 130, ready: 66, restarts: 84, status: 132, ip: 112, node: 96, age: 64,
   ports: 132, type: 112, clusterIP: 120, image: 220, keys: 74, volume: 132, claim: 168,
   storageclass: 132, reclaim: 92, roles: 152, version: 98, cpu: 112, mem: 172, pods: 130, replicas: 125,
   provisioner: 184, hosts: 220, class: 100, capacity: 90, group: 110,
@@ -83,6 +85,7 @@ const columnsFor = (kind: ResourceKind): ColumnDef[] => {
       return [
         ...BASE_COLUMNS,
         { id: 'ready', label: 'Ready', align: 'right', mono: true, get: (i) => i.ready },
+        { id: 'containers', label: 'Containers', get: (i) => String(i.containers?.length ?? 0) },
         { id: 'restarts', label: 'Restarts', align: 'right', mono: true, get: (i) => (i.restarts === undefined ? undefined : String(i.restarts)) },
         { id: 'status', label: 'Status', get: (i) => i.status },
         { id: 'ip', label: 'IP', mono: true, get: (i) => i.ip },
@@ -234,7 +237,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
     density, uiScale, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidth, resetColumnWidths,
     setRightTab, activePerspective, inspectorCollapsed, toggleInspector,
   } = useUiStore();
-  const { openYamlEditor, openResourceDetail, openLogsTab, toggleSplit } = useWorkspaceStore();
+  const { openYamlEditor, openResourceDetail, openLogsTab, openTerminalTab, toggleSplit } = useWorkspaceStore();
 
   const effectiveKind = explicitKind || activeKind;
   const tableRef = useRef<HTMLDivElement>(null);
@@ -539,15 +542,16 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
           id: 'dock-logs',
           label: 'Stream Logs in Bottom Drawer',
           icon: FileText,
-          onSelect: () => useDockStore.getState().openLogs(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
+          onSelect: () => useDockStore.getState().openLogs(item.name, item.namespace, defaultContainer(item), podContainers(item).map((c) => c.name)),
         },
         {
           id: 'dock-terminal',
           label: 'Terminal in Bottom Drawer',
           icon: Terminal,
-          onSelect: () => useDockStore.getState().openTerminal(item.name, item.namespace, item.containers?.[0]?.name, item.containers?.map((c) => c.name)),
+          onSelect: () => useDockStore.getState().openTerminal(item.name, item.namespace, defaultContainer(item, true), podContainers(item).map((c) => c.name)),
         },
         { id: 'logs', label: 'Stream Logs in Full Tab', icon: ExternalLink, onSelect: () => openLogsTab(item) },
+        { id: 'terminal', label: 'Terminal in Full Tab', icon: ExternalLink, onSelect: () => openTerminalTab(item) },
         { id: 'pf', label: 'Port-forward…', icon: ArrowRightLeft, onSelect: () => setPfFor(item) },
       );
     }
@@ -946,6 +950,7 @@ function CellValue({
 
   if (col.id === 'replicas') return <span className="font-mono text-[length:calc(11px*var(--ui-factor))] tabular-nums text-[var(--text-primary)]">{v}</span>;
 
+  if (col.id === 'containers') return <ContainerIndicators containers={item.containers ?? podContainers(item)} />;
   if (col.id === 'ready') {
     const m = /^(\d+)\/(\d+)$/.exec(v);
     const danger = m && m[1] !== m[2] && m[1] === '0';

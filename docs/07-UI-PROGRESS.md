@@ -6,7 +6,29 @@
 
 ---
 
-## Последний блок — 2026-10-20: DATA-03B1, namespace-scoped watch и состояния неполных данных
+## Последний блок — 2026-10-20: OPS-02A, живой Pod exec, контейнеры и адаптивные логи
+
+- **OPS-02A — готово:** заглушка Pod terminal заменена kube-rs WebSocket → Tauri Channel → xterm. Работают stdin/stdout, Ctrl-C и другие управляющие последовательности, TTY resize, shell binary picker, exit/error, явные Reconnect/Disconnect. Контекст и UID закреплены в ResourceRef; перед подключением проверяются UID и running-состояние контейнера. Предварительный GET не объявляется атомарной exec precondition.
+- **Lifecycle/flow control:** регистрация до handshake, cancel pending connection, owner реального окна, лимит 32 сессии, bounded input/output, отдельное параллельное чтение stdout, IPC batching и один batch в полёте. ACK идёт после xterm write callback; split UTF-8 передаётся байтами. При отмене RAII guard явно abort-ит задачу AttachedProcess и закрывает WebSocket. Автоматический reconnect/повтор ввода отсутствует. Сохраняются 403 как GET Pod, так и exec upgrade (в kube-rs 0.98 это отдельный ProtocolSwitch error).
+- **Контейнеры:** app/init/native sidecar/ephemeral нормализуются по имени из соответствующих spec/status массивов, без index fallback. Native sidecar определяется только по init restartPolicy=Always; legacy sidecar не угадывается по названию. В Pod-таблице — компактные status icons с tooltip, без действий в строках; в Overview — роль, состояние и доступность shell. Завершённому init доступен Logs, shell отключён. Default-container annotation и выбор работающей цели учитываются во всех основных точках открытия.
+- **Логи/shell:** общий dropdown с именем, ролью, состоянием и значком. Смена контейнера выполняется в текущей вкладке с закрытием предыдущего exec, не создаёт лишний dock tab и не сбрасывает log filter. Сессии разделены по context/namespace/UID/container; известное пересоздание Pod останавливает чтение его старой log-сессии. Логи всё ещё tail snapshots (500 строк / 3 с), follow остаётся OPS-01.
+- **Адаптивный toolbar:** широкая панель — строка с target/namespace, контейнером, поиском и действиями; узкая — две строки, Pause и Options рядом с target, контейнер и поиск ниже. Timestamps/Wrap/Download/Clear доступны из Options. Длинные имена сокращаются с полным target в tooltip. Скриншот 900 px просмотрен, горизонтального overflow нет.
+- **Рабочая область:** посещённые terminal/log tabs сохраняются смонтированными в фоне; вывод shell и фильтр логов не теряются при навигации, dock collapse или перестановке в split. Исправлена уникальность primary/split при focus/reopen/close. Ctrl-K/B/J/W в xterm передаются shell, не перехватываются IDE; настройки и scale shortcuts остаются доступны.
+- **Исправлен дополнительный баг:** FixedMenu только закрывался, не вызывая callback выбранного действия. Теперь onSelect исполняется один раз. Открытие full-tab shell/logs из ПКМ проверено; добавлен пункт Terminal in Full Tab.
+- **Roadmap/документация:** UX-09/10/11 и OPS-02A закрыты. OPS-02 остаётся PARTIAL: host PTY — OPS-02B, native GUI/длительные сессии — OPS-02C; Node debug — OPS-03. DATA-01C PARTIAL: exec получил ResourceRef/UID check, остальные named operations/preconditions ещё открыты. Описание реализации и запуск smoke — [13](13-POD-SESSIONS.md). Отложенные native pan/blur и graphics flags не менялись.
+
+Проверки финального состояния:
+
+- `pnpm test`: **125 unit/contract tests**, 15 файлов. Новые проверки: роли/status/default-container, сопоставление по имени, отсутствие ложного чужого status; session UID/context/container и split invariants; ACK после renderer consumption, input ordering/limits, sequence gaps, foreign ID, abort/late ack и callback cleanup.
+- `pnpm typecheck`, `pnpm build`, `git diff --check`: успешно. Прежнее предупреждение о крупных Monaco/main chunks сохраняется.
+- **41 browser scenario на production preview пройден**, 48,1 с. Новые 4: input/UTF-8/Ctrl-C/W/resize/exit/reconnect, контейнеры и адаптивный log toolbar, 403 и cleanup, full-tab/split keepalive и выбор контейнера без открытия dock. Эти сценарии используют реальный JS Channel SDK с подставленным IPC.
+- `cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline`: **22 Rust tests**. Четыре новых используют локальный HTTP/WebSocket Kubernetes API: настоящий kube-rs upgrade, stdin/resize frames, split UTF-8, exit 0/7, UID conflict/неработающий контейнер/GET 403, upgrade 403, фактическое закрытие WebSocket при stop, pending client cancellation и owner/input limits. `cargo check --manifest-path src-tauri/Cargo.toml --offline`: успешно.
+- **Живой backend проверен на указанном пользователем Pod:** `default / chaos-lab / pod-with-init-container / main-application`. Новый `PodTerminalManager` выполнил фиксированный printf/stty/exit smoke: marker получен, exit=0, TTY 100×40 подтверждён, active_sessions=0. В репозитории оставлен явный opt-in `examples/terminal_smoke.rs`; автоматические тесты к кластеру не подключаются.
+- Полная GUI-приёмка внутри Tauri, длительные сессии и cross-platform QA ещё не выполнены. Browser IPC tests и живой headless smoke не объявляются этой приёмкой. Стадия остаётся early alpha.
+
+---
+
+## 2026-10-20: DATA-03B1, namespace-scoped watch и состояния неполных данных
 
 - **DATA-03B1 — готово:** общий namespace picker управляет реальным query desktop watch. Пересоздаются только namespaced подписки; Node/Namespace/PersistentVolume/StorageClass/CustomResourceDefinition продолжают работать без restart и потери snapshot. При возврате в All Namespaces query снова получает namespace=null.
 - **Изоляция scope:** новая область немедленно очищает старый snapshot, pending changes, selectedItem и историю namespaced ресурсов; hasSnapshot=false до полного списка. Retry/Sync прежней области сохраняет последний snapshot. WatchState содержит query. Старые callbacks и late acknowledgements не меняют новую область, включая быстрые A → B → A; подписка на изменение namespace снимается вместе с session.

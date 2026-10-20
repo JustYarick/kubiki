@@ -27,6 +27,11 @@ export type ResourceKind =
   | 'CustomResourceDefinition';
 
 export interface ResourceContainer {
+  role?: 'application' | 'sidecar' | 'init' | 'ephemeral';
+  state?: 'running' | 'waiting' | 'terminated' | 'unknown';
+  reason?: string;
+  message?: string;
+  exitCode?: number;
   name: string;
   image: string;
   ready: boolean;

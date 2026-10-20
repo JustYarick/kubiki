@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ResourceKind } from '../types/k8s';
+import { useResourceStore } from './resource_store';
+import { defaultContainer, podContainers } from '../core/resources/containers';
 import { useClusterStore } from './cluster_store';
 
 export type DockSessionType = 'terminal' | 'logs' | 'ports' | 'events';
@@ -8,6 +10,8 @@ export type DockTargetType = 'local' | 'pod' | 'node';
 
 export interface DockSession {
   id: string;
+  context?: string | null;
+  uid?: string;
   type: DockSessionType;
   title: string;
   subtitle?: string;
@@ -61,6 +65,7 @@ export const useDockStore = create<DockState>()(
         const newSession: DockSession = {
           id,
           type: 'terminal',
+          context: useClusterStore.getState().currentContext,
           title: `Terminal: Local Shell #${num}`,
           subtitle: 'localhost (bash/zsh)',
           targetType: 'local',
@@ -90,6 +95,7 @@ export const useDockStore = create<DockState>()(
         const newSession: DockSession = {
           id,
           type: 'terminal',
+          context: useClusterStore.getState().currentContext,
           title: `Node Shell: ${nodeName}`,
           subtitle: 'Cluster Node',
           targetType: 'node',
@@ -107,7 +113,7 @@ export const useDockStore = create<DockState>()(
         return id;
       },
 
-      openTerminal: (resourceName, namespace = 'default', container = 'app', allContainers = []) => {
+      openTerminal: (resourceName, namespace = 'default', container, allContainers = []) => {
         if (!resourceName || resourceName === 'host' || resourceName === 'local' || resourceName === 'localhost') {
           return get().openLocalTerminal();
         }
@@ -116,9 +122,12 @@ export const useDockStore = create<DockState>()(
         }
 
         const { sessions } = get();
-        const id = JSON.stringify(['terminal', useClusterStore.getState().currentContext, namespace, resourceName, container]);
-
-        const existing = sessions.find((s) => s.id === id);
+        const context = useClusterStore.getState().currentContext;
+        const pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        container ??= defaultContainer(pod, true) ?? allContainers[0] ?? '';
+        if (pod) allContainers = podContainers(pod).map((c) => c.name);
+        const id = `dock-terminal-${crypto.randomUUID()}`;
+        const existing = sessions.find((s) => s.type === 'terminal' && s.context === context && s.uid === pod?.uid && s.resourceName === resourceName && s.namespace === namespace && s.container === container);
         if (existing) {
           set({ activeSessionId: existing.id, dockCollapsed: false });
           return existing.id;
@@ -127,6 +136,7 @@ export const useDockStore = create<DockState>()(
         const newSession: DockSession = {
           id,
           type: 'terminal',
+          context, uid: pod?.uid,
           title: `Pod: ${resourceName}`,
           subtitle: `${namespace} · ${container}`,
           targetType: 'pod',
@@ -147,11 +157,14 @@ export const useDockStore = create<DockState>()(
         return id;
       },
 
-      openLogs: (resourceName, namespace = 'default', container = 'app', allContainers = []) => {
+      openLogs: (resourceName, namespace = 'default', container, allContainers = []) => {
         const { sessions } = get();
-        const id = JSON.stringify(['logs', useClusterStore.getState().currentContext, namespace, resourceName, container]);
-
-        const existing = sessions.find((s) => s.id === id);
+        const context = useClusterStore.getState().currentContext;
+        const pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        container ??= defaultContainer(pod, false) ?? allContainers[0] ?? '';
+        if (pod) allContainers = podContainers(pod).map((c) => c.name);
+        const id = `dock-logs-${crypto.randomUUID()}`;
+        const existing = sessions.find((s) => s.type === 'logs' && s.context === context && s.uid === pod?.uid && s.resourceName === resourceName && s.namespace === namespace && s.container === container);
         if (existing) {
           set({ activeSessionId: existing.id, dockCollapsed: false });
           return existing.id;
@@ -160,6 +173,7 @@ export const useDockStore = create<DockState>()(
         const newSession: DockSession = {
           id,
           type: 'logs',
+          context, uid: pod?.uid,
           title: `Logs: ${resourceName}`,
           subtitle: `${namespace} · ${container}`,
           targetType: 'pod',
@@ -256,8 +270,7 @@ export const useDockStore = create<DockState>()(
       updateSessionContainer: (id, container) => {
         const session = get().sessions.find((entry) => entry.id === id);
         if (!session?.resourceName || session.targetType !== 'pod') return;
-        if (session.type === 'logs') get().openLogs(session.resourceName, session.namespace, container, session.allContainers);
-        if (session.type === 'terminal') get().openTerminal(session.resourceName, session.namespace, container, session.allContainers);
+        set((state) => ({ sessions: state.sessions.map((entry) => entry.id === id ? { ...entry, container, subtitle: `${entry.namespace} · ${container}` } : entry) }));
       },
     }),
     {

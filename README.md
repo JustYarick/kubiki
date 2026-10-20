@@ -31,7 +31,7 @@ Settings → Appearance: масштаб интерфейса **80–200%** (по
 
 В таблицах поиск и фильтры стоят в одной строке: проблемы/статус и сортировка (ошибки первыми, новые/старые, имя или колонка). В узкой панели фильтры доступны через `Filters`, поиск сохраняет доступную ширину. Общий namespace выбирается один раз рядом с кластером. В desktop это также область live watch: ресурсы другого namespace выгружаются, кластерные остаются. Если список namespaces запрещён RBAC, введите имя в поиске picker и выберите `Use namespace: …`. Открытые вкладки и диаграммы вне области предлагают `Load namespace …`, не объявляя ресурс удалённым. На диаграммах Namespace — рамка с ресурсами внутри, Events — отдельный компактный список сбоку. Произвольные custom resources пока не загружаются, доступны определения CRD.
 
-Реальные логи пока читаются как tail 500 строк с обновлением раз в 3 с. Live exec/host/node shell, port-forward, apply/delete/restart/create ещё не подключены; UI обозначает ограничения. В реальном режиме YAML доступен для просмотра/копирования/скачивания. Наличие Rust API для подсистемы не означает завершённую интеграцию.
+Реальные логи пока читаются как tail 500 строк с обновлением раз в 3 с. Desktop Pod shell подключён через kube-rs/Tauri/xterm: ввод, resize, exit/error, явный reconnect и cleanup. В логах и shell есть выбор обычных/init/sidecar/ephemeral контейнеров со статусами; toolbar логов адаптивен. Подробности и проверка — [13](docs/13-POD-SESSIONS.md). Host/node shell, port-forward, apply/delete/restart/create ещё не подключены; UI обозначает ограничения. В реальном режиме YAML доступен для просмотра/копирования/скачивания. Наличие Rust API для подсистемы не означает завершённую интеграцию.
 
 ## Проверки
 
@@ -45,7 +45,7 @@ cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline
 cargo check --manifest-path src-tauri/Cargo.toml --offline
 ```
 
-Playwright автоматически использует `/usr/bin/google-chrome`, если он установлен. Другой путь задаётся через `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; при отсутствии системного Chrome используется стандартный браузер Playwright (`pnpm exec playwright install chromium`). Тесты работают в изолированном demo mode, с подставленными ошибками API и Tauri IPC; Rust tests проверяют kube-rs watcher через локальный HTTP API; они не заменяют live cluster integration.
+Playwright автоматически использует `/usr/bin/google-chrome`, если он установлен. Другой путь задаётся через `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; при отсутствии системного Chrome используется стандартный браузер Playwright (`pnpm exec playwright install chromium`). Тесты работают в изолированном demo mode, с подставленными ошибками API и Tauri IPC; Rust tests проверяют kube-rs watcher и exec через локальный HTTP/WebSocket API; они не заменяют live cluster integration.
 
 ## Лицензия
 

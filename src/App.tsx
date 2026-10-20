@@ -22,6 +22,7 @@ import { toast } from './state/notifications_store';
 import type { ResourceKind } from './types/k8s';
 import { errorHint } from './providers/errors';
 import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
+import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
@@ -53,6 +54,7 @@ export default function App() {
     const current = () => generation === connectionGeneration.current;
     stopMockWatchEngine();
     stopResourceWatches();
+    closeExecConnections();
     useClusterStore.getState().selectContext(contextName);
     useResourceStore.getState().reset();
     useDockStore.getState().clearAllSessions();
@@ -61,6 +63,7 @@ export default function App() {
     setLoading(true);
     try {
       await k8s.resetResourceWatches();
+      await resetExecSessions();
       if (!current()) return;
       const ping = await k8s.pingCluster(contextName);
       if (!current()) return;
@@ -118,11 +121,12 @@ export default function App() {
       connectionGeneration.current++;
       stopMockWatchEngine();
       stopResourceWatches();
+      closeExecConnections();
     };
   }, [connectToContext, setContexts]);
 
   useEffect(() => {
-    const onPageHide = () => stopResourceWatches();
+    const onPageHide = () => { stopResourceWatches(); closeExecConnections(); };
     window.addEventListener('pagehide', onPageHide);
     return () => window.removeEventListener('pagehide', onPageHide);
   }, []);
@@ -133,6 +137,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
+      if (!e.metaKey && e.target instanceof Element && e.target.closest('.xterm') && ['k', 'b', 'j', 'w'].includes(key)) return;
       if (!e.altKey && ['=', '+', '-', '0'].includes(key)) {
         e.preventDefault();
         const ui = useUiStore.getState();

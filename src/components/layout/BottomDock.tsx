@@ -2,19 +2,13 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   ChevronDown,
-  Download,
   Eraser,
-  Pause,
-  Play,
   Plus,
   RotateCw,
   Terminal as TerminalIcon,
-  WrapText,
   X,
-  ArrowDownToLine,
   Maximize2,
   Minimize2,
-  Clock,
   Box,
   Check,
   ArrowRightLeft,
@@ -25,8 +19,11 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { LogsToolbar } from '../k8s/LogsToolbar';
+import { LiveTerminalPane } from '../k8s/LiveTerminalPane';
+import { ContainerSelect } from '../k8s/ContainerSelect';
+import { useSessionContainers } from '../k8s/useSessionContainers';
 import { k8s } from '../../providers/k8s_provider';
-import { useClusterStore } from '../../state/cluster_store';
 import { usePfStore } from '../../state/pf_store';
 import { useResourceStore } from '../../state/resource_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
@@ -320,7 +317,7 @@ const ExpandedDock: React.FC = () => {
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => {
-                            openTerminal(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
+                            openTerminal(p.name, p.namespace, undefined, p.containers?.map((c) => c.name));
                             close();
                           }}
                           className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[length:calc(10px*var(--ui-factor))]"
@@ -329,7 +326,7 @@ const ExpandedDock: React.FC = () => {
                         </button>
                         <button
                           onClick={() => {
-                            openLogs(p.name, p.namespace, p.containers?.[0]?.name || 'app', p.containers?.map((c) => c.name));
+                            openLogs(p.name, p.namespace, undefined, p.containers?.map((c) => c.name));
                             close();
                           }}
                           className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[length:calc(10px*var(--ui-factor))]"
@@ -382,12 +379,13 @@ const ExpandedDock: React.FC = () => {
 /* Terminal Session Component                                         */
 /* ------------------------------------------------------------------ */
 
-export function TerminalSessionPane({ session, visible = true }: { session: DockSession; visible?: boolean }) {
-  if (!k8s.demo) return <div className="p-5 text-[var(--text-secondary)] text-xs"><div className="font-medium mb-2">{session.targetType === 'node' ? 'Node shell' : 'Interactive shell'} · {session.resourceName}</div><p>The live terminal transport is not connected yet. This session does not execute commands.</p></div>;
-  return <DemoTerminalSessionPane session={session} visible={visible} />;
+export function TerminalSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
+  if (!k8s.demo && session.targetType === 'pod') return <LiveTerminalPane session={session} visible={visible} onContainerChange={onContainerChange} />;
+  if (!k8s.demo) return <div className="p-5 text-xs text-[var(--text-secondary)]">{session.targetType === 'node' ? 'Node debug shell requires a managed debug Pod; this transport is not connected yet.' : 'Local host PTY is not connected yet. Open Shell from a Pod to use Kubernetes exec.'}</div>;
+  return <DemoTerminalSessionPane session={session} visible={visible} onContainerChange={onContainerChange} />;
 }
 
-function DemoTerminalSessionPane({ session, visible }: { session: DockSession; visible: boolean }) {
+function DemoTerminalSessionPane({ session, visible, onContainerChange }: { session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
   const fontSize = useUiStore((state) => state.terminalFontSize);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -405,9 +403,7 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
   const activeContainer = session.container || (isLocal ? 'host' : isNode ? 'sh' : 'app');
   const [shellBinary, setShellBinary] = useState(isLocal ? '/bin/zsh' : '/bin/sh');
 
-  const containers = session.allContainers && session.allContainers.length > 0
-    ? session.allContainers
-    : [session.container || 'default'];
+  const { containers } = useSessionContainers(session, true);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -533,7 +529,7 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       {/* Target Info Header (Lens-grade) */}
-      <div className="h-8 shrink-0 flex items-center gap-2 px-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50 text-xs">
+      <div className="shrink-0 flex flex-wrap items-center gap-2 px-2.5 py-1 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50 text-xs">
         <div className="flex items-center gap-1.5">
           <span
             className={cx(
@@ -569,47 +565,7 @@ function DemoTerminalSessionPane({ session, visible }: { session: DockSession; v
 
         <div className="h-3.5 w-px bg-[var(--border-default)] mx-1" />
 
-        {/* Container Selector Dropdown (Pod only) */}
-        {isPod && (
-          <Popover
-            width={200}
-            trigger={({ open }) => (
-              <button
-                className={cx(
-                  'flex items-center gap-1 h-[calc(22px*var(--ui-factor))] px-2 rounded-[calc(3px*var(--ui-factor))] border text-[length:calc(11px*var(--ui-factor))] font-mono transition-colors',
-                  open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
-                )}
-                title="Select Container"
-              >
-                <Box size="calc(11px * var(--ui-factor))" className="text-blue-400" />
-                <span>{activeContainer}</span>
-                <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-60" />
-              </button>
-            )}
-          >
-            {(close) => (
-              <div className="py-1">
-                <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  Select Container
-                </div>
-                {containers.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => {
-                      updateSessionContainer(session.id, c);
-                      toast.info(`Switched to container: ${c}`);
-                      close();
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                  >
-                    <span className="font-mono">{c}</span>
-                    {activeContainer === c && <Check size="calc(11px * var(--ui-factor))" className="text-[var(--accent)]" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </Popover>
-        )}
+        {isPod && <ContainerSelect shell containers={containers} value={activeContainer} onChange={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} />}
 
         {/* Shell Binary Selector Dropdown */}
         <Popover
@@ -690,22 +646,18 @@ const LOG_TEMPLATES = [
 
 interface LogLine { t: string; level: string; msg: string; seq: number }
 
-export function LogsSessionPane({ session, visible = true }: { session: DockSession; visible?: boolean }) {
+export function LogsSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
   const [error, setError] = useState('');
-  const context = useClusterStore((s) => s.currentContext);
+  const { containers, container: activeContainer, context, recreated } = useSessionContainers(session);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [wrap, setWrap] = useState(true);
   const [filter, setFilter] = useState('');
   const [showTimestamps, setShowTimestamps] = useState(true);
-  const activeContainer = session.container || 'app';
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
 
-  const containers = session.allContainers && session.allContainers.length > 0
-    ? session.allContainers
-    : [session.container || 'default'];
 
   useEffect(() => {
     setLines([]);
@@ -724,6 +676,7 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
           const line = { t: new Date().toISOString().slice(11, 23), level, msg, seq: seqRef.current++ };
           setLines((previous) => [...previous, line].slice(-500));
         } else {
+          if (recreated) throw new Error('The Pod was recreated. Open the current Pod to read its logs.');
           if (!context || !session.resourceName || !session.namespace) throw new Error('Select a Pod and namespace to view logs.');
           const text = await k8s.getLogs(context, session.resourceName, session.namespace, activeContainer);
           if (cancelled) return;
@@ -742,7 +695,7 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
     };
     void poll();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [session.resourceName, session.namespace, activeContainer, context, visible, paused]);
+  }, [session.resourceName, session.namespace, activeContainer, context, visible, paused, recreated]);
 
   const shown = useMemo(() => {
     if (!filter.trim()) return lines;
@@ -754,124 +707,13 @@ export function LogsSessionPane({ session, visible = true }: { session: DockSess
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       {error && <div role="alert" className="px-3 py-1 text-[var(--status-danger)] text-xs">{error}</div>}
       <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? 'Simulated logs' : 'Latest 500 lines · refresh every 3s'}</div>
-      {/* Logs Target Header Bar */}
-      <div className="h-8 shrink-0 flex items-center gap-2 px-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50 text-xs">
-        <div className="flex items-center gap-1.5">
-          <ArrowDownToLine size="calc(13px * var(--ui-factor))" className="text-blue-400 shrink-0" />
-          <span className="text-[var(--text-muted)]">Logs:</span>
-          <span className="font-mono font-medium text-[var(--text-primary)]">
-            {session.resourceName}
-          </span>
-          {session.namespace && (
-            <span className="text-[length:calc(10px*var(--ui-factor))] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
-              ns: {session.namespace}
-            </span>
-          )}
-        </div>
-
-        <div className="h-3.5 w-px bg-[var(--border-default)] mx-1" />
-
-        {/* Container Selector */}
-        <Popover
-          width={200}
-          trigger={({ open }) => (
-            <button
-              className={cx(
-                'flex items-center gap-1 h-[calc(22px*var(--ui-factor))] px-2 rounded-[calc(3px*var(--ui-factor))] border text-[length:calc(11px*var(--ui-factor))] font-mono transition-colors',
-                open ? 'border-[var(--accent)] text-[var(--text-primary)]' : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
-              )}
-              title="Select Container"
-            >
-              <Box size="calc(11px * var(--ui-factor))" className="text-blue-400" />
-              <span>{activeContainer}</span>
-              <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-60" />
-            </button>
-          )}
-        >
-          {(close) => (
-            <div className="py-1">
-              <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Select Container
-              </div>
-              {containers.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => {
-                    updateSessionContainer(session.id, c);
-                    toast.info(`Switched logs to container: ${c}`);
-                    close();
-                  }}
-                  className="w-full flex items-center justify-between px-2.5 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                >
-                  <span className="font-mono">{c}</span>
-                  {activeContainer === c && <Check size="calc(11px * var(--ui-factor))" className="text-[var(--accent)]" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </Popover>
-
-        <SearchInput
-          value={filter}
-          onChange={setFilter}
-          placeholder="Filter log lines…"
-          className="w-[calc(180px*var(--ui-factor))] h-[calc(22px*var(--ui-factor))]"
-        />
-
-        <div className="flex-1" />
-
-        <IconButton
-          icon={paused ? Play : Pause}
-          size="sm"
-          active={paused}
-          onClick={() => setPaused(!paused)}
-          tooltip={paused ? 'Resume Live Stream' : 'Pause Live Stream'}
-          aria-label="Pause"
-        />
-
-        <IconButton
-          icon={Clock}
-          size="sm"
-          active={showTimestamps}
-          onClick={() => setShowTimestamps(!showTimestamps)}
-          tooltip={showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'}
-          aria-label="Timestamps"
-        />
-
-        <IconButton
-          icon={WrapText}
-          size="sm"
-          active={wrap}
-          onClick={() => setWrap(!wrap)}
-          tooltip="Toggle Word Wrap"
-          aria-label="Wrap"
-        />
-
-        <IconButton
-          icon={Download}
-          size="sm"
-          tooltip="Download .log File"
-          onClick={() => {
-            const blob = new Blob([lines.map((l) => `${l.t} ${l.level.toUpperCase()} ${l.msg}`).join('\n')], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${session.resourceName}-${activeContainer}.log`;
-            a.click();
-            URL.revokeObjectURL(url);
-            toast.success('Logs downloaded', `${session.resourceName}.log`);
-          }}
-          aria-label="Download logs"
-        />
-
-        <IconButton
-          icon={Eraser}
-          size="sm"
-          tooltip="Clear Log Buffer"
-          onClick={() => setLines([])}
-          aria-label="Clear"
-        />
-      </div>
+      <LogsToolbar name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
+        onContainer={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} filter={filter} onFilter={setFilter}
+        paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)}
+        onClear={() => setLines([])} onDownload={() => {
+          const blob = new Blob([lines.map((l) => `${l.t} ${l.msg}`).join('\n')], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${session.resourceName}-${activeContainer}.log`; anchor.click(); URL.revokeObjectURL(url);
+        }} />
 
       {/* Log Output Body */}
       <div className="flex-1 min-h-0 overflow-auto kubiki-scrollbar bg-[var(--bg-canvas)] px-3 py-2 select-text">

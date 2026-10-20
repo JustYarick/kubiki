@@ -1,4 +1,5 @@
-import type { ResourceItem, ResourceKind, ResourceContainer } from '../../types/k8s';
+import type { ResourceItem, ResourceKind } from '../../types/k8s';
+import { mapPodContainers } from '../resources/containers';
 import { stringify } from 'yaml';
 import { apiVersionFor, resourceType } from '../resources/resource_types';
 
@@ -53,16 +54,7 @@ export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
       const totalCount = (spec.containers || []).length;
       const restarts = cStatuses.reduce((acc: number, c: any) => acc + (c.restartCount || 0), 0);
 
-      const containers: ResourceContainer[] = (spec.containers || []).map((c: any, i: number) => {
-        const cs = cStatuses.find((s) => s.name === c.name) || cStatuses[i];
-        return {
-          name: c.name,
-          image: c.image || '',
-          ready: cs?.ready || false,
-          restarts: cs?.restartCount || 0,
-          port: (c.ports || []).map((p: any) => `${p.containerPort}/${p.protocol || 'TCP'}`).join(', ') || '-',
-        };
-      });
+      const containers = mapPodContainers(spec, status);
 
       return {
         ...base,

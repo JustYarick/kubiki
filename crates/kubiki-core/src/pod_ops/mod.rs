@@ -1,6 +1,7 @@
 //! Real-time Pod operations (Logs, Exec, Port Forwarding)
 
 pub mod exec;
+pub mod terminal;
 pub mod logs;
 pub mod port_forward;
 

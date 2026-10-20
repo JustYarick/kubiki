@@ -1,4 +1,4 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { MainTabBar } from './MainTabBar';
 import { BreadcrumbBar } from './BreadcrumbBar';
 import { ResourceView } from '../../views/ResourceView';
@@ -28,63 +28,34 @@ export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => voi
   const [splitRatio, setSplitRatio] = useState(0.5); // 50% split by default
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
-  const splitTab = splitTabId ? tabs.find((t) => t.id === splitTabId) : null;
+  const splitTab = splitTabId && splitTabId !== activeTab?.id ? tabs.find((t) => t.id === splitTabId) : null;
 
-  return (
-    <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
-      {/* Top JetBrains Tab Bar */}
-      <MainTabBar />
-
-      {/* JetBrains Interactive Breadcrumb Bar */}
-      <BreadcrumbBar onSelectContext={onSelectContext} />
-
-      {/* Main Content Area: Single Pane or Split Panes */}
-      <div className="flex-1 min-h-0 min-w-0 relative flex overflow-hidden">
-        {splitTab ? (
-          <div className="flex-1 flex min-h-0 min-w-0">
-            {/* Primary Left Pane */}
-            <div
-              style={{ flex: `${splitRatio} 1 0%` }}
-              className="min-w-0 min-h-0 flex flex-col border-r border-[var(--border-default)]"
-            >
-              <ErrorBoundary key={activeTab?.id}><TabContent tab={activeTab} /></ErrorBoundary>
-            </div>
-
-            {/* Split Resizer */}
-            <Resizer
-              orientation="vertical"
-              onDelta={(d) => {
-                setSplitRatio((prev) => {
-                  const deltaFrac = d / (window.innerWidth * 0.6);
-                  return Math.min(0.8, Math.max(0.2, prev + deltaFrac));
-                });
-              }}
-            />
-
-            {/* Secondary Right Pane */}
-            <div
-              style={{ flex: `${1 - splitRatio} 1 0%` }}
-              className="min-w-0 min-h-0 flex flex-col"
-            >
-              <div className="h-6 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] select-none">
-                <span className="font-medium text-[var(--text-secondary)]">{splitTab.title}</span>
-                <span className="text-[length:calc(10px*var(--ui-factor))] uppercase font-mono">Split View</span>
-              </div>
-              <ErrorBoundary key={splitTab.id}><TabContent tab={splitTab} /></ErrorBoundary>
-            </div>
-          </div>
-        ) : (
-          /* Single Full Pane */
-          <div className="flex-1 min-h-0 min-w-0 flex flex-col">
-            <ErrorBoundary key={activeTab?.id}><TabContent tab={activeTab} /></ErrorBoundary>
-          </div>
-        )}
-      </div>
+  const [visited, setVisited] = useState<Set<string>>(new Set());
+  useEffect(() => { setVisited((previous) => {
+    const next = new Set([...previous].filter((id) => tabs.some((tab) => tab.id === id)));
+    if (activeTab) next.add(activeTab.id); if (splitTab) next.add(splitTab.id);
+    if (next.size === previous.size && [...next].every((id) => previous.has(id))) return previous;
+    return next;
+  }); }, [tabs, activeTab?.id, splitTab?.id]);
+  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'logs'));
+  return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
+    <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
+    <div className="flex-1 min-h-0 min-w-0 relative grid overflow-hidden" style={{ gridTemplateColumns: splitTab ? `minmax(0, ${splitRatio}fr) auto minmax(0, ${1 - splitRatio}fr)` : 'minmax(0, 1fr)', gridTemplateRows: 'minmax(0, 1fr)' }}>
+      {!activeTab && <TabContent />}
+      {mounted.map((tab) => {
+        const split = tab.id === splitTab?.id;
+        const visible = tab.id === activeTab?.id || split;
+        return <div key={tab.id} hidden={!visible} className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
+          {split && <div className="h-6 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-muted)]"><span className="truncate">{tab.title}</span><span>Split View</span></div>}
+          <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
+        </div>;
+      })}
+      {splitTab && <div className="min-h-0 flex z-10 border-l border-[var(--border-default)]" style={{ gridRow: 1, gridColumn: 2 }}><Resizer orientation="vertical" onDelta={(d) => setSplitRatio((previous) => Math.min(0.8, Math.max(0.2, previous + d / (window.innerWidth * 0.6))))} /></div>}
     </div>
-  );
+  </div>;
 };
 
-function TabContent({ tab }: { tab?: WorkspaceTab }) {
+function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boolean }) {
   const { resources, updateItem, syncMode, watchStates, loadErrors } = useResourceStore();
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   const context = useClusterStore((s) => s.currentContext);
@@ -107,7 +78,9 @@ function TabContent({ tab }: { tab?: WorkspaceTab }) {
     const kind = tab.kind || 'Pod';
     const candidate = tab.uid ? resources[kind]?.get(tab.uid)
       : tab.name ? Array.from(resources[kind]?.values() || []).find((item) => matchesResourceRef(item, { ...tab, kind, name: tab.name! })) : undefined;
-    const item = candidate && matchesResourceRef(candidate, tab.resource ?? { ...tab, kind, name: tab.name ?? candidate.name }) ? candidate : undefined;
+    const loaded = candidate && matchesResourceRef(candidate, tab.resource ?? { ...tab, kind, name: tab.name ?? candidate.name }) ? candidate : undefined;
+    // An already open shell can keep its pinned target while namespace snapshots are unloaded.
+    const item = loaded ?? ((tab.type === 'terminal' || tab.type === 'logs') && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode) ? tab.item : undefined);
 
     if (!item && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
       return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;
@@ -133,9 +106,9 @@ function TabContent({ tab }: { tab?: WorkspaceTab }) {
     if (tab.type === 'resource-detail') return <ResourceDetails key={item.uid} item={item} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />;
     if (tab.type === 'topology') return <Suspense fallback={<div className="p-4">Loading topology…</div>}><TopologyView item={item} namespace={tab.namespace} /></Suspense>;
     if (tab.type === 'logs' || tab.type === 'terminal') {
-      const session = { id: tab.id, type: tab.type, title: tab.title, resourceName: item.name, namespace: item.namespace,
-        container: tab.container ?? item.containers?.[0]?.name, allContainers: item.containers?.map((c) => c.name), targetType: item.kind === 'Node' ? 'node' as const : 'pod' as const };
-      return tab.type === 'logs' ? <LogsSessionPane key={tab.id} session={session} /> : <TerminalSessionPane key={tab.id} session={session} />;
+      const session = { context: tab.context, uid: item.uid, id: tab.id, type: tab.type, title: tab.title, resourceName: item.name, namespace: item.namespace,
+        container: tab.container, allContainers: item.containers?.map((c) => c.name), targetType: item.kind === 'Node' ? 'node' as const : 'pod' as const };
+      return tab.type === 'logs' ? <LogsSessionPane key={tab.id} session={session} visible={visible} onContainerChange={(name) => useWorkspaceStore.getState().setTabContainer(tab.id, name)} /> : <TerminalSessionPane key={tab.id} session={session} visible={visible} onContainerChange={(name) => useWorkspaceStore.getState().setTabContainer(tab.id, name)} />;
     }
 
     return (

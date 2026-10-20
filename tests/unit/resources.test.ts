@@ -60,15 +60,15 @@ describe('Workspace and session isolation', () => {
     useClusterStore.getState().selectContext('second'); store.openYamlEditor(pod());
     expect(useWorkspaceStore.getState().tabs).toHaveLength(3);
   });
-  it('keeps container and namespace log sessions separate and focuses an existing session', () => {
+  it('keeps namespace sessions separate and switches the container inside the existing session', () => {
     const store = useDockStore.getState();
     const first = store.openLogs('web', 'default', 'app');
     const other = store.openLogs('web', 'other', 'app');
     expect(first).not.toBe(other); expect(store.openLogs('web', 'default', 'app')).toBe(first);
     expect(useDockStore.getState().sessions).toHaveLength(2);
     store.updateSessionContainer(first, 'sidecar');
-    expect(useDockStore.getState().sessions).toHaveLength(3);
-    expect(useDockStore.getState().sessions.find((session) => session.id === first)?.container).toBe('app');
+    expect(useDockStore.getState().sessions).toHaveLength(2);
+    expect(useDockStore.getState().sessions.find((session) => session.id === first)?.container).toBe('sidecar');
     expect(useDockStore.getState().sessions.find((session) => session.id === useDockStore.getState().activeSessionId)?.container).toBe('sidecar');
     store.openPorts(); expect(useDockStore.getState().sessions.find((s) => s.id === useDockStore.getState().activeSessionId)?.type).toBe('ports');
   });
@@ -101,4 +101,13 @@ it('builds demo manifests with stable UIDs and explicit owner references', () =>
   expect(first.Pod[0].uid).toBe(second.Pod[0].uid);
   expect(first.Pod[0].raw?.metadata.ownerReferences[0].kind).toBe('ReplicaSet');
   expect(first.ReplicaSet.length).toBeGreaterThan(0);
+});
+
+it('keeps primary/split tabs distinct when focusing, reopening or closing a split target', () => {
+  const store = useWorkspaceStore.getState(); store.openYamlEditor(pod()); store.openResourceDetail(pod());
+  const [yaml, details] = useWorkspaceStore.getState().tabs;
+  store.setSplit(details.id); expect(useWorkspaceStore.getState()).toMatchObject({ activeTabId: yaml.id, splitTabId: details.id });
+  store.setActiveTab(details.id); expect(useWorkspaceStore.getState()).toMatchObject({ activeTabId: details.id, splitTabId: yaml.id });
+  store.openYamlEditor(pod()); expect(useWorkspaceStore.getState()).toMatchObject({ activeTabId: yaml.id, splitTabId: details.id });
+  store.closeTab(yaml.id); expect(useWorkspaceStore.getState()).toMatchObject({ activeTabId: details.id, splitTabId: null });
 });

@@ -16,7 +16,7 @@
 | 1. Core/Kubeconfig | Сервисы и CLI есть; клиентский пул и базовый health; полноценный multi-cluster session lifecycle не завершён |
 | 2. IDE shell | Дерево/табы/split/inspector/dock есть; только dark, полноценный dockview не интегрирован |
 | 3. Watch/таблицы | Desktop watch подключён через Tauri Channels; atomic relist, bounded batching, reconnect/stale, lifecycle и context isolation покрыты локальным HTTP/API и browser IPC tests. Browser — snapshots; namespace-scoped UI и ручной ввод при RBAC подключены; native/live QA, lazy subscriptions и virtualization ещё открыты |
-| 4. Pod Ops | Реальные logs tail snapshots добавлены; follow stream, interactive exec, node debug и PF не подключены к UI |
+| 4. Pod Ops | Desktop Pod exec подключён (WebSocket/Tauri/xterm, ввод/resize/exit/cleanup), backend проверен на живом Pod; полная native GUI QA ещё открыта. Logs пока tail snapshots, follow stream/host PTY/node debug/PF остаются в плане |
 | 5. Config/Network/Storage/RBAC | Часть фиксированных списков и деталей есть; RBAC UI, NetworkPolicy, quotas/HPA/EndpointSlice отсутствуют |
 | 6. YAML/CRD | Monaco, просмотр/экспорт и demo edit; live apply/diff/schema и dynamic CRD explorer отсутствуют |
 | 7. Helm | Есть Rust wrapper вокруг helm; нет UI/IPC, context в API wrapper пока не передаётся |
@@ -52,3 +52,5 @@
 Для каждой функции отдельно хранить: **UI / backend / IPC / live integration test / release QA**. Статус «готово» допустим после проверки всего пользовательского сценария. Демонстрационный сценарий отмечается demo, снимок — snapshot, полноценный поток — stream. Не закрывать фазу по зелёной TypeScript сборке.
 
 Ближайший релизный milestone: один реальный тестовый кластер, корректный watch/relist, подробности и ownership navigation, поток логов, exec с resize и cleanup, работающий PF, ошибки RBAC/timeout/reconnect. Затем YAML mutations с dry-run/diff/conflict и production-эргономика. Диаграммы могут развиваться параллельно после стабилизации общей модели ссылок, не заменяя интеграцию.
+
+Pod-сессии дополнены: [13](13-POD-SESSIONS.md). Общая модель normal/init/native-sidecar/ephemeral, status icons и общий picker в логах/shell; toolbar логов адаптивен. Контекстное меню исправлено; terminal/log вкладки сохраняются при навигации. DATA-01C остаётся PARTIAL: exec проверяет UID перед upgrade, остальные named operations и атомарные preconditions ещё не завершены.

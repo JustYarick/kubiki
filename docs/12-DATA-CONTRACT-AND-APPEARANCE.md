@@ -22,7 +22,7 @@
 
 Для kube-rs сохраняется настоящий status из ErrorResponse. kubectl по-прежнему возвращает stderr: классифицируются только известные server reasons и transport failures, неизвестные ошибки остаются internal с исходным сообщением. Совпадение kind/name с текстом «forbidden» не считается HTTP 403. Общие fixtures проверяются Rust и TypeScript; HTTP bridge дополнительно тестируется через локальный HTTP server с подставленным executor без запуска kubectl.
 
-Browser request и чтение body ограничены 20 с. Процессы kubectl в обоих bridge ограничены 15 с, API request — 10 с; desktop ping/namespace discovery также ограничены 15 с. Scale теперь использует тот же timeout/kill-on-drop lifecycle, что reads/logs. Это ещё не lifecycle live streams.
+Browser request и чтение body ограничены 20 с. Процессы kubectl в обоих bridge ограничены 15 с, API request — 10 с; desktop ping/namespace discovery также ограничены 15 с. Scale теперь использует тот же timeout/kill-on-drop lifecycle, что reads/logs. Это ограничения snapshot-операций; lifecycle нового Pod exec описан в [13](13-POD-SESSIONS.md), follow logs остаётся в плане.
 
 ## Desktop resource watch
 

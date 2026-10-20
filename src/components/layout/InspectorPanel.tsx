@@ -8,6 +8,8 @@ import { useDockStore } from '../../state/dock_store';
 import { KIND_ICONS } from '../../core/perspectives';
 import { buildResourceGraph } from '../../core/resources/relationships';
 import { resourceKey } from '../../core/resources/identity';
+import { ContainerStatusIcon } from '../k8s/ContainerSelect';
+import { canExecContainer, defaultContainer, podContainers, CONTAINER_ROLE_LABEL } from '../../core/resources/containers';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
 import { ResourceWarnings } from '../k8s/ResourceWarnings';
 import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
@@ -60,9 +62,9 @@ export function ResourceDetails({ item, onClose, onNavigate, onBack, inspector =
     const target = graph?.items.get(edge.source === key ? edge.target : edge.source);
     return [target?.name ?? edge.missing?.name, target?.kind ?? edge.missing?.kind, target?.namespace ?? edge.missing?.namespace, edge.type].join(' ').toLowerCase().includes(relatedQuery.toLowerCase());
   });
-  const containers = item.containers?.map((c) => c.name) ?? [];
-  const logs = (container = containers[0]) => useDockStore.getState().openLogs(item.name, item.namespace, container, containers);
-  const shell = (container = containers[0]) => item.kind === 'Node' ? useDockStore.getState().openNodeShell(item.name) : useDockStore.getState().openTerminal(item.name, item.namespace, container, containers);
+  const containers = podContainers(item).map((c) => c.name);
+  const logs = (container = defaultContainer(item)) => useDockStore.getState().openLogs(item.name, item.namespace, container, containers);
+  const shell = (container = defaultContainer(item, true)) => item.kind === 'Node' ? useDockStore.getState().openNodeShell(item.name) : useDockStore.getState().openTerminal(item.name, item.namespace, container, containers);
   const navigate = (next: ResourceItem) => { setTab('overview'); onNavigate(next); };
   return <div className="h-full flex flex-col bg-[var(--bg-canvas)] min-h-0" data-testid="resource-details">
     <div className="shrink-0 bg-[var(--bg-secondary)] border-b border-[var(--border-default)]">
@@ -131,9 +133,9 @@ function Overview({ item, onNavigate, onLogs, onShell }: { item: ResourceItem; o
     ]} /></Card>
     {!!conditions.length && <Card title="Conditions">{conditions.map((c) => <div key={c.type} className="py-1.5 border-b border-[var(--border-subtle)]"><div className="flex justify-between gap-2 text-xs"><span>{c.type}</span><span className={c.status === 'True' ? 'text-[var(--status-ok)]' : 'text-[var(--text-secondary)]'}>{c.status}</span></div><div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] mt-1 break-words">{c.reason}{c.message ? ` · ${c.message}` : ''}</div></div>)}</Card>}
     {!!item.containers?.length && <Card title={`Containers (${item.containers.length})`}>{item.containers.map((c) => {
-      const containerSpec = (spec.containers ?? []).find((s: any) => s.name === c.name) ?? {};
-      const cs = (status.containerStatuses ?? []).find((s: any) => s.name === c.name);
-      return <div key={c.name} className="py-2 border-b border-[var(--border-subtle)]"><div className="flex items-center gap-2"><span className={cx('h-1.5 w-1.5 rounded-full', c.ready ? 'bg-[var(--status-ok)]' : 'bg-[var(--status-warn)]')} /><span className="font-mono text-xs flex-1">{c.name}</span><IconButton icon={FileText} size="sm" onClick={() => onLogs(c.name)} aria-label={`Logs for ${c.name}`} /><IconButton icon={Terminal} size="sm" onClick={() => onShell(c.name)} aria-label={`Shell for ${c.name}`} /></div><div className="font-mono text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] break-all mt-1">{c.image}</div><MetaGrid rows={[
+      const containerSpec = [...(spec.containers ?? []), ...(spec.initContainers ?? []), ...(spec.ephemeralContainers ?? [])].find((s: any) => s.name === c.name) ?? {};
+      const cs = [...(status.containerStatuses ?? []), ...(status.initContainerStatuses ?? []), ...(status.ephemeralContainerStatuses ?? [])].find((s: any) => s.name === c.name);
+      return <div key={c.name} className="py-2 border-b border-[var(--border-subtle)]"><div className="flex items-center gap-2"><ContainerStatusIcon container={c} /><span className="font-mono text-xs flex-1">{c.name}</span><span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{CONTAINER_ROLE_LABEL[c.role ?? 'application']}</span><IconButton icon={FileText} size="sm" onClick={() => onLogs(c.name)} aria-label={`Logs for ${c.name}`} /><IconButton icon={Terminal} size="sm" disabled={!canExecContainer(c)} tooltip={!canExecContainer(c) ? c.reason ?? c.state : undefined} onClick={() => onShell(c.name)} aria-label={`Shell for ${c.name}`} /></div><div className="font-mono text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] break-all mt-1">{c.image}</div><MetaGrid rows={[
         ['Ports', c.port], ['Restarts', String(c.restarts)], ['State', cs?.state ? Object.keys(cs.state).join(', ') : undefined],
         ['Requests', containerSpec.resources?.requests ? JSON.stringify(containerSpec.resources.requests) : undefined], ['Limits', containerSpec.resources?.limits ? JSON.stringify(containerSpec.resources.limits) : undefined],
         ['Readiness probe', containerSpec.readinessProbe ? JSON.stringify(containerSpec.readinessProbe) : undefined], ['Liveness probe', containerSpec.livenessProbe ? JSON.stringify(containerSpec.livenessProbe) : undefined],

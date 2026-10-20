@@ -32,6 +32,7 @@ crates/kubiki-core/
 │   │   └── watcher.rs          # InformerManager: стриминг событий K8s Watch Streams
 │   ├── pod_ops/
 │   │   ├── logs.rs             # PodLogService: стриминг логов с follow, tail, контейнерами
+│   │   ├── terminal.rs         # PodTerminalManager: managed exec, bounded queues, lifecycle
 │   │   ├── exec.rs             # PodExecService: интерактивный WebSocket шелл в контейнере
 │   │   └── port_forward.rs     # PortForwardManager: локальные TCP сокеты + статистика
 │   ├── crd/
@@ -119,6 +120,10 @@ while let Some(line_res) = stream.next().await {
     }
 }
 ```
+
+### 2.4.1. Управляемый интерактивный Pod exec
+
+Desktop использует `kubiki_core::pod_ops::terminal::PodTerminalManager`, не одиночный attach без lifecycle. `start(owner, id, ExecRequest, client_future)` возвращает `ExecSubscription { output, acknowledgements }`; `write`, `resize`, `acknowledge`, `stop` и `stop_owner` управляют сессией. Core consumer может читать output напрямую; acknowledgements используются Tauri forwarder для renderer backpressure. Scope/UID, протокол и ограничения — [13](13-POD-SESSIONS.md). Запускаемый live-пример: `examples/terminal_smoke.rs`.
 
 ### 2.5. Проброс портов (Port Forwarding Manager)
 

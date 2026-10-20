@@ -52,6 +52,7 @@ interface WorkspaceState {
   setActiveTab: (id: string) => void;
   togglePinTab: (id: string) => void;
   setTabDirty: (id: string, dirty: boolean) => void;
+  setTabContainer: (id: string, container: string) => void;
   setSplit: (splitTabId: string | null, direction?: 'horizontal' | 'vertical') => void;
   toggleSplit: (tabId?: string) => void;
   reorderTabs: (sourceIndex: number, destIndex: number) => void;
@@ -94,7 +95,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         );
 
         if (existing) {
-          set({ activeTabId: existing.id });
+          get().setActiveTab(existing.id);
           return;
         }
 
@@ -115,7 +116,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const existing = tabs.find((t) => t.id === id || (t.type === 'resource-list' && t.kind === kind));
 
         if (existing) {
-          set({ activeTabId: existing.id });
+          get().setActiveTab(existing.id);
         } else {
           const newTab: WorkspaceTab = {
             id,
@@ -145,6 +146,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
       }),
+      setTabContainer: (id, container) => set((state) => ({ tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, container, subtitle: `${tab.namespace} · ${container}` } : tab) })),
       openLogsTab: (item, container) => get().openTab({
         id: resourceTabId('logs', useClusterStore.getState().currentContext, item, container),
         type: 'logs', title: `Logs: ${item.name}`, subtitle: `${item.namespace} · ${container || 'default container'}`,
@@ -193,7 +195,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set({
           tabs: newTabs,
           activeTabId: nextActive,
-          splitTabId: splitTabId === id ? null : splitTabId,
+          splitTabId: splitTabId === id || splitTabId === nextActive ? null : splitTabId,
         });
       },
 
@@ -215,7 +217,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set({
           tabs: kept,
           activeTabId: id,
-          splitTabId: kept.some((t) => t.id === get().splitTabId) ? get().splitTabId : null,
+          splitTabId: get().splitTabId !== id && kept.some((t) => t.id === get().splitTabId) ? get().splitTabId : null,
         });
       },
 
@@ -230,7 +232,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         });
       },
 
-      setActiveTab: (activeTabId) => set({ activeTabId }),
+      setActiveTab: (activeTabId) => set((state) => ({ activeTabId, splitTabId: state.splitTabId === activeTabId ? state.activeTabId === activeTabId ? null : state.activeTabId : state.splitTabId })),
 
       togglePinTab: (id) => {
         set((state) => ({
@@ -245,7 +247,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       setSplit: (splitTabId, direction = 'vertical') => {
-        set({ splitTabId, splitDirection: direction });
+        const state = get();
+        const primary = splitTabId === state.activeTabId ? state.tabs.find((tab) => tab.id !== splitTabId)?.id : state.activeTabId;
+        set({ activeTabId: primary ?? state.activeTabId, splitTabId: primary ? splitTabId : null, splitDirection: direction });
       },
 
       toggleSplit: (tabId) => {
@@ -254,9 +258,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           set({ splitTabId: null });
         } else {
           const target = tabId || tabs.find((t) => t.id !== activeTabId)?.id;
-          if (target && target !== activeTabId) {
-            set({ splitTabId: target, splitDirection: 'vertical' });
-          }
+          if (target) get().setSplit(target, 'vertical');
         }
       },
 

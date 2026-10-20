@@ -225,7 +225,7 @@ export function FixedMenu({
       style={{ top: pos.top, left: pos.left }}
       className="fixed z-[85] min-w-[calc(200px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1 kub-pop kubiki-scrollbar max-h-[70vh] overflow-y-auto"
     >
-      <MenuList items={items} onSelect={(item) => onClose(item)} />
+      <MenuList items={items} onSelect={(item) => { onClose(); item.onSelect?.(); }} />
     </div>,
     document.body
   );

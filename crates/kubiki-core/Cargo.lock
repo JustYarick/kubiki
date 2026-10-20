@@ -987,6 +987,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-test",
+ "tokio-tungstenite",
  "tower",
  "tracing",
  "tracing-subscriber",
