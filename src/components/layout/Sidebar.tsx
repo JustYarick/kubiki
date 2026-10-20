@@ -10,8 +10,9 @@ import {
   Columns2,
   ExternalLink,
   LayoutDashboard,
+  Anchor,
 } from 'lucide-react';
-import { SIDEBAR_TREE, type KindEntry, type TreeGroup, type TreeCategory } from '../../core/perspectives';
+import { SIDEBAR_TREE, HELM_VIEWS, type KindEntry, type TreeGroup, type TreeCategory } from '../../core/perspectives';
 import { useResourceStore } from '../../state/resource_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useUiStore } from '../../state/ui_store';
@@ -28,8 +29,10 @@ export const Sidebar: React.FC = () => {
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   const groups = useUiStore((s) => s.sidebarGroups);
   const toggleGroup = useUiStore((s) => s.toggleGroup);
-  const { openResourceList, toggleSplit, openOverview, tabs, activeTabId } = useWorkspaceStore();
-  const overviewActive = tabs.find(tab => tab.id === activeTabId)?.type === 'overview';
+  const { openResourceList, toggleSplit, openOverview, openHelm, tabs, activeTabId } = useWorkspaceStore();
+  const activeTab = tabs.find(tab => tab.id === activeTabId);
+  const overviewActive = activeTab?.type === 'overview';
+  const helmActive = activeTab?.type === 'helm-releases' || activeTab?.type === 'helm-repositories';
 
   const [filter, setFilter] = useState('');
   const [contextMenu, setContextMenu] = useState<{ kind: ResourceKind; x: number; y: number } | null>(null);
@@ -49,8 +52,9 @@ export const Sidebar: React.FC = () => {
           .map((g: TreeGroup) => ({
             ...g,
             kinds: g.kinds.filter((e: KindEntry) => matchKind(e) || hitCat || (g.label ?? '').toLowerCase().includes(q)),
+            helmViews: g.helmViews?.filter(view => hitCat || HELM_VIEWS[view].toLowerCase().includes(q)),
           }))
-          .filter((g: TreeGroup) => g.kinds.length > 0 || (g.placeholder && (g.placeholder.toLowerCase().includes(q) || hitCat)) || (g.label ?? '').toLowerCase().includes(q)),
+          .filter((g: TreeGroup) => g.kinds.length > 0 || g.helmViews?.length || (g.placeholder && (g.placeholder.toLowerCase().includes(q) || hitCat)) || (g.label ?? '').toLowerCase().includes(q)),
       } satisfies TreeCategory;
     }).filter((cat) => cat.groups.length > 0 || cat.label.toLowerCase().includes(q));
   }, [q, searching]);
@@ -221,7 +225,7 @@ export const Sidebar: React.FC = () => {
                     {gOpen && (
                       <div className="py-0.5">
                         {g.kinds.map((entry) => {
-                          const selected = !overviewActive && activeKind === entry.kind;
+                          const selected = !overviewActive && !helmActive && activeKind === entry.kind;
                           const total = countFor(entry.kind);
                           const Icon = entry.icon;
 
@@ -253,6 +257,7 @@ export const Sidebar: React.FC = () => {
                             </button>
                           );
                         })}
+                        {g.helmViews?.map(section => <button key={section} aria-label={`Open Helm ${HELM_VIEWS[section]}`} aria-current={activeTab?.type === `helm-${section}` ? 'page' : undefined} onClick={() => openHelm(section)} className={cx('relative w-full flex items-center gap-2 pl-[calc(34px*var(--ui-factor))] pr-2 py-1 text-xs hover:bg-[var(--bg-hover)]', activeTab?.type === `helm-${section}` ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}><Anchor size={14} aria-hidden="true" /><span>{HELM_VIEWS[section]}</span></button>)}
                       </div>
                     )}
                   </div>

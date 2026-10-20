@@ -8,6 +8,8 @@ mod node_commands;
 mod host_terminal_commands;
 mod log_commands;
 mod watch_commands;
+mod helm_commands;
+use helm_commands::*;
 
 use k8s_commands::*;
 use kubiki_core::cluster::client::ClusterClientPool;
@@ -44,6 +46,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            list_helm_releases,
+            get_helm_history,
+            get_helm_content,
+            list_helm_repositories,
             start_port_forward,
             list_port_forwards,
             stop_port_forward,

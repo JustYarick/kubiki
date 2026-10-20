@@ -6,7 +6,15 @@
 
 ---
 
-## Последний блок — 2026-10-20: шрифты терминала, границы resize и live port forwarding
+## Последний блок — 2026-10-20: Helm read-only UI и IPC
+
+- **DONE DOMAIN-02C1/C2:** Explorer → Helm → Releases / Repositories, отдельные workspace tabs и адаптивная панель подробностей. Releases следуют единому context/namespace picker; статусы/поиск имени и namespace/сортировка/страницы 100+1. Overview, History, Values, Manifest, Notes; выбор истории открывает values конкретной revision. Документы ограничены по высоте, значения не сохраняются в workspace persistence. Локальные репозитории не зависят от выбранного кластера; Refresh только перечитывает конфигурацию.
+- **Backend:** новый read-only `HelmReader` и четыре Tauri IPC команды; browser GET bridge. Explicit literal context/namespace/revision, target/document allowlist, 15s subprocess timeout, output limits и kill-on-drop. Ошибки PATH/RBAC/JSON показываются, пустой repository state только для точного no-repositories; retained snapshot/retry, cancellation/late-response isolation. Legacy mutating wrappers не экспортированы в IPC/UI.
+- **Проверки:** 196 unit tests, полный Rust suite 64/64, production Chromium 87/87 (включая четыре новых Helm flow и native IPC harness); typecheck/build/offline Tauri cargo check прошли. Native watch regression tests используют размер resource catalog вместо прежних констант 18/36. Screenshots узкого Helm workspace просмотрены, длинные строки и документы прокручиваются внутри своих pane.
+- **Реальный CLI smoke:** установленный Helm 3.16.2 против локального mock Kubernetes API: list/history/values старой revision/manifest/notes с заведомо неверным default context. Все 10 запросов — GET. Пользовательский кластер не использовался. Native Tauri GUI/реальный Helm 4/cross-platform/live acceptance остаются TODO.
+- **Дальше:** DOMAIN-02C3 — install/upgrade/rollback/uninstall/repository changes через backend review/consent; C4 — native/live/Helm 4 QA; C5 — переходы release/manifest → Kubernetes resources, расширенная история и межстраничный поиск. Стадия UI-9 остаётся PARTIAL. Подробности и проверка: [23](23-HELM.md).
+
+## 2026-10-20: шрифты терминала, границы resize и live port forwarding
 
 - **TERM-FONT DONE:** Settings → Terminal typeface: bundled/default/system monospace presets, произвольный installed family/fallback list + Apply, font size/line height, glyph preview и persist/reset. Symbols Only Mono Nerd Fonts v3.4.0 поставляется offline с MIT license и source/hash; пользовательский основной шрифт имеет приоритет. Оба xterm renderer используют общий stack/load/refit hook; шрифт загружается до стартового grid measurement, смена настроек не пересоздаёт PTY и сохраняет output. Host shell уже реальная, `$SHELL`, Unix login/interactive (`zsh -l -i`); чужой terminal emulator/font config автоматически не импортируется.
 - **TABLE-RESIZE DONE:** fixed table width равна сумме explicit widths; растягивается только выбранная колонка, соседние ширины сохраняются. Общие min/max для keyboard/pointer, pointer ограничен видимым pane, активная guide до края, cleanup cancel/unmount. Прокрутка остаётся локальной; приложение не расширяется за viewport. Browser tests измеряют каждую ширину/границу в широком и узком окнах и уход курсора за край.

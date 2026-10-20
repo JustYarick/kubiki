@@ -10,6 +10,7 @@ import {
   Boxes,
   Columns2,
   LayoutDashboard,
+  Anchor,
 } from 'lucide-react';
 import { useWorkspaceStore, type WorkspaceTab } from '../../state/workspace_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -65,6 +66,7 @@ export const MainTabBar: React.FC = () => {
   };
 
   const getTabIcon = (tab: WorkspaceTab) => {
+    if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Anchor size={13} className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'overview') return <LayoutDashboard size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'yaml-editor') return <FileCode size="calc(13px * var(--ui-factor))" className="text-amber-400 shrink-0" />;
     if (tab.type === 'terminal') return <TermIcon size="calc(13px * var(--ui-factor))" className="text-emerald-400 shrink-0" />;

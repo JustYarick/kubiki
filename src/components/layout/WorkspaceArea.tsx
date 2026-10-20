@@ -23,6 +23,7 @@ import { matchesResourceRef } from '../../core/resources/identity';
 
 const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => ({ default: m.TopologyView })));
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
+const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
 
 export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => void }> = ({ onSelectContext }) => {
   const { tabs, activeTabId, splitTabId } = useWorkspaceStore();
@@ -70,6 +71,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   }
 
   if (tab.type === 'overview') return <OverviewView />;
+  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<div role="status" className="p-4">Loading Helm…</div>}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
 
   if (tab.type !== 'resource-list' && tab.context !== context) {
     return <div className="p-6 text-[var(--text-secondary)]">This tab belongs to context {tab.context || 'unknown'}. Switch back to that context to use it.</div>;

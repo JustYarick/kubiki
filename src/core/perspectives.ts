@@ -18,6 +18,9 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ResourceKind } from '../types/k8s';
+import type { HelmSection } from '../providers/helm_types';
+
+export const HELM_VIEWS: Record<HelmSection, string> = { releases: 'Releases', repositories: 'Repositories' };
 
 export type Perspective =
   | 'workloads'
@@ -41,6 +44,7 @@ export interface TreeGroup {
   id: string;
   label?: string;
   kinds: KindEntry[];
+  helmViews?: HelmSection[];
   /** Rendered as a muted disabled row instead of clickable kinds. */
   placeholder?: string;
 }
@@ -164,7 +168,7 @@ export const SIDEBAR_TREE: TreeCategory[] = [
     label: 'Helm',
     icon: Anchor,
     groups: [
-      { id: 'helm-soon', kinds: [], placeholder: 'Releases & repositories — phase UI-8' },
+      { id: 'helm-core', kinds: [], helmViews: ['releases', 'repositories'] },
     ],
   },
   {

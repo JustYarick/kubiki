@@ -821,6 +821,8 @@ UI-0 ─→ UI-1 ─→ UI-2 ─→ UI-3 ─→ UI-4 ─┬─→ UI-5 ─┬─
 
 ### Фаза UI-9 — Helm UI (M)
 
+Актуально 2026-10-20: read-only часть releases/detail/history/values/manifest/notes и repositories подключена (DOMAIN-02C1/C2), см. [23](23-HELM.md). Пункты ниже остаются незакрытыми целиком: mutating actions/CRUD и переходы к ресурсам ещё не реализованы.
+
 Задачи:
 - [ ] **UI-9.1** Releases list/detail/actions (rollback, upgrade-диалог с values-редактором) по §7.9 + IPC `helm_*`.
 - [ ] **UI-9.2** Repositories panel CRUD.

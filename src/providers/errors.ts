@@ -77,7 +77,7 @@ export function errorHint(error: K8sRequestError): string {
     case 'timeout': return 'The request timed out. Check the connection and try again.';
     case 'rate_limited': return 'The API server is limiting requests. Wait before retrying.';
     case 'unavailable': return 'The API server is unavailable. Check the connection and selected context.';
-    case 'bridge_unavailable': return 'Start the desktop app or development bridge and check that kubectl is installed.';
+    case 'bridge_unavailable': return error.operation.startsWith('helm') ? 'Check that Helm is installed and available to the app in PATH.' : 'Start the desktop app or development bridge and check that kubectl is installed.';
     case 'unsupported': return 'This resource type or API version is not supported yet.';
     default: return '';
   }

@@ -193,7 +193,7 @@ export default function App() {
   }, [toggleDock]);
 
   const activeTabType = useWorkspaceStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.type);
-  const showInspector = !inspectorCollapsed;
+  const showInspector = !inspectorCollapsed && activeTabType !== 'helm-releases' && activeTabType !== 'helm-repositories';
   useEffect(() => {
     if (activeTabType === 'overview' && !inspectorPinned) useUiStore.setState({ inspectorCollapsed: true });
   }, [activeTabType, inspectorPinned]);

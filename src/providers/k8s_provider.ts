@@ -6,6 +6,7 @@ import type { KubernetesProvider } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
 import type { ResourceQuery } from '../core/resources/resource_types';
 import type { WatchBatch } from './watch_types';
+import { parseHelmPage, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmOffset, validateHelmDocument, type HelmDocument } from './helm_types';
 
 export const DEMO_CONTEXT = 'kubiki-demo';
 
@@ -36,7 +37,7 @@ export class K8sProvider implements KubernetesProvider {
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
     try {
-      if (path !== 'contexts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
+      if (path !== 'contexts' && path !== 'helm/repositories' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
       if (this.isTauriEnv()) {
         const { invoke } = await import('@tauri-apps/api/core');
         return await invoke<T>(command, nativeArgs ?? args);
@@ -122,6 +123,34 @@ export class K8sProvider implements KubernetesProvider {
   async updateSecretData(request: import('./secret_data').SecretDataRequest): Promise<Record<string, any>> {
     if (this.demo) throw new Error('Demo updates are handled in memory');
     return this.request('update_secret_data', 'secrets', { ...request.resource }, request, { request });
+  }
+
+  async getHelmReleases(context: string, namespace: string | null, offset = 0, signal?: AbortSignal) {
+    validateHelmTarget(context, namespace); validateHelmOffset(offset);
+    if (this.demo) {
+      const { demoHelmPage } = await import('./mock/mock_helm');
+      return demoHelmPage(context, namespace, offset);
+    }
+    return parseHelmPage(await this.request('list_helm_releases', 'helm/releases', { context, namespace, offset }, undefined, undefined, signal), context, namespace, offset);
+  }
+
+  async getHelmHistory(context: string, namespace: string, name: string, signal?: AbortSignal) {
+    validateHelmTarget(context, namespace, name);
+    if (this.demo) return (await import('./mock/mock_helm')).demoHelmHistory(name);
+    return parseHelmHistory(await this.request('get_helm_history', 'helm/history', { context, namespace, name }, undefined, undefined, signal));
+  }
+
+  async getHelmContent(context: string, namespace: string, name: string, revision: number, document: HelmDocument, signal?: AbortSignal): Promise<string> {
+    validateHelmTarget(context, namespace, name); validateHelmDocument(document, revision);
+    if (this.demo) return (await import('./mock/mock_helm')).demoHelmContent(name, namespace, revision, document);
+    const content = await this.request<unknown>('get_helm_content', 'helm/content', { context, namespace, name, revision, document }, undefined, undefined, signal);
+    if (typeof content !== 'string') throw requestError('internal', 'Helm returned an invalid document', { operation: 'helm', context }, 500);
+    return content;
+  }
+
+  async getHelmRepositories(signal?: AbortSignal) {
+    if (this.demo) return [{ name: 'kubiki-demo', url: 'https://charts.example.com' }];
+    return parseHelmRepositories(await this.request('list_helm_repositories', 'helm/repositories', {}, undefined, undefined, signal));
   }
 
   async scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number, uid: string, resourceVersion: string): Promise<boolean> {

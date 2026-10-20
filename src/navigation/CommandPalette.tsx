@@ -79,6 +79,7 @@ export const CommandPalette: React.FC = () => {
       hint: 'perspective',
       run: () => {
         ui.setActivePerspective(p.id);
+        if (p.id === 'helm') { useWorkspaceStore.getState().openHelm('releases'); return; }
         const dk = defaultKindFor(p.id);
         if (dk) useWorkspaceStore.getState().openResourceList(dk);
       },
@@ -100,6 +101,7 @@ export const CommandPalette: React.FC = () => {
 
   // View toggles
   commands.push(
+    { id: 'helm-repositories', label: 'Helm repositories', section: 'Go to', icon: Boxes, run: () => useWorkspaceStore.getState().openHelm('repositories') },
     { id: 'ui-zoom-in', label: 'Increase interface scale', section: 'View', icon: Maximize2, kbd: 'Ctrl/⌘ +', run: () => ui.setUiScale(ui.uiScale + 10) },
     { id: 'ui-zoom-out', label: 'Decrease interface scale', section: 'View', icon: Minimize2, kbd: 'Ctrl/⌘ −', run: () => ui.setUiScale(ui.uiScale - 10) },
     { id: 'ui-zoom-reset', label: 'Reset interface scale', section: 'View', icon: Layout, kbd: 'Ctrl/⌘ 0', run: () => ui.setUiScale(DEFAULT_APPEARANCE.uiScale) },

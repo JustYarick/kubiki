@@ -634,7 +634,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind }) => {
           <Boxes size="calc(40px * var(--ui-factor))" strokeWidth={1.2} className="mx-auto text-[var(--text-muted)] mb-3" />
           <div className="text-sm font-medium text-[var(--text-primary)]">Nothing here yet</div>
           <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
-            This perspective is a stub in the current milestone — Helm releases arrive in phase UI-8.
+            Choose a resource from the Explorer tree.
           </p>
         </div>
       </div>

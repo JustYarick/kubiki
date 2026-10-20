@@ -1,3 +1,5 @@
+import { RESOURCE_TYPES } from '../../src/core/resources/resource_types';
+const resourceCount = RESOURCE_TYPES.length;
 import { test, expect, type Page } from '@playwright/test';
 
 // Exercises the desktop adapter with the real JS Channel SDK. Rust HTTP runtime is tested separately.
@@ -78,8 +80,8 @@ test('Sync replaces subscriptions, ignores old messages, and pagehide releases c
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Auto-refresh interval')).toHaveCount(0);
   await page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(36);
-  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.stops)).toBe(18);
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(resourceCount * 2);
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.stops)).toBe(resourceCount);
   await page.evaluate(() => (window as any).__watchHarness.late());
   await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
   await expect(page.getByTestId('resource-table').getByText('stale-web', { exact: true })).toHaveCount(0);
@@ -122,8 +124,8 @@ test('context A → B → A isolates old subscriptions, including late callbacks
     await page.evaluate(() => (window as any).__watchHarness.late());
     await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
     await expect(page.getByTestId('resource-table').getByText('stale-web', { exact: true })).toHaveCount(0);
-    expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(18);
-    expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(18);
+    expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(resourceCount);
+    expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(resourceCount);
   }
 });
 
@@ -161,7 +163,7 @@ test('namespace changes replace only scoped watches; pinned tabs stay available 
   await namespace(page, 'backend'); await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
   await page.evaluate(() => (window as any).__watchHarness.late());
   await expect(page.getByTestId('resource-table').getByText('stale-web', { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(18);
+  expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(resourceCount);
 });
 
 test('a restricted user can enter an unlisted namespace and recover namespaced reads after 403', async ({ page }) => {
@@ -201,7 +203,7 @@ test('Overview derives live phase/issue counts from existing watches without add
   await nativeApi(page);await page.goto('/');await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const overview = page.getByTestId('cluster-overview');const phases = overview.getByRole('region', { name: 'Pod phases', exact: true });
   await expect(overview.getByTestId('overview-count-Pod')).toHaveText('1');await expect(phases.getByText('Running', { exact: true }).locator('..')).toHaveText('Running1');
-  expect(await page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(18);
+  expect(await page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(resourceCount);
   await page.evaluate(() => (window as any).__watchHarness.update('Failed'));await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed1');await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
   await page.evaluate(() => (window as any).__watchHarness.reconnect());await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('1');
   await page.evaluate(() => (window as any).__watchHarness.empty());await expect(overview.getByTestId('overview-count-Pod')).toHaveText('0');await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed0');
