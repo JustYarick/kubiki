@@ -1,3 +1,4 @@
+import { normalizeMetricList } from '../src/providers/overview_metrics.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
 import { encodeSecretRows } from '../src/core/resources/secret_data.ts';
@@ -29,7 +30,7 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
     };
     const invalid = (message: string) => requestError('invalid_request', message, info, 400);
     try {
-      const methods: Record<string, string> = { contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', logs: 'GET', scale: 'POST', secrets: 'POST' };
+      const methods: Record<string, string> = { contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET' };
       if (!methods[operation]) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== methods[operation]) throw requestError('invalid_request', 'Method not allowed', info, 405);
       if (operation === 'contexts') {
@@ -46,6 +47,17 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
       if (operation === 'namespaces') {
         const data = JSON.parse(await kubectl([...contextArgs, 'get', 'namespaces', '-o', 'json']));
         return send((data.items ?? []).map((namespace: any) => namespace.metadata.name));
+      }
+      if (operation === 'metrics') {
+        const namespace = url.searchParams.get('namespace');
+        if (namespace !== null && (!isValidNamespaceName(namespace) || namespace === 'all')) throw invalid('Invalid metrics namespace');
+        const source = async (kind: 'pods' | 'nodes') => {
+          const path = `/apis/metrics.k8s.io/v1beta1/${namespace && kind === 'pods' ? `namespaces/${namespace}/` : ''}${kind}`;
+          try { return { items: normalizeMetricList(JSON.parse(await kubectl([...contextArgs, 'get', '--raw', path])), kind), error: null }; }
+          catch (error) { const failure = normalizeK8sError(error, { operation: `${kind}_metrics`, context });return { items: null, error: { code: failure.code, message: failure.message, status: failure.status, retryable: failure.retryable, operation: `${kind}_metrics`, context } }; }
+        };
+        const [pods, nodes] = await Promise.all([source('pods'), namespace ? Promise.resolve({ items: null, error: null }) : source('nodes')]);
+        return send({ context, namespace, pods, nodes });
       }
       if (operation === 'resources') {
         const kind = url.searchParams.get('kind') ?? '';

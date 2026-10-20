@@ -87,6 +87,13 @@ describe.each(['HTTP', 'Tauri'] as const)('%s provider transport', (transport) =
       expect(JSON.parse(init!.body as string)).toEqual(request);
     }
   });
+  it('routes namespace metrics through HTTP/native and validates the response identity', async () => {
+    const data = { context: 'production', namespace: 'backend', pods: { items: [], error: null }, nodes: { items: null, error: null } };
+    respond(data);await expect(new K8sProvider().getOverviewMetrics('production', 'backend')).resolves.toEqual(data);
+    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('get_overview_metrics', { context: 'production', namespace: 'backend' });
+    else expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('namespace=backend');
+    respond({ ...data, context: 'wrong' });await expect(new K8sProvider().getOverviewMetrics('production', 'backend')).rejects.toThrow('invalid response');
+  });
   it('passes a qualified list query and maps the manifest', async () => {
     respond({ items: [{ apiVersion: 'apps/v1', metadata: { name: 'web', namespace: 'backend', uid: 'dep' }, spec: { replicas: 0 } }] });
     const result = await new K8sProvider().getResources('production', 'Deployment', 'backend');

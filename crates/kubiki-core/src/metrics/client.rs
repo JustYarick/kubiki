@@ -1,7 +1,7 @@
 use crate::core::error::KubikiError;
+use kube::Client;
 use kube::api::{Api, DynamicObject, ListParams};
 use kube::discovery::ApiResource;
-use kube::Client;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -43,19 +43,48 @@ impl MetricsService {
         };
 
         let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
-        let list = api.list(&ListParams::default()).await.map_err(|e| {
-            KubikiError::KubeApiError(format!("Failed to query metrics.k8s.io/v1beta1/nodes: {e}"))
-        })?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .map_err(KubikiError::from)?;
 
         let mut metrics = Vec::new();
         for item in list {
             let name = item.metadata.name.unwrap_or_default();
-            let timestamp = item.data.get("timestamp").and_then(|t| t.as_str()).unwrap_or_default().to_string();
-            let window = item.data.get("window").and_then(|w| w.as_str()).unwrap_or_default().to_string();
+            let timestamp = item
+                .data
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let window = item
+                .data
+                .get("window")
+                .and_then(|w| w.as_str())
+                .unwrap_or_default()
+                .to_string();
 
             let usage = item.data.get("usage");
-            let cpu = usage.and_then(|u| u.get("cpu")).and_then(|c| c.as_str()).unwrap_or("0").to_string();
-            let memory = usage.and_then(|u| u.get("memory")).and_then(|m| m.as_str()).unwrap_or("0").to_string();
+            let cpu = usage
+                .and_then(|u| u.get("cpu"))
+                .and_then(|c| c.as_str())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    KubikiError::Internal(
+                        "Metrics API returned a missing CPU or memory quantity".into(),
+                    )
+                })?
+                .to_string();
+            let memory = usage
+                .and_then(|u| u.get("memory"))
+                .and_then(|m| m.as_str())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    KubikiError::Internal(
+                        "Metrics API returned a missing CPU or memory quantity".into(),
+                    )
+                })?
+                .to_string();
 
             metrics.push(NodeMetricsInfo {
                 name,
@@ -87,24 +116,57 @@ impl MetricsService {
             _ => Api::all_with(client.clone(), &ar),
         };
 
-        let list = api.list(&ListParams::default()).await.map_err(|e| {
-            KubikiError::KubeApiError(format!("Failed to query metrics.k8s.io/v1beta1/pods: {e}"))
-        })?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .map_err(KubikiError::from)?;
 
         let mut metrics = Vec::new();
         for item in list {
             let name = item.metadata.name.unwrap_or_default();
             let ns = item.metadata.namespace.unwrap_or_default();
-            let timestamp = item.data.get("timestamp").and_then(|t| t.as_str()).unwrap_or_default().to_string();
-            let window = item.data.get("window").and_then(|w| w.as_str()).unwrap_or_default().to_string();
+            let timestamp = item
+                .data
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let window = item
+                .data
+                .get("window")
+                .and_then(|w| w.as_str())
+                .unwrap_or_default()
+                .to_string();
 
             let mut containers = Vec::new();
             if let Some(cont_list) = item.data.get("containers").and_then(|c| c.as_array()) {
                 for c in cont_list {
-                    let c_name = c.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
+                    let c_name = c
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or_default()
+                        .to_string();
                     let usage = c.get("usage");
-                    let cpu = usage.and_then(|u| u.get("cpu")).and_then(|val| val.as_str()).unwrap_or("0").to_string();
-                    let memory = usage.and_then(|u| u.get("memory")).and_then(|val| val.as_str()).unwrap_or("0").to_string();
+                    let cpu = usage
+                        .and_then(|u| u.get("cpu"))
+                        .and_then(|val| val.as_str())
+                        .filter(|v| !v.is_empty())
+                        .ok_or_else(|| {
+                            KubikiError::Internal(
+                                "Metrics API returned a missing CPU or memory quantity".into(),
+                            )
+                        })?
+                        .to_string();
+                    let memory = usage
+                        .and_then(|u| u.get("memory"))
+                        .and_then(|val| val.as_str())
+                        .filter(|v| !v.is_empty())
+                        .ok_or_else(|| {
+                            KubikiError::Internal(
+                                "Metrics API returned a missing CPU or memory quantity".into(),
+                            )
+                        })?
+                        .to_string();
 
                     containers.push(ContainerMetric {
                         name: c_name,

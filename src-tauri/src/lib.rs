@@ -40,6 +40,7 @@ pub fn run() {
             get_kube_contexts,
             get_current_context,
             ping_cluster,
+            get_overview_metrics,
             get_namespaces,
             get_resources,
             scale_workload,

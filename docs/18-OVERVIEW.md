@@ -13,13 +13,13 @@ Overview следует за глобальным cluster context и namespace p
 - Detected issues использует общие resource diagnostics, сортирует ошибки перед предупреждениями и показывает первые 10 объектов с переходом в details. Это обнаруженные проблемы в доступных данных, не гарантия здоровья недоступных объектов. Warning Events считаются отдельно.
 - Resource inventory: counts загруженных встроенных kinds и переход к спискам. Общая сумма не включает Event. Произвольные custom instances пока не загружаются; отсутствующие kinds не подразумеваются в total.
 
-Overview не запрашивает дополнительные списки и не создаёт дополнительных watch subscriptions. Desktop обновляется из существующих atomic watch commits; browser показывает snapshots, обновляемые Sync. При смене namespace/context watch snapshot должен покрывать выбранную область; старый snapshot другой области не участвует в статистике.
+Resource counts не запрашивают дополнительные resource lists/watch subscriptions. CPU/RAM добавлены отдельным Metrics API polling, см. [19](19-OVERVIEW-TELEMETRY.md). Desktop обновляется из существующих atomic watch commits; browser показывает snapshots, обновляемые Sync. При смене namespace/context watch snapshot должен покрывать выбранную область; старый snapshot другой области не участвует в статистике.
 
 ## Частичные данные и ограничения
 
 Первичная загрузка/403/отсутствие snapshot показываются как `—`, а не ноль. При reconnect/ошибке с сохранённым snapshot counts остаются видимыми с явным stale/partial warning. Раскрываемый блок показывает недоступные kinds и причины. Пустой успешно загруженный namespace показывает настоящие нули. Connected описывает соединение, а не доступность каждого kind.
 
-CPU/RAM usage, история, Metrics API/Prometheus, quotas/requests/limits не подключены в этом блоке. В UI явно указана недоступность usage metrics; DOMAIN-02 остаётся TODO. Dashboard агрегирует только уже доступные resource snapshots. Дополнительные live/native GUI и большие кластеры проверяются отдельной приёмкой; виртуализация и lazy subscriptions не закрыты этой задачей.
+CPU/RAM usage, короткая история наблюдений, configured requests/limits и capacity/allocatable подключены следующим блоком DOMAIN-02A, см. [19](19-OVERVIEW-TELEMETRY.md). Prometheus/history backfill, quotas и native metrics QA остаются TODO, DOMAIN-02 целиком PARTIAL. Dashboard агрегирует только уже доступные resource snapshots. Дополнительные live/native GUI и большие кластеры проверяются отдельной приёмкой; виртуализация и lazy subscriptions не закрыты этой задачей.
 
 ## Проверки
 

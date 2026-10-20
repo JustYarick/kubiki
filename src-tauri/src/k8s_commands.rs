@@ -260,3 +260,12 @@ pub async fn update_secret_data(
         kubiki_core::core::secret_data::update_secret_data(client, request).await
     }).await.map_err(|_| ApiError::from_status(504, "Secret update timed out. Refresh to verify the saved state", "secret_data", Some(&context)))?
 }
+
+#[tauri::command]
+pub async fn get_overview_metrics(context: String, namespace: Option<String>, pool: tauri::State<'_, ClusterClientPool>) -> Result<kubiki_core::metrics::overview::OverviewMetrics, ApiError> {
+    kubiki_core::metrics::overview::validate_scope(&context, namespace.as_deref())?;
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let client = pool.get_client(&context).await.map_err(|error| ApiError::from_core(error, "metrics", Some(&context)))?;
+        kubiki_core::metrics::overview::get_overview_metrics(client, context.clone(), namespace).await
+    }).await.map_err(|_| ApiError::from_status(504, "Metrics request timed out", "metrics", Some(&context)))?
+}

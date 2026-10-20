@@ -69,3 +69,13 @@ it('updates Secret data through stdin with UID/version, and redacts mutation err
   run.mockReset(); expect((await post({ ...target, data: { password: '!' } })).status).toBe(400); expect(run).not.toHaveBeenCalled();
   expect((await fetch(`${base}secrets?context=test`, { method: 'POST', headers: { origin: 'http://untrusted.invalid' }, body: JSON.stringify(target) })).status).toBe(403);
 });
+
+it('metrics bridge scopes Pod metrics to one namespace and isolates Node metrics RBAC failures', async () => {
+  const podList = { items: [{ metadata: { name: 'web', namespace: 'backend' }, timestamp: '2026-10-20T12:00:00Z', window: '15s', containers: [{ name: 'app', usage: { cpu: '100m', memory: '64Mi' } }] }] };
+  run.mockImplementation(async args => { if (args.at(-1)?.endsWith('/nodes')) throw { stderr: 'Error from server (Forbidden): node metrics denied' };return JSON.stringify(podList); });
+  const data = await (await fetch(`${base}metrics?context=test&namespace=backend`)).json();
+  expect(data).toMatchObject({ namespace: 'backend', pods: { items: [{ name: 'web', containers: [{ cpu: '100m', memory: '64Mi' }] }] }, nodes: { items: null, error: null } });
+  expect(run).toHaveBeenCalledExactlyOnceWith(['--context', 'test', 'get', '--raw', '/apis/metrics.k8s.io/v1beta1/namespaces/backend/pods']);
+  const all = await (await fetch(`${base}metrics?context=test`)).json();expect(all.pods.items).toHaveLength(1);expect(all.nodes.error).toMatchObject({ code: 'forbidden', status: 403 });
+  run.mockClear();expect((await fetch(`${base}metrics?context=test&namespace=bad/name`)).status).toBe(400);expect(run).not.toHaveBeenCalled();
+});

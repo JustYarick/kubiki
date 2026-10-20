@@ -31,7 +31,7 @@ export class K8sProvider implements KubernetesProvider {
     return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
   }
 
-  private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown, nativeArgs?: Record<string, unknown>): Promise<T> {
+  private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown, nativeArgs?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const info: RequestInfo = { operation: path, context: args.context as string | undefined,
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
@@ -45,7 +45,10 @@ export class K8sProvider implements KubernetesProvider {
       for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
       let response: Response;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 20000);
+      const abort = () => controller.abort();
+      if (signal?.aborted) controller.abort();
+      signal?.addEventListener('abort', abort, { once: true });
+      const timer = setTimeout(abort, 20000);
       try {
         // A signal also bounds reading the response body.
         response = await fetch(`/api/k8s/${path}?${query}`, { signal: controller.signal, ...(body === undefined ? {} : {
@@ -63,7 +66,7 @@ export class K8sProvider implements KubernetesProvider {
         if (controller.signal.aborted) throw requestError('timeout', 'Kubernetes bridge request timed out', info, 504);
         if (error instanceof TypeError) throw requestError('unavailable', error.message, info);
         throw error;
-      } finally { clearTimeout(timer); }
+      } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
     } catch (error) { throw normalizeK8sError(error, info); }
   }
 
@@ -102,6 +105,18 @@ export class K8sProvider implements KubernetesProvider {
   async getLogs(context: string, name: string, namespace: string, container?: string): Promise<string> {
     if (this.demo) return '';
     return this.request('get_pod_logs', 'logs', { ...resourceQuery(context, 'Pod', namespace), name, container });
+  }
+
+  async getOverviewMetrics(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./overview_metrics').OverviewMetrics> {
+    const { validateMetrics } = await import('./overview_metrics');
+    if (this.demo) {
+      this.mock ??= buildMockResources();
+      const timestamp = new Date().toISOString();
+      const pods = (this.mock.Pod ?? []).filter(pod => (!namespace || pod.namespace === namespace) && !['Completed', 'Succeeded', 'Failed'].includes(pod.status ?? '')).map((pod, index) => ({ name: pod.name, namespace: pod.namespace!, timestamp, window: '15s', containers: (pod.containers?.length ? pod.containers : [{ name: 'app' }]).map((container, i) => ({ name: container.name, cpu: `${70 + ((index * 47 + i * 19 + Math.floor(Date.now() / 15000) % 17) % 700)}m`, memory: `${40 + (index * 37 + i * 17) % 600}Mi` })) }));
+      const nodes = namespace ? null : (this.mock.Node ?? []).map((node, i) => ({ name: node.name, timestamp, window: '15s', cpu: `${1200 + i * 730}m`, memory: `${1600 + i * 800}Mi` }));
+      return { context, namespace, pods: { items: pods, error: null }, nodes: { items: nodes, error: null } };
+    }
+    return validateMetrics(await this.request('get_overview_metrics', 'metrics', { context, namespace }, undefined, undefined, signal), context, namespace);
   }
 
   async updateSecretData(request: import('./secret_data').SecretDataRequest): Promise<Record<string, any>> {
