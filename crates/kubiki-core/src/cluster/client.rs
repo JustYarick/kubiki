@@ -5,7 +5,7 @@ use kube::{Client, Config};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ClusterVersionInfo {
@@ -17,7 +17,7 @@ pub struct ClusterVersionInfo {
 
 #[derive(Clone, Default)]
 pub struct ClusterClientPool {
-    clients: Arc<RwLock<HashMap<String, Client>>>,
+    clients: Arc<RwLock<HashMap<String, Arc<OnceCell<Client>>>>>,
     config_mgr: KubeConfigManager,
 }
 
@@ -31,21 +31,24 @@ impl ClusterClientPool {
 
     /// Load or reuse an existing kube::Client for a specific context
     pub async fn get_client(&self, context: &str) -> Result<Client, KubikiError> {
-        // Read lock check
-        {
-            let map = self.clients.read().await;
-            if let Some(client) = map.get(context) {
-                return Ok(client.clone());
+        // Reserve one initialization per context. Startup opens many collections in
+        // parallel; each must share the HTTP pool and credential plugin invocation.
+        let slot = {
+            let existing = self.clients.read().await.get(context).cloned();
+            match existing {
+                Some(slot) => slot,
+                None => self
+                    .clients
+                    .write()
+                    .await
+                    .entry(context.to_owned())
+                    .or_default()
+                    .clone(),
             }
-        }
-
-        // Construct client for context
-        let client = self.build_client(context).await?;
-
-        // Write lock store
-        let mut map = self.clients.write().await;
-        map.insert(context.to_string(), client.clone());
-        Ok(client)
+        };
+        slot.get_or_try_init(|| self.build_client(context))
+            .await
+            .cloned()
     }
 
     async fn build_client(&self, context: &str) -> Result<Client, KubikiError> {

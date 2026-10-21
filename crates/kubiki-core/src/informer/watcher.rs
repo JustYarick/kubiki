@@ -16,7 +16,11 @@ use tokio::{
 };
 
 pub const WATCH_QUEUE_CAPACITY: usize = 256;
-const MAX_WATCHERS: usize = 128;
+// Below kube-rs' default 295s read timeout. Watch renewal resumes the current RV;
+// renewing every 30s creates unnecessary API requests in quiet clusters.
+pub const WATCH_TIMEOUT_SECONDS: u32 = 290;
+// The expanded API catalog fans out namespaced collections for selected namespaces.
+const MAX_WATCHERS: usize = 512;
 
 struct ActiveWatch {
     owner: String,
@@ -279,7 +283,11 @@ async fn run_watch<F>(
             return;
         }
     };
-    let stream = watcher::watcher(api, watcher::Config::default().timeout(30)).default_backoff();
+    let stream = watcher::watcher(
+        api,
+        watcher::Config::default().timeout(WATCH_TIMEOUT_SECONDS),
+    )
+    .default_backoff();
     tokio::pin!(stream);
     let mut reconcile = Reconciler::new(scope.query.clone());
     let mut phase = WatchPhase::Connecting;

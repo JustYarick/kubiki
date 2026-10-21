@@ -142,6 +142,12 @@ async fn expired_watch_relists_atomically_and_removes_offline_deletions() {
     assert!(
         captured
             .iter()
+            .filter(|request| request.contains("watch=true"))
+            .all(|request| request.contains("timeoutSeconds=290"))
+    );
+    assert!(
+        captured
+            .iter()
             .all(|request| request.starts_with("GET /api/v1/namespaces/backend/pods?"))
     );
     assert!(
@@ -311,5 +317,70 @@ async fn a_slow_consumer_backpressures_the_watcher_without_losing_order_or_cance
     assert_eq!(manager.store().snapshot(&scope).await.unwrap().len(), 500);
     manager.stop_owner("main").await;
     assert_eq!(manager.active_count().await, 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_paginated_initial_list_of_3500_pods_is_published_as_one_complete_snapshot() {
+    let list = |range: std::ops::Range<usize>, continuation: &str| {
+        json!({
+            "apiVersion": "v1", "kind": "PodList",
+            "metadata": { "resourceVersion": "10", "continue": continuation },
+            "items": range.map(|index| pod(&format!("pod-{index}"))).collect::<Vec<_>>()
+        })
+        .to_string()
+    };
+    let (client, requests, server) = api(vec![
+        (200, list(0..2000, "chunk-two")),
+        (200, list(2000..3500, "")),
+        (200, "HOLD".into()),
+    ])
+    .await;
+    let manager = InformerManager::new(ResourceStore::new());
+    let mut rx = manager
+        .start_watch("scale", "snapshot", query(), async move { Ok(client) })
+        .await
+        .unwrap();
+    let mut sequence = 0;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let message = rx.recv().await.unwrap();
+            assert_eq!(message.sequence, sequence + 1);
+            sequence = message.sequence;
+            match message.event {
+                WatchEvent::Delta(ResourceDelta::Restarted { items }) => {
+                    assert_eq!(items.len(), 3500);
+                    assert!(
+                        items
+                            .iter()
+                            .any(|item| item["metadata"]["name"] == "pod-3499")
+                    );
+                    break;
+                }
+                WatchEvent::Delta(_) => panic!("Initial list must be atomic"),
+                WatchEvent::Status {
+                    phase: WatchPhase::Failed,
+                    error,
+                } => panic!("Watch failed: {error:?}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let scope = WatchScope {
+        subscription_id: "scale:snapshot".into(),
+        query: query(),
+    };
+    assert_eq!(manager.store().snapshot(&scope).await.unwrap().len(), 3500);
+    assert!(
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.contains("continue=chunk-two"))
+    );
+    manager.stop_owner("scale").await;
+    assert!(manager.store().snapshot(&scope).await.is_none());
     server.abort();
 }
