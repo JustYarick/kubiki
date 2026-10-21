@@ -8,6 +8,7 @@ export interface ManifestTarget { resource: ResourceRef; resource_version: strin
 export type ChangeRequest =
   | { operation: 'manifest'; context: string; manifest: string; target?: ManifestTarget }
   | { operation: 'scale'; resource: ResourceRef; resource_version: string; replicas: number }
+  | { operation: 'evict'; resource: ResourceRef; resource_version: string }
   | { operation: 'secret'; request: SecretDataRequest }
   | { operation: 'helm'; request: HelmMutation }
   | { operation: 'node_debug'; session_id: string; request: NodeDebugRequest };

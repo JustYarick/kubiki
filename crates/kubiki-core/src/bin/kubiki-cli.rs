@@ -2,7 +2,7 @@ use kubiki_core::cluster::client::ClusterClientPool;
 use kubiki_core::cluster::kubeconfig::KubeConfigManager;
 use kubiki_core::cluster::namespaces::NamespaceService;
 use kubiki_core::crd::discovery::CrdDiscoveryService;
-use kubiki_core::helm::client::HelmClient;
+use kubiki_core::helm::reader::HelmReader;
 use kubiki_core::metrics::client::MetricsService;
 use std::env;
 
@@ -78,12 +78,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }))?);
         }
         "helm-releases" => {
-            let ns = args.get(2).map(|s| s.as_str());
-            let releases = HelmClient::list_releases(ns).await?;
+            let context = args.get(2).cloned().or_else(|| {
+                config_mgr.get_current_context().ok().flatten()
+            }).unwrap_or_else(|| "default".into());
+            let ns = args.get(3).map(|s| s.as_str());
+            let reader = HelmReader::default();
+            let releases = reader.releases(&context, ns, 0).await.map_err(|e| format!("{e:?}"))?;
             println!("{}", serde_json::to_string_pretty(&releases)?);
         }
         "helm-repos" => {
-            let repos = HelmClient::list_repositories().await?;
+            let reader = HelmReader::default();
+            let repos = reader.repositories().await.map_err(|e| format!("{e:?}"))?;
             println!("{}", serde_json::to_string_pretty(&repos)?);
         }
         _ => {

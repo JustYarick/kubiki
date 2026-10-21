@@ -1,4 +1,6 @@
 import { ContainerLaunchDialog } from './components/k8s/ContainerLaunchDialog';
+import { MutationConfirmModal } from './components/dialogs/MutationConfirmModal';
+import { setupMutationConfirmListener } from './state/mutation_confirm_store';
 import { RESOURCE_TYPES, setDiscoveredResourceTypes } from './core/resources/resource_types';
 import { closePortForwards, resetPortForwards, listPortForwards } from './providers/port_forward';
 import { useEffect, useCallback, useRef, useState } from 'react';
@@ -33,6 +35,9 @@ import { startResourceWatches, stopResourceWatches } from './state/resource_watc
 
 export default function App() {
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    void setupMutationConfirmListener();
+  }, []);
   useEffect(() => {
     const resize = () => setViewportWidth(window.innerWidth);
     window.addEventListener('resize', resize);
@@ -283,6 +288,7 @@ export default function App() {
       <CommandPalette />
       <SettingsDialog />
       <ContainerLaunchDialog />
+      <MutationConfirmModal />
       <Toasts />
     </div>
   );

@@ -242,6 +242,17 @@ export class K8sProvider implements KubernetesProvider {
     await deleteObject({ operation: 'resource', resource, resource_version: resourceVersion });
     return 'Resource deleted';
   }
+
+  async evictPod(context: string, name: string, namespace: string, uid: string, resourceVersion: string): Promise<string> {
+    if (this.demo) return 'Pod evicted (demo)';
+    const resource = { ...resourceQuery(context, 'Pod', namespace), name, uid };
+    await changeResource({
+      operation: 'evict',
+      resource,
+      resource_version: resourceVersion,
+    });
+    return 'Pod evicted';
+  }
 }
 
 export const k8s = new K8sProvider();

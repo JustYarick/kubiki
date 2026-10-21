@@ -1,6 +1,6 @@
 use crate::cluster::kubeconfig::KubeConfigManager;
 use crate::core::error::KubikiError;
-use kube::config::KubeConfigOptions;
+use kube::config::{KubeConfigOptions, Kubeconfig};
 use kube::{Client, Config};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -15,10 +15,45 @@ pub struct ClusterVersionInfo {
     pub platform: String,
 }
 
+#[derive(Clone)]
+struct ClientSlot {
+    client: Arc<OnceCell<Client>>,
+    fingerprint: u64,
+}
+
 #[derive(Clone, Default)]
 pub struct ClusterClientPool {
-    clients: Arc<RwLock<HashMap<String, Arc<OnceCell<Client>>>>>,
+    clients: Arc<RwLock<HashMap<String, ClientSlot>>>,
     config_mgr: KubeConfigManager,
+}
+
+fn context_fingerprint(config: &Kubeconfig, context_name: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    context_name.hash(&mut hasher);
+    let named_ctx = config.contexts.iter().find(|c| c.name == context_name);
+    if let Some(ctx) = named_ctx {
+        if let Ok(json) = serde_json::to_vec(ctx) {
+            json.hash(&mut hasher);
+        }
+        if let Some(c) = &ctx.context {
+            if let Some(cluster) = config.clusters.iter().find(|cl| cl.name == c.cluster) {
+                if let Ok(json) = serde_json::to_vec(cluster) {
+                    json.hash(&mut hasher);
+                }
+            }
+            if let Some(user_name) = &c.user {
+                if let Some(user) = config.auth_infos.iter().find(|u| &u.name == user_name) {
+                    if let Ok(json) = serde_json::to_vec(user) {
+                        json.hash(&mut hasher);
+                    }
+                }
+            }
+        }
+    }
+    hasher.finish()
 }
 
 impl ClusterClientPool {
@@ -29,30 +64,73 @@ impl ClusterClientPool {
         }
     }
 
-    /// Load or reuse an existing kube::Client for a specific context
+    /// Invalidate cached client for a specific context
+    pub async fn invalidate(&self, context: &str) {
+        self.clients.write().await.remove(context);
+    }
+
+    /// Invalidate all cached clients
+    pub async fn invalidate_all(&self) {
+        self.clients.write().await.clear();
+    }
+
+    /// Load or reuse an existing kube::Client for a specific context.
+    /// If configuration has changed for this context, a fresh client is constructed.
     pub async fn get_client(&self, context: &str) -> Result<Client, KubikiError> {
-        // Reserve one initialization per context. Startup opens many collections in
-        // parallel; each must share the HTTP pool and credential plugin invocation.
+        let kubeconfig = self.config_mgr.read_config()?;
+        let fp = context_fingerprint(&kubeconfig, context);
+
         let slot = {
-            let existing = self.clients.read().await.get(context).cloned();
-            match existing {
-                Some(slot) => slot,
-                None => self
-                    .clients
-                    .write()
-                    .await
-                    .entry(context.to_owned())
-                    .or_default()
-                    .clone(),
+            let guard = self.clients.read().await;
+            if let Some(slot) = guard.get(context) {
+                if slot.fingerprint == fp {
+                    Some(slot.client.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
             }
         };
-        slot.get_or_try_init(|| self.build_client(context))
+
+        let slot = match slot {
+            Some(s) => s,
+            None => {
+                let mut guard = self.clients.write().await;
+                if let Some(existing) = guard.get(context) {
+                    if existing.fingerprint == fp {
+                        existing.client.clone()
+                    } else {
+                        let cell = Arc::new(OnceCell::new());
+                        guard.insert(
+                            context.to_owned(),
+                            ClientSlot {
+                                client: cell.clone(),
+                                fingerprint: fp,
+                            },
+                        );
+                        cell
+                    }
+                } else {
+                    let cell = Arc::new(OnceCell::new());
+                    guard.insert(
+                        context.to_owned(),
+                        ClientSlot {
+                            client: cell.clone(),
+                            fingerprint: fp,
+                        },
+                    );
+                    cell
+                }
+            }
+        };
+
+        slot.get_or_try_init(|| self.build_client(kubeconfig, context))
             .await
             .cloned()
     }
 
-    async fn build_client(&self, context: &str) -> Result<Client, KubikiError> {
-        let kubeconfig = self.config_mgr.read_config()?;
+    async fn build_client(&self, kubeconfig: Kubeconfig, context: &str) -> Result<Client, KubikiError> {
         let options = KubeConfigOptions {
             context: Some(context.to_string()),
             ..Default::default()

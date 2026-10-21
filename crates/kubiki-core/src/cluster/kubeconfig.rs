@@ -26,17 +26,17 @@ impl KubeConfigManager {
         Self { custom_path: Some(path) }
     }
 
-    /// Returns the resolved path to kubeconfig file
+    /// Returns the resolved path to kubeconfig file, or first existing path if multiple are configured
     pub fn get_config_path(&self) -> Result<PathBuf, KubikiError> {
         if let Some(ref path) = self.custom_path {
             return Ok(path.clone());
         }
 
         if let Ok(env_path) = std::env::var("KUBECONFIG") {
-            let first = env_path.split(':').next().unwrap_or(&env_path);
-            let path = PathBuf::from(first);
-            if path.exists() {
-                return Ok(path);
+            for path in std::env::split_paths(&env_path) {
+                if path.exists() {
+                    return Ok(path);
+                }
             }
         }
 
@@ -48,19 +48,25 @@ impl KubeConfigManager {
         Ok(default_path)
     }
 
-    /// Read and parse kubeconfig
+    /// Read and parse kubeconfig.
+    /// When custom_path is set, reads that single file.
+    /// Otherwise, uses kube::config::Kubeconfig::read() which supports merging multiple files from KUBECONFIG.
     pub fn read_config(&self) -> Result<Kubeconfig, KubikiError> {
-        let path = self.get_config_path()?;
-        if !path.exists() {
-            return Err(KubikiError::KubeconfigError(format!(
-                "Kubeconfig file not found at {}",
-                path.display()
-            )));
+        if let Some(ref path) = self.custom_path {
+            if !path.exists() {
+                return Err(KubikiError::KubeconfigError(format!(
+                    "Kubeconfig file not found at {}",
+                    path.display()
+                )));
+            }
+            Kubeconfig::read_from(path).map_err(|e| {
+                KubikiError::KubeconfigError(format!("Failed to parse kubeconfig: {e}"))
+            })
+        } else {
+            Kubeconfig::read().map_err(|e| {
+                KubikiError::KubeconfigError(format!("Failed to read kubeconfig: {e}"))
+            })
         }
-
-        Kubeconfig::read_from(&path).map_err(|e| {
-            KubikiError::KubeconfigError(format!("Failed to parse kubeconfig: {e}"))
-        })
     }
 
     /// List all contexts found in kubeconfig
@@ -127,5 +133,76 @@ users:
         let config: Kubeconfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.current_context.as_deref(), Some("dev-cluster"));
         assert_eq!(config.contexts.len(), 2);
+    }
+
+    #[test]
+    fn test_multi_file_kubeconfig_merges_contexts() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = std::env::temp_dir().join(format!(
+            "kubiki-multi-kcfg-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(dir.clone());
+
+        let file_a = dir.join("kcfg_a");
+        let file_b = dir.join("kcfg_b");
+
+        let yaml_a = r#"
+apiVersion: v1
+kind: Config
+current-context: audit-a
+clusters:
+- cluster: { server: "https://127.0.0.1:6443" }
+  name: cluster-a
+contexts:
+- context: { cluster: cluster-a, user: user-a }
+  name: audit-a
+users:
+- name: user-a
+  user: { token: "token-a" }
+"#;
+
+        let yaml_b = r#"
+apiVersion: v1
+kind: Config
+current-context: audit-b
+clusters:
+- cluster: { server: "https://127.0.0.1:6444" }
+  name: cluster-b
+contexts:
+- context: { cluster: cluster-b, user: user-b }
+  name: audit-b
+users:
+- name: user-b
+  user: { token: "token-b" }
+"#;
+
+        std::fs::write(&file_a, yaml_a).unwrap();
+        std::fs::write(&file_b, yaml_b).unwrap();
+
+        let joined = std::env::join_paths([&file_a, &file_b]).unwrap();
+        unsafe {
+            std::env::set_var("KUBECONFIG", joined);
+        }
+
+        let mgr = KubeConfigManager::new();
+        let contexts = mgr.list_contexts().unwrap();
+        let names: Vec<_> = contexts.into_iter().map(|c| c.name).collect();
+        assert!(names.contains(&"audit-a".to_string()));
+        assert!(names.contains(&"audit-b".to_string()));
+
+        unsafe {
+            std::env::remove_var("KUBECONFIG");
+        }
     }
 }

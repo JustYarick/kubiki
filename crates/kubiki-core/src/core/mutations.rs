@@ -36,6 +36,10 @@ pub enum MutationIntent {
         resource: ResourceRef,
         resource_version: String,
     },
+    Evict {
+        resource: ResourceRef,
+        resource_version: String,
+    },
 }
 
 /// Separate from editable YAML so changing metadata cannot retarget an editor save.
@@ -94,21 +98,35 @@ pub async fn bounded<T>(
         .map_err(|source| error(resource, match source { kube::Error::Api(response) => response.code, _ => 503 }, "Kubernetes mutation request failed; check permissions, connectivity and object version"))
 }
 
+fn is_rbac_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "Role" | "ClusterRole" | "RoleBinding" | "ClusterRoleBinding"
+    )
+}
+
+fn valid_name_segment(name: &str, kind: &str) -> bool {
+    if name.is_empty() || name.len() > 253 || name == "." || name == ".." {
+        return false;
+    }
+    // Disallow path traversal, URL escapes, whitespace, control characters
+    if name.bytes().any(|c| c <= 32 || c == 127 || b"/\\%?#[]@".contains(&c)) {
+        return false;
+    }
+    if is_rbac_kind(kind) {
+        // RBAC names allow alphanumeric, '.', '-', '_', ':'
+        name.bytes().all(|c| c.is_ascii_alphanumeric() || b".-_:".contains(&c))
+    } else {
+        // Standard names allow alphanumeric, '.', '-', and also allow ':' or '_' if present
+        name.bytes().all(|c| c.is_ascii_alphanumeric() || b".-_:".contains(&c))
+    }
+}
+
 fn validate_identity(resource: &ResourceRef, version: &str) -> Result<(), ApiError> {
     validate_reference(resource)?;
     if resource.uid.as_deref().is_none_or(str::is_empty)
         || version.is_empty()
-        || resource.name.is_empty()
-        || resource.name.len() > 253
-        || resource.name.split('.').any(|label| {
-            label.is_empty()
-                || label.len() > 63
-                || label.starts_with('-')
-                || label.ends_with('-')
-                || !label
-                    .bytes()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-        })
+        || !valid_name_segment(&resource.name, &resource.query.kind)
     {
         return Err(error(
             resource,
@@ -129,7 +147,7 @@ fn valid_segment(value: &str) -> bool {
 fn validate_reference(resource: &ResourceRef) -> Result<(), ApiError> {
     let q = &resource.query;
     if q.context.trim().is_empty()
-        || !valid_segment(&resource.name)
+        || !valid_name_segment(&resource.name, &q.kind)
         || !valid_segment(&q.kind)
         || !valid_segment(&q.version)
         || (!q.group.is_empty() && !valid_segment(&q.group))
@@ -206,6 +224,7 @@ pub struct PreparedMutation {
     review: String,
     scale: Option<i32>,
     delete: bool,
+    evict: bool,
     create: bool,
     prepared_at: Instant,
 }
@@ -219,7 +238,7 @@ impl PreparedMutation {
             } => return Self::prepare_manifest(client, context, manifest, target).await,
             intent => intent,
         };
-        let (resource, version, scale, secret, delete) = match intent {
+        let (resource, version, scale, secret, delete, evict) = match intent {
             MutationIntent::Manifest { .. } => unreachable!(),
             MutationIntent::Scale {
                 resource,
@@ -236,12 +255,25 @@ impl PreparedMutation {
                         "Only Deployment/StatefulSet/ReplicaSet replicas in 0..100000 can be changed",
                     ));
                 }
-                (resource, resource_version, Some(replicas), None, false)
+                (resource, resource_version, Some(replicas), None, false, false)
             }
             MutationIntent::Delete {
                 resource,
                 resource_version,
-            } => (resource, resource_version, None, None, true),
+            } => (resource, resource_version, None, None, true, false),
+            MutationIntent::Evict {
+                resource,
+                resource_version,
+            } => {
+                if resource.query.kind != "Pod" || resource.query.namespace.as_deref().unwrap_or("").is_empty() {
+                    return Err(error(
+                        &resource,
+                        400,
+                        "Only namespaced Pods can be evicted using the Eviction API",
+                    ));
+                }
+                (resource, resource_version, None, None, false, true)
+            }
             MutationIntent::Secret(request) => {
                 request.validate()?;
                 (
@@ -249,6 +281,7 @@ impl PreparedMutation {
                     request.resource_version.clone(),
                     None,
                     Some(request),
+                    false,
                     false,
                 )
             }
@@ -326,7 +359,15 @@ impl PreparedMutation {
                 diff.push_str("\n\nDeleting a Namespace removes its namespaced contents.");
             }
         }
-        let operation = if delete { "DELETE" } else { "Apply" };
+        if evict {
+            let metadata = serde_json::to_value(&before.metadata).expect("metadata serializes");
+            let summary = json!({"creationTimestamp": metadata.get("creationTimestamp"), "labels": metadata.get("labels"), "owners": metadata.get("ownerReferences")});
+            diff = format!(
+                "EVICT this Pod using policy/v1 Eviction API.\nPodDisruptionBudgets (PDB) will be respected. The API will refuse eviction if a PDB is violated.\n\nPod metadata:\n{}",
+                serde_json::to_string_pretty(&summary).expect("metadata serializes")
+            );
+        }
+        let operation = if delete { "DELETE" } else if evict { "EVICT" } else { "Apply" };
         let review = format!(
             "{}\n\n{}\n\n{operation} this exact change? Cancel leaves the resource unchanged.",
             identity_summary(&resource, &version),
@@ -348,6 +389,7 @@ impl PreparedMutation {
             review,
             scale,
             delete,
+            evict,
             create: false,
             prepared_at: Instant::now(),
         })
@@ -491,6 +533,7 @@ impl PreparedMutation {
             review,
             scale: None,
             delete: false,
+            evict: false,
             create,
             prepared_at: Instant::now(),
         })
@@ -594,6 +637,34 @@ impl PreparedMutation {
                 )
             });
         }
+        if self.evict {
+            let body = serde_json::json!({
+                "apiVersion": "policy/v1",
+                "kind": "Eviction",
+                "metadata": {
+                    "name": self.resource.name,
+                    "namespace": self.resource.query.namespace,
+                },
+                "deleteOptions": {
+                    "preconditions": {
+                        "uid": self.resource.uid,
+                        "resourceVersion": self.version,
+                    }
+                }
+            });
+            let payload = serde_json::to_vec(&body).map_err(|e| error(&self.resource, 500, &e.to_string()))?;
+            let result = bounded(
+                &self.resource,
+                self.api.create_subresource::<DynamicObject>("eviction", &self.resource.name, &PostParams::default(), payload)
+            ).await?;
+            return serde_json::to_value(result).map_err(|_| {
+                error(
+                    &self.resource,
+                    500,
+                    "Cannot decode eviction response; refresh to verify the outcome",
+                )
+            });
+        }
         let result = if let Some(replicas) = self.scale {
             // RV is a conditional patch precondition enforced by the API server;
             // UID additionally pins the object across delete/recreate races.
@@ -673,6 +744,7 @@ mod tests {
             review: "review".into(),
             scale: Some(0),
             delete: false,
+            evict: false,
             create: false,
             prepared_at: Instant::now() - REVIEW_TTL - Duration::from_secs(1),
         };
@@ -683,5 +755,31 @@ mod tests {
                 .status,
             Some(409)
         );
+    }
+
+    #[test]
+    fn rbac_names_with_colons_are_valid() {
+        let rbac_res: ResourceRef = serde_json::from_value(json!({
+            "context": "test",
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "ClusterRole",
+            "namespace": null,
+            "name": "system:discovery",
+            "uid": "rbac-uid"
+        })).unwrap();
+        assert!(validate_reference(&rbac_res).is_ok());
+        assert!(validate_identity(&rbac_res, "123").is_ok());
+
+        let invalid_path: ResourceRef = serde_json::from_value(json!({
+            "context": "test",
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "ClusterRole",
+            "namespace": null,
+            "name": "../escape",
+            "uid": "rbac-uid"
+        })).unwrap();
+        assert!(validate_reference(&invalid_path).is_err());
     }
 }

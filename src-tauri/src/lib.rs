@@ -4,6 +4,7 @@ mod port_forward_commands;
 use port_forward_commands::*;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
 mod mutation_guard;
+use mutation_guard::resolve_mutation_confirm;
 mod mutation_commands;
 use mutation_commands::*;
 mod k8s_commands;
@@ -76,6 +77,7 @@ pub fn run() {
             get_api_resources,
             get_custom_resources,
             delete_resource,
+            resolve_mutation_confirm,
             get_pod_logs,
             watch_resources,
             stop_resource_watch,

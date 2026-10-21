@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create draft release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.startsWith("refs/tags/")
+              ? context.ref.replace("refs/tags/", "")
+              : "${{ github.event.inputs.tag }}";
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Kubiki ${tag}`,
+              draft: true,
+              prerelease: false,
+              generate_release_notes: true
+            });
+            return data.id;
+
+  build-tauri:
+    name: Build (${{ matrix.platform }})
+    needs: create-release
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+            cli_bin: "crates/kubiki-core/target/release/kubiki-cli"
+            cli_artifact: "kubiki-cli-linux-amd64"
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+            cli_bin: "crates/kubiki-core/target/aarch64-apple-darwin/release/kubiki-cli"
+            cli_artifact: "kubiki-cli-macos-arm64"
+          - platform: windows-latest
+            args: ""
+            cli_bin: "crates/kubiki-core/target/release/kubiki-cli.exe"
+            cli_artifact: "kubiki-cli-windows-amd64.exe"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/kubiki-core
+            src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build standalone CLI
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cargo build --release --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target aarch64-apple-darwin
+          else
+            cargo build --release --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli
+          fi
+
+      - name: Build Desktop Application & Upload Bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+      - name: Upload CLI to Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const release_id = ${{ needs.create-release.outputs.release_id }};
+            const filePath = path.resolve('${{ matrix.cli_bin }}');
+            if (fs.existsSync(filePath)) {
+              console.log(`Uploading ${filePath} as ${{ matrix.cli_artifact }}`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release_id,
+                name: '${{ matrix.cli_artifact }}',
+                data: fs.readFileSync(filePath)
+              });
+            } else {
+              console.warn(`File not found: ${filePath}`);
+            }
+
+  publish-release:
+    name: Publish Release
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false
+            });

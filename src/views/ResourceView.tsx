@@ -54,7 +54,7 @@ import { SearchInput, Input, Label } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import { PFDialog } from '../components/dialogs/PFDialog';
-import { ScaleDialog, ConfirmDialog, RestartDialog } from '../components/dialogs/ActionDialogs';
+import { ScaleDialog, ConfirmDialog, RestartDialog, DeleteResourceDialog } from '../components/dialogs/ActionDialogs';
 import { toast } from '../state/notifications_store';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
@@ -803,10 +803,10 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     }
   };
 
-  const doToggleCordon = async (node: ResourceItem) => {
+  const doToggleCordon = async (node: ResourceItem): Promise<'success' | 'cancelled' | 'failed'> => {
     if (!currentContext && !k8s.demo) {
       toast.error('No active cluster context');
-      return;
+      return 'failed';
     }
     const currentlyUnschedulable = node.raw?.spec?.unschedulable === true;
     const nextUnschedulable = !currentlyUnschedulable;
@@ -818,16 +818,20 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       if (k8s.demo) {
         updateItem('Node', node.uid, { ...node, raw });
         toast.success(`Node ${node.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'} (demo)`);
+        return 'success';
       } else {
         await k8s.applyManifest(currentContext!, stringify(raw), node);
         await refresh();
         toast.success(`Node ${node.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'}`);
+        return 'success';
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') {
         toast.info(`Cordon cancelled`);
+        return 'cancelled';
       } else {
         toast.error(`Failed to update cordon state`, String(err?.message || err));
+        return 'failed';
       }
     }
   };
@@ -838,7 +842,10 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       return;
     }
     if (!node.raw?.spec?.unschedulable) {
-      await doToggleCordon(node);
+      const outcome = await doToggleCordon(node);
+      if (outcome !== 'success') {
+        return;
+      }
     }
     const allPods = [...(useResourceStore.getState().resources.Pod?.values() ?? [])];
     const nodePods = allPods.filter(
@@ -852,22 +859,29 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     }
 
     let evicted = 0;
+    let failed = 0;
     for (const pod of nodePods) {
       try {
         if (k8s.demo) {
           useResourceStore.getState().deleteItem('Pod', pod.uid);
           evicted++;
         } else {
-          await k8s.deleteResource(currentContext!, 'Pod', pod.name, pod.namespace, pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
+          await k8s.evictPod(currentContext!, pod.name, pod.namespace ?? 'default', pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
           evicted++;
         }
       } catch (err: any) {
-        if (err?.code === 'cancelled') break;
+        if (err?.code === 'cancelled') {
+          toast.info(`Drain cancelled. ${evicted} pod(s) evicted.`);
+          if (!k8s.demo && evicted > 0) await refresh();
+          return;
+        }
+        failed++;
+        toast.error(`Eviction failed for pod ${pod.name}`, String(err?.message || err));
       }
     }
-    if (evicted > 0) {
+    if (evicted > 0 || failed === 0) {
       if (!k8s.demo) await refresh();
-      toast.success(`Drained ${evicted} pod(s) from node ${node.name}`);
+      toast.success(`Drained ${evicted} pod(s) from node ${node.name}${failed > 0 ? ` (${failed} failed)` : ''}`);
     }
   };
 
@@ -881,7 +895,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         useResourceStore.getState().deleteItem('Pod', pod.uid);
         toast.success(`Pod ${pod.name} evicted (demo)`);
       } else {
-        await k8s.deleteResource(currentContext!, 'Pod', pod.name, pod.namespace, pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
+        await k8s.evictPod(currentContext!, pod.name, pod.namespace ?? 'default', pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
         await refresh();
         toast.success(`Pod ${pod.name} evicted`);
       }
@@ -1513,18 +1527,10 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       <PFDialog item={pfFor} onClose={() => setPfFor(null)} />
       <ScaleDialog item={scaleFor} onClose={() => setScaleFor(null)} onApply={(n) => scaleFor && doScale(scaleFor, n)} />
       <RestartDialog item={restartFor} onClose={() => setRestartFor(null)} onConfirm={() => restartFor && doRestart(restartFor)} />
-      <ConfirmDialog
-        open={!!confirmFor}
-        title={`Delete ${confirmFor?.kind.toLowerCase() ?? ''}`}
-        confirmLabel="Delete"
+      <DeleteResourceDialog
+        item={confirmFor}
         onClose={() => setConfirmFor(null)}
         onConfirm={() => confirmFor && doDelete(confirmFor)}
-        message={
-          <>
-            Delete <span className="font-mono text-[var(--text-primary)]">{confirmFor?.name}</span> from namespace{' '}
-            <span className="font-mono">{confirmFor?.namespace ?? '-'}</span>? This cannot be undone.
-          </>
-        }
       />
       <ConfirmDialog
         open={!!drainFor}

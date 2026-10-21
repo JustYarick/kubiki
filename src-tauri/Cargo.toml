@@ -47,6 +47,3 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-gtk = "0.18"

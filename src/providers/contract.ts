@@ -22,4 +22,5 @@ export interface KubernetesProvider extends ResourceWatchProvider {
   scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number, uid: string, resourceVersion: string): Promise<boolean>;
   applyManifest(context: string, manifest: string, item?: ResourceItem): Promise<string>;
   deleteResource(context: string, kind: string, name: string, namespace: string | undefined, uid: string, resourceVersion: string, apiVersion?: string): Promise<string>;
+  evictPod(context: string, name: string, namespace: string, uid: string, resourceVersion: string): Promise<string>;
 }

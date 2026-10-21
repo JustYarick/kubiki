@@ -1,6 +1,6 @@
 import { chromium } from '@playwright/test';
 
-// Run against pnpm preview; see docs/11-TOPOLOGY-PERFORMANCE.md for methodology.
+// Run against pnpm preview.
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
 try {
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });

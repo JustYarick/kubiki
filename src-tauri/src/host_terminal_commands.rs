@@ -17,6 +17,27 @@ pub async fn start_host_terminal(
     manager: tauri::State<'_, HostTerminalManager>,
     _guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<(), ApiError> {
+    let dummy = kubiki_core::core::api::ResourceRef {
+        query: kubiki_core::core::api::ResourceQuery {
+            context: "local".into(),
+            group: "".into(),
+            version: "v1".into(),
+            kind: "HostTerminal".into(),
+            namespace: None,
+        },
+        name: "host-shell".into(),
+        uid: None,
+    };
+    let review = format!(
+        "Open local host terminal session:\nShell: {}\nThis will launch a local PTY process on your machine.",
+        request.shell.as_deref().unwrap_or("(default shell)")
+    );
+    if !crate::mutation_guard::confirm(window.clone(), &dummy, review).await? {
+        return Err(kubiki_core::core::mutations::cancelled(
+            &dummy,
+            "Host terminal session was cancelled",
+        ));
+    }
     let manager = manager.inner().clone();
     let owner = window.label().to_owned();
     let mut subscription = manager.start(&owner, &session_id, request).await?;

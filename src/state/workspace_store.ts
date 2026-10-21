@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useClusterStore } from './cluster_store';
 import { resourceRef, resourceTabId } from '../core/resources/identity';
+import { useYamlDraftStore, yamlDraftKey } from './yaml_draft_store';
 import type { ResourceRef } from '../core/resources/resource_types';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 
@@ -80,6 +81,14 @@ export function restoreWorkspace(persisted: unknown, current: WorkspaceState): W
       resource: { context: tab.context ?? '', group: 'helm.sh', version: 'v1', kind: 'HelmRelease', namespace: tab.namespace, name: tab.name, uid } };
   });
   return { ...current, ...saved, tabs };
+}
+
+function clearDraftForTab(tab?: WorkspaceTab) {
+  if (tab?.type === 'yaml-editor') {
+    useYamlDraftStore.getState().clearDraft(
+      yamlDraftKey(tab.context ?? '', tab.kind, tab.namespace, tab.name, tab.uid)
+    );
+  }
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()(
@@ -220,6 +229,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const { tabs, activeTabId, splitTabId } = get();
         const target = tabs.find((t) => t.id === id);
         if (!target) return;
+        clearDraftForTab(target);
 
         const newTabs = tabs.filter((t) => t.id !== id);
         if (newTabs.length === 0) {
@@ -247,6 +257,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       closeOtherTabs: (id) => {
         const { tabs } = get();
+        tabs.filter((t) => t.id !== id).forEach(clearDraftForTab);
         const kept = tabs.filter((t) => t.id === id);
         set({
           tabs: kept,
@@ -259,6 +270,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const { tabs } = get();
         const idx = tabs.findIndex((t) => t.id === id);
         if (idx === -1) return;
+        tabs.slice(idx + 1).forEach(clearDraftForTab);
         const kept = tabs.filter((_, i) => i <= idx);
         set({
           tabs: kept,
@@ -268,6 +280,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       closeAllTabs: () => {
+        const { tabs } = get();
+        tabs.forEach(clearDraftForTab);
         set({
           tabs: [],
           activeTabId: '',

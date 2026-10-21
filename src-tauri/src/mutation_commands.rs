@@ -31,6 +31,10 @@ pub enum ChangeRequest {
     Secret {
         request: kubiki_core::core::secret_data::SecretDataRequest,
     },
+    Evict {
+        resource: ResourceRef,
+        resource_version: String,
+    },
     Helm {
         request: HelmMutation,
     },
@@ -54,6 +58,7 @@ impl ChangeRequest {
     fn resource(&self) -> ResourceRef {
         match self {
             Self::Scale { resource, .. } => resource.clone(),
+            Self::Evict { resource, .. } => resource.clone(),
             Self::Secret { request } => request.resource.clone(),
             Self::Helm { request } => request.resource(),
             Self::NodeDebug { request, .. } => request.resource.clone(),
@@ -149,6 +154,13 @@ pub async fn mutate_resource(
             resource_version,
             replicas,
         },
+        ChangeRequest::Evict {
+            resource,
+            resource_version,
+        } => MutationIntent::Evict {
+            resource,
+            resource_version,
+        },
         ChangeRequest::Secret { request } => MutationIntent::Secret(request),
         _ => unreachable!(),
     };
@@ -211,6 +223,7 @@ mod tests {
             json!({"operation":"manifest","context":"prod","manifest":"{}"}),
             json!({"operation":"scale","resource":resource,"resource_version":"10","replicas":0}),
             json!({"operation":"secret","request":{"resource":resource,"resource_version":"10","data":{}}}),
+            json!({"operation":"evict","resource":resource,"resource_version":"10"}),
             json!({"operation":"helm","request":{"operation":"repository_update","name":null}}),
             json!({"operation":"node_debug","session_id":"id","request":{"resource":resource,"namespace":"team","image":"ubuntu:24.04"}}),
         ];

@@ -1,5 +1,5 @@
 //! Isolated full-Tauri renderer benchmark. Only synthetic reads are available; no kubeconfig/cluster access.
-//! See docs/11-TOPOLOGY-PERFORMANCE.md. Not registered in the application.
+//! Not registered in the application.
 #[cfg(target_os = "linux")]
 #[path = "../src/graphics.rs"]
 mod graphics;

@@ -175,7 +175,20 @@ pub async fn stop_node_debug(
     session_id: String,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, NodeDebugManager>,
+    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<(), ApiError> {
+    let dummy = kubiki_core::core::api::ResourceRef {
+        query: kubiki_core::core::api::ResourceQuery {
+            context: "node-debug".into(),
+            group: "".into(),
+            version: "v1".into(),
+            kind: "Pod".into(),
+            namespace: None,
+        },
+        name: session_id.clone(),
+        uid: None,
+    };
+    let _gate = guard.acquire(&dummy)?;
     manager.stop(window.label(), &session_id).await
 }
 #[tauri::command]

@@ -42,7 +42,7 @@ export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => voi
     if (next.size === previous.size && [...next].every((id) => previous.has(id))) return previous;
     return next;
   }); }, [tabs, activeTab?.id, splitTab?.id]);
-  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'logs'));
+  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'logs' || tab.type === 'yaml-editor')));
   return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
     <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
     <div className="flex-1 min-h-0 min-w-0 relative grid overflow-hidden" style={{ gridTemplateColumns: splitTab ? `minmax(0, ${splitRatio}fr) auto minmax(0, ${1 - splitRatio}fr)` : 'minmax(0, 1fr)', gridTemplateRows: 'minmax(0, 1fr)' }}>
@@ -146,7 +146,11 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
       return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;
     }
     if (!item && custom.loading) return <ResourceLoading label="Loading custom resource…" />;
-    if (!item && !loadErrors[kind] && !customDefinition && syncMode !== 'watch' && (loadingKinds[kind] ?? clusterLoading)) return <ResourceLoading label={`Loading ${kind}…`} />;
+    if (!item && loadErrors[kind]) {
+      const error = loadErrors[kind];
+      return <div className="p-6"><RequestErrorNotice error={error} onRetry={() => { if (customDefinition) { custom.refresh(); } else { void refreshResourceWatches(kind).catch(() => {}); } }} /></div>;
+    }
+    if (!item && !customDefinition && syncMode !== 'watch' && (loadingKinds[kind] ?? clusterLoading)) return <ResourceLoading label={`Loading ${kind}…`} />;
     if (!item && !customDefinition && syncMode === 'watch' && (watchStates[kind] || clusterLoading) && watchStates[kind]?.phase !== 'live') {
       const error = loadErrors[kind];
       return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <ResourceLoading label={`Loading ${kind}…`} description={`Waiting for a complete ${kind} snapshot…`} />}</div>;
@@ -165,7 +169,12 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
       );
     }
 
-    if (tab.type === 'resource-detail') return <ResourceDetails key={item.uid} item={item} onClose={() => useWorkspaceStore.getState().closeTab(tab.id)} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />;
+    if (tab.type === 'resource-detail') return (
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        {loadErrors[kind] && <div className="p-4 border-b border-[var(--border-subtle)]"><RequestErrorNotice error={loadErrors[kind]} onRetry={() => { if (customDefinition) { custom.refresh(); } else { void refreshResourceWatches(kind).catch(() => {}); } }} retainedData={true} /></div>}
+        <ResourceDetails key={item.uid} item={item} onClose={() => useWorkspaceStore.getState().closeTab(tab.id)} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />
+      </div>
+    );
     if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><TopologyView item={item} namespace={tab.namespace} /></Suspense>;
     if (tab.type === 'logs' || tab.type === 'terminal') {
       const session = { context: tab.context, uid: item.uid, id: tab.id, type: tab.type, title: tab.title, resourceName: item.name, namespace: item.namespace,
@@ -174,7 +183,8 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     }
 
     return (
-      <div className="flex-1 min-h-0 min-w-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        {loadErrors[kind] && <div className="p-4 border-b border-[var(--border-subtle)]"><RequestErrorNotice error={loadErrors[kind]} onRetry={() => { if (customDefinition) { custom.refresh(); } else { void refreshResourceWatches(kind).catch(() => {}); } }} retainedData={true} /></div>}
         <Suspense
           fallback={
             <div className="h-full flex items-center justify-center gap-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">

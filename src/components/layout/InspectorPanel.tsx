@@ -18,7 +18,7 @@ import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
 import { IconButton, Button } from '../ui/Button';
 import { SearchInput } from '../ui/Input';
 import { PFDialog } from '../dialogs/PFDialog';
-import { ConfirmDialog, RestartDialog } from '../dialogs/ActionDialogs';
+import { ConfirmDialog, RestartDialog, DeleteResourceDialog } from '../dialogs/ActionDialogs';
 import { toast } from '../../state/notifications_store';
 import { parse, stringify } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
@@ -182,7 +182,8 @@ function KubernetesResourceDetails({
           item.name,
           item.namespace,
           item.uid,
-          item.raw?.metadata?.resourceVersion ?? ''
+          item.raw?.metadata?.resourceVersion ?? '',
+          item.apiVersion
         );
         toast.success(`Deleted ${item.kind}/${item.name}`);
         onClose?.();
@@ -233,13 +234,20 @@ function KubernetesResourceDetails({
       if (k8s.demo) {
         useResourceStore.getState().updateItem('Node', item.uid, { ...item, raw: rawCopy });
         toast.success(`Node ${item.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'} (demo)`);
+        return 'success';
       } else {
         await k8s.applyManifest(currentContext!, stringify(rawCopy), item);
         toast.success(`Node ${item.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'}`);
+        return 'success';
       }
     } catch (err: any) {
-      if (err?.code === 'cancelled') toast.info('Cordon cancelled');
-      else toast.error('Failed to update cordon state', String(err?.message || err));
+      if (err?.code === 'cancelled') {
+        toast.info('Cordon cancelled');
+        return 'cancelled';
+      } else {
+        toast.error('Failed to update cordon state', String(err?.message || err));
+        return 'failed';
+      }
     }
   };
 
@@ -249,7 +257,10 @@ function KubernetesResourceDetails({
       return;
     }
     if (!item.raw?.spec?.unschedulable) {
-      await doToggleCordon();
+      const outcome = await doToggleCordon();
+      if (outcome !== 'success') {
+        return;
+      }
     }
     const allPods = [...(useResourceStore.getState().resources.Pod?.values() ?? [])];
     const nodePods = allPods.filter(
@@ -264,15 +275,28 @@ function KubernetesResourceDetails({
 
     toast.info(`Evicting ${nodePods.length} pods from ${item.name}…`);
     let evicted = 0;
+    let failed = 0;
     for (const pod of nodePods) {
       try {
-        if (!k8s.demo) {
-          await k8s.deleteResource(currentContext!, 'Pod', pod.name, pod.namespace, pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
+        if (k8s.demo) {
+          useResourceStore.getState().deleteItem('Pod', pod.uid);
+          evicted++;
+        } else {
+          await k8s.evictPod(currentContext!, pod.name, pod.namespace ?? 'default', pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
+          evicted++;
         }
-        evicted++;
-      } catch {}
+      } catch (err: any) {
+        if (err?.code === 'cancelled') {
+          toast.info(`Drain cancelled. ${evicted} pod(s) evicted.`);
+          return;
+        }
+        failed++;
+        toast.error(`Eviction failed for pod ${pod.name}`, String(err?.message || err));
+      }
     }
-    toast.success(`Drain completed for ${item.name} (${evicted} pods evicted)`);
+    if (evicted > 0 || failed === 0) {
+      toast.success(`Drain completed for ${item.name} (${evicted} pods evicted${failed > 0 ? `, ${failed} failed` : ''})`);
+    }
   };
 
   const attach = (container?: string) => {
@@ -303,15 +327,8 @@ function KubernetesResourceDetails({
         footer={
           <>
             <PFDialog key={`pf-${item.uid}`} item={pfOpen ? item : null} onClose={() => setPfOpen(false)} />
-            <ConfirmDialog
-              open={confirmDelete}
-              title={`Delete ${item.kind}`}
-              confirmLabel="Delete"
-              message={
-                <>
-                  Are you sure you want to delete <span className="font-mono text-[var(--text-primary)] font-medium">{item.kind}/{item.name}</span>? This action cannot be undone.
-                </>
-              }
+            <DeleteResourceDialog
+              item={confirmDelete ? item : null}
               onClose={() => setConfirmDelete(false)}
               onConfirm={doDelete}
             />

@@ -75,3 +75,89 @@ async fn parallel_collection_startup_shares_the_credential_provider() {
         "One shared client initializes credentials in Config, then refreshes once for its first HTTP request; 32 reads must not build 32 providers"
     );
 }
+
+#[tokio::test]
+async fn reloads_client_when_kubeconfig_changes() {
+    let dir = std::env::temp_dir().join(format!(
+        "kubiki-pool-reload-test-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(dir.clone());
+    let config = dir.join("config");
+
+    // Server A
+    let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server_a = format!("http://{}", listener_a.local_addr().unwrap());
+    tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener_a.accept().await {
+            let mut bytes = Vec::new();
+            loop {
+                let mut chunk = [0; 4096];
+                let n = socket.read(&mut chunk).await.unwrap();
+                if n == 0 { break; }
+                bytes.extend_from_slice(&chunk[..n]);
+                if bytes.windows(4).any(|p| p == b"\r\n\r\n") { break; }
+            }
+            let body = json!({"gitVersion":"audit-server-A","major":"1","minor":"35","platform":"linux/amd64"}).to_string();
+            let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).as_bytes()).await;
+        }
+    });
+
+    // Server B
+    let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server_b = format!("http://{}", listener_b.local_addr().unwrap());
+    tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener_b.accept().await {
+            let mut bytes = Vec::new();
+            loop {
+                let mut chunk = [0; 4096];
+                let n = socket.read(&mut chunk).await.unwrap();
+                if n == 0 { break; }
+                bytes.extend_from_slice(&chunk[..n]);
+                if bytes.windows(4).any(|p| p == b"\r\n\r\n") { break; }
+            }
+            let body = json!({"gitVersion":"audit-server-B","major":"1","minor":"35","platform":"linux/amd64"}).to_string();
+            let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).as_bytes()).await;
+        }
+    });
+
+    // Point config to Server A
+    std::fs::write(&config, json!({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "current-context": "audit",
+        "clusters": [{"name": "audit", "cluster": {"server": server_a}}],
+        "contexts": [{"name": "audit", "context": {"cluster": "audit", "user": "audit"}}],
+        "users": [{"name": "audit", "user": {"token": "token"}}]
+    }).to_string()).unwrap();
+
+    let pool = ClusterClientPool::new(KubeConfigManager::with_custom_path(config.clone()));
+
+    let version_a = pool.check_health("audit").await.unwrap();
+    assert_eq!(version_a.git_version, "audit-server-A");
+
+    // Rewrite config to Server B
+    std::fs::write(&config, json!({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "current-context": "audit",
+        "clusters": [{"name": "audit", "cluster": {"server": server_b}}],
+        "contexts": [{"name": "audit", "context": {"cluster": "audit", "user": "audit"}}],
+        "users": [{"name": "audit", "user": {"token": "token"}}]
+    }).to_string()).unwrap();
+
+    // Query again with same pool and same context - should now talk to Server B!
+    let version_b = pool.check_health("audit").await.unwrap();
+    assert_eq!(version_b.git_version, "audit-server-B");
+}

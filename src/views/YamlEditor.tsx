@@ -10,6 +10,8 @@ import type { ResourceItem } from '../types/k8s';
 import { parse, stringify } from 'yaml';
 import { cx } from '../core/utils/cx';
 import { useUiStore } from '../state/ui_store';
+import { useClusterStore } from '../state/cluster_store';
+import { useYamlDraftStore, yamlDraftKey } from '../state/yaml_draft_store';
 import { cleanYaml, restoreServerFields, sameYaml } from '../core/resources/yaml_document';
 
 interface YamlEditorProps {
@@ -19,16 +21,33 @@ interface YamlEditorProps {
 
 export function YamlEditor({ item, onApply }: YamlEditorProps) {
   const fontSize = useUiStore((state) => state.editorFontSize);
+  const context = useClusterStore((state) => state.currentContext) || '';
+  const draftKey = useMemo(
+    () => yamlDraftKey(context, item.kind, item.namespace, item.name, item.uid),
+    [context, item.kind, item.namespace, item.name, item.uid]
+  );
   const original = item.rawYaml ?? '';
-  const [draft, setDraft] = useState(() => cleanYaml(original));
+  const existingMemento = useYamlDraftStore.getState().getDraft(draftKey);
+
+  const [cleanView, setCleanView] = useState(() => (existingMemento && existingMemento.uid === item.uid ? existingMemento.cleanView : true));
+  const cleanViewRef = useRef(cleanView);
+  cleanViewRef.current = cleanView;
+
+  const [draft, setDraft] = useState(() => {
+    if (existingMemento && existingMemento.uid === item.uid && existingMemento.dirty) {
+      return existingMemento.draft;
+    }
+    return cleanYaml(original);
+  });
   const [ready, setReady] = useState(false);
   const [editorError, setEditorError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [applying, setApplying] = useState(false);
-  const [cleanView, setCleanView] = useState(true);
-  const cleanViewRef = useRef(cleanView);
-  cleanViewRef.current = cleanView;
-  const fullDraftRef = useRef(original);
+  const fullDraftRef = useRef(
+    existingMemento && existingMemento.uid === item.uid && existingMemento.dirty
+      ? existingMemento.fullDraft
+      : original
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<editor.ITextModel | null>(null);
@@ -42,18 +61,32 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
     const model = modelRef.current;
     if (model && !model.isDisposed() && model.getValue() !== value) model.setValue(value);
     setDraft(value);
-  }, []);
+    const isDirty = !sameYaml(value, cleanViewRef.current ? cleanYaml(original) : original);
+    useYamlDraftStore.getState().saveDraft(draftKey, {
+      draft: value,
+      fullDraft: fullDraftRef.current,
+      cleanView: cleanViewRef.current,
+      resourceVersion: item.raw?.metadata?.resourceVersion || '',
+      uid: item.uid,
+      dirty: isDirty,
+    });
+  }, [cleanViewRef, draftKey, item.raw?.metadata?.resourceVersion, item.uid, original]);
 
   // Refresh clean documents; never overwrite a local draft on a background snapshot.
   useEffect(() => {
     const prior = previous.current;
-    const pristine = sameYaml(draftRef.current, cleanViewRef.current ? cleanYaml(prior.original) : prior.original);
-    if (prior.uid !== item.uid || pristine) {
-      fullDraftRef.current = original;
-      replaceDraft(cleanViewRef.current ? cleanYaml(original) : original);
+    const memento = useYamlDraftStore.getState().getDraft(draftKey);
+    const hasUnsavedDraft = memento && memento.uid === item.uid && memento.dirty;
+
+    if (!hasUnsavedDraft) {
+      const pristine = sameYaml(draftRef.current, cleanViewRef.current ? cleanYaml(prior.original) : prior.original);
+      if (prior.uid !== item.uid || pristine) {
+        fullDraftRef.current = original;
+        replaceDraft(cleanViewRef.current ? cleanYaml(original) : original);
+      }
     }
     previous.current = { uid: item.uid, original };
-  }, [item.uid, original, replaceDraft]);
+  }, [draftKey, item.uid, original, replaceDraft]);
 
   const apply = useCallback(async () => {
     if (sameYaml(draftRef.current, baseline) || applying) return;
@@ -65,6 +98,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
       setApplying(true);
       const manifest = stringify(parsed);
       await onApply(manifest);
+      useYamlDraftStore.getState().clearDraft(draftKey);
       replaceDraft(manifest);
     } catch (error) {
       toast.error('Apply failed', String(error));
@@ -213,7 +247,11 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
     }
   };
 
-  const revert = () => { fullDraftRef.current = original; replaceDraft(baseline); };
+  const revert = () => {
+    useYamlDraftStore.getState().clearDraft(draftKey);
+    fullDraftRef.current = original;
+    replaceDraft(baseline);
+  };
   const actions: MenuItem[] = [
     { id: 'replace', label: 'Find and Replace', icon: ArrowRightLeft, onSelect: openReplace },
     { id: 'format', label: 'Format YAML', icon: AlignLeft, onSelect: formatYaml },

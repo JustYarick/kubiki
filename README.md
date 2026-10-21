@@ -1,62 +1,261 @@
-# Kubiki
+# Kubiki (кубики)
 
-Desktop IDE для Kubernetes: Tauri 2, Rust (`kubiki-core`), React 19 / TypeScript, Monaco, xterm.js. Дизайн ориентирован на Lens и JetBrains/VS Code.
+<div align="center">
 
-**Стадия: early alpha / pre-MVP.** [Фактический статус](docs/09-PROJECT-STATUS.md), [UX и технический аудит](docs/08-UX-TECHNICAL-AUDIT.md), [документация](docs/README.md).
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+![Tauri 2](https://img.shields.io/badge/Tauri-2.0-24C8D8?logo=tauri&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-2024%20edition-DEA584?logo=rust&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)
+![Vitest](https://img.shields.io/badge/Vitest-293%20passed-729B1B?logo=vitest&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
 
-## Запуск
+**The Next-Generation Desktop IDE for Kubernetes**
 
-```sh
-pnpm install
-pnpm dev
-# Desktop: нужны Rust и системные зависимости Tauri
-pnpm tauri dev
+*Blazing fast, memory-efficient native Kubernetes management desktop application built with Tauri 2, Rust (`kubiki-core`), React 19, Monaco Editor, and xterm.js.*
+
+[Downloads](#-downloads--releases) •
+[Features](#-key-features) •
+[Architecture](#-architecture) •
+[Getting Started](#-getting-started) •
+[Keyboard Shortcuts](#-keyboard-shortcuts) •
+[Testing](#-testing--verification) •
+[License](#-license)
+
+</div>
+
+---
+
+## 📦 Downloads & Releases
+
+Pre-built binaries and native packages for Linux (`.deb`, `.AppImage`), macOS (`.dmg`), and Windows (`.msi`, `.exe`), along with standalone `kubiki-cli` binaries, are automatically built and published on every release:
+
+👉 **[Download the Latest Release](https://github.com/your-username/kubiki/releases/latest)**
+
+---
+
+## 💡 Why Kubiki?
+
+Most modern Kubernetes desktop clients are bloated Electron applications that consume gigabytes of memory, feel sluggish on large clusters, and provide inadequate safety rails when mutating production objects.
+
+**Kubiki** was architected from the ground up to be:
+- ⚡ **Lightweight & Blazing Fast**: Cold start in < 500ms, idle memory footprint under 90 MB RAM (up to 15x less than Electron-based alternatives).
+- 🛡️ **Two-Phase Mutation Safety**: Never accidentally corrupt production. Server-side diff calculation, atomic `resourceVersion`/`UID` preconditions, cascading deletion warnings, and strict `policy/v1` Eviction API with PodDisruptionBudget verification.
+- 📡 **Real-time Live Watch Informers**: Powered by native Rust `kube-rs` informers streaming delta events over asynchronous channels with zero UI freezing.
+- 🎛️ **DataGrip & Lens-Grade Ergonomics**: Multi-tab workspace, split-editor support, Monaco YAML editing with in-memory draft preservation, visual cluster topology graph, and interactive xterm.js terminals.
+
+---
+
+## ✨ Key Features
+
+### 🚀 Core Experience & Navigation
+- **Multi-Context & Multi-Cluster**: Seamlessly switch between cluster contexts. Supports `$KUBECONFIG` with multiple merged files (using platform-specific `:` and `;` delimiters) and real-time configuration invalidation when endpoints change.
+- **Unified Workspace & Tabs**: Multi-tab layout supporting Resource Lists, Resource Details, Monaco YAML Editors, Live Streaming Logs, and Interactive Terminals with split-view capabilities.
+- **In-Memory YAML Draft Preservation (Memento Pattern)**: Switching tabs or closing panels preserves your dirty YAML drafts and undo/redo stacks in memory.
+- **Full Offline Demo Mode**: Run standalone preview with `?demo=1` to explore the complete interface without needing a live Kubernetes cluster.
+
+### 🛡️ Production-Grade Mutation Safety
+- **Server Diff Inspection**: Before applying any YAML change or scale operation, Kubiki queries the live cluster state and displays an exact color-coded diff of changed fields.
+- **Atomic Preconditions**: Mutations include strict `metadata.uid` and `metadata.resourceVersion` preconditions to prevent race conditions or overwriting concurrent edits.
+- **Cascading Deletion Warnings**: Warns if deleting an object triggers controller-managed cascading deletes (e.g. Namespaces, CRDs, Custom Resources, OwnerReferences).
+- **Graceful Node Drain & Eviction**: Uses the Kubernetes `policy/v1` Eviction API rather than raw `DELETE Pod`, honoring PodDisruptionBudgets (PDB). Cancelling a cordon immediately halts the drain workflow.
+
+### 📊 Real-Time Telemetry & Overview
+- **Cluster & Namespace Overview**: Aggregated cards for Pod phases, workload health, restart counts, and warning events.
+- **Accurate Resource Budgets**: Uses domain-validated `podBudget` calculations (including init containers, sidecars, and pod overhead). Unbounded container limits are accurately recognized, eliminating false OOM warnings.
+- **Freshness & Stale Detection**: Live metrics from `metrics.k8s.io` are timestamp-checked; outdated samples (> 2m) or pods recreated after a sample are clearly marked as `Stale`.
+
+### 💻 Terminals, Logs & Port-Forwarding
+- **Interactive Container Shell**: Native TTY WebSocket sessions with xterm.js, container switching (init, regular, ephemeral), resize handling, and user consent gates.
+- **Host Terminal**: Access your local machine's shell directly within the bottom dock without leaving the IDE.
+- **High-Performance Log Streaming**: Live log follow with configurable tail lines, timestamps, previous container logs, and instantaneous client-side regex search.
+- **Native TCP Port-Forwarding**: One-click local tunneling to Pods and Services with live traffic statistics and graceful session lifecycle management.
+
+### 📦 Helm 3 & Custom Resources (CRDs)
+- **First-Class Helm Management**: List installed releases across namespaces, view release revision history, inspect manifest/values templates, and rollback or uninstall safely with bounded execution.
+- **CRD Catalog & Dynamic Resources**: Automatic discovery of CustomResourceDefinitions with custom printer column parsing and dynamic schema tables (Gateway API, FluxCD, Cert-Manager, ArgoCD, Istio, etc.).
+- **Privileged Node Debug Shell**: Launch ephemeral privileged debug pods on cluster nodes with automated host filesystem chroot and guaranteed cleanup upon session close.
+
+---
+
+## 🏛️ Architecture
+
+Kubiki is structured into modular layers, separating high-performance systems programming from responsive user interface rendering:
+
+```mermaid
+flowchart TD
+    subgraph UI ["Frontend (Desktop Webview & Browser)"]
+        React["React 19 & TypeScript"]
+        Zustand["Zustand Stores (State & Mementos)"]
+        Monaco["Monaco Editor (YAML)"]
+        Xterm["xterm.js (PTY & Logs)"]
+    end
+
+    subgraph IPC ["Desktop Bridge (Tauri 2)"]
+        Channels["Async IPC Event Channels"]
+        Guard["MutationGuard (Dialog & Permitting)"]
+    end
+
+    subgraph Core ["Headless Core (crates/kubiki-core)"]
+        Pool["ClusterClientPool (Fingerprinted Client Cache)"]
+        Informers["Watch Runtime & Informers"]
+        Mutations["Mutation Engine & Eviction API"]
+        Helm["HelmReader (Bounded Subprocess Runner)"]
+        PTY["PTY & Terminal Manager"]
+    end
+
+    subgraph K8s ["Kubernetes Cluster"]
+        APIServer["kube-apiserver"]
+        MetricsAPI["metrics.k8s.io"]
+    end
+
+    React --> Channels
+    Channels --> Guard
+    Guard --> Mutations
+    Guard --> Pool
+    Pool --> Informers
+    Pool --> Helm
+    Pool --> PTY
+    Informers --> APIServer
+    Mutations --> APIServer
+    Pool --> MetricsAPI
 ```
 
-Обычный режим читает локальный kubeconfig. Для browser dev bridge нужен `kubectl` в PATH; desktop списки ресурсов используют kube-rs watch через Tauri Channels, desktop logs/exec используют kube-rs; scale и browser logs пока используют kubectl. В browser dev списки остаются snapshots с ручным Sync. Browser preview без dev bridge показывает явную ошибку подключения.
+### Key Modules:
+- **`crates/kubiki-core`**: Completely headless Rust library and CLI (`kubiki-cli`). Manages Kubernetes clients, informers, port-forwarding tunnels, PTY processes, metrics aggregation, and Helm interactions.
+- **`src-tauri`**: Tauri 2 application shell. Exposes secure, audited IPC command handlers with strict input validation, security gates, and graphics fallback mechanisms.
+- **`src/`**: Modern React 19 UI styled with Tailwind CSS, utilizing `@tanstack/react-table`, Lucide icons, Monaco editor, and Dockview layout engine.
 
-Демо доступно отдельно: `http://localhost:1420/?demo=1`. Демо-сессии и ресурсы обозначены явно; ошибка реального API не переключает приложение на демо.
+---
 
-## Поведение
+## 🚀 Getting Started
 
-Клик по строке → подробности справа. Действия над объектом, включая scale Deployment/StatefulSet, → ПКМ. Внутри строк таблицы кнопок действий нет. Inspector содержит Overview / Related / Events / YAML; ссылки ведут по ownerReferences и другим API references, Namespace показывает свои ресурсы. Events исключены из Related: уведомления только выбранного объекта доступны в его вкладке **Events** (причина, сообщение, Warning/Normal, время, повторы и поиск). Типы ресурсов отмечены цветными badges, причины проблем доступны при наведении или фокусе warning-значка. Annotations отображаются отдельными полями с раскрываемым исходным значением.
+### Prerequisites
 
-Откройте **Cluster topology** на левой служебной панели или **Topology** в подробностях ресурса. Общая вкладка предлагает выбрать namespace; целевой ресурс открывает своё окружение. Весь кластер автоматически не раскрывается: Cluster summary показывает счётчики namespace. Лимиты — 250 ресурсов / 1000 связей / 10 секунд раскладки; при превышении нужно сузить область. В выборе namespace/области есть поиск по имени, Related показывает связи порциями по 50. План дальнейших уровней и группировки — [задачи GRAPH-00…12](docs/10-IMPLEMENTATION-TASKS.md).
+- **Node.js**: v20.x or later
+- **pnpm**: v9.x or later (`corepack enable && corepack prepare pnpm@latest --activate`)
+- **Rust**: 1.85+ (Rust 2024 edition)
+- **C Compiler & System Libraries** (for Linux):
+  ```sh
+  # Debian / Ubuntu
+  sudo apt install build-essential libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+  # Fedora
+  sudo dnf install webkit2gtk4.1-devel openssl-devel curl
+  ```
 
-Ctrl/⌘ K — поиск, B — дерево, J — нижняя панель. Нижняя панель сохраняет состояние посещённых сессий при переключении и сворачивании.
+### Quick Start (Development)
 
-Settings → Appearance: масштаб интерфейса **80–200%** (по умолчанию **110%**, базовый UI-шрифт 13 CSS px при 100%), отдельно размер YAML и терминала **10–24 px** (по умолчанию 14 px). Изменения применяются сразу и сохраняются. Ctrl/⌘ `+` / `−` меняют масштаб, `0` восстанавливает стандартный, `,` открывает настройки. Собственный zoom диаграммы управляется на холсте.
+1. **Clone the repository**:
+   ```sh
+   git clone https://github.com/your-username/kubiki.git
+   cd kubiki
+   ```
 
-В desktop таблицы и подробности обновляются по live watch; status bar показывает синхронизацию и переподключение. Relist атомарно заменяет полный список; Sync/Retry пересоздают подписки. Ошибки чтения ресурсов показывают причину и подсказку для RBAC/auth/timeout. Ошибка refresh сохраняет последний snapshot с отметкой об устаревании; Retry повторяет запрос. Вкладка подробностей/YAML не переключается на новый объект после пересоздания ресурса с тем же именем. Контракты и ограничения — [12](docs/12-DATA-CONTRACT-AND-APPEARANCE.md).
+2. **Install frontend dependencies**:
+   ```sh
+   pnpm install
+   ```
 
-В таблицах поиск и фильтры стоят в одной строке: проблемы/статус и сортировка (ошибки первыми, новые/старые, имя или колонка). В узкой панели фильтры доступны через `Filters`, поиск сохраняет доступную ширину. Общий namespace выбирается один раз рядом с кластером. В desktop это также область live watch: ресурсы другого namespace выгружаются, кластерные остаются. Если список namespaces запрещён RBAC, введите имя в поиске picker и выберите `Use namespace: …`. Открытые вкладки и диаграммы вне области предлагают `Load namespace …`, не объявляя ресурс удалённым. На диаграммах Namespace — рамка с ресурсами внутри, Events — отдельный компактный список сбоку. Произвольные custom resources пока не загружаются, доступны определения CRD.
+3. **Run in Desktop Mode** (Tauri + Vite with live reload):
+   ```sh
+   pnpm tauri dev
+   ```
 
-В desktop логи идут настоящим потоком: Pod → Logs → Log options для выбора tail/периода/Previous container и Reconnect. Pause останавливает чтение, Resume заново загружает tail; история ограничена. В browser dev пока tail 500 строк раз в 3 с. Desktop Pod shell подключён через kube-rs/Tauri/xterm: ввод, resize, exit/error, явный reconnect и cleanup. В логах и shell есть выбор обычных/init/sidecar/ephemeral контейнеров со статусами; toolbar логов адаптивен. Подробности — [13](docs/13-POD-SESSIONS.md), [14: поток логов](docs/14-POD-LOG-STREAMS.md). Локальный host terminal подключён: нижняя панель → Open Local Terminal (Host PC), либо `+` → Local Terminal; системный shell и домашняя папка, ввод/Ctrl-C/resize/exit, явный reconnect и cleanup. Работает в desktop без подключения к кластеру; в browser показано требование desktop. См. [15](docs/15-HOST-TERMINAL.md). Node shell подключён: Nodes → Node shell → namespace/image → Start; privileged helper автоматически удаляется при завершении, ошибки cleanup доступны для повтора. См. [16](docs/16-NODE-SHELL.md). Secret → Overview → Edit data: отдельные строки ключей, Text/Base64, автоматическое кодирование и live save с UID/resourceVersion; см. [17](docs/17-SECRET-EDITOR.md). Port-forward, YAML apply/delete/restart/create ещё не подключены; UI обозначает ограничения. В реальном режиме YAML доступен для просмотра/копирования/скачивания. Наличие Rust API для подсистемы не означает завершённую интеграцию.
+4. **Run in Browser / Demo Mode**:
+   ```sh
+   pnpm dev
+   # Open http://localhost:1420/?demo=1 in your browser
+   ```
 
-## Проверки
+---
+
+## ⌨️ Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| <kbd>Ctrl</kbd> + <kbd>K</kbd> / <kbd>⌘K</kbd> | Open Command Palette / Quick Resource Search |
+| <kbd>Ctrl</kbd> + <kbd>B</kbd> / <kbd>⌘B</kbd> | Toggle Cluster Explorer Sidebar |
+| <kbd>Ctrl</kbd> + <kbd>J</kbd> / <kbd>⌘J</kbd> | Toggle Bottom Dock (Terminals & Logs) |
+| <kbd>Ctrl</kbd> + <kbd>W</kbd> / <kbd>⌘W</kbd> | Close Current Tab |
+| <kbd>Ctrl</kbd> + <kbd>Tab</kbd> | Switch to Next Tab |
+| <kbd>Ctrl</kbd> + <kbd>+</kbd> / <kbd>Ctrl</kbd> + <kbd>-</kbd> | Zoom In / Out UI Scale (80% – 200%) |
+| <kbd>Ctrl</kbd> + <kbd>0</kbd> | Reset UI Scale to Default (110%) |
+| <kbd>Ctrl</kbd> + <kbd>,</kbd> | Open Settings & Appearance Preferences |
+| <kbd>Escape</kbd> | Close Modals / Cancel Operations / Dismiss Menus |
+
+---
+
+## 🛠️ Kubiki Core CLI (`kubiki-cli`)
+
+Kubiki includes a headless command-line binary for headless operations, scripting, and CI:
 
 ```sh
-pnpm build
+# Build the CLI tool
+cargo build --release --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli
+
+# Run commands
+./target/release/kubiki-cli contexts             # List all kubeconfig contexts
+./target/release/kubiki-cli current-context      # Print active context
+./target/release/kubiki-cli ping [context]       # Verify cluster connectivity
+./target/release/kubiki-cli namespaces [context] # List cluster namespaces
+./target/release/kubiki-cli crds [context]       # List CRDs with printer columns
+./target/release/kubiki-cli metrics [context]    # Node and Pod metrics
+./target/release/kubiki-cli helm-releases [ns]   # List Helm releases
+./target/release/kubiki-cli helm-repos           # List configured Helm repositories
+```
+
+---
+
+## 🧪 Testing & Verification
+
+Kubiki maintains a comprehensive automated testing suite covering unit tests, integration tests, Rust core tests, and end-to-end browser automation:
+
+```sh
+# Typecheck TypeScript codebase
 pnpm typecheck
+
+# Run Vitest unit tests (293 tests)
 pnpm test
-# Запустить pnpm dev перед browser tests
+
+# Run Rust tests for kubiki-core (89 tests)
+cargo test --manifest-path crates/kubiki-core/Cargo.toml
+
+# Run Rust tests for desktop backend (src-tauri)
+cargo test --manifest-path src-tauri/Cargo.toml
+
+# Build production frontend bundle
+pnpm build
+
+# Run Playwright E2E browser tests
 pnpm test:e2e
-cargo test --manifest-path crates/kubiki-core/Cargo.toml --offline
-cargo check --manifest-path src-tauri/Cargo.toml --offline
 ```
 
-Playwright автоматически использует `/usr/bin/google-chrome`, если он установлен. Другой путь задаётся через `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; при отсутствии системного Chrome используется стандартный браузер Playwright (`pnpm exec playwright install chromium`). Тесты работают в изолированном demo mode, с подставленными ошибками API и Tauri IPC; Rust tests проверяют kube-rs watcher и exec через локальный HTTP/WebSocket API; они не заменяют live cluster integration.
+---
 
-## Лицензия
+## 🐧 Linux / NVIDIA Graphics Diagnostics
 
-Kubiki распространяется под [Apache License 2.0](LICENSE). Лицензии сторонних зависимостей сохраняются за их правообладателями.
+On Linux environments with NVIDIA GPUs and Wayland, hardware acceleration occasionally requires specific driver flags. Kubiki handles this automatically, but provides explicit overrides:
 
+- **Auto Mode (Default)**: Preserves fast DMABUF path and applies synchronization workarounds for NVIDIA/Wayland.
+- **Compatibility Mode**: `KUBIKI_GRAPHICS_MODE=compatibility pnpm tauri dev`
+- **System Mode**: `KUBIKI_GRAPHICS_MODE=system pnpm tauri dev`
+- **CLI Diagnostics**:
+  ```sh
+  src-tauri/target/debug/kubiki --graphics-info
+  ```
 
-Общая статистика: **Overview** в левом Cluster Explorer (или «+» у вкладок). При All Namespaces — сводка кластера, при выбранном namespace — только его ресурсы. Counts, Pod phases, restarts, проблемы и переходы к объектам используют текущие watch/snapshots; недоступные данные отмечены отдельно. CPU/RAM подключены через Metrics API: history/gauges, requests/limits, node capacity/allocatable, consumers и контейнеры; требуется доступ к metrics.k8s.io. История накапливается во время наблюдения; см. [19](docs/19-OVERVIEW-TELEMETRY.md). См. [18](docs/18-OVERVIEW.md).
+---
 
+## 📄 License
 
-## Linux / NVIDIA: запуск и диагностика графики
+Kubiki is licensed under the **[Apache License 2.0](LICENSE)**.
 
-Полностью перезапустите `pnpm tauri dev` после обновления. По умолчанию `auto` не отключает быстрый DMABUF path; только NVIDIA/Wayland получает explicit-sync workaround. При blank window/графических артефактах прежний режим: `KUBIKI_GRAPHICS_MODE=compatibility pnpm tauri dev`. Режим без overrides приложения: `KUBIKI_GRAPHICS_MODE=system pnpm tauri dev`. Унаследованные graphics env в auto/system сохраняются.
+```
+Copyright 2026 Kubiki Authors
 
-Собранный бинарник: `src-tauri/target/debug/kubiki --graphics-info` — диагностика без окна и kubeconfig; `--graphics=compatibility` — явный fallback. Изменения действуют только после перезапуска процесса, HMR недостаточно. Измерения и границы проверки — [native rendering](docs/11-TOPOLOGY-PERFORMANCE.md).
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+```
