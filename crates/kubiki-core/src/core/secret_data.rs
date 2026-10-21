@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SecretDataRequest {
     pub resource: ResourceRef,
     pub resource_version: String,
@@ -83,7 +84,18 @@ where
     Fut: std::future::Future<Output = Result<bool, ApiError>>,
 {
     let resource = request.resource.clone();
-    let result = super::mutations::PreparedMutation::prepare(client, super::mutations::MutationIntent::Secret(request)).await?
-        .confirm_and_commit(confirm).await?;
-    serde_json::from_value(result).map_err(|_| super::mutations::error(&resource, 500, "Cannot decode Secret response; refresh to verify saved state"))
+    let result = super::mutations::PreparedMutation::prepare(
+        client,
+        super::mutations::MutationIntent::Secret(request),
+    )
+    .await?
+    .confirm_and_commit(confirm)
+    .await?;
+    serde_json::from_value(result).map_err(|_| {
+        super::mutations::error(
+            &resource,
+            500,
+            "Cannot decode Secret response; refresh to verify saved state",
+        )
+    })
 }

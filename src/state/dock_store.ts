@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware';
 import type { ResourceKind } from '../types/k8s';
 import { useResourceStore } from './resource_store';
 import { defaultContainer, podContainers } from '../core/resources/containers';
+import { findWorkloadPods, preferredWorkloadPod } from '../core/resources/workload_pods';
 import { useClusterStore } from './cluster_store';
 
 export type DockSessionType = 'terminal' | 'logs' | 'ports' | 'events';
@@ -125,12 +126,29 @@ export const useDockStore = create<DockState>()(
 
         const { sessions } = get();
         const context = useClusterStore.getState().currentContext;
-        const pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        let pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        let resolvedTitle = `Pod: ${resourceName}`;
+        if (!pod) {
+          const resources = useResourceStore.getState().resources;
+          for (const kind of ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'CronJob'] as const) {
+            const wl = resources[kind]?.get(`${namespace}/${resourceName}`) || [...(resources[kind]?.values() ?? [])].find(i => i.name === resourceName && i.namespace === namespace);
+            if (wl) {
+              const childPods = findWorkloadPods(wl, resources);
+              const active = preferredWorkloadPod(childPods);
+              if (active) {
+                pod = active;
+                resolvedTitle = `Pod: ${resourceName} (${active.name})`;
+                break;
+              }
+            }
+          }
+        }
+        const effectiveName = pod ? pod.name : resourceName;
         if (useContainerLaunchStore.getState().request(pod, container, true, chosen => get().openTerminal(resourceName, namespace, chosen, allContainers))) return '';
         container ??= defaultContainer(pod, true) ?? allContainers[0] ?? '';
         if (pod) allContainers = podContainers(pod).map((c) => c.name);
         const id = `dock-terminal-${crypto.randomUUID()}`;
-        const existing = sessions.find((s) => s.type === 'terminal' && s.context === context && s.uid === pod?.uid && s.resourceName === resourceName && s.namespace === namespace && s.container === container);
+        const existing = sessions.find((s) => s.type === 'terminal' && s.context === context && s.uid === pod?.uid && s.resourceName === effectiveName && s.namespace === namespace && s.container === container);
         if (existing) {
           set({ activeSessionId: existing.id, dockCollapsed: false });
           return existing.id;
@@ -140,11 +158,11 @@ export const useDockStore = create<DockState>()(
           id,
           type: 'terminal',
           context, uid: pod?.uid,
-          title: `Pod: ${resourceName}`,
+          title: resolvedTitle,
           subtitle: `${namespace} · ${container}`,
           targetType: 'pod',
           kind: 'Pod',
-          resourceName,
+          resourceName: effectiveName,
           namespace,
           container,
           allContainers: allContainers.length > 0 ? allContainers : [container],
@@ -163,12 +181,29 @@ export const useDockStore = create<DockState>()(
       openLogs: (resourceName, namespace = 'default', container, allContainers = []) => {
         const { sessions } = get();
         const context = useClusterStore.getState().currentContext;
-        const pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        let pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        let resolvedTitle = `Logs: ${resourceName}`;
+        if (!pod) {
+          const resources = useResourceStore.getState().resources;
+          for (const kind of ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'CronJob'] as const) {
+            const wl = resources[kind]?.get(`${namespace}/${resourceName}`) || [...(resources[kind]?.values() ?? [])].find(i => i.name === resourceName && i.namespace === namespace);
+            if (wl) {
+              const childPods = findWorkloadPods(wl, resources);
+              const active = preferredWorkloadPod(childPods);
+              if (active) {
+                pod = active;
+                resolvedTitle = `Logs: ${resourceName} (${active.name})`;
+                break;
+              }
+            }
+          }
+        }
+        const effectiveName = pod ? pod.name : resourceName;
         if (useContainerLaunchStore.getState().request(pod, container, false, chosen => get().openLogs(resourceName, namespace, chosen, allContainers))) return '';
         container ??= defaultContainer(pod, false) ?? allContainers[0] ?? '';
         if (pod) allContainers = podContainers(pod).map((c) => c.name);
         const id = `dock-logs-${crypto.randomUUID()}`;
-        const existing = sessions.find((s) => s.type === 'logs' && s.context === context && s.uid === pod?.uid && s.resourceName === resourceName && s.namespace === namespace && s.container === container);
+        const existing = sessions.find((s) => s.type === 'logs' && s.context === context && s.uid === pod?.uid && s.resourceName === effectiveName && s.namespace === namespace && s.container === container);
         if (existing) {
           set({ activeSessionId: existing.id, dockCollapsed: false });
           return existing.id;
@@ -178,11 +213,11 @@ export const useDockStore = create<DockState>()(
           id,
           type: 'logs',
           context, uid: pod?.uid,
-          title: `Logs: ${resourceName}`,
+          title: resolvedTitle,
           subtitle: `${namespace} · ${container}`,
           targetType: 'pod',
           kind: 'Pod',
-          resourceName,
+          resourceName: effectiveName,
           namespace,
           container,
           allContainers: allContainers.length > 0 ? allContainers : [container],
@@ -260,7 +295,7 @@ export const useDockStore = create<DockState>()(
 
       setDockCollapsed: (dockCollapsed) => set({ dockCollapsed }),
 
-      setDockHeight: (h) => set({ dockHeight: Math.min(600, Math.max(140, h)), dockCollapsed: false }),
+      setDockHeight: (h) => set({ dockHeight: Math.max(140, h), dockCollapsed: false }),
 
       resetLayout: () => set({ dockHeight: 280, dockCollapsed: true }),
       focusTool: (type) => {

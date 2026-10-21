@@ -1,7 +1,7 @@
 //! The desktop write boundary. A prepared operation owns its payload and can only
 //! be consumed once, after backend consent. No approval flag is deserialized.
 use super::{
-    api::{ApiError, ApiErrorCode, ResourceRef, validate_query},
+    api::{ApiError, ApiErrorCode, ResourceRef, resource_type, validate_query},
     secret_data::SecretDataRequest,
 };
 use kube::{
@@ -21,6 +21,11 @@ pub const REVIEW_TTL: Duration = Duration::from_secs(120);
 pub const MAX_REVIEW_CHARS: usize = 24_000;
 
 pub enum MutationIntent {
+    Manifest {
+        context: String,
+        manifest: String,
+        target: Option<ManifestTarget>,
+    },
     Scale {
         resource: ResourceRef,
         resource_version: String,
@@ -31,6 +36,14 @@ pub enum MutationIntent {
         resource: ResourceRef,
         resource_version: String,
     },
+}
+
+/// Separate from editable YAML so changing metadata cannot retarget an editor save.
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestTarget {
+    pub resource: ResourceRef,
+    pub resource_version: String,
 }
 
 pub fn error(resource: &ResourceRef, status: u16, message: &str) -> ApiError {
@@ -55,9 +68,15 @@ pub fn cancelled(resource: &ResourceRef, message: &str) -> ApiError {
 
 pub fn identity_summary(resource: &ResourceRef, version: &str) -> String {
     // JSON quoting prevents untrusted labels/names from spoofing lines in the review.
+    let api_version = if resource.query.group.is_empty() {
+        resource.query.version.clone()
+    } else {
+        format!("{}/{}", resource.query.group, resource.query.version)
+    };
     format!(
-        "Context: {:?}\n{}: {:?}\nNamespace: {:?}\nUID: {:?}\nResource version: {:?}",
+        "Context: {:?}\nAPI: {:?}\n{}: {:?}\nNamespace: {:?}\nUID: {:?}\nResource version: {:?}",
         resource.query.context,
+        api_version,
         resource.query.kind,
         resource.name,
         resource.query.namespace.as_deref().unwrap_or("(cluster)"),
@@ -76,7 +95,7 @@ pub async fn bounded<T>(
 }
 
 fn validate_identity(resource: &ResourceRef, version: &str) -> Result<(), ApiError> {
-    let kind = validate_query(&resource.query)?;
+    validate_reference(resource)?;
     if resource.uid.as_deref().is_none_or(str::is_empty)
         || version.is_empty()
         || resource.name.is_empty()
@@ -90,12 +109,6 @@ fn validate_identity(resource: &ResourceRef, version: &str) -> Result<(), ApiErr
                     .bytes()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         })
-        || (kind.namespaced
-            && resource
-                .query
-                .namespace
-                .as_deref()
-                .is_none_or(|s| s == "all" || s.is_empty()))
     {
         return Err(error(
             resource,
@@ -106,20 +119,77 @@ fn validate_identity(resource: &ResourceRef, version: &str) -> Result<(), ApiErr
     Ok(())
 }
 
-fn resource_api(client: Client, resource: &ResourceRef) -> Result<Api<DynamicObject>, ApiError> {
-    let kind = validate_query(&resource.query)?;
-    let ar = ApiResource {
-        group: kind.group.clone(),
-        version: kind.version.clone(),
-        api_version: if kind.group.is_empty() {
-            kind.version.clone()
+fn valid_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 253
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c))
+}
+fn validate_reference(resource: &ResourceRef) -> Result<(), ApiError> {
+    let q = &resource.query;
+    if q.context.trim().is_empty()
+        || !valid_segment(&resource.name)
+        || !valid_segment(&q.kind)
+        || !valid_segment(&q.version)
+        || (!q.group.is_empty() && !valid_segment(&q.group))
+        || q.namespace
+            .as_deref()
+            .is_some_and(|ns| !valid_segment(ns) || ns == "all")
+    {
+        return Err(error(
+            resource,
+            400,
+            "An exact context, API, resource name and namespace are required",
+        ));
+    }
+    Ok(())
+}
+
+async fn resource_api(
+    client: Client,
+    resource: &ResourceRef,
+) -> Result<Api<DynamicObject>, ApiError> {
+    validate_reference(resource)?;
+    let q = &resource.query;
+    let (ar, namespaced) =
+        if let Some(kind) = resource_type(&q.kind).filter(|kind| kind.group == q.group) {
+            validate_query(q)?;
+            (
+                ApiResource {
+                    group: q.group.clone(),
+                    version: q.version.clone(),
+                    api_version: if q.group.is_empty() {
+                        q.version.clone()
+                    } else {
+                        format!("{}/{}", q.group, q.version)
+                    },
+                    kind: q.kind.clone(),
+                    plural: kind.plural.clone(),
+                },
+                kind.namespaced,
+            )
         } else {
-            format!("{}/{}", kind.group, kind.version)
-        },
-        kind: kind.kind.clone(),
-        plural: kind.plural.clone(),
-    };
-    Ok(match &resource.query.namespace {
+            let gvk = kube::core::GroupVersionKind::gvk(&q.group, &q.version, &q.kind);
+            let (ar, capabilities) =
+                bounded(resource, kube::discovery::pinned_kind(&client, &gvk)).await?;
+            if !capabilities.supports_operation("get") || ar.plural.contains('/') {
+                return Err(error(
+                    resource,
+                    400,
+                    "Only standalone Kubernetes objects can be changed",
+                ));
+            }
+            (ar, capabilities.scope == kube::discovery::Scope::Namespaced)
+        };
+    if namespaced != q.namespace.is_some() {
+        return Err(error(
+            resource,
+            400,
+            "The resource scope requires an exact namespace or a cluster-scoped identity",
+        ));
+    }
+    Ok(match &q.namespace {
         Some(ns) => Api::namespaced_with(client, ns, &ar),
         None => Api::all_with(client, &ar),
     })
@@ -136,23 +206,34 @@ pub struct PreparedMutation {
     review: String,
     scale: Option<i32>,
     delete: bool,
+    create: bool,
     prepared_at: Instant,
 }
 impl PreparedMutation {
     pub async fn prepare(client: Client, intent: MutationIntent) -> Result<Self, ApiError> {
+        let intent = match intent {
+            MutationIntent::Manifest {
+                context,
+                manifest,
+                target,
+            } => return Self::prepare_manifest(client, context, manifest, target).await,
+            intent => intent,
+        };
         let (resource, version, scale, secret, delete) = match intent {
+            MutationIntent::Manifest { .. } => unreachable!(),
             MutationIntent::Scale {
                 resource,
                 resource_version,
                 replicas,
             } => {
-                if !["Deployment", "StatefulSet"].contains(&resource.query.kind.as_str())
+                validate_query(&resource.query)?;
+                if !["Deployment", "StatefulSet", "ReplicaSet"].contains(&resource.query.kind.as_str())
                     || !(0..=100000).contains(&replicas)
                 {
                     return Err(error(
                         &resource,
                         400,
-                        "Only Deployment/StatefulSet replicas in 0..100000 can be changed",
+                        "Only Deployment/StatefulSet/ReplicaSet replicas in 0..100000 can be changed",
                     ));
                 }
                 (resource, resource_version, Some(replicas), None, false)
@@ -173,7 +254,7 @@ impl PreparedMutation {
             }
         };
         validate_identity(&resource, &version)?;
-        let api = resource_api(client, &resource)?;
+        let api = resource_api(client, &resource).await?;
         let before = bounded(&resource, api.get(&resource.name)).await?;
         if before.metadata.uid != resource.uid
             || before.metadata.resource_version.as_deref() != Some(&version)
@@ -238,6 +319,9 @@ impl PreparedMutation {
                 "DELETE this Kubernetes object using background garbage collection. Controllers or garbage collection may also remove dependents; Kubernetes does not provide a complete preview of those effects.\n\nObject metadata:\n{}",
                 serde_json::to_string_pretty(&summary).expect("metadata serializes")
             );
+            if resource.query.kind == "CustomResourceDefinition" {
+                diff.push_str("\n\nDeleting a CRD deletes all custom resources defined by it across namespaces.");
+            }
             if resource.query.kind == "Namespace" {
                 diff.push_str("\n\nDeleting a Namespace removes its namespaced contents.");
             }
@@ -264,6 +348,150 @@ impl PreparedMutation {
             review,
             scale,
             delete,
+            create: false,
+            prepared_at: Instant::now(),
+        })
+    }
+
+    async fn prepare_manifest(
+        client: Client,
+        context: String,
+        manifest: String,
+        target: Option<ManifestTarget>,
+    ) -> Result<Self, ApiError> {
+        use super::api::ResourceQuery;
+        let mut resource = ResourceRef {
+            query: ResourceQuery {
+                context,
+                group: String::new(),
+                version: String::new(),
+                kind: String::new(),
+                namespace: None,
+            },
+            name: String::new(),
+            uid: None,
+        };
+        if manifest.len() > 1024 * 1024 {
+            return Err(error(&resource, 422, "Manifest exceeds 1 MiB"));
+        }
+        // Exactly one named object: no List, multi-document input, subresource or generateName.
+        let mut after: DynamicObject = serde_yaml::from_str(&manifest).map_err(|_| {
+            error(
+                &resource,
+                400,
+                "Expected one named Kubernetes object as YAML",
+            )
+        })?;
+        let types = after
+            .types
+            .as_ref()
+            .ok_or_else(|| error(&resource, 400, "apiVersion and kind are required"))?;
+        let (group, version) = types
+            .api_version
+            .split_once('/')
+            .unwrap_or(("", &types.api_version));
+        resource.query.group = group.into();
+        resource.query.version = version.into();
+        resource.query.kind = types.kind.clone();
+        resource.query.namespace = after.metadata.namespace.clone();
+        resource.name = after.metadata.name.clone().unwrap_or_default();
+        resource.uid = after.metadata.uid.clone();
+        validate_reference(&resource)?;
+        if resource.query.kind == "List" || after.metadata.generate_name.is_some() {
+            return Err(error(
+                &resource,
+                400,
+                "Lists and generated names are not supported by the object change gateway",
+            ));
+        }
+        let mut version = after.metadata.resource_version.clone().unwrap_or_default();
+        if let Some(target) = target {
+            if target.resource != resource || target.resource_version != version {
+                return Err(error(
+                    &resource,
+                    409,
+                    "The YAML identity or resourceVersion differs from the object opened in the editor. Refresh and review again",
+                ));
+            }
+        }
+        let api = resource_api(client, &resource).await?;
+        let current = bounded(&resource, api.get_opt(&resource.name)).await?;
+        let create = current.is_none();
+        let before = if let Some(before) = current {
+            validate_identity(&resource, &version)?;
+            if before.metadata.uid != resource.uid
+                || before.metadata.resource_version.as_deref() != Some(&version)
+            {
+                return Err(error(
+                    &resource,
+                    409,
+                    "Object changed or was recreated. Refresh and review again",
+                ));
+            }
+            // Server-owned fields are restored, never trusted from an editable document.
+            after.metadata.managed_fields = before.metadata.managed_fields.clone();
+            after.metadata.creation_timestamp = before.metadata.creation_timestamp.clone();
+            if let Some(status) = before.data.get("status") {
+                after.data["status"] = status.clone();
+            } else if let Some(map) = after.data.as_object_mut() {
+                map.remove("status");
+            }
+            before
+        } else {
+            if resource.uid.is_some() || !version.is_empty() {
+                return Err(error(
+                    &resource,
+                    409,
+                    "The edited object no longer exists. Refusing to recreate it",
+                ));
+            }
+            if after.data.get("status").is_some() || after.metadata.managed_fields.is_some() {
+                return Err(error(
+                    &resource,
+                    400,
+                    "Creation cannot include server-owned status or managedFields",
+                ));
+            }
+            version = "(new object)".into();
+            after.clone()
+        };
+        let old = serde_json::to_value(&before).expect("object serializes");
+        let new = serde_json::to_value(&after).expect("object serializes");
+        let mut diff = String::new();
+        if create {
+            diff = format!(
+                "CREATE object:\n{}",
+                serde_json::to_string_pretty(&new).unwrap()
+            );
+        } else {
+            json_diff("", &old, &new, &mut diff);
+        }
+        if diff.is_empty() {
+            return Err(error(&resource, 400, "No changes to apply"));
+        }
+        let review = format!(
+            "{}\n\n{}\n\n{} this exact object? Changes to controllers or finalizers may create or delete dependent resources. Cancel changes nothing.",
+            identity_summary(&resource, &version),
+            diff,
+            if create { "CREATE" } else { "UPDATE" }
+        );
+        if review.chars().count() > MAX_REVIEW_CHARS {
+            return Err(error(
+                &resource,
+                422,
+                "Complete change review exceeds 24000 characters. Split the change",
+            ));
+        }
+        Ok(Self {
+            api,
+            resource,
+            version,
+            before,
+            after,
+            review,
+            scale: None,
+            delete: false,
+            create,
             prepared_at: Instant::now(),
         })
     }
@@ -291,6 +519,38 @@ impl PreparedMutation {
                 "Confirmation expired. Refresh and review again",
             ));
         }
+        if self.create {
+            if bounded(&self.resource, self.api.get_opt(&self.resource.name))
+                .await?
+                .is_some()
+            {
+                return Err(error(
+                    &self.resource,
+                    409,
+                    "An object appeared during confirmation. Nothing was overwritten; refresh and review again",
+                ));
+            }
+            if self.prepared_at.elapsed() > REVIEW_TTL {
+                return Err(error(
+                    &self.resource,
+                    409,
+                    "Confirmation expired during the final check; review again",
+                ));
+            }
+            // POST cannot replace an object created by another actor after this read.
+            let result = bounded(
+                &self.resource,
+                self.api.create(&PostParams::default(), &self.after),
+            )
+            .await?;
+            return serde_json::to_value(result).map_err(|_| {
+                error(
+                    &self.resource,
+                    500,
+                    "Cannot decode response; refresh to verify the outcome",
+                )
+            });
+        }
         let current = bounded(&self.resource, self.api.get(&self.resource.name)).await?;
         if current.metadata.uid != self.before.metadata.uid
             || current.metadata.resource_version.as_deref() != Some(&self.version)
@@ -299,6 +559,13 @@ impl PreparedMutation {
                 &self.resource,
                 409,
                 "Resource changed while confirmation was open. Refresh and review again",
+            ));
+        }
+        if self.prepared_at.elapsed() > REVIEW_TTL {
+            return Err(error(
+                &self.resource,
+                409,
+                "Confirmation expired during the final check; review again",
             ));
         }
         if self.delete {
@@ -358,6 +625,31 @@ impl PreparedMutation {
     }
 }
 
+fn json_diff(path: &str, before: &Value, after: &Value, out: &mut String) {
+    if before == after {
+        return;
+    }
+    if let (Some(a), Some(b)) = (before.as_object(), after.as_object()) {
+        for key in a.keys().chain(b.keys()).collect::<BTreeSet<_>>() {
+            let next = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
+            match (a.get(key), b.get(key)) {
+                (Some(old), Some(new)) => json_diff(&next, old, new, out),
+                (old, new) => out.push_str(&format!(
+                    "{:?}: BEFORE {} → AFTER {}\n",
+                    next,
+                    old.map(Value::to_string).unwrap_or("(absent)".into()),
+                    new.map(Value::to_string).unwrap_or("(removed)".into())
+                )),
+            }
+        }
+    } else {
+        out.push_str(&format!(
+            "{:?}: BEFORE {} → AFTER {}\n",
+            path, before, after
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,7 +663,9 @@ mod tests {
         });
         let before:DynamicObject=serde_json::from_value(json!({"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","uid":"uid","resourceVersion":"10"},"spec":{"replicas":1}})).unwrap();
         let plan = PreparedMutation {
-            api: resource_api(Client::new(service, "default"), &resource).unwrap(),
+            api: resource_api(Client::new(service, "default"), &resource)
+                .await
+                .unwrap(),
             resource,
             version: "10".into(),
             before: before.clone(),
@@ -379,6 +673,7 @@ mod tests {
             review: "review".into(),
             scale: Some(0),
             delete: false,
+            create: false,
             prepared_at: Instant::now() - REVIEW_TTL - Duration::from_secs(1),
         };
         assert_eq!(

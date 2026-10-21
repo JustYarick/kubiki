@@ -1,3 +1,4 @@
+import { inNamespaceScope } from '../core/resources/namespace_scope';
 import type { ResourceKind } from '../types/k8s';
 import { apiVersionFor, resourceQuery, resourceType, type ResourceQuery } from '../core/resources/resource_types';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
@@ -85,11 +86,12 @@ export class ResourceWatchSession {
   }
 
   private validateObject(raw: Record<string, any>, query: ResourceQuery): void {
-    const namespaced = resourceType(query.kind as ResourceKind).namespaced;
-    if (!raw || typeof raw.metadata?.uid !== 'string' || !raw.metadata.uid || typeof raw.metadata.name !== 'string' || !raw.metadata.name
+    const type = resourceType(query.kind as ResourceKind);
+    const namespaced = type.namespaced;
+    if (!raw || type.watch !== false && (typeof raw.metadata?.uid !== 'string' || !raw.metadata.uid) || typeof raw.metadata?.name !== 'string' || !raw.metadata.name
       || namespaced && (typeof raw.metadata.namespace !== 'string' || !raw.metadata.namespace)
       || !namespaced && raw.metadata.namespace
-      || query.namespace && raw.metadata.namespace !== query.namespace
+      || query.namespace && !inNamespaceScope(query.namespace, raw.metadata.namespace)
       || raw.kind && raw.kind !== query.kind || raw.apiVersion && raw.apiVersion !== apiVersionFor(query)) throw new Error('Watch object does not match the requested resource scope');
   }
 

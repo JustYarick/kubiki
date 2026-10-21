@@ -1,11 +1,19 @@
+import { changeResource, deleteObject } from './mutations';
+import { resourceRef } from '../core/resources/identity';
+import { namespaceNames, inNamespaceScope } from '../core/resources/namespace_scope';
+import { parseApiResources } from './api_discovery';
+import { RESOURCE_TYPES } from '../core/resources/resource_types';
+import { pollResourceSnapshots } from './snapshot_watch';
+import { watchNamespaceSelection } from './multi_namespace_watch';
 import type { KubeContextInfo, ResourceItem, ResourceKind } from '../types/k8s';
 import { mapK8sResourceList } from '../core/utils/k8s_mapper';
 import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
-import { parseApiVersion, resourceQuery } from '../core/resources/resource_types';
+import { parseApiVersion, resourceQuery, resourceType } from '../core/resources/resource_types';
 import type { KubernetesProvider } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
 import type { ResourceQuery } from '../core/resources/resource_types';
 import type { WatchBatch } from './watch_types';
+import { parseCustomResources, type CustomResourceInstance } from './custom_resources';
 import { parseHelmPage, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmOffset, validateHelmDocument, type HelmDocument } from './helm_types';
 
 export const DEMO_CONTEXT = 'kubiki-demo';
@@ -25,8 +33,9 @@ export class K8sProvider implements KubernetesProvider {
 
   async watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
     if (!this.supportsResourceWatch) throw requestError('unsupported', 'Resource watch is available in the desktop app. Browser mode uses snapshots.', { operation: 'watch', context: query.context, resource: query });
+    if (resourceType(query.kind).watch === false) return watchNamespaceSelection({ watchResources: (scoped, receive, abort) => pollResourceSnapshots(scoped, () => this.request('get_resources', 'resources', { ...scoped }, undefined, undefined, abort), receive, abort) }, query, onBatch, signal);
     const { watchTauriResources } = await import('./tauri_watch');
-    return watchTauriResources(query, onBatch, signal);
+    return watchNamespaceSelection({ watchResources: watchTauriResources }, query, onBatch, signal);
   }
 
   private isTauriEnv(): boolean {
@@ -91,13 +100,20 @@ export class K8sProvider implements KubernetesProvider {
     return this.request('get_namespaces', 'namespaces', { context });
   }
 
-  async getResources(context: string, kind: ResourceKind, namespace?: string): Promise<ResourceItem[]> {
+  async getApiResources(context: string) {
+    if (this.demo) return [...RESOURCE_TYPES];
+    return parseApiResources(await this.request('get_api_resources', 'api-resources', { context }));
+  }
+
+  async getResources(context: string, kind: ResourceKind, namespace?: string, signal?: AbortSignal): Promise<ResourceItem[]> {
     if (this.demo) {
       this.mock ??= buildMockResources();
-      return (this.mock[kind] ?? []).filter((item) => !namespace || namespace === 'all' || !item.namespace || item.namespace === namespace);
+      return (this.mock[kind] ?? []).filter((item) => inNamespaceScope(namespace ?? 'all', item.namespace));
     }
+    const names = namespaceNames(namespace ?? 'all');
+    if (names && names.length !== 1 && resourceType(kind).namespaced) return (await Promise.all(names.map(name => this.getResources(context, kind, name, signal)))).flat();
     const query = resourceQuery(context, kind, namespace);
-    const raw = await this.request<any>('get_resources', 'resources', { ...query });
+    const raw = await this.request<any>('get_resources', 'resources', { ...query }, undefined, undefined, signal);
     if (!raw || !Array.isArray(raw.items) || raw.items.some((item: any) => !item || typeof item.metadata?.name !== 'string' || !item.metadata.name || item.kind && item.kind !== kind || item.apiVersion && (typeof item.apiVersion !== 'string' || parseApiVersion(item.apiVersion).group !== query.group))) {
       throw requestError('internal', 'Invalid resource list returned by Kubernetes bridge', { operation: 'resources', context, resource: query });
     }
@@ -109,8 +125,42 @@ export class K8sProvider implements KubernetesProvider {
     return this.request('get_pod_logs', 'logs', { ...resourceQuery(context, 'Pod', namespace), name, container });
   }
 
+  async getCustomResources(context: string, name: string, uid: string, namespace: string | null, signal?: AbortSignal): Promise<CustomResourceInstance[]> {
+    const names = namespaceNames(namespace ?? 'all');
+    if (names && names.length !== 1) return (await Promise.all(names.map(namespace => this.getCustomResources(context, name, uid, namespace, signal)))).flat();
+    if (this.demo) {
+      if (name === 'buckets.source.toolkit.fluxcd.io') {
+        const rawItems = [
+          {
+            apiVersion: 'source.toolkit.fluxcd.io/v1beta2',
+            kind: 'Bucket',
+            metadata: { name: 'media-assets', namespace: 'default', uid: 'bucket-media-1', creationTimestamp: new Date(Date.now() - 86400000 * 5).toISOString() },
+            spec: { endpoint: 's3.eu-west-1.amazonaws.com', bucketName: 'media-assets-prod', interval: '5m' },
+            status: { conditions: [{ type: 'Ready', status: 'True', message: 'Stored revision: v1.2.0' }] },
+          },
+          {
+            apiVersion: 'source.toolkit.fluxcd.io/v1beta2',
+            kind: 'Bucket',
+            metadata: { name: 'backup-dumps', namespace: 'infra', uid: 'bucket-backup-2', creationTimestamp: new Date(Date.now() - 86400000 * 12).toISOString() },
+            spec: { endpoint: 'minio.infra.svc.cluster.local:9000', bucketName: 'backups', interval: '10m' },
+            status: { conditions: [{ type: 'Ready', status: 'True', message: 'Stored revision: rev-381' }] },
+          },
+        ];
+        return parseCustomResources({ items: rawItems }).filter(item => inNamespaceScope(namespace ?? 'all', item.namespace));
+      }
+      return [];
+    }
+    return parseCustomResources(await this.request('get_custom_resources', 'custom-resources', { context, name, uid, namespace }, undefined, undefined, signal));
+  }
+
   async getOverviewMetrics(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./overview_metrics').OverviewMetrics> {
     const { validateMetrics } = await import('./overview_metrics');
+    const names = namespaceNames(namespace ?? 'all');
+    if (names && names.length !== 1) {
+      const metrics = await Promise.all(names.map(namespace => this.getOverviewMetrics(context, namespace, signal)));
+      const error = metrics.find(result => result.pods.error)?.pods.error ?? null;
+      return { context, namespace, pods: { items: error ? null : metrics.flatMap(result => result.pods.items ?? []), error }, nodes: { items: null, error: null } };
+    }
     if (this.demo) {
       this.mock ??= buildMockResources();
       const timestamp = new Date().toISOString();
@@ -123,10 +173,15 @@ export class K8sProvider implements KubernetesProvider {
 
   async updateSecretData(request: import('./secret_data').SecretDataRequest): Promise<Record<string, any>> {
     if (this.demo) throw new Error('Demo updates are handled in memory');
-    return this.request('update_secret_data', 'secrets', { ...request.resource }, request, { request });
+    return changeResource({ operation: 'secret', request });
   }
 
-  async getHelmReleases(context: string, namespace: string | null, offset = 0, signal?: AbortSignal) {
+  async getHelmReleases(context: string, namespace: string | null, offset = 0, signal?: AbortSignal): Promise<import('./helm_types').HelmReleasePage> {
+    const names = namespaceNames(namespace ?? 'all');
+    if (names && names.length !== 1) {
+      const pages = await Promise.all(names.map(namespace => this.getHelmReleases(context, namespace, offset, signal)));
+      return { context, namespace, offset, limit: 100, has_more: pages.some(page => page.has_more), items: pages.flatMap(page => page.items) };
+    }
     validateHelmTarget(context, namespace); validateHelmOffset(offset);
     if (this.demo) {
       const { demoHelmPage } = await import('./mock/mock_helm');
@@ -163,18 +218,29 @@ export class K8sProvider implements KubernetesProvider {
 
   async mutateHelm(request: import('./helm_types').HelmMutation): Promise<{ message: string }> {
     if (!this.supportsHelmMutations) throw requestError('forbidden', 'Helm changes require the desktop app and backend system confirmation.', { operation: 'helm_mutation' }, 403);
-    const { invoke } = await import('@tauri-apps/api/core');
-    try { return await invoke('mutate_helm', { request }); }
-    catch (error) { throw normalizeK8sError(error, { operation: 'helm_mutation', context: 'context' in request ? request.context : undefined }); }
+    return changeResource({ operation: 'helm', request });
   }
 
   async scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number, uid: string, resourceVersion: string): Promise<boolean> {
     if (this.demo) return true;
-    if (!['Deployment', 'StatefulSet'].includes(kind)) throw requestError('unsupported', 'Only Deployment and StatefulSet can be scaled', { context, operation: 'scale' }, 400);
+    if (!['Deployment', 'StatefulSet', 'ReplicaSet'].includes(kind)) throw requestError('unsupported', 'Only Deployment, StatefulSet and ReplicaSet can be scaled', { context, operation: 'scale' }, 400);
     const resource = { ...resourceQuery(context, kind as ResourceKind, namespace), name, uid };
-    const args = { resource, resourceVersion, replicas };
-    await this.request('scale_workload', 'scale', resource, args, args);
+    await changeResource({ operation: 'scale', resource, resource_version: resourceVersion, replicas });
     return true;
+  }
+
+  async applyManifest(context: string, manifest: string, item?: ResourceItem): Promise<string> {
+    if (this.demo) return 'Manifest applied in demo memory';
+    const target = item ? { resource: resourceRef(context, item), resource_version: item.raw?.metadata?.resourceVersion ?? '' } : undefined;
+    await changeResource({ operation: 'manifest', context, manifest, ...(target ? { target } : {}) });
+    return 'Manifest saved';
+  }
+
+  async deleteResource(context: string, kind: string, name: string, namespace: string | undefined, uid: string, resourceVersion: string, apiVersion?: string): Promise<string> {
+    if (this.demo) return 'Resource deleted in demo memory';
+    const resource = apiVersion ? { context, ...parseApiVersion(apiVersion), kind, namespace: namespace ?? null, name, uid } : { ...resourceQuery(context, kind as ResourceKind, namespace), name, uid };
+    await deleteObject({ operation: 'resource', resource, resource_version: resourceVersion });
+    return 'Resource deleted';
   }
 }
 

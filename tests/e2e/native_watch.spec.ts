@@ -1,3 +1,4 @@
+import { selectDiagramNamespaces } from './helpers/topology';
 import { RESOURCE_TYPES } from '../../src/core/resources/resource_types';
 const resourceCount = RESOURCE_TYPES.length;
 import { test, expect, type Page } from '@playwright/test';
@@ -57,13 +58,13 @@ async function nativeApi(page: Page, holdPod = false, restricted = false) {
 }
 
 test('native watch updates the table/inspector, retains stale data, then recovers with an authoritative empty list', async ({ page }) => {
-  await nativeApi(page); await page.goto('/');
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   const table = page.getByTestId('resource-table');
   await table.getByText('live-web', { exact: true }).click();
   await page.evaluate(() => (window as any).__watchHarness.update('Pending'));
   await expect(table.getByText('Pending', { exact: true })).toBeVisible();
-  await expect(page.getByTestId('resource-details').getByText('Pending', { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId('resource-details').getByRole('img', { name: 'Container · app · Pending · 0 restarts', exact: true })).toBeVisible();
   await page.evaluate(() => (window as any).__watchHarness.reconnect());
   await expect(page.getByText('Watch · 1 unavailable', { exact: true })).toBeVisible();
   await expect(table.getByRole('alert')).toContainText('Connection lost');
@@ -76,7 +77,7 @@ test('native watch updates the table/inspector, retains stale data, then recover
 });
 
 test('Sync replaces subscriptions, ignores old messages, and pagehide releases callbacks and watches', async ({ page }) => {
-  await nativeApi(page); await page.goto('/');
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Auto-refresh interval')).toHaveCount(0);
   await page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true }).click();
@@ -93,10 +94,9 @@ test('Sync replaces subscriptions, ignores old messages, and pagehide releases c
 
 test('status updates preserve manual graph positions and viewport without another layout worker', async ({ page }) => {
   const workers: string[] = []; page.on('worker', (worker) => { if (worker.url().includes('layout_worker')) workers.push(worker.url()); });
-  await nativeApi(page); await page.goto('/'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
-  await page.getByRole('button', { name: 'Diagram scope', exact: true }).click();
-  await page.getByRole('option', { name: 'Namespace: backend (1)', exact: true }).click();
+  await selectDiagramNamespaces(page, ['backend']);
   const node = page.locator('.react-flow__node-resource'); await expect(node).toHaveCount(1);
   await expect(page.getByText('Arranging topology…', { exact: true })).toHaveCount(0);
   const before = await node.getAttribute('style'); const bounds = (await node.boundingBox())!;
@@ -115,7 +115,7 @@ test('status updates preserve manual graph positions and viewport without anothe
 });
 
 test('context A → B → A isolates old subscriptions, including late callbacks', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   for (const context of ['native-other', 'native-test']) {
     await page.getByTitle('Switch Kubernetes Cluster Context', { exact: true }).click();
     await page.getByText(context, { exact: true }).click();
@@ -130,7 +130,7 @@ test('context A → B → A isolates old subscriptions, including late callbacks
 });
 
 test('first sync is visibly pending and does not pretend the namespace is empty', async ({ page }) => {
-  await nativeApi(page, true); await page.goto('/');
+  await nativeApi(page, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   await expect(table.getByRole('status')).toContainText('Waiting for the first complete snapshot');
   await expect(table.getByText('No pods found', { exact: true })).toHaveCount(0);
@@ -141,11 +141,13 @@ test('first sync is visibly pending and does not pretend the namespace is empty'
 
 async function namespace(page: Page, name: string) {
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
   await page.getByRole('dialog', { name: 'Choose Namespace Scope' }).getByRole('option', { name, exact: true }).click();
+  await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
 }
 
 test('namespace changes replace only scoped watches; pinned tabs stay available and ignore late snapshots', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await namespace(page, 'backend'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   const cluster = await page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => ['Node', 'Namespace', 'StorageClass', 'CustomResourceDefinition'].includes(s.kind)));
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
@@ -167,13 +169,14 @@ test('namespace changes replace only scoped watches; pinned tabs stay available 
 });
 
 test('a restricted user can enter an unlisted namespace and recover namespaced reads after 403', async ({ page }) => {
-  await nativeApi(page, false, true); await page.goto('/');
+  await nativeApi(page, false, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByTestId('resource-table').getByRole('alert')).toHaveAttribute('data-error-code', 'forbidden');
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Choose Namespace Scope' });
   await picker.getByRole('searchbox').fill('../other'); await expect(picker.getByRole('option')).toHaveCount(0);
   await picker.getByRole('searchbox').fill('backend');
-  await picker.getByRole('option', { name: 'Use namespace: backend', exact: true }).click();
+  await picker.getByRole('option', { name: 'backend', exact: true }).click();
+  await picker.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Namespace Scope', exact: true })).toHaveAttribute('data-value', 'backend');
   await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
   await expect(page.getByTestId('resource-table').getByRole('alert')).toHaveCount(0);
@@ -187,24 +190,64 @@ test('a restricted user can enter an unlisted namespace and recover namespaced r
 });
 
 test('a diagram outside the selected namespace explains missing data and loads its scope explicitly', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await namespace(page, 'backend'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
-  await page.getByRole('button', { name: 'Diagram scope', exact: true }).click();
-  await page.getByRole('option', { name: 'Namespace: other (not loaded)', exact: true }).click();
+  await selectDiagramNamespaces(page, ['other']);
   await expect(page.getByText('Load this namespace using the button above to build its diagram.', { exact: true })).toBeVisible();
   await expect(page.locator('.react-flow__node-resource')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Load namespace other', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Namespace Scope', exact: true })).toHaveAttribute('data-value', 'other');
+  await page.getByRole('button', { name: 'Load diagram namespaces', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Namespace Scope', exact: true })).toHaveAttribute('data-value', '["backend","other"]');
   await expect(page.locator('.react-flow__node-resource').getByText('other-web', { exact: true })).toBeVisible();
 });
 
 test('Overview derives live phase/issue counts from existing watches without adding subscriptions', async ({ page }) => {
-  await nativeApi(page);await page.goto('/');await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  await nativeApi(page);await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const overview = page.getByTestId('cluster-overview');const phases = overview.getByRole('region', { name: 'Pod phases', exact: true });
   await expect(overview.getByTestId('overview-count-Pod')).toHaveText('1');await expect(phases.getByText('Running', { exact: true }).locator('..')).toHaveText('Running1');
   expect(await page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(resourceCount);
   await page.evaluate(() => (window as any).__watchHarness.update('Failed'));await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed1');await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
   await page.evaluate(() => (window as any).__watchHarness.reconnect());await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('1');
   await page.evaluate(() => (window as any).__watchHarness.empty());await expect(overview.getByTestId('overview-count-Pod')).toHaveText('0');await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed0');
+});
+
+
+test('multiple selected namespaces use independent desktop watches and commit one complete combined snapshot', async ({ page }) => {
+  await nativeApi(page);
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).__watchHarness.holdNamespace('other'));
+  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Choose Namespace Scope', exact: true });
+  await picker.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await picker.getByRole('option', { name: 'backend', exact: true }).click();
+  await picker.getByRole('option', { name: 'other', exact: true }).click();
+  await picker.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
+  const table = page.getByTestId('resource-table');
+  await expect(table.getByRole('status')).toContainText('Waiting for the first complete snapshot');
+  await expect(table.locator('tbody tr')).toHaveCount(0);
+  const subscriptions = await page.evaluate(() => (window as any).__watchHarness.subscriptions());
+  expect(subscriptions.filter((subscription: any) => subscription.kind === 'Pod').map((subscription: any) => subscription.namespace).sort()).toEqual(['backend', 'other']);
+  await page.evaluate(() => (window as any).__watchHarness.release());
+  await expect(table.getByText('live-web', { exact: true })).toBeVisible();
+  await expect(table.getByText('other-web', { exact: true })).toBeVisible();
+  await expect(table.locator('tbody tr')).toHaveCount(2);
+  await page.evaluate(() => (window as any).__watchHarness.update('Pending'));
+  await expect(table.getByText('Pending', { exact: true })).toHaveCount(2);
+  await page.evaluate(() => (window as any).__watchHarness.reconnect());
+  await expect(table.getByRole('alert')).toContainText('Connection lost');
+  await expect(table.locator('tbody tr')).toHaveCount(2);
+  await page.evaluate(() => (window as any).__watchHarness.empty());
+  await expect(table.locator('tbody tr')).toHaveCount(0);
+  await expect(table.getByRole('alert')).toHaveCount(0);
+  await page.evaluate(() => (window as any).__watchHarness.update('Running'));
+  await namespace(page, 'backend');
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+  await expect(table.getByText('other-web', { exact: true })).toHaveCount(0);
+  await page.evaluate(() => (window as any).__watchHarness.late());
+  await expect(table.getByText('stale-web', { exact: true })).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.active())).toBe(0);
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(0);
 });

@@ -1,3 +1,4 @@
+import { defaultNamespace } from '../../core/resources/namespace_scope';
 import { useEffect, useState } from 'react';
 import { parse } from 'yaml';
 import { Modal } from '../ui/Modal';
@@ -13,14 +14,14 @@ export type HelmAction = HelmMutation['operation'];
 const titles: Record<HelmAction, string> = { install: 'Install Helm release', upgrade: 'Upgrade Helm release', rollback: 'Roll back Helm release', uninstall: 'Uninstall Helm release', repository_set: 'Configure Helm repository', repository_remove: 'Remove Helm repository', repository_update: 'Update Helm repository cache' };
 const input = 'w-full rounded border border-[var(--border-default)] bg-[var(--bg-canvas)] px-2 py-1.5 text-xs outline-none focus:border-[var(--accent)]';
 
-export function HelmActionDialog({ action, release, repo, onClose, onCompleted }: { action: HelmAction; release?: HelmRelease; repo?: HelmRepo; onClose: () => void; onCompleted: () => void }) {
+export function HelmActionDialog({ action, release, repo, initialRevision, onClose, onCompleted }: { action: HelmAction; initialRevision?: number; release?: HelmRelease; repo?: HelmRepo; onClose: () => void; onCompleted: () => void }) {
   const context = useClusterStore(state => state.currentContext);
   const scope = useClusterStore(state => state.selectedNamespace);
   const [name, setName] = useState(release?.name ?? repo?.name ?? '');
-  const [namespace, setNamespace] = useState(release?.namespace ?? (scope === 'all' ? '' : scope));
+  const [namespace, setNamespace] = useState(release?.namespace ?? (scope === 'all' ? '' : defaultNamespace(scope)));
   const [chart, setChart] = useState(''); const [version, setVersion] = useState('');
   const [values, setValues] = useState('{}\n'); const [url, setUrl] = useState(repo?.url ?? 'https://');
-  const [revision, setRevision] = useState(Math.max(1, Number(release?.revision ?? 2) - 1));
+  const [revision, setRevision] = useState(initialRevision ?? Math.max(1, Number(release?.revision ?? 2) - 1));
   const [hooks, setHooks] = useState(false); const [wait, setWait] = useState(true); const [createNamespace, setCreateNamespace] = useState(false); const [keepHistory, setKeepHistory] = useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState<K8sRequestError | null>(null);
   const [valuesReady, setValuesReady] = useState(action !== 'upgrade'); const [loadEpoch, reload] = useState(0);
@@ -39,6 +40,7 @@ export function HelmActionDialog({ action, release, repo, onClose, onCompleted }
     setError(null);
     try {
       if (releaseAction) validateHelmTarget(context ?? '', namespace, name);
+      if (action === 'rollback' && (!Number.isSafeInteger(revision) || revision < 1 || revision >= Number(release?.revision))) throw new Error('Choose an earlier positive release revision.');
       if (chartAction) {
         if (!chart.trim()) throw new Error('Choose a chart reference or a packaged .tgz path.');
         const parsed = parse(values); if (parsed !== null && (typeof parsed !== 'object' || Array.isArray(parsed))) throw new Error('Values must be a YAML mapping.');
@@ -56,9 +58,14 @@ export function HelmActionDialog({ action, release, repo, onClose, onCompleted }
     } catch (error) { setError(normalizeK8sError(error, { operation: 'helm_mutation' })); }
     finally { setBusy(false); }
   };
-  return <Modal open onClose={() => { if (!busy) onClose(); }} title={titles[action]} width={720} footer={<><Button size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button size="sm" loading={busy} disabled={busy || !valuesReady || !k8s.supportsHelmMutations} onClick={() => { void submit(); }}>Review in system dialog</Button></>}>
+  return <Modal open onClose={() => { if (!busy) onClose(); }} title={titles[action]} width={720} footer={<><Button size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button size="sm" variant={action === 'uninstall' || action === 'repository_remove' ? 'danger' : 'primary'} loading={busy} disabled={busy || !valuesReady || !k8s.supportsHelmMutations} onClick={() => { void submit(); }}>Review in system dialog</Button></>}>
     <div className="space-y-3 text-xs">
       <p className="text-[var(--text-secondary)]">{releaseAction ? `Cluster: ${context ?? 'Select a cluster'}` : 'Local Helm configuration · shared across clusters'}. The backend prepares the change and opens a system confirmation before executing it.</p>
+      {release && <div className="rounded border border-[var(--border-default)] bg-[var(--bg-secondary)] p-3 space-y-1">
+        <p className="font-mono font-medium break-all">{release.name} <span className="text-[var(--text-secondary)]">· revision {release.revision}</span></p>
+        <p className="text-[var(--text-secondary)]">{release.chart} · {release.namespace}</p>
+        <p className={action === 'uninstall' ? 'text-[var(--status-danger)]' : 'text-[var(--text-secondary)]'}>{action === 'uninstall' ? 'Remove this release and its managed Kubernetes resources.' : action === 'rollback' ? `Restore revision ${revision} as a new release revision. The current revision remains in history.` : 'Choose a chart version and review its values before upgrading.'}</p>
+      </div>}
       {!k8s.supportsHelmMutations && <p>Helm changes are available in the desktop app.</p>}
       {releaseAction && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label className="space-y-1 block"><span>Release name</span><input aria-label="Helm release name" className={input} value={name} disabled={busy || action !== 'install'} onChange={event => setName(event.target.value)} /></label><label className="space-y-1 block"><span>Namespace</span><input aria-label="Helm target namespace" className={input} value={namespace} disabled={busy || action !== 'install'} onChange={event => setNamespace(event.target.value)} /></label></div>}
       {chartAction && <><div className="flex gap-2 items-end"><label className="space-y-1 block flex-1 min-w-0"><span>Chart reference or packaged .tgz path</span><input aria-label="Helm chart reference" className={input} placeholder="repository/chart or oci://registry/chart" value={chart} disabled={busy} onChange={event => setChart(event.target.value)} /></label><Button size="sm" disabled={busy || searching || !chart.trim()} onClick={() => { setSearching(true); setError(null); void k8s.searchHelmCharts(chart).then(setCharts).catch(error => setError(normalizeK8sError(error, { operation: 'helm' }))).finally(() => setSearching(false)); }}>{searching ? 'Searching…' : 'Find charts'}</Button></div>

@@ -1,4 +1,6 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { useCustomResources } from '../../providers/use_custom_resources';
+import { customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
+import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { MainTabBar } from './MainTabBar';
 import { BreadcrumbBar } from './BreadcrumbBar';
 import { OverviewView } from '../../views/OverviewView';
@@ -14,16 +16,16 @@ import { k8s } from '../../providers/k8s_provider';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
 import { toast } from '../../state/notifications_store';
-import { FileCode, Loader2 } from 'lucide-react';
+import { FileCode, Loader2, LayoutDashboard, Boxes, Layers, Network } from 'lucide-react';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
 import { RequestErrorNotice } from '../k8s/RequestErrorNotice';
 import { refreshResourceWatches } from '../../state/resource_watch';
-import { namespaceIsOutsideScope } from '../../core/resources/resource_types';
+import { ResourceLoading } from '../ui/ResourceLoading';
+import { RESOURCE_TYPES, namespaceIsOutsideScope } from '../../core/resources/resource_types';
 import { matchesResourceRef } from '../../core/resources/identity';
 
 const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => ({ default: m.TopologyView })));
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
-const HelmReleaseWorkspace = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmReleaseWorkspace })));
 const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
 
 export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => void }> = ({ onSelectContext }) => {
@@ -62,39 +64,92 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   const { resources, updateItem, syncMode, watchStates, loadErrors } = useResourceStore();
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   const context = useClusterStore((s) => s.currentContext);
+  const clusterLoading = useClusterStore(state => state.isLoading);
+  const loadingKinds = useResourceStore(state => state.loadingKinds);
+  const customKey = tab?.type === 'resource-list' ? tab.kind : tab?.kind ? resourceBucket({ kind: tab.kind, apiVersion: tab.apiVersion }) : '';
+  const customDefinition = useMemo(() => [...resources.CustomResourceDefinition.values()].map(customResourceType).find(type => type?.key === customKey), [resources.CustomResourceDefinition, customKey]);
+  const custom = useCustomResources(tab?.type !== 'resource-list' && tab?.context === context ? customDefinition : undefined);
 
   if (!tab) {
     return (
-      <div className="flex-1 flex items-center justify-center text-[var(--text-muted)]">
-        No active tab
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none bg-[var(--bg-canvas)]">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-blue-600/20 to-indigo-500/20 border border-blue-500/30 flex items-center justify-center text-[var(--accent)] text-2xl font-bold mb-3 shadow-sm">
+          ⎈
+        </div>
+        <h2 className="text-sm font-semibold text-[var(--text-primary)]">No Open Tabs</h2>
+        <p className="text-xs text-[var(--text-muted)] mt-1 max-w-sm">
+          Select a resource from the sidebar to inspect your cluster, or use quick actions below.
+        </p>
+
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-4 max-w-md">
+          <button
+            type="button"
+            onClick={() => useWorkspaceStore.getState().openOverview()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] text-xs font-medium text-[var(--text-primary)] transition-colors"
+          >
+            <LayoutDashboard size={13} className="text-[var(--accent)]" />
+            Overview
+          </button>
+          <button
+            type="button"
+            onClick={() => useWorkspaceStore.getState().openResourceList('Pod')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] text-xs font-medium text-[var(--text-primary)] transition-colors"
+          >
+            <Boxes size={13} className="text-blue-400" />
+            Pods
+          </button>
+          <button
+            type="button"
+            onClick={() => useWorkspaceStore.getState().openResourceList('Deployment')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] text-xs font-medium text-[var(--text-primary)] transition-colors"
+          >
+            <Layers size={13} className="text-cyan-400" />
+            Deployments
+          </button>
+          <button
+            type="button"
+            onClick={() => useWorkspaceStore.getState().openResourceList('Service')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] text-xs font-medium text-[var(--text-primary)] transition-colors"
+          >
+            <Network size={13} className="text-emerald-400" />
+            Services
+          </button>
+        </div>
+
+        <div className="mt-5 text-[length:calc(10.5px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
+          Press <kbd className="px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">Ctrl+K</kbd> / <kbd className="px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">⌘K</kbd> for Command Palette
+        </div>
       </div>
     );
   }
 
   if (tab.type === 'overview') return <OverviewView />;
-  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<div role="status" className="p-4">Loading Helm…</div>}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
+  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Loading Helm…" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
 
   if (tab.type !== 'resource-list' && tab.context !== context) {
     return <div className="p-6 text-[var(--text-secondary)]">This tab belongs to context {tab.context || 'unknown'}. Switch back to that context to use it.</div>;
   }
-  if (tab.type === 'helm-release' && tab.item) return <Suspense fallback={<div>Loading Helm…</div>}><HelmReleaseWorkspace item={tab.item} /></Suspense>;
-  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<div className="p-4">Loading topology…</div>}><TopologyView namespace={tab.namespace} /></Suspense>;
+  if (tab.kind && !tab.kind.startsWith('custom:') && !tab.apiVersion?.includes('/') && !RESOURCE_TYPES.some(type => type.kind === tab.kind) && tab.kind !== 'HelmRelease') return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
+  if (tab.type === 'resource-list' && tab.kind && !tab.kind.startsWith('custom:') && !RESOURCE_TYPES.some(type => type.kind === tab.kind)) return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
+  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><TopologyView namespace={tab.namespace} /></Suspense>;
 
   if (tab.type !== 'resource-list') {
     // A pinned UID must never silently bind to a recreated object with the same name.
-    const kind = tab.kind || 'Pod';
+    const kind = resourceBucket({ kind: tab.kind || 'Pod', apiVersion: tab.apiVersion });
     const candidate = tab.uid ? resources[kind]?.get(tab.uid)
       : tab.name ? Array.from(resources[kind]?.values() || []).find((item) => matchesResourceRef(item, { ...tab, kind, name: tab.name! })) : undefined;
     const loaded = candidate && matchesResourceRef(candidate, tab.resource ?? { ...tab, kind, name: tab.name ?? candidate.name }) ? candidate : undefined;
     // An already open shell can keep its pinned target while namespace snapshots are unloaded.
-    const item = loaded ?? (tab.item?.kind === 'HelmRelease' ? tab.item : undefined) ?? ((tab.type === 'terminal' || tab.type === 'logs') && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode) ? tab.item : undefined);
+    const item = loaded ?? (tab.item?.kind === 'HelmRelease' ? tab.item : tab.kind === 'HelmRelease' && tab.name && tab.namespace ? { kind: 'HelmRelease' as const, apiVersion: tab.apiVersion ?? 'helm.sh/v1', name: tab.name, namespace: tab.namespace, uid: tab.uid ?? tab.id, raw: { context: tab.context } } : undefined) ?? ((tab.type === 'terminal' || tab.type === 'logs') && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode) ? tab.item : undefined);
 
     if (!item && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
       return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;
     }
-    if (!item && syncMode === 'watch' && watchStates[kind]?.phase !== 'live') {
+    if (!item && custom.loading) return <ResourceLoading label="Loading custom resource…" />;
+    if (!item && !loadErrors[kind] && !customDefinition && syncMode !== 'watch' && (loadingKinds[kind] ?? clusterLoading)) return <ResourceLoading label={`Loading ${kind}…`} />;
+    if (!item && !customDefinition && syncMode === 'watch' && (watchStates[kind] || clusterLoading) && watchStates[kind]?.phase !== 'live') {
       const error = loadErrors[kind];
-      return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <p role="status" className="text-xs text-[var(--text-secondary)]">Waiting for a complete {kind} snapshot…</p>}</div>;
+      return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <ResourceLoading label={`Loading ${kind}…`} description={`Waiting for a complete ${kind} snapshot…`} />}</div>;
     }
     if (!item) {
       return (
@@ -110,8 +165,8 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
       );
     }
 
-    if (tab.type === 'resource-detail') return <ResourceDetails key={item.uid} item={item} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />;
-    if (tab.type === 'topology') return <Suspense fallback={<div className="p-4">Loading topology…</div>}><TopologyView item={item} namespace={tab.namespace} /></Suspense>;
+    if (tab.type === 'resource-detail') return <ResourceDetails key={item.uid} item={item} onClose={() => useWorkspaceStore.getState().closeTab(tab.id)} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />;
+    if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><TopologyView item={item} namespace={tab.namespace} /></Suspense>;
     if (tab.type === 'logs' || tab.type === 'terminal') {
       const session = { context: tab.context, uid: item.uid, id: tab.id, type: tab.type, title: tab.title, resourceName: item.name, namespace: item.namespace,
         container: tab.container, allContainers: item.containers?.map((c) => c.name), targetType: item.kind === 'Node' ? 'node' as const : 'pod' as const };
@@ -130,10 +185,28 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
         >
           <YamlEditor
             item={item}
-            onApply={(yaml) => {
-              if (!k8s.demo) { toast.error('Live manifest apply is not connected yet'); return; }
-              updateItem(item.kind, item.uid, { ...mapK8sResource(parse(yaml), item.kind), uid: item.uid });
-              toast.success('Manifest saved in demo memory', `${item.kind}/${item.name}`);
+            onApply={async (yaml) => {
+              try {
+                if (k8s.demo) {
+                  updateItem(item.kind, item.uid, { ...mapK8sResource(parse(yaml), item.kind), uid: item.uid });
+                  toast.success('Manifest saved in demo memory', `${item.kind}/${item.name}`);
+                } else {
+                  const currentContext = useClusterStore.getState().currentContext;
+                  if (!currentContext) {
+                    toast.error('No active cluster context');
+                    return;
+                  }
+                  const output = await k8s.applyManifest(currentContext, yaml, item);
+                  toast.success(output || 'Manifest applied', `${item.kind}/${item.name}`);
+                }
+              } catch (err: any) {
+                if (err?.code === 'cancelled') {
+                  toast.info('Apply cancelled');
+                } else {
+                  toast.error('Apply failed', String(err?.message || err));
+                }
+                throw err;
+              }
             }}
           />
         </Suspense>
@@ -142,5 +215,6 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   }
 
   // Default: Resource List Table
-  return <ResourceView key={tab.id} explicitKind={tab.kind} />;
+  if (tab.kind?.startsWith('custom:') && !customDefinition) return <p className="p-3 text-xs text-[var(--text-secondary)]">This custom resource definition is not loaded in the current cluster.</p>;
+  return <ResourceView key={tab.id} explicitKind={tab.kind} customType={customDefinition} />;
 }

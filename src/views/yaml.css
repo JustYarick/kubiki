@@ -1,0 +1,9 @@
+.yaml-editor { min-width: 0; }
+.yaml-resource-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: calc(11px * var(--ui-factor))/1.5 var(--font-mono); color: var(--text-primary); }
+.yaml-manifest-state { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: calc(10px * var(--ui-factor))/1.5 var(--font-mono); padding: calc(1px * var(--ui-factor)) calc(6px * var(--ui-factor)); border: 1px solid var(--border-default); border-radius: calc(4px * var(--ui-factor)); color: var(--text-secondary); }
+.yaml-manifest-state[data-dirty="true"] { color: var(--status-warn); border-color: var(--status-warn); }
+.yaml-manifest-state-short, .yaml-actions-overflow { display: none; }
+.yaml-toolbar[data-layout="narrow"] .yaml-secondary-action, .yaml-toolbar[data-layout="narrow"] .yaml-manifest-state-long, .yaml-toolbar[data-layout="narrow"] .yaml-apply-label { display: none; }
+.yaml-toolbar[data-layout="narrow"] .yaml-manifest-state-short, .yaml-toolbar[data-layout="narrow"] .yaml-actions-overflow { display: inline-flex; }
+.yaml-toolbar[data-layout="narrow"] .yaml-apply { width: calc(26px * var(--ui-factor)); height: calc(26px * var(--ui-factor)); padding: 0; }
+.yaml-editor-content { flex: 1; min-height: 0; min-width: 0; position: relative; }

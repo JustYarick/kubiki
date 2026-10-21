@@ -32,6 +32,15 @@ it('uses Node usage for cluster cards and keeps physical capacity separate from 
   const node = mapK8sResource({ metadata: { name: 'worker', uid: 'node' }, status: { capacity: { cpu: '8', memory: '16Gi' }, allocatable: { cpu: '7', memory: '14Gi' } } }, 'Node');
   const result = buildTelemetry(data, [pod()], [node], null, now);expect(result.cpu).toBe(2);expect(result.budgets.cpu).toMatchObject({ capacity: 8, allocatable: 7, request: 0 });expect(result.memory).toBe(3 * 1024 ** 3);
 });
+it('aggregates measured usage across a selected set of namespaces', () => {
+  const data = metrics();
+  data.namespace = '["a","b"]';
+  data.pods.items = ['a', 'b', 'outside'].map(namespace => ({ ...data.pods.items![0], namespace }));
+  const pods = ['a', 'b'].map(namespace => ({ ...pod(), uid: namespace, namespace }));
+  const result = buildTelemetry(data, pods, null, '["a","b"]', now);
+  expect(result).toMatchObject({ cpu: .25, memory: 128 * 1024 ** 2, measured: 2, complete: true });
+  expect(result.podRows.map(row => row.namespace)).toEqual(['a', 'b']);
+});
 it('history only accepts newer source samples and stays bounded in memory and time', () => {
   let history: import('../../src/core/resources/telemetry').HistoryPoint[] = [];
   for (let index = 0; index < 200; index++) history = appendHistory(history, { at: now + index * 15000, cpu: index, memory: index });

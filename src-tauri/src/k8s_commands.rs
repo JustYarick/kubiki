@@ -121,6 +121,25 @@ pub async fn get_namespaces(
 }
 
 #[tauri::command]
+pub async fn get_api_resources(context: String) -> Result<String, ApiError> {
+    require_context(&context, "api-resources")?;
+    kubectl(
+        &[
+            "--context".into(),
+            context.clone(),
+            "api-resources".into(),
+            "--verbs=list".into(),
+            "-o".into(),
+            "wide".into(),
+            "--no-headers".into(),
+        ],
+        "api-resources",
+        &context,
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn get_resources(
     context: String,
     group: String,
@@ -174,27 +193,83 @@ pub async fn get_resources(
 }
 
 #[tauri::command]
-pub async fn scale_workload(
-    resource: kubiki_core::core::api::ResourceRef,
-    resource_version: String,
-    replicas: i32,
-    window: tauri::WebviewWindow,
-    pool: tauri::State<'_, ClusterClientPool>,
-    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
-) -> Result<String, ApiError> {
-    let _gate = guard.acquire(&resource)?;
-    let context = resource.query.context.clone();
-    let client = mutation_client(&pool, &resource).await?;
-    let plan = kubiki_core::core::mutations::PreparedMutation::prepare(client,
-        kubiki_core::core::mutations::MutationIntent::Scale { resource: resource.clone(), resource_version, replicas }).await?;
-    plan.confirm_and_commit(|review| crate::mutation_guard::confirm(window, &resource, review)).await?;
-    Ok(format!("{}/{} scaled to {} in {}", resource.query.kind, resource.name, replicas, context))
-}
-
-async fn mutation_client(pool: &ClusterClientPool, resource: &kubiki_core::core::api::ResourceRef) -> Result<kube::Client, ApiError> {
-    tokio::time::timeout(std::time::Duration::from_secs(15), pool.get_client(&resource.query.context)).await
-        .map_err(|_| kubiki_core::core::mutations::error(resource, 504, "Context connection timed out"))?
-        .map_err(|_| kubiki_core::core::mutations::error(resource, 503, "Cannot connect to the requested context"))
+pub async fn get_custom_resources(
+    context: String,
+    name: String,
+    uid: String,
+    namespace: Option<String>,
+) -> Result<Value, ApiError> {
+    let invalid = |message: &str| {
+        ApiError::new(
+            ApiErrorCode::InvalidRequest,
+            message,
+            "custom-resources",
+            Some(&context),
+            Some(400),
+        )
+    };
+    let valid_name = |value: &str| {
+        !value.is_empty()
+            && value.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && value
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+    };
+    if context.trim().is_empty() || !valid_name(&name) || uid.is_empty() {
+        return Err(invalid("Context, CRD name and UID are required"));
+    }
+    if let Some(namespace) = &namespace {
+        if namespace.is_empty()
+            || namespace.len() > 63
+            || namespace.starts_with('-')
+            || namespace.ends_with('-')
+            || !namespace
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        {
+            return Err(invalid("Invalid namespace"));
+        }
+    }
+    let args = vec![
+        "--context".into(),
+        context.clone(),
+        "get".into(),
+        format!("customresourcedefinitions.apiextensions.k8s.io/{name}"),
+        "-o".into(),
+        "json".into(),
+    ];
+    let output = kubectl(&args, "custom-resources", &context).await?;
+    let crd: Value = serde_json::from_str(&output).map_err(|_| invalid("Invalid CRD response"))?;
+    if crd["metadata"]["uid"].as_str() != Some(uid.as_str()) {
+        return Err(ApiError::from_status(
+            409,
+            "This CRD has been replaced. Refresh the resource list.",
+            "custom-resources",
+            Some(&context),
+        ));
+    }
+    let group = crd["spec"]["group"].as_str().unwrap_or("");
+    let plural = crd["spec"]["names"]["plural"].as_str().unwrap_or("");
+    let scope = crd["spec"]["scope"].as_str().unwrap_or("");
+    if !valid_name(group) || !valid_name(plural) || !matches!(scope, "Namespaced" | "Cluster") {
+        return Err(invalid("Invalid CRD definition"));
+    }
+    let mut args = vec![
+        "--context".into(),
+        context.clone(),
+        "get".into(),
+        format!("{plural}.{group}"),
+        "-o".into(),
+        "json".into(),
+    ];
+    if scope == "Namespaced" {
+        match namespace {
+            Some(namespace) => args.extend(["-n".into(), namespace]),
+            None => args.push("-A".into()),
+        }
+    }
+    let output = kubectl(&args, "custom-resources", &context).await?;
+    serde_json::from_str(&output).map_err(|_| invalid("Invalid custom resource list"))
 }
 
 #[tauri::command]
@@ -230,25 +305,22 @@ pub async fn get_pod_logs(
 }
 
 #[tauri::command]
-pub async fn update_secret_data(
-    request: kubiki_core::core::secret_data::SecretDataRequest,
-    window: tauri::WebviewWindow,
+pub async fn get_overview_metrics(
+    context: String,
+    namespace: Option<String>,
     pool: tauri::State<'_, ClusterClientPool>,
-    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
-) -> Result<k8s_openapi::api::core::v1::Secret, ApiError> {
-    request.validate()?;
-    let resource = request.resource.clone();
-    let _gate = guard.acquire(&resource)?;
-    let client = mutation_client(&pool, &resource).await?;
-    kubiki_core::core::secret_data::update_secret_data(client, request,
-        |review| crate::mutation_guard::confirm(window, &resource, review)).await
-}
-
-#[tauri::command]
-pub async fn get_overview_metrics(context: String, namespace: Option<String>, pool: tauri::State<'_, ClusterClientPool>) -> Result<kubiki_core::metrics::overview::OverviewMetrics, ApiError> {
+) -> Result<kubiki_core::metrics::overview::OverviewMetrics, ApiError> {
     kubiki_core::metrics::overview::validate_scope(&context, namespace.as_deref())?;
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        let client = pool.get_client(&context).await.map_err(|error| ApiError::from_core(error, "metrics", Some(&context)))?;
-        kubiki_core::metrics::overview::get_overview_metrics(client, context.clone(), namespace).await
-    }).await.map_err(|_| ApiError::from_status(504, "Metrics request timed out", "metrics", Some(&context)))?
+        let client = pool
+            .get_client(&context)
+            .await
+            .map_err(|error| ApiError::from_core(error, "metrics", Some(&context)))?;
+        kubiki_core::metrics::overview::get_overview_metrics(client, context.clone(), namespace)
+            .await
+    })
+    .await
+    .map_err(|_| {
+        ApiError::from_status(504, "Metrics request timed out", "metrics", Some(&context))
+    })?
 }

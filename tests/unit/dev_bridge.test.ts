@@ -41,7 +41,7 @@ describe('HTTP bridge without a real cluster', () => {
     await fetch(`${base}resources?context=test&group=&version=v1&kind=Node`);
     expect(run).toHaveBeenCalledWith(['--context', 'test', 'get', 'nodes', '-o', 'json']);
   });
-  it.each(['scale', 'secrets'])('denies all %s writes, including forged approvals, before any kubectl call', async (operation) => {
+  it.each(['scale', 'secrets', 'apply', 'delete', 'mutate'])('denies all %s writes, including forged approvals, before any kubectl call', async (operation) => {
     for (const extra of [{}, { confirmed: true, approved: true, token: 'forged' }]) {
       const response = await fetch(`${base}${operation}?context=test`, { method: 'POST', body: JSON.stringify({ context: 'test', kind: 'Deployment', namespace: 'backend', name: 'web', replicas: 0, ...extra }) });
       expect(response.status).toBe(403);
@@ -59,4 +59,37 @@ it('metrics bridge scopes Pod metrics to one namespace and isolates Node metrics
   expect(run).toHaveBeenCalledExactlyOnceWith(['--context', 'test', 'get', '--raw', '/apis/metrics.k8s.io/v1beta1/namespaces/backend/pods']);
   const all = await (await fetch(`${base}metrics?context=test`)).json();expect(all.pods.items).toHaveLength(1);expect(all.nodes.error).toMatchObject({ code: 'forbidden', status: 403 });
   run.mockClear();expect((await fetch(`${base}metrics?context=test&namespace=bad/name`)).status).toBe(400);expect(run).not.toHaveBeenCalled();
+});
+
+it.each(['Namespaced', 'Cluster'])('discovers %s CRD instances from the live definition', async scope => {
+  run.mockResolvedValueOnce(JSON.stringify({ metadata: { uid: 'crd-uid' }, spec: { group: 'example.com', names: { plural: 'widgets' }, scope } }))
+    .mockResolvedValueOnce(JSON.stringify({ items: [{ kind: 'Widget', apiVersion: 'example.com/v1', metadata: { name: 'one' } }] }));
+  const response = await fetch(`${base}custom-resources?context=test&name=widgets.example.com&uid=crd-uid&namespace=backend`);
+  expect(response.status).toBe(200);
+  expect((await response.json()).items[0].metadata.name).toBe('one');
+  expect(run.mock.calls).toEqual([
+    [['--context', 'test', 'get', 'customresourcedefinitions.apiextensions.k8s.io/widgets.example.com', '-o', 'json']],
+    [['--context', 'test', 'get', 'widgets.example.com', ...(scope === 'Namespaced' ? ['-n', 'backend'] : []), '-o', 'json']],
+  ]);
+});
+
+it('rejects replaced CRDs and invalid custom resource queries without listing instances', async () => {
+  run.mockResolvedValue(JSON.stringify({ metadata: { uid: 'new-uid' } }));
+  const response = await fetch(`${base}custom-resources?context=test&name=widgets.example.com&uid=old-uid`);
+  expect(response.status).toBe(409);
+  expect(run).toHaveBeenCalledTimes(1);
+  run.mockClear();
+  expect((await fetch(`${base}custom-resources?context=test&name=--raw&uid=old-uid`)).status).toBe(400);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it('discovers API resources in the selected context with literal arguments', async () => {
+  run.mockResolvedValue('horizontalpodautoscalers hpa autoscaling/v1 true HorizontalPodAutoscaler get,list,watch');
+  const response = await fetch(`${base}api-resources?context=production`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toContain('autoscaling/v1');
+  expect(run).toHaveBeenCalledWith(['--context', 'production', 'api-resources', '--verbs=list', '-o', 'wide', '--no-headers']);
+  run.mockClear();
+  expect((await fetch(`${base}api-resources`)).status).toBe(400);
+  expect(run).not.toHaveBeenCalled();
 });

@@ -13,7 +13,7 @@ import { resourceRef } from '../../core/resources/identity';
 import { toast } from '../../state/notifications_store';
 import type { ResourceItem } from '../../types/k8s';
 
-export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose: () => void }) {
+export function PFDialog({ item, onClose, initialRemotePort }: { item: ResourceItem | null; onClose: () => void; initialRemotePort?: number }) {
   const context = useClusterStore(state => state.currentContext);
   const openedContext = useRef(context);
   useEffect(() => { if (context !== openedContext.current) { controller.current?.abort(); onClose(); } }, [context]);
@@ -25,12 +25,12 @@ export function PFDialog({ item, onClose }: { item: ResourceItem | null; onClose
     return source.filter((p: any) => (p.protocol ?? 'TCP') === 'TCP').map((p: any) => ({ port: p.port ?? p.containerPort, name: p.name }));
   }, [item]);
   useEffect(() => {
-    const suggested = Number(ports[0]?.port ?? item?.containers?.[0]?.port);
+    const suggested = Number(initialRemotePort ?? ports[0]?.port ?? item?.containers?.[0]?.port);
     setRemote(String(Number.isInteger(suggested) && suggested > 0 && suggested <= 65535 ? suggested : 80)); setLocal(''); setError(''); setBusy(false);
     return () => controller.current?.abort();
     // Status updates must not reset a user's draft or cancel an in-flight start.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.uid, context]);
+  }, [item?.uid, context, initialRemotePort]);
   if (!item) return null;
   const remoteInvalid = !/^\d+$/.test(remote) || +remote < 1 || +remote > 65535;
   const localInvalid = local !== '' && (!/^\d+$/.test(local) || +local < 0 || +local > 65535);

@@ -1,0 +1,4 @@
+.floating-island { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: calc(6px * var(--ui-factor)); background: var(--bg-overlay); box-shadow: var(--shadow-popup); pointer-events: auto; }
+.floating-island-heading { display: flex; align-items: center; gap: calc(8px * var(--ui-factor)); padding: calc(8px * var(--ui-factor)) calc(10px * var(--ui-factor)); width: 100%; flex: none; text-align: left; font-size: calc(11px * var(--ui-factor)); font-weight: 500; }
+.floating-island-heading:hover { background: var(--bg-hover); }
+.floating-island-body { min-height: 0; overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--border-default); }

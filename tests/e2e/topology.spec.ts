@@ -1,3 +1,4 @@
+import { selectDiagramNamespaces } from './helpers/topology';
 import { test, expect } from '@playwright/test';
 
 const pod = { apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'pod', name: 'web', namespace: 'backend' }, spec: { containers: [] } };
@@ -17,10 +18,9 @@ test('Events stay in a bounded collapsible island and never consume the namespac
     const kind = url.searchParams.get('kind');
     return route.fulfill({ json: { items: kind === 'Pod' ? [pod] : kind === 'Event' ? [...events, { ...events[499], metadata: { uid: 'other-event', name: 'other', namespace: 'other' }, message: 'Wrong namespace message' }] : [] } });
   });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
-  await page.getByRole('button', { name: 'Diagram scope', exact: true }).click();
-  await page.getByRole('option', { name: 'Namespace: backend (1)', exact: true }).click();
+  await selectDiagramNamespaces(page, ['backend']);
   await expect(page.locator('.react-flow__node-resource')).toHaveCount(1);
   await expect(page.locator('[data-namespace-group="backend"]')).toBeVisible();
   const frame = (await page.locator('[data-namespace-group="backend"]').boundingBox())!;
@@ -37,7 +37,7 @@ test('Events stay in a bounded collapsible island and never consume the namespac
   await expect(island.locator('li').first()).toContainText('×4');
   await expect(island.getByText('Latest 10 of 500 events')).toBeVisible();
   await expect(island.getByText('Wrong namespace message')).toHaveCount(0);
-  const typesBounds = (await page.getByRole('button', { name: 'Topology resource types', exact: true }).boundingBox())!;
+  const typesBounds = (await page.getByRole('button', { name: 'Diagram settings', exact: true }).boundingBox())!;
   expect((await island.boundingBox())!.y).toBeGreaterThan(typesBounds.y + typesBounds.height);
   const toggle = island.getByRole('button', { name: /Recent events/ });
   await toggle.click(); await expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -64,11 +64,10 @@ test('dragging and late Events preserve positions and viewport without restartin
     if (kind === 'Event') await eventGate;
     return route.fulfill({ json: { items: kind === 'Pod' ? [{ ...pod, metadata: { ...pod.metadata, ownerReferences: [{ uid: 'dep', kind: 'Deployment', name: 'web-owner' }] } }] : kind === 'Deployment' ? [{ metadata: { uid: 'dep', name: 'web-owner', namespace: 'backend' } }] : kind === 'Event' ? events : [] } });
   });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByTestId('resource-table').getByText('web', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
-  await page.getByRole('button', { name: 'Diagram scope', exact: true }).click();
-  await page.getByRole('option', { name: 'Namespace: backend (2)', exact: true }).click();
+  await selectDiagramNamespaces(page, ['backend']);
   await expect(page.locator('.react-flow__node-resource')).toHaveCount(2);
   await expect(page.locator('.react-flow__edge-text')).toHaveCount(1);
   const island = page.getByTestId('topology-events');

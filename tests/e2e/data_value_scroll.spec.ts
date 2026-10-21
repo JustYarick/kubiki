@@ -11,7 +11,7 @@ for (const kind of ['Secret', 'ConfigMap']) test(`${kind} long values scroll int
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: ['default'] });
     return route.fulfill({ json: { items: url.searchParams.get('kind') === kind ? [item] : [] } });
   });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByRole('button', { name: kind === 'Secret' ? /^Secrets(?: \d+)?$/ : /^ConfigMaps(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByTitle('large-data', { exact: true }).click();
   const section = page.getByRole('region', { name: kind === 'Secret' ? 'Secret data' : 'Configuration data', exact: true });

@@ -1,3 +1,4 @@
+import { namespaceNames, namespaceScope } from '../core/resources/namespace_scope';
 import { create } from 'zustand';
 import { KubeContextInfo } from '../types/k8s';
 import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
@@ -7,6 +8,7 @@ interface ClusterState {
   currentContext: string | null;
   selectedNamespace: string;
   availableNamespaces: string[];
+  availableResourceKinds: string[] | null;
   isConnected: boolean;
   clusterVersion: string | null;
   isLoading: boolean;
@@ -25,6 +27,7 @@ export const useClusterStore = create<ClusterState>((set) => ({
   contexts: [],
   currentContext: null,
   selectedNamespace: 'all',
+  availableResourceKinds: null,
   availableNamespaces: ['default', 'kube-system', 'kube-public', 'kube-node-lease'],
   isConnected: false,
   clusterVersion: null,
@@ -47,11 +50,12 @@ export const useClusterStore = create<ClusterState>((set) => ({
       clusterVersion: null,
       selectedNamespace: 'all',
       availableNamespaces: [],
+      availableResourceKinds: null,
       error: null,
     }));
   },
 
-  selectNamespace: (selectedNamespace) => set({ selectedNamespace }),
+  selectNamespace: (selectedNamespace) => set({ selectedNamespace: namespaceScope(namespaceNames(selectedNamespace)) }),
 
   setAvailableNamespaces: (availableNamespaces) => set({ availableNamespaces }),
 

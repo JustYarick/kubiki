@@ -1,3 +1,4 @@
+import { defaultNamespace } from '../../core/resources/namespace_scope';
 import { useEffect, useRef, useState } from 'react';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -18,7 +19,7 @@ export function NodeShellPane({ session, visible }: { session: DockSession; visi
   const node = currentContext === context ? [...nodes.values()].find((node) => node.name === session.resourceName) : undefined;
   const uid = session.uid ?? node?.uid;
   const recreated = Boolean(session.uid && node && session.uid !== node.uid);
-  const [namespace, setNamespace] = useState(selectedNamespace === 'all' ? 'default' : selectedNamespace);
+  const [namespace, setNamespace] = useState(defaultNamespace(selectedNamespace));
   const [image, setImage] = useState('docker.io/library/ubuntu:24.04');
   const [showSetup, setShowSetup] = useState(true);
   const [shell, setShell] = useState('/bin/sh');

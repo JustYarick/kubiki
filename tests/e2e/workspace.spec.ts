@@ -1,18 +1,20 @@
+import { selectDiagramNamespaces } from './helpers/topology';
 import { test, expect } from '@playwright/test';
 
 test('plain table rows, related resource navigation, container logs and persistent dock', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/?demo=1');
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway-7f9c8b6d5-q7x9z' });
   await expect(row).toBeVisible(); await row.hover(); await expect(row.locator('button')).toHaveCount(0);
   await row.click();
   const details = page.getByTestId('resource-details');
   await expect(details.getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).first()).toBeVisible();
   await details.getByRole('tab', { name: /^Related/ }).click();
-  await details.getByRole('button').filter({ hasText: 'api-gateway-7f9c8b6d5' }).click();
+  await details.getByRole('region', { name: 'Resource relationships' }).getByRole('button').filter({ hasText: 'api-gateway-7f9c8b6d5' }).click();
   await expect(details.getByText('ReplicaSet · default')).toBeVisible();
   await details.getByRole('tab', { name: /^Related/ }).click();
-  await details.getByRole('button').filter({ hasText: /^api-gatewayDeployment/ }).click();
+  await details.getByRole('region', { name: 'Resource relationships' }).getByRole('button').filter({ has: page.locator('[data-resource-kind="Deployment"]') }).click();
   await expect(details.getByText('Deployment · default')).toBeVisible();
   await details.getByRole('button', { name: 'Back to previous resource' }).click();
   await details.getByRole('button', { name: 'Back to previous resource' }).click();
@@ -28,7 +30,7 @@ test('plain table rows, related resource navigation, container logs and persiste
 });
 
 test('deployment actions are available through the context menu, with no inline controls', async ({ page }) => {
-  await page.goto('/?demo=1');
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway' }).first();
   await expect(row).toBeVisible(); await row.hover(); await expect(row.locator('button')).toHaveCount(0);
@@ -38,20 +40,18 @@ test('deployment actions are available through the context menu, with no inline 
 
 test('cluster and focused topology automatically lay out and open resource details', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/?demo=1');
-  await expect(page.getByTestId('resource-table').locator('tbody tr').first()).toBeVisible();
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
-  await expect(page.getByLabel('Diagram scope', { exact: true })).toHaveAttribute('data-value', '');
+  await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', '');
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
-  await page.getByLabel('Diagram scope', { exact: true }).click();
-  await page.getByRole('option', { name: /^Namespace: backend / }).click();
+  await selectDiagramNamespaces(page, ['backend']);
   await expect(page.locator('.react-flow__node').first()).toBeVisible({ timeout: 20000 });
   await expect(page.getByText('Arranging topology…')).toHaveCount(0);
   const node = page.locator('.react-flow__node').filter({ hasText: 'auth-service-58848db6cb-kl8m2' });
   await node.click(); await expect(page.getByTestId('resource-details')).toBeVisible();
   await page.screenshot({ path: 'test-results/topology.png', fullPage: true });
   await page.getByTestId('resource-details').getByRole('button', { name: 'Topology', exact: true }).click();
-  await expect(page.getByLabel('Diagram scope', { exact: true })).toHaveAttribute('data-value', 'resource');
+  await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', 'resource');
   await expect(page.locator('.react-flow__node').first()).toBeVisible();
   await expect(page.getByText('Arranging topology…')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/resource-topology.png', fullPage: true });
@@ -63,7 +63,7 @@ test('an unavailable API server remains disconnected without demo fallback', asy
     if (route.request().url().includes('/contexts')) return route.fulfill({ json: [{ name: 'unreachable', is_current: true }] });
     return route.fulfill({ status: 503, json: { error: 'API server unavailable' } });
   });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'API server unavailable' })).toBeVisible();
   await expect(page.getByText('Disconnected', { exact: true })).toBeVisible();
   await expect(page.getByTestId('resource-table').locator('tbody tr')).toHaveCount(0);
@@ -80,7 +80,7 @@ test('live details, manifest and logs use the selected object and container', as
     if (url.pathname.endsWith('/logs')) { logs.push(url.search); return route.fulfill({ json: '2026-10-20T00:00:00Z actual-container-output\n' }); }
     return route.fulfill({ json: { items: url.searchParams.get('kind') === 'Pod' ? [pod] : [] } });
   });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
   const details = page.getByTestId('resource-details');
   await details.getByRole('button', { name: 'Open details in tab' }).click();
@@ -103,7 +103,7 @@ test('late responses from the previous cluster cannot replace the current cluste
     if (context === 'cluster-a') await new Promise((resolve) => setTimeout(resolve, 800));
     return route.fulfill({ json: { items: url.searchParams.get('kind') === 'Pod' ? [{ metadata: { uid: context, name: context, namespace: 'default' }, spec: { containers: [] } }] : [] } });
   });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.locator('main').getByRole('button', { name: 'cluster-a', exact: true }).click();
   await page.getByText('cluster-b', { exact: true }).click();
   await expect(page.getByTestId('resource-table').getByText('cluster-b', { exact: true })).toBeVisible();
@@ -114,7 +114,8 @@ test('late responses from the previous cluster cannot replace the current cluste
 
 test('details leave usable editor space at the minimum window size', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 600 });
-  await page.goto('/?demo=1');
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').locator('tbody tr').first().click();
   const details = await page.getByTestId('resource-details').boundingBox();
   const table = await page.getByTestId('resource-table').boundingBox();

@@ -9,7 +9,9 @@ export interface KubernetesProvider extends ResourceWatchProvider {
   getContexts(): Promise<KubeContextInfo[]>;
   pingCluster(context: string): Promise<{ status: string; version?: string }>;
   getNamespaces(context: string): Promise<string[]>;
-  getResources(context: string, kind: ResourceKind, namespace?: string): Promise<ResourceItem[]>;
+  getApiResources(context: string): Promise<import('../core/resources/resource_types').ResourceType[]>;
+  getResources(context: string, kind: ResourceKind, namespace?: string, signal?: AbortSignal): Promise<ResourceItem[]>;
+  getCustomResources(context: string, name: string, uid: string, namespace: string | null, signal?: AbortSignal): Promise<import('./custom_resources').CustomResourceInstance[]>;
   getLogs(context: string, name: string, namespace: string, container?: string): Promise<string>;
   getOverviewMetrics(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./overview_metrics').OverviewMetrics>;
   getHelmReleases(context: string, namespace: string | null, offset?: number, signal?: AbortSignal): Promise<import('./helm_types').HelmReleasePage>;
@@ -18,4 +20,6 @@ export interface KubernetesProvider extends ResourceWatchProvider {
   getHelmRepositories(signal?: AbortSignal): Promise<import('./helm_types').HelmRepo[]>;
   updateSecretData(request: import('./secret_data').SecretDataRequest): Promise<Record<string, any>>;
   scaleWorkload(context: string, kind: string, name: string, namespace: string, replicas: number, uid: string, resourceVersion: string): Promise<boolean>;
+  applyManifest(context: string, manifest: string, item?: ResourceItem): Promise<string>;
+  deleteResource(context: string, kind: string, name: string, namespace: string | undefined, uid: string, resourceVersion: string, apiVersion?: string): Promise<string>;
 }

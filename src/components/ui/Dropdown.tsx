@@ -23,7 +23,7 @@ export function Popover({ trigger, children, align = 'start', width, className }
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const [pos, setPos] = useState({ top: 0, left: 0, maxHeight: window.innerHeight * 0.7 });
 
   const close = () => setOpen(false);
   const toggle = () => setOpen((o) => !o);
@@ -32,15 +32,25 @@ export function Popover({ trigger, children, align = 'start', width, className }
     if (!open || !anchorRef.current) return;
     const update = () => {
       const r = anchorRef.current!.getBoundingClientRect();
-      const ph = panelRef.current?.offsetHeight ?? 0;
+      const panel = panelRef.current;
+      const desiredHeight = Math.min(panel?.scrollHeight ?? 0, window.innerHeight * 0.7);
+      const below = Math.max(0, window.innerHeight - r.bottom - 12);
+      const above = Math.max(0, r.top - 12);
+      const fitsBelow = desiredHeight <= below || below >= above;
+      const maxHeight = Math.max(0, Math.min(window.innerHeight * 0.7, fitsBelow ? below : above));
+      const ph = Math.min(panel?.offsetHeight ?? 0, maxHeight);
       const left = align === 'end' ? r.right - (panelRef.current?.offsetWidth ?? 0) : r.left;
-      const fitsBelow = r.bottom + Math.min(ph, 340) < window.innerHeight - 8;
-      setPos({
-        top: fitsBelow ? r.bottom + 4 : Math.max(8, r.top - ph - 4),
+      const next = {
+        top: Math.max(8, Math.min(fitsBelow ? r.bottom + 4 : r.top - ph - 4, window.innerHeight - ph - 8)),
         left: Math.max(8, Math.min(left, window.innerWidth - (panelRef.current?.offsetWidth ?? 240) - 8)),
-      });
+        maxHeight,
+      };
+      setPos(previous => previous.top === next.top && previous.left === next.left && previous.maxHeight === next.maxHeight ? previous : next);
     };
     update();
+    const observer = new ResizeObserver(update);
+    observer.observe(anchorRef.current);
+    if (panelRef.current) observer.observe(panelRef.current);
     const onScroll = (event: Event) => {
       if (event.target instanceof Node && panelRef.current?.contains(event.target)) return;
       close();
@@ -55,12 +65,13 @@ export function Popover({ trigger, children, align = 'start', width, className }
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
+      observer.disconnect();
       window.removeEventListener('resize', update);
       document.removeEventListener('scroll', onScroll, true);
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open, align]);
+  }, [open, align, width]);
 
   const openRef = useRef(open);
   openRef.current = open;
@@ -87,7 +98,15 @@ export function Popover({ trigger, children, align = 'start', width, className }
         createPortal(
           <div
             ref={panelRef}
-            style={{ top: pos.top, left: pos.left, width: width ? uiPixels(width) : undefined, maxWidth: 'calc(100vw - 16px)' }}
+            data-floating-panel
+            onKeyDown={event => {
+              if (event.key !== 'Escape' || event.defaultPrevented) return;
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+              anchorRef.current?.focus();
+            }}
+            style={{ top: pos.top, left: pos.left, maxHeight: pos.maxHeight, width: width ? uiPixels(width) : undefined, minWidth: 'min(calc(180px * var(--ui-factor)), calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)' }}
             className={cx(
               'fixed z-[70] min-w-[calc(180px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)]',
               'shadow-[var(--shadow-popup)] py-1 max-h-[70vh] overflow-y-auto kubiki-scrollbar kub-pop',
@@ -115,6 +134,7 @@ export interface MenuItem {
   disabled?: boolean;
   checked?: boolean;
   separator?: boolean;
+  header?: boolean;
   items?: MenuItem[]; // simple submenu (RMB expanding)
   onSelect?: () => void;
 }
@@ -126,7 +146,7 @@ export function MenuList({ items, onSelect, autoFocus = false, onBack }: { items
   const [submenu, setSubmenu] = useState<{ id: string; x: number; y: number; keyboard: boolean } | null>(null);
   const subItems = items.find((item) => item.id === submenu?.id)?.items;
   useEffect(() => {
-    if (autoFocus) rootRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    if (autoFocus) (rootRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? rootRef.current)?.focus();
   }, [autoFocus]);
   useLayoutEffect(() => {
     if (!submenu || !submenuRef.current) return;
@@ -143,7 +163,7 @@ export function MenuList({ items, onSelect, autoFocus = false, onBack }: { items
   };
   const back = () => { setSubmenu(null); parentRef.current?.focus(); };
   return (
-    <div ref={rootRef} role="group" aria-label="Actions" onKeyDown={(event) => {
+    <div ref={rootRef} role="group" tabIndex={-1} aria-label="Actions" onKeyDown={(event) => {
       const buttons = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>(':scope > button:not(:disabled)') ?? []);
       const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
       const next = event.key === 'Home' ? buttons[0] : event.key === 'End' ? buttons[buttons.length - 1]
@@ -152,7 +172,11 @@ export function MenuList({ items, onSelect, autoFocus = false, onBack }: { items
       if (next) { event.preventDefault(); event.stopPropagation(); next.focus(); }
       if (onBack && (event.key === 'ArrowLeft' || event.key === 'Escape')) { event.preventDefault(); event.stopPropagation(); onBack(); }
     }}>
-      {items.map((item) => item.separator ? <div key={item.id} className="my-1 h-px bg-[var(--border-subtle)]" /> : (
+      {items.map((item) => item.separator ? <div key={item.id} className="my-1 h-px bg-[var(--border-subtle)]" /> : item.header ? (
+        <div key={item.id} className="px-2.5 pt-1.5 pb-0.5 text-[length:calc(9.5px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)] select-none">
+          {item.label}
+        </div>
+      ) : (
         <button key={item.id} disabled={item.disabled} aria-pressed={item.checked}
           aria-expanded={item.items ? submenu?.id === item.id : undefined} aria-haspopup={item.items ? 'true' : undefined}
           onMouseEnter={(event) => { if (item.items) openSubmenu(event.currentTarget, item, false); else setSubmenu(null); }}
@@ -160,14 +184,14 @@ export function MenuList({ items, onSelect, autoFocus = false, onBack }: { items
           onClick={(event) => { if (item.items) { openSubmenu(event.currentTarget, item, true); return; } if (!item.disabled) onSelect(item); }}
           className={cx('flex w-full items-center gap-2 px-2.5 h-[calc(24px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] transition-colors text-left', item.disabled ? 'text-[var(--text-disabled)] cursor-not-allowed' : item.danger ? 'text-[var(--status-danger)] hover:bg-[var(--status-danger)]/12' : 'text-[var(--text-primary)] hover:bg-[var(--bg-hover)]')}>
           {item.icon && <item.icon size="calc(14px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-muted)] shrink-0" />}
-          <span className="flex-1 truncate">{item.label}</span>
-          {item.checked === true && <Check size="calc(13px * var(--ui-factor))" className="text-[var(--accent)]" />}
-          {item.kbd && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{shortcutLabel(item.kbd)}</span>}
-          {item.items && <ChevronRight size="calc(12px * var(--ui-factor))" className="text-[var(--text-muted)]" />}
+          <span className="flex-1 min-w-0 truncate" title={item.label}>{item.label}</span>
+          {item.checked === true && <Check size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />}
+          {item.kbd && <span className="max-w-[40%] truncate text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{shortcutLabel(item.kbd)}</span>}
+          {item.items && <ChevronRight size="calc(12px * var(--ui-factor))" className="text-[var(--text-muted)] shrink-0" />}
         </button>
       ))}
       {submenu && subItems && createPortal(
-        <div ref={submenuRef} data-menu-layer style={{ top: submenu.y, left: submenu.x }}
+        <div ref={submenuRef} data-menu-layer style={{ top: submenu.y, left: submenu.x, minWidth: 'min(calc(170px * var(--ui-factor)), calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)' }}
           className="fixed z-[86] min-w-[calc(170px*var(--ui-factor))] max-h-[70vh] overflow-auto rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1">
           <MenuList items={subItems} autoFocus={submenu.keyboard} onBack={back} onSelect={(item) => { setSubmenu(null); onSelect(item); }} />
         </div>, document.body)}
@@ -192,8 +216,8 @@ export function FixedMenu({
     const h = panelRef.current?.offsetHeight ?? 200;
     const w = panelRef.current?.offsetWidth ?? 200;
     setPos({
-      top: Math.min(rect.y, window.innerHeight - h - 8),
-      left: Math.min(rect.x, window.innerWidth - w - 8),
+      top: Math.max(8, Math.min(rect.y, window.innerHeight - h - 8)),
+      left: Math.max(8, Math.min(rect.x, window.innerWidth - w - 8)),
     });
     const onDown = (e: MouseEvent) => {
       if (panelRef.current?.contains(e.target as Node) || (e.target instanceof Element && e.target.closest('[data-menu-layer]'))) return;
@@ -214,7 +238,7 @@ export function FixedMenu({
   return createPortal(
     <div
       ref={panelRef}
-      style={{ top: pos.top, left: pos.left }}
+      style={{ top: pos.top, left: pos.left, minWidth: 'min(calc(200px * var(--ui-factor)), calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)' }}
       className="fixed z-[85] min-w-[calc(200px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-popup)] py-1 kub-pop kubiki-scrollbar max-h-[70vh] overflow-y-auto"
     >
       <MenuList items={items} autoFocus onSelect={(item) => { onClose(); item.onSelect?.(); }} />

@@ -217,7 +217,7 @@ async fn no_op_immutable_and_unreviewably_large_changes_never_prompt_or_write() 
 }
 #[tokio::test]
 async fn missing_identity_invalid_kind_and_negative_replicas_fail_without_api_access() {
-    for mode in ["uid", "rv", "kind", "replicas", "namespace"] {
+    for mode in ["uid", "rv", "kind", "group", "replicas", "namespace"] {
         let f = fixture("Deployment", 200);
         let mut target = resource("Deployment");
         let mut rv = "10".to_string();
@@ -226,6 +226,7 @@ async fn missing_identity_invalid_kind_and_negative_replicas_fail_without_api_ac
             "uid" => target.uid = None,
             "rv" => rv.clear(),
             "kind" => target.query.kind = "Pod".into(),
+            "group" => target.query.group = "custom.example".into(),
             "replicas" => replicas = -1,
             _ => target.query.namespace = None,
         };

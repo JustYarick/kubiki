@@ -40,7 +40,7 @@ crates/kubiki-core/
 │   │   └── dynamic_client.rs   # DynamicCrdService: динамические запросы через DynamicObject
 │   ├── helm/
 │   │   ├── model.rs            # Модели HelmRelease, HelmRepo, HelmHistory
-│   │   └── client.rs           # HelmClient: list, history, rollback, repo add/update, values
+│   │   └── client.rs           # HelmClient: read-only list, history, repos, values; mutations: PreparedHelmMutation
 │   └── metrics/
 │       └── client.rs           # MetricsService: сбор метрик NodeMetrics и PodMetrics
 └── tests/
@@ -148,8 +148,8 @@ use kubiki_core::HelmClient;
 // Список установленных релизов
 let releases = HelmClient::list_releases(Some("all")).await?;
 
-// Откат на ревизию 1
-HelmClient::rollback("my-release", 1, "default").await?;
+// Изменения: HelmMutation → PreparedHelmMutation::prepare → confirm_and_commit.
+// Callback согласия предоставляет доверенный backend; renderer не задаёт approval.
 ```
 
 ---

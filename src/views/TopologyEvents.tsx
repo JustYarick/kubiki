@@ -1,5 +1,6 @@
-import { memo, useId, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Clock3, TriangleAlert } from 'lucide-react';
+import { FloatingIsland } from '../components/ui/FloatingIsland';
+import { memo, useMemo } from 'react';
+import { Clock3, TriangleAlert } from 'lucide-react';
 import { topologyEvents } from '../core/resources/topology_events';
 import type { ResourceGraph } from '../core/resources/relationships';
 import { useResourceStore } from '../state/resource_store';
@@ -9,16 +10,8 @@ import { useUiStore } from '../state/ui_store';
 export const TopologyEvents = memo(function TopologyEvents({ scope, graph }: { scope: string; graph: ResourceGraph }) {
   const resources = useResourceStore((state) => state.resources);
   const error = useResourceStore((state) => state.loadErrors.Event);
-  const [expanded, setExpanded] = useState(true);
-  const id = useId();
   const { entries, total, warnings } = useMemo(() => topologyEvents(resources.Event.values(), scope, graph, resources), [resources, scope, graph]);
-  return <aside aria-label="Topology events" className="topology-events" data-testid="topology-events">
-    <button className="flex items-center gap-2 w-full px-3 py-2 text-left text-xs font-medium" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded((value) => !value)}>
-      <Clock3 size="calc(13px * var(--ui-factor))" className="text-[var(--text-secondary)]" /><span className="flex-1">Recent events <span className="text-[var(--text-muted)]">({total})</span></span>
-      {warnings > 0 && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size="calc(11px * var(--ui-factor))" />{warnings}</span>}
-      {expanded ? <ChevronUp size="calc(12px * var(--ui-factor))" /> : <ChevronDown size="calc(12px * var(--ui-factor))" />}
-    </button>
-    {expanded && <div id={id} className="border-t border-[var(--border-default)]">
+  return <FloatingIsland label="Topology events" testId="topology-events" className="topology-events" icon={Clock3} defaultExpanded title={<span className="flex items-center gap-2"><span className="flex-1 truncate">Recent events ({total})</span>{warnings > 0 && <span className="text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size="calc(11px * var(--ui-factor))" />{warnings}</span>}</span>}>
       {error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Events unavailable: {error.message}</p>}
       {!entries.length && !error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No events in the loaded snapshot for this scope.</p>}
       {!!entries.length && <ol className="topology-events-list">{entries.map((entry) => <li key={entry.event.uid} className="px-3 py-2 border-b last:border-0 border-[var(--border-subtle)] text-[length:calc(11px*var(--ui-factor))]">
@@ -35,6 +28,5 @@ export const TopologyEvents = memo(function TopologyEvents({ scope, graph }: { s
       </li>)}</ol>}
       {total > entries.length && <p className="px-3 py-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">Latest {entries.length} of {total} events</p>}
       <p className="px-3 py-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">Loaded snapshot · click a resource for its events</p>
-    </div>}
-  </aside>;
+  </FloatingIsland>;
 });

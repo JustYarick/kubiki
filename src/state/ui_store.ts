@@ -24,6 +24,7 @@ interface UIState {
   inspectorPinned: boolean;
   /* sidebar tree groups open/closed */
   sidebarGroups: Record<string, boolean>;
+  sidebarTreeVersion: number;
   /* visible columns per kind — hidden column ids */
   hiddenColumns: Record<string, string[]>;
   /* per-kind/column pixel widths (Lens-like column resize) */
@@ -80,6 +81,7 @@ export const useUiStore = create<UIState>()(
       inspectorPinned: false,
       /* dock stays hidden on launch — it opens on demand (⌘J / row actions) */
       sidebarGroups: {},
+      sidebarTreeVersion: 2,
       hiddenColumns: {},
       columnWidths: {},
       rightTab: 'overview',
@@ -99,7 +101,7 @@ export const useUiStore = create<UIState>()(
       setInspectorWidth: (w) => set({ inspectorWidth: clamp(w, 340, 800), inspectorCollapsed: false }),
       toggleInspector: () => set((s) => ({ inspectorCollapsed: !s.inspectorCollapsed })),
       toggleGroup: (title) =>
-        set((s) => ({ sidebarGroups: { ...s.sidebarGroups, [title]: s.sidebarGroups[title] === false } })),
+        set((s) => ({ sidebarGroups: { ...s.sidebarGroups, [title]: !(s.sidebarGroups[title] ?? s.sidebarGroups['*'] ?? false) } })),
       setHiddenColumns: (kind, hidden) => set((s) => ({ hiddenColumns: { ...s.hiddenColumns, [kind]: hidden } })),
       setColumnWidth: (kind, colId, width) =>
         set((s) => ({ columnWidths: { ...s.columnWidths, [`${kind}:${colId}`]: width } })),
@@ -124,12 +126,13 @@ export const useUiStore = create<UIState>()(
           sidebarCollapsed: false,
           inspectorCollapsed: true,
           inspectorPinned: false,
+          sidebarGroups: {},
         });
       },
     }),
     {
       name: 'kubiki.settings.v3',
-      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, ...normalizeAppearance(persisted as Partial<UIState> | undefined), terminalFontFamily: normalizeTerminalFont((persisted as Partial<UIState> | undefined)?.terminalFontFamily), terminalLineHeight: normalizeTerminalLineHeight((persisted as Partial<UIState> | undefined)?.terminalLineHeight) }),
+      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, sidebarGroups: (persisted as Partial<UIState> | undefined)?.sidebarTreeVersion === 2 ? (persisted as Partial<UIState>).sidebarGroups ?? {} : {}, sidebarTreeVersion: 2, ...normalizeAppearance(persisted as Partial<UIState> | undefined), terminalFontFamily: normalizeTerminalFont((persisted as Partial<UIState> | undefined)?.terminalFontFamily), terminalLineHeight: normalizeTerminalLineHeight((persisted as Partial<UIState> | undefined)?.terminalLineHeight) }),
       partialize: (s) => ({
         density: s.density,
         uiScale: s.uiScale,
@@ -142,6 +145,7 @@ export const useUiStore = create<UIState>()(
         inspectorWidth: s.inspectorWidth,
         inspectorCollapsed: s.inspectorCollapsed,
         sidebarGroups: s.sidebarGroups,
+        sidebarTreeVersion: 2,
         hiddenColumns: s.hiddenColumns,
         columnWidths: s.columnWidths,
       }),

@@ -17,14 +17,14 @@ test('resource search, health, status and chronological order compose with one g
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: ['backend', 'other'] });
     return route.fulfill({ json: { items: url.searchParams.get('kind') === 'Pod' ? pods : [] } });
   });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   await expect(table.locator('tbody tr')).toHaveCount(6);
   await expect(page.getByRole('button', { name: 'Namespace Scope', exact: true })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Namespace filter', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Breadcrumb namespace', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
-  await page.getByRole('option', { name: 'backend', exact: true }).click();
+  await page.getByRole('option', { name: 'backend', exact: true }).click();await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
   const names = () => table.locator('tbody tr').evaluateAll((rows) => rows.map((row) => row.querySelector('td:nth-child(2)')?.textContent?.trim()));
   await page.getByLabel('Resource order', { exact: true }).selectOption('issues');
   await expect.poll(names).toEqual(['a-error', 'b-warning', 'c-completed', 'd-unknown-date', 'z-new']);
@@ -61,7 +61,7 @@ test('resource search, health, status and chronological order compose with one g
 });
 
 test('filters share one row with search and collapse into a menu without moving rows or losing state', async ({ page }) => {
-  await page.goto('/?demo=1');
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   const toolbar = page.getByTestId('resource-search-toolbar');
   const search = page.getByPlaceholder('Filter pods…');
@@ -89,6 +89,7 @@ test('filters share one row with search and collapse into a menu without moving 
   await expect(page.getByLabel('Resource order', { exact: true })).toHaveValue('newest');
   expect((await search.boundingBox())!.width).toBeGreaterThan(300);
   await page.setViewportSize({ width: 900, height: 600 });
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
   await expect(trigger).toBeVisible();
   await expect.poll(() => toolbar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await trigger.click();

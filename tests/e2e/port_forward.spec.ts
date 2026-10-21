@@ -34,7 +34,8 @@ async function setup(page: Page, mode = 'ok') {
       },
     };
   }, { mode });
-  await page.goto('/');
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('web', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Ports', exact: true }).click();
   return page.getByRole('dialog', { name: 'Create port-forward', exact: true });
@@ -47,7 +48,7 @@ test('Pod and Service forwards use native assigned ports, show errors and stop e
   expect(await page.evaluate(() => (window as any).__pfHarness.starts[0].request)).toMatchObject({ resource: { uid: 'pod-uid', context: 'cluster-a', namespace: 'backend', kind: 'Pod' }, remote_port: 8080, local_port: 0 });
   await page.getByRole('button', { name: /^Services(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('web-service', { exact: true }).click();
-  await page.getByTestId('resource-details').getByRole('button', { name: 'Ports', exact: true }).click();
+  await page.getByTestId('resource-details').getByRole('region', { name: 'Service routing', exact: true }).getByRole('button', { name: 'Port-forward', exact: true }).click();
   await expect(dialog.getByLabel('Remote port', { exact: true })).toHaveValue('80');
   await dialog.getByLabel('Local port', { exact: true }).fill('4000');
   await dialog.getByRole('button', { name: 'Start forward' }).click();
@@ -114,7 +115,8 @@ test('browser snapshots explain the desktop transport requirement', async ({ pag
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: ['backend'] });
     return route.fulfill({ json: { items: url.searchParams.get('kind') === 'Pod' ? [{ apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'pod', name: 'web', namespace: 'backend' }, spec: { containers: [{ name: 'app', image: 'nginx' }] }, status: { phase: 'Running' } }] : [] } });
   });
-  await page.goto('/'); await page.getByTestId('resource-table').getByText('web', { exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByTestId('resource-table').getByText('web', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Ports', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create port-forward' });
   await dialog.getByRole('button', { name: 'Start forward' }).click();

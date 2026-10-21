@@ -58,7 +58,7 @@ export const MainTabBar: React.FC = () => {
   };
 
   const handleAuxClick = (e: React.MouseEvent, tab: WorkspaceTab) => {
-    if (e.button === 1 && !tab.pinned) {
+    if (e.button === 1) {
       // Middle click to close tab
       e.preventDefault();
       closeTab(tab.id);
@@ -66,7 +66,7 @@ export const MainTabBar: React.FC = () => {
   };
 
   const getTabIcon = (tab: WorkspaceTab) => {
-    if (tab.type === 'helm-releases' || tab.type === 'helm-repositories' || tab.type === 'helm-release') return <Anchor size={13} className="text-[var(--accent)] shrink-0" />;
+    if (tab.type === 'helm-releases' || tab.type === 'helm-repositories' || tab.kind === 'HelmRelease') return <Anchor size={13} className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'overview') return <LayoutDashboard size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'yaml-editor') return <FileCode size="calc(13px * var(--ui-factor))" className="text-amber-400 shrink-0" />;
     if (tab.type === 'terminal') return <TermIcon size="calc(13px * var(--ui-factor))" className="text-emerald-400 shrink-0" />;
@@ -84,7 +84,6 @@ export const MainTabBar: React.FC = () => {
           id: 'close',
           label: 'Close Tab',
           kbd: '⌘W',
-          disabled: contextMenu.tab.pinned,
           onSelect: () => closeTab(contextMenu.tab.id),
         },
         {
@@ -154,7 +153,7 @@ export const MainTabBar: React.FC = () => {
                   : event.key === 'ArrowLeft' ? tabs[(index - 1 + tabs.length) % tabs.length] : undefined;
                 if (next) { event.preventDefault(); handleTabClick(next); tabRefs.current.get(next.id)?.focus(); }
                 else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handleTabClick(tab); }
-                else if (event.key === 'Delete' && !tab.pinned) { event.preventDefault(); const adjacent = tabs[index + 1] ?? tabs[index - 1]; closeTab(tab.id); if (adjacent) tabRefs.current.get(adjacent.id)?.focus(); }
+                else if (event.key === 'Delete') { event.preventDefault(); const adjacent = tabs[index + 1] ?? tabs[index - 1]; closeTab(tab.id); if (adjacent) tabRefs.current.get(adjacent.id)?.focus(); }
               }}
               onClick={() => handleTabClick(tab)}
               onContextMenu={(e) => handleContextMenu(e, tab)}
@@ -192,22 +191,20 @@ export const MainTabBar: React.FC = () => {
               )}
 
               {/* Close Button */}
-              {!tab.pinned && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(tab.id);
-                  }}
-                  className={cx(
-                    'p-0.5 rounded focus-visible:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-white transition-opacity',
-                    isActive ? 'opacity-70 group-hover:opacity-100' : 'opacity-0 group-hover:opacity-70'
-                  )}
-                  title={shortcutLabel("Close Tab (⌘W)")}
-                  aria-label="Close tab"
-                >
-                  <X size="calc(12px * var(--ui-factor))" />
-                </button>
-              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(tab.id);
+                }}
+                className={cx(
+                  'p-0.5 rounded focus-visible:opacity-100 hover:bg-[var(--bg-elevated)] hover:text-white transition-opacity',
+                  isActive ? 'opacity-70 group-hover:opacity-100' : 'opacity-0 group-hover:opacity-70'
+                )}
+                title={shortcutLabel("Close Tab (⌘W)")}
+                aria-label="Close tab"
+              >
+                <X size="calc(12px * var(--ui-factor))" />
+              </button>
             </div>
           );
         })}

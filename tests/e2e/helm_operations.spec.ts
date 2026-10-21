@@ -1,3 +1,4 @@
+import { openDiagramSettings } from './helpers/topology';
 import { test, expect } from '@playwright/test';
 
 test('desktop Helm edit/install/rollback/uninstall and repository CRUD use backend-reviewed requests', async ({ page }) => {
@@ -14,10 +15,11 @@ test('desktop Helm edit/install/rollback/uninstall and repository CRUD use backe
       if (command.startsWith('stop_') || command === 'watch_resources') return;
       if (command === 'list_helm_releases') return { ...args, limit: 100, has_more: false, items: [...releases] };
       if (command === 'list_helm_repositories') return [...repos];
+      if (command === 'get_helm_history') return Array.from({ length: Number(releases[0].revision) }, (_, index) => ({ revision: index + 1, updated: '', status: index + 1 === Number(releases[0].revision) ? 'deployed' : 'superseded', chart: 'web-1', app_version: '1', description: 'Fixture revision' }));
       if (command === 'get_helm_content') return 'replicaCount: 2\n';
       if (command === 'search_helm_charts') return [{ name: 'demo/web', version: '1.2.0', app_version: '1', description: 'test chart' }];
-      if (command === 'mutate_helm') {
-        const r = args.request; w.__helmWrites.push(r);
+      if (command === 'mutate_resource' && args.request.operation === 'helm') {
+        const r = args.request.request; w.__helmWrites.push(r);
         if (r.operation === 'install') releases.push({ ...releases[0], name: r.name, namespace: r.namespace, revision: '1' });
         if (r.operation === 'upgrade' || r.operation === 'rollback') releases = releases.map(item => item.name === r.name ? { ...item, revision: String(Number(item.revision) + 1) } : item);
         if (r.operation === 'uninstall') releases = releases.filter(item => item.name !== r.name);
@@ -28,10 +30,11 @@ test('desktop Helm edit/install/rollback/uninstall and repository CRUD use backe
       throw new Error(`Unexpected command ${command}`);
     } };
   });
-  await page.goto('/'); await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
   const view = page.getByTestId('helm-releases');
+  const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
   await view.getByRole('row', { name: 'Inspect Helm release web in backend' }).click();
-  await view.getByRole('button', { name: 'Upgrade', exact: true }).click();
+  await details.getByRole('button', { name: 'Upgrade', exact: true }).click();
   let dialog = page.getByRole('dialog', { name: 'Upgrade Helm release', exact: true });
   await expect(dialog.getByLabel('Helm values YAML')).toHaveValue('replicaCount: 2\n');
   await dialog.getByLabel('Helm chart reference').fill('demo/web');
@@ -40,22 +43,25 @@ test('desktop Helm edit/install/rollback/uninstall and repository CRUD use backe
   await dialog.getByLabel('Helm values YAML').fill('replicaCount: 4\n');
   await dialog.getByRole('button', { name: 'Review in system dialog' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(view.getByRole('complementary').getByText('3', { exact: true })).toBeVisible();
-  await view.getByRole('button', { name: 'Roll back', exact: true }).click();
-  dialog = page.getByRole('dialog', { name: 'Roll back Helm release' }); await dialog.getByLabel('Helm rollback revision').fill('1');
+  await expect(details.getByRole('region', { name: 'Release overview' }).getByText('3', { exact: true })).toBeVisible();
+  await details.getByRole('tab', { name: 'History', exact: true }).click();
+  await expect(details.getByRole('button', { name: 'Restore Helm revision 3', exact: true })).toBeDisabled();
+  await page.screenshot({ path: 'test-results/helm-history-actions.png', animations: 'disabled' });
+  await details.getByRole('button', { name: 'Restore Helm revision 1', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Roll back Helm release' }); await expect(dialog.getByLabel('Helm rollback revision')).toHaveValue('1');
   await dialog.getByRole('button', { name: 'Review in system dialog' }).click(); await expect(dialog).toHaveCount(0);
   await view.getByRole('button', { name: 'Install release', exact: true }).click();
   dialog = page.getByRole('dialog', { name: 'Install Helm release' }); await dialog.getByLabel('Helm release name').fill('second'); await dialog.getByLabel('Helm target namespace').fill('backend'); await dialog.getByLabel('Helm chart reference').fill('demo/web');
   await dialog.getByRole('button', { name: 'Review in system dialog' }).click(); await expect(dialog).toHaveCount(0);
   await expect(view.getByRole('row', { name: 'Inspect Helm release second in backend' })).toBeVisible();
-  await view.getByRole('button', { name: 'Uninstall', exact: true }).click(); dialog = page.getByRole('dialog', { name: 'Uninstall Helm release' });
+  await details.getByRole('button', { name: 'More release actions', exact: true }).click(); await page.getByRole('menu', { name: 'Release actions' }).getByRole('button', { name: 'Uninstall', exact: true }).click(); dialog = page.getByRole('dialog', { name: 'Uninstall Helm release' });
   await dialog.getByRole('button', { name: 'Review in system dialog' }).click(); await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Open Helm Repositories' }).click();
   const repositories = page.getByTestId('helm-repositories'); await repositories.getByRole('row', { name: 'Helm repository demo' }).click({ button: 'right' });
   await page.getByRole('button', { name: 'Edit repository…' }).click(); dialog = page.getByRole('dialog', { name: 'Configure Helm repository' });
   await dialog.getByLabel('Helm repository URL').fill('https://new.example/charts'); await dialog.getByRole('button', { name: 'Review in system dialog' }).click();
   await expect(repositories).toContainText('https://new.example/charts');
-  await repositories.getByRole('button', { name: 'Update indexes' }).click(); dialog = page.getByRole('dialog', { name: 'Update Helm repository cache' }); await dialog.getByRole('button', { name: 'Review in system dialog' }).click(); await expect(dialog).toHaveCount(0);
+  await repositories.getByRole('button', { name: 'More repository actions', exact: true }).click(); await page.getByRole('menu', { name: 'Repository actions' }).getByRole('button', { name: 'Update indexes' }).click(); dialog = page.getByRole('dialog', { name: 'Update Helm repository cache' }); await dialog.getByRole('button', { name: 'Review in system dialog' }).click(); await expect(dialog).toHaveCount(0);
   await repositories.getByRole('row', { name: 'Helm repository demo' }).click({ button: 'right' }); await page.getByRole('button', { name: 'Remove repository…' }).click();
   dialog = page.getByRole('dialog', { name: 'Remove Helm repository' }); await dialog.getByRole('button', { name: 'Review in system dialog' }).click(); await expect(repositories).toContainText('No repositories configured');
   await repositories.getByRole('button', { name: 'Add repository' }).click(); dialog = page.getByRole('dialog', { name: 'Configure Helm repository' });
@@ -88,8 +94,9 @@ test('RBAC diagrams show declared chains; Helm nodes connect to owned objects an
     if (url.pathname.includes('/helm/') && op === 'history') return route.fulfill({ json: [{ revision: 2, status: 'deployed', chart: 'web-1', app_version: '1', updated: '', description: '' }] });
     return route.fulfill({ json: { items: objects[url.searchParams.get('kind') ?? ''] ?? [] } });
   });
-  await page.goto('/'); await page.getByRole('button', { name: /^Roles(?: \d+)?$/ }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByRole('button', { name: /^Roles(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('reader', { exact: true }).click(); await page.getByTestId('resource-details').getByRole('button', { name: 'Topology', exact: true }).click();
+  await openDiagramSettings(page);
   await page.getByLabel('Relationship depth').selectOption('3');
   await expect(page.locator('.react-flow__node-resource').getByText('RoleBinding', { exact: true })).toBeVisible();
   await expect(page.locator('.react-flow__node-resource').getByText('ServiceAccount', { exact: true })).toBeVisible();
@@ -98,8 +105,7 @@ test('RBAC diagrams show declared chains; Helm nodes connect to owned objects an
   const pod = page.locator('.react-flow__node-resource').filter({ has: page.locator('[data-resource-kind="Pod"]') });
   const position = await pod.getAttribute('style'); const workerCount = workers.length;
   const canvas = page.locator('.topology-canvas'); const bounds = await canvas.boundingBox();
-  await expect(types).toHaveCount(0);
-  await page.getByRole('button', { name: 'Topology resource types', exact: true }).click();
+  await expect(types).toBeVisible();
   expect(await canvas.boundingBox()).toEqual(bounds);
   await types.getByLabel('Show RoleBinding', { exact: true }).uncheck();
   await expect(page.locator('.react-flow__node-resource').getByText('RoleBinding', { exact: true })).toHaveCount(0);
@@ -113,10 +119,13 @@ test('RBAC diagrams show declared chains; Helm nodes connect to owned objects an
   await page.screenshot({ path: 'test-results/topology-type-filter.png' });
   await page.keyboard.press('Escape'); await expect(types).toHaveCount(0);
   await page.getByRole('button', { name: 'Open Helm Releases' }).click(); await page.getByTestId('helm-releases').getByRole('row', { name: 'Inspect Helm release web in backend' }).click();
-  await page.getByTestId('helm-releases').getByRole('button', { name: 'Topology', exact: true }).click();
+  await page.getByTestId('inspector-panel').getByRole('button', { name: 'Topology', exact: true }).click();
   const node = page.locator('.react-flow__node-resource').filter({ has: page.locator('[data-resource-kind="HelmRelease"]') });
   await expect(node).toBeVisible(); await expect(page.locator('.react-flow__node-resource').getByText('Deployment', { exact: true })).toBeVisible();
   await expect(page.locator('.react-flow__edge-text').getByText('manages', { exact: true })).toBeVisible();
-  await node.click(); await expect(page.getByRole('tab', { name: /^Helm: web/ })).toBeVisible();
-  await expect(page.locator('main').getByRole('complementary')).toContainText('Managed Kubernetes objects (1 loaded)');
+  await node.click();
+  await expect(page.getByTestId('inspector-panel').getByTestId('resource-details')).toContainText('Managed Kubernetes objects (1 loaded)');
+  await page.getByTestId('inspector-panel').getByRole('button', { name: 'Open details in tab', exact: true }).click();
+  await expect(page.getByRole('tab', { name: /^Helm: web/ })).toBeVisible();
+  await expect(page.locator('main').getByTestId('resource-details')).toContainText('Managed Kubernetes objects (1 loaded)');
 });

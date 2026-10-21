@@ -1,0 +1,15 @@
+.responsive-toolbar { min-width: 0; flex-shrink: 0; border-bottom: 1px solid var(--border-subtle); background: var(--bg-secondary); }
+.responsive-toolbar-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: calc(6px * var(--ui-factor)); padding: calc(5px * var(--ui-factor)) calc(8px * var(--ui-factor)); min-width: 0; }
+.responsive-toolbar-identity { display: flex; align-items: center; min-width: 0; gap: calc(6px * var(--ui-factor)); }
+.responsive-toolbar-actions { display: flex; align-items: center; min-width: 0; gap: calc(3px * var(--ui-factor)); }
+.responsive-toolbar-primary { display: flex; align-items: center; justify-content: end; min-width: 0; }
+.responsive-toolbar:not([data-layout="wide"]) .responsive-toolbar-layout { grid-template-columns: minmax(0, 1fr) auto; }
+.responsive-toolbar:not([data-layout="wide"]) .responsive-toolbar-identity { grid-column: 1 / -1; }
+.responsive-toolbar:not([data-layout="wide"]) .responsive-toolbar-actions { grid-column: 1; }
+.responsive-toolbar:not([data-layout="wide"]) .responsive-toolbar-primary { grid-column: 2; }
+.ui-checkbox { box-sizing: border-box; width: calc(14px * var(--ui-factor)); height: calc(14px * var(--ui-factor)); min-width: calc(14px * var(--ui-factor)); margin: 0; flex: none; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.ui-checkbox:disabled { cursor: default; }
+.ui-checkbox-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: calc(8px * var(--ui-factor)); min-width: 0; min-height: calc(30px * var(--ui-factor)); padding: calc(6px * var(--ui-factor)) calc(8px * var(--ui-factor)); border-radius: calc(4px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); cursor: pointer; }
+.ui-checkbox-row:hover, .ui-checkbox-row:focus-within { background: var(--bg-hover); }
+.ui-checkbox-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-checkbox-trailing { white-space: nowrap; color: var(--text-secondary); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

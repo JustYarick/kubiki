@@ -51,7 +51,7 @@ function IssueIndicator({ issues, showSummary }: { issues: ResourceIssue[]; show
   return <>
     <span ref={anchor} role="img" tabIndex={0} aria-label={`Resource issues: ${description}`} aria-describedby={open ? tooltipId : undefined}
       data-resource-issues={issues.length} data-severity={error ? 'error' : 'warning'}
-      className={cx('inline-flex items-center gap-1.5 min-w-0 align-middle', error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]')}
+      className={cx('inline-flex items-center gap-1.5 min-w-0 align-middle', !showSummary && 'shrink-0', error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]')}
       onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
       onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false); }}>
       <TriangleAlert size="calc(13px * var(--ui-factor))" strokeWidth={2} className="shrink-0" />

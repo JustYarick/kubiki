@@ -1,6 +1,7 @@
 import type { ResourceItem } from '../../types/k8s';
 import type { OverviewMetrics } from '../../providers/overview_metrics';
 import { quantity } from './quantities';
+import { inNamespaceScope } from './namespace_scope';
 export type Dimension = 'cpu' | 'memory';
 export interface Budget { request: number | null; limit: number | null }
 export interface UsageRow { name: string; namespace?: string; item?: ResourceItem; cpu: number; memory: number; timestamp: number; window: string; containers: { name: string; cpu: number; memory: number }[] }
@@ -42,7 +43,7 @@ export function buildTelemetry(data: OverviewMetrics | undefined, pods: Resource
   const nodeMap = new Map(nodes?.map(node => [node.name, node]));
   const podRows: UsageRow[] = (data?.pods.items ?? []).flatMap(metric => {
     const item = podMap.get(`${metric.namespace}/${metric.name}`);
-    if (namespace && metric.namespace !== namespace || activePods && !item || item?.creationTimestamp && Date.parse(item.creationTimestamp) > Date.parse(metric.timestamp)) return [];
+    if (namespace && !inNamespaceScope(namespace, metric.namespace) || activePods && !item || item?.creationTimestamp && Date.parse(item.creationTimestamp) > Date.parse(metric.timestamp)) return [];
     const containers = metric.containers.map(container => ({ name: container.name, cpu: quantity(container.cpu)!, memory: quantity(container.memory)! }));
     return [{ name: metric.name, namespace: metric.namespace, item, timestamp: Date.parse(metric.timestamp), window: metric.window, containers, cpu: containers.reduce((sum, container) => sum + container.cpu, 0), memory: containers.reduce((sum, container) => sum + container.memory, 0) }];
   });

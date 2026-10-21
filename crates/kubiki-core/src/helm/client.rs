@@ -1,3 +1,4 @@
+//! Legacy read-only CLI helpers. All mutations use PreparedHelmMutation and trusted consent.
 use crate::core::error::KubikiError;
 use crate::helm::model::{HelmRelease, HelmReleaseHistory, HelmRepo};
 use tokio::process::Command;
@@ -21,12 +22,16 @@ impl HelmClient {
         }
 
         let output = cmd.output().await.map_err(|e| {
-            KubikiError::Internal(format!("Failed to execute 'helm list': {e}. Ensure helm binary is in PATH."))
+            KubikiError::Internal(format!(
+                "Failed to execute 'helm list': {e}. Ensure helm binary is in PATH."
+            ))
         })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KubikiError::Internal(format!("Helm command failed: {stderr}")));
+            return Err(KubikiError::Internal(format!(
+                "Helm command failed: {stderr}"
+            )));
         }
 
         let json_str = String::from_utf8_lossy(&output.stdout);
@@ -34,9 +39,8 @@ impl HelmClient {
             return Ok(Vec::new());
         }
 
-        let releases: Vec<HelmRelease> = serde_json::from_str(&json_str).map_err(|e| {
-            KubikiError::Internal(format!("Failed to parse Helm JSON output: {e}"))
-        })?;
+        let releases: Vec<HelmRelease> = serde_json::from_str(&json_str)
+            .map_err(|e| KubikiError::Internal(format!("Failed to parse Helm JSON output: {e}")))?;
 
         Ok(releases)
     }
@@ -55,13 +59,13 @@ impl HelmClient {
             .arg("json")
             .output()
             .await
-            .map_err(|e| {
-                KubikiError::Internal(format!("Failed to execute 'helm history': {e}"))
-            })?;
+            .map_err(|e| KubikiError::Internal(format!("Failed to execute 'helm history': {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KubikiError::Internal(format!("Helm history failed: {stderr}")));
+            return Err(KubikiError::Internal(format!(
+                "Helm history failed: {stderr}"
+            )));
         }
 
         let json_str = String::from_utf8_lossy(&output.stdout);
@@ -70,32 +74,6 @@ impl HelmClient {
         })?;
 
         Ok(history)
-    }
-
-    /// Roll back a release to a specific previous revision
-    pub async fn rollback(
-        release_name: &str,
-        revision: i32,
-        namespace: &str,
-    ) -> Result<String, KubikiError> {
-        let output = Command::new("helm")
-            .arg("rollback")
-            .arg(release_name)
-            .arg(revision.to_string())
-            .arg("-n")
-            .arg(namespace)
-            .output()
-            .await
-            .map_err(|e| {
-                KubikiError::Internal(format!("Failed to execute 'helm rollback': {e}"))
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KubikiError::Internal(format!("Helm rollback failed: {stderr}")));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     /// List configured Helm chart repositories
@@ -121,67 +99,6 @@ impl HelmClient {
         Ok(repos)
     }
 
-    /// Add a new Helm repository
-    pub async fn add_repository(name: &str, url: &str) -> Result<(), KubikiError> {
-        let output = Command::new("helm")
-            .arg("repo")
-            .arg("add")
-            .arg(name)
-            .arg(url)
-            .output()
-            .await
-            .map_err(|e| {
-                KubikiError::Internal(format!("Failed to execute 'helm repo add': {e}"))
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KubikiError::Internal(format!("Failed to add Helm repo: {stderr}")));
-        }
-
-        Ok(())
-    }
-
-    /// Update Helm repositories cache
-    pub async fn update_repositories() -> Result<(), KubikiError> {
-        let output = Command::new("helm")
-            .arg("repo")
-            .arg("update")
-            .output()
-            .await
-            .map_err(|e| {
-                KubikiError::Internal(format!("Failed to execute 'helm repo update': {e}"))
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KubikiError::Internal(format!("Failed to update Helm repos: {stderr}")));
-        }
-
-        Ok(())
-    }
-
-    /// Uninstall a Helm release
-    pub async fn uninstall_release(name: &str, namespace: &str) -> Result<(), KubikiError> {
-        let output = Command::new("helm")
-            .arg("uninstall")
-            .arg(name)
-            .arg("-n")
-            .arg(namespace)
-            .output()
-            .await
-            .map_err(|e| {
-                KubikiError::Internal(format!("Failed to execute 'helm uninstall': {e}"))
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KubikiError::Internal(format!("Failed to uninstall Helm release: {stderr}")));
-        }
-
-        Ok(())
-    }
-
     /// Retrieve user values.yaml of an installed release
     pub async fn get_values(name: &str, namespace: &str) -> Result<String, KubikiError> {
         let output = Command::new("helm")
@@ -200,7 +117,9 @@ impl HelmClient {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KubikiError::Internal(format!("Failed to get Helm values: {stderr}")));
+            return Err(KubikiError::Internal(format!(
+                "Failed to get Helm values: {stderr}"
+            )));
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())

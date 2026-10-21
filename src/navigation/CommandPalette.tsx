@@ -1,4 +1,6 @@
+import { inNamespaceScope, namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { shortcutLabel } from '../core/shortcuts';
+import { customResourceType } from '../core/resources/custom_resource_types';
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRightLeft, Boxes, Braces, Command, FileText, Layout, Maximize2, Minimize2, PanelBottom, PanelLeft, PanelRight, Palette, RefreshCw, Rocket, Settings, Terminal, Trash2, Columns2, X } from 'lucide-react';
@@ -99,6 +101,24 @@ export const CommandPalette: React.FC = () => {
     });
   }
 
+  // Navigate: custom resources
+  const crdMap = st.resources.CustomResourceDefinition;
+  if (crdMap) {
+    for (const crdItem of crdMap.values()) {
+      const type = customResourceType(crdItem);
+      if (!type) continue;
+      commands.push({
+        id: `crd-${type.key}`,
+        label: `${type.kind} (${type.group})`,
+        section: 'Custom Resources',
+        icon: Boxes,
+        hint: 'custom resource',
+        keywords: `${type.name} ${type.plural} ${type.singular ?? ''} ${(type.shortNames ?? []).join(' ')} ${type.group}`,
+        run: () => useWorkspaceStore.getState().openResourceList(type.key),
+      });
+    }
+  }
+
   // View toggles
   commands.push(
     { id: 'helm-repositories', label: 'Helm repositories', section: 'Go to', icon: Boxes, run: () => useWorkspaceStore.getState().openHelm('repositories') },
@@ -142,7 +162,7 @@ export const CommandPalette: React.FC = () => {
     { id: 'pf', label: `Port-forwards (${usePfStore.getState().sessions.length})`, section: 'Panel', icon: ArrowRightLeft, run: () => useDockStore.getState().openPorts() },
     { id: 'events', label: 'Cluster events snapshot', section: 'Panel', icon: FileText, run: () => useDockStore.getState().openEvents() },
     { id: 'refresh', label: 'Refresh current list', section: 'Data', icon: RefreshCw, run: () => { if (!cluster.currentContext) return; const context = cluster.currentContext; void k8s.getResources(context, st.activeKind, 'all').then((items) => { if (useClusterStore.getState().currentContext === context) st.setResourcesForKind(st.activeKind, items); }).catch((error) => toast.error('Refresh failed', String(error))); } },
-    { id: 'ns', label: `Namespace: ${cluster.selectedNamespace}`, section: 'Data', icon: Boxes, keywords: 'namespace filter', run: () => { const list = ['all', ...cluster.availableNamespaces]; const next = list[(list.indexOf(cluster.selectedNamespace) + 1) % list.length]; cluster.selectNamespace(next); toast.info(`Namespace: ${next}`); } },
+    { id: 'ns', label: `Namespaces: ${namespaceScopeLabel(cluster.selectedNamespace)}`, section: 'Data', icon: Boxes, keywords: 'namespace filter scope select multiple', run: () => { document.querySelector<HTMLButtonElement>('[aria-label="Namespace Scope"]')?.click(); } },
     { id: 'settings', label: 'Open settings', section: 'System', icon: Settings, run: () => ui.setSettingsOpen(true) },
     { id: 'clear', label: 'Clear all filters', section: 'Data', icon: Trash2, run: () => { st.setSearchQuery(''); cluster.selectNamespace('all'); toast.success('Filters cleared'); } },
   );
@@ -152,6 +172,7 @@ export const CommandPalette: React.FC = () => {
   for (const kind of allKinds) {
     const items = Array.from(st.resources[kind].values());
     for (const item of items) {
+      if (!inNamespaceScope(cluster.selectedNamespace, item.namespace)) continue;
       commands.push({
         id: `res-${item.uid}`,
         label: item.name,

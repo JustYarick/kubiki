@@ -30,7 +30,8 @@ export type ResourceKind =
   | 'RoleBinding'
   | 'ClusterRole'
   | 'ClusterRoleBinding'
-  | 'HelmRelease';
+  | 'HelmRelease'
+  | (string & {});
 
 export interface ResourceContainer {
   role?: 'application' | 'sidecar' | 'init' | 'ephemeral';
@@ -87,6 +88,16 @@ export interface ResourceItem {
   ingressHosts?: string;
   ingressClass?: string;
   replicas?: number;
+  controlledBy?: string;
+  duration?: string;
+  lastScheduleTime?: string;
+  activeJobs?: number;
+  externalIP?: string;
+  selectorText?: string;
+  sizeBytes?: number;
+  taintsCount?: number;
+  qosClass?: string;
+  loadBalancer?: string;
 }
 
 export interface ResourceDeltaPayload {

@@ -8,10 +8,10 @@ import { SearchInput } from '../ui/Input';
 import { Popover } from '../ui/Dropdown';
 import type { ResourceContainer } from '../../types/k8s';
 
-export function LogsToolbar({ name, namespace, context, containers, container, onContainer, filter, onFilter, paused, onPause, timestamps, onTimestamps, wrap, onWrap, onDownload, onClear, sourceControls }: {
+export function LogsToolbar({ name, namespace, context, containers, container, onContainer, filter, onFilter, isRegex, onToggleRegex, paused, onPause, timestamps, onTimestamps, wrap, onWrap, onDownload, onClear, sourceControls }: {
   sourceControls?: ReactNode;
   name?: string; namespace?: string; context?: string | null; containers: ResourceContainer[]; container: string; onContainer: (name: string) => void;
-  filter: string; onFilter: (value: string) => void; paused: boolean; onPause: () => void; timestamps: boolean; onTimestamps: () => void; wrap: boolean; onWrap: () => void; onDownload: () => void; onClear: () => void;
+  filter: string; onFilter: (value: string) => void; isRegex?: boolean; onToggleRegex?: (v: boolean) => void; paused: boolean; onPause: () => void; timestamps: boolean; onTimestamps: () => void; wrap: boolean; onWrap: () => void; onDownload: () => void; onClear: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null); const [compact, setCompact] = useState(true); const scale = useUiStore((s) => s.uiScale);
   useEffect(() => { const el = ref.current; if (!el) return; const resize = () => setCompact(el.clientWidth / uiFactor(scale) < 680); resize(); const observer = new ResizeObserver(resize); observer.observe(el); return () => observer.disconnect(); }, [scale]);
@@ -31,7 +31,7 @@ export function LogsToolbar({ name, namespace, context, containers, container, o
     </div>
     <div className={`flex items-center gap-2 min-w-0 ${compact ? 'w-full' : 'flex-[2_1_300px]'}`}>
       <div className="min-w-0 max-w-[45%] shrink"><ContainerSelect containers={containers} value={container} onChange={onContainer} /></div>
-      <SearchInput value={filter} onChange={onFilter} placeholder="Filter log lines…" className="flex-1 min-w-0 w-full" />
+      <SearchInput value={filter} onChange={onFilter} isRegex={isRegex} onToggleRegex={onToggleRegex} placeholder="Filter log lines…" className="flex-1 min-w-0 w-full" />
     </div>
     {!compact && buttons}
   </div>;

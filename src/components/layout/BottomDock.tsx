@@ -39,7 +39,7 @@ import { usePfStore } from '../../state/pf_store';
 import { useResourceStore } from '../../state/resource_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
-import { uiPixels } from '../../core/appearance';
+import { uiPixels, uiFactor } from '../../core/appearance';
 import { IconButton } from '../ui/Button';
 import { Button } from '../ui/Button';
 import { Popover } from '../ui/Dropdown';
@@ -88,7 +88,7 @@ const ExpandedDock: React.FC = () => {
       setIsMaximized(false);
     } else {
       setPrevHeight(dockHeight);
-      setDockHeight(Math.floor(window.innerHeight * 0.7));
+      setDockHeight((window.innerHeight - 170) / uiFactor(useUiStore.getState().uiScale));
       setIsMaximized(true);
     }
   };
@@ -100,7 +100,7 @@ const ExpandedDock: React.FC = () => {
     return (
       <div
         className="shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] flex flex-col z-20 overflow-hidden font-sans"
-        style={{ height: uiPixels(dockHeight), maxHeight: '60vh' }}
+        style={{ height: uiPixels(dockHeight), maxHeight: 'calc(100dvh - 170px)' }}
       >
         <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-center justify-between px-3 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] select-none">
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
@@ -168,7 +168,7 @@ const ExpandedDock: React.FC = () => {
   return (
     <div
       className="shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] flex flex-col z-20 overflow-hidden font-sans"
-      style={{ height: uiPixels(dockHeight), maxHeight: '60vh' }}
+      style={{ height: uiPixels(dockHeight), maxHeight: 'calc(100dvh - 170px)' }}
     >
       {/* Lens-Grade Multi-Session Tab Strip */}
       <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-stretch px-1 gap-0.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-x-auto overflow-y-hidden kubiki-scrollbar select-none">
@@ -742,11 +742,20 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     if (visible && pinned.current && output) output.scrollTop = output.scrollHeight;
   }, [lines, visible, filter]);
 
+  const [filterRegex, setFilterRegex] = useState(false);
   const shown = useMemo(() => {
     if (!filter.trim()) return lines;
+    if (filterRegex) {
+      try {
+        const rx = new RegExp(filter.trim(), 'i');
+        return lines.filter((l) => rx.test(l.level + ' ' + l.msg));
+      } catch {
+        return [];
+      }
+    }
     const q = filter.toLowerCase();
     return lines.filter((l) => (l.level + ' ' + l.msg).toLowerCase().includes(q));
-  }, [lines, filter]);
+  }, [lines, filter, filterRegex]);
 
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
@@ -759,7 +768,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
         <Button size="sm" onClick={() => { setPaused(false); setGeneration((value) => value + 1); }}>Reconnect logs</Button>
         <p className="text-[var(--text-muted)]">Changing the source or resuming reloads its tail. Previous logs are a snapshot.</p>
       </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
-        onContainer={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} filter={filter} onFilter={setFilter}
+        onContainer={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} filter={filter} onFilter={setFilter} isRegex={filterRegex} onToggleRegex={setFilterRegex}
         paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)}
         onClear={() => { bufferRef.current.clear(); setLines([]); setTruncated(false); }} onDownload={() => {
           const blob = new Blob([lines.map((l) => `${l.t} ${l.msg}`).join('\n')], { type: 'text/plain' });

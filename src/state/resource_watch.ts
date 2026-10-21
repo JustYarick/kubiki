@@ -24,7 +24,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     }
   });
   useResourceStore.getState().setSyncMode('watch');
-  return next.start(RESOURCE_TYPES.map(type => type.kind) as ResourceKind[]);
+  return next.start(RESOURCE_TYPES.filter(type => !useClusterStore.getState().availableResourceKinds || useClusterStore.getState().availableResourceKinds!.includes(type.kind)).map(type => type.kind) as ResourceKind[]);
 }
 export async function refreshResourceWatches(kind?: ResourceKind): Promise<boolean> {
   if (!session) return false;

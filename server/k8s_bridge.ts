@@ -29,16 +29,17 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
     };
     const invalid = (message: string) => requestError('invalid_request', message, info, 400);
     try {
-      const methods: Record<string, string> = { contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET' };
+      const methods: Record<string, string> = { 'api-resources': 'GET', contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', 'custom-resources': 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET', apply: 'POST', delete: 'POST', mutate: 'POST' };
       if (!methods[operation]) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== methods[operation]) throw requestError('invalid_request', 'Method not allowed', info, 405);
-      if (operation === 'scale' || operation === 'secrets') throw requestError('forbidden', 'Kubernetes changes require the desktop application and backend system confirmation. HTTP bridge is read-only', info, 403);
+      if (operation === 'scale' || operation === 'secrets' || operation === 'apply' || operation === 'delete' || operation === 'mutate') throw requestError('forbidden', 'Kubernetes changes require the desktop application and backend system confirmation. HTTP bridge is read-only', info, 403);
       if (operation === 'contexts') {
         const data = JSON.parse(await kubectl(['config', 'view', '-o', 'json']));
         return send((data.contexts ?? []).map((entry: any) => ({ name: entry.name, cluster: entry.context?.cluster, user: entry.context?.user, namespace: entry.context?.namespace, is_current: entry.name === data['current-context'] })));
       }
       if (!context?.trim()) throw invalid('A Kubernetes context is required');
       const contextArgs = ['--context', context];
+      if (operation === 'api-resources') return send(await kubectl([...contextArgs, 'api-resources', '--verbs=list', '-o', 'wide', '--no-headers']));
       if (operation === 'ping') {
         const data = JSON.parse(await kubectl([...contextArgs, 'version', '-o', 'json']));
         if (!data.serverVersion) throw requestError('unavailable', 'The API server did not return its version', info, 503);
@@ -64,12 +65,25 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
         const type = RESOURCE_TYPES.find((type) => type.kind === kind);
         const query: ResourceQuery = { context, kind, group: url.searchParams.get('group') ?? '', version: url.searchParams.get('version') ?? '', namespace: url.searchParams.get('namespace') };
         info.resource = query;
-        if (!type || query.group !== type.group || query.version !== type.version) throw requestError('unsupported', `Unsupported resource kind or API group/version: ${kind}`, info, 400);
+        if (!type || query.group !== type.group || !/^v[1-9]\d*(?:(?:alpha|beta)\d+)?$/.test(query.version)) throw requestError('unsupported', `Unsupported resource kind or API group/version: ${kind}`, info, 400);
         if (!type.namespaced && query.namespace !== null) throw invalid('Cluster-scoped resources cannot have a namespace');
         const namespaceArgs = !type.namespaced ? [] : query.namespace && query.namespace !== 'all' ? ['-n', query.namespace] : ['-A'];
         const plural = type.group ? `${type.plural}.${type.group}` : type.plural;
         const data = JSON.parse(await kubectl([...contextArgs, 'get', plural, ...namespaceArgs, '-o', 'json']));
         return send(data);
+      }
+      if (operation === 'custom-resources') {
+        const name = url.searchParams.get('name') ?? '';
+        const uid = url.searchParams.get('uid');
+        const namespace = url.searchParams.get('namespace');
+        if (!/^[a-z0-9][a-z0-9.-]*$/.test(name) || !uid) throw invalid('CRD name and UID are required');
+        if (namespace !== null && !isValidNamespaceName(namespace)) throw invalid('Invalid namespace');
+        const crd = JSON.parse(await kubectl([...contextArgs, 'get', `customresourcedefinitions.apiextensions.k8s.io/${name}`, '-o', 'json']));
+        if (crd.metadata?.uid !== uid) throw requestError('conflict', 'This CRD has been replaced. Refresh the resource list.', info, 409);
+        const { group, names, scope } = crd.spec ?? {};
+        if (!/^[a-z0-9][a-z0-9.-]*$/.test(group ?? '') || !/^[a-z][a-z0-9-]*$/.test(names?.plural ?? '') || !['Namespaced', 'Cluster'].includes(scope)) throw invalid('Invalid CRD definition');
+        const namespaceArgs = scope === 'Namespaced' ? namespace ? ['-n', namespace] : ['-A'] : [];
+        return send(JSON.parse(await kubectl([...contextArgs, 'get', `${names.plural}.${group}`, ...namespaceArgs, '-o', 'json'])));
       }
       if (operation === 'logs') {
         const name = url.searchParams.get('name');

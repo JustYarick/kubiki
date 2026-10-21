@@ -1,11 +1,11 @@
 import { RESOURCE_TYPES } from '../../core/resources/resource_types';
+import { syncResourceSnapshot } from '../../providers/snapshot_sync';
 import { shortcutLabel } from '../../core/shortcuts';
 import React, { useState, useCallback, useRef } from 'react';
 import {
   ChevronDown,
   Circle,
   Command,
-  Layers,
   RefreshCw,
   Server,
   Settings,
@@ -15,25 +15,25 @@ import {
   PanelRight,
 } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
-import { useResourceStore } from '../../state/resource_store';
 import { useDockStore } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
-import { isValidNamespaceName } from '../../core/resources/resource_types';
 import { k8s } from '../../providers/k8s_provider';
 import { refreshResourceWatches } from '../../state/resource_watch';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
 import { IconButton, Tooltip } from '../ui/Button';
-import { SearchableSelect } from '../ui/SearchableSelect';
+import { NamespaceSelect } from '../ui/NamespaceSelect';
 import { toast } from '../../state/notifications_store';
 import type { ResourceKind } from '../../types/k8s';
 import { cx } from '../../core/utils/cx';
 
 interface TitleBarProps {
   onSelectContext: (name: string) => void;
+  compact?: boolean;
+  narrow?: boolean;
 }
 
-export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
+export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = false, narrow = false }) => {
   const { dockCollapsed, toggleDock } = useDockStore();
   const {
     contexts, currentContext, selectedNamespace, selectNamespace, availableNamespaces,
@@ -56,19 +56,15 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
     if (!currentContext || refreshing.current) return;
     refreshing.current = true;
     setIsRefreshing(true);
+    const scope = useClusterStore.getState().selectedNamespace;
+    const current = () => useClusterStore.getState().currentContext === currentContext && useClusterStore.getState().selectedNamespace === scope;
     try {
       if (await refreshResourceWatches()) return;
-      const kinds = RESOURCE_TYPES.map(type => type.kind) as ResourceKind[];
+      const kinds = RESOURCE_TYPES.filter(type => !useClusterStore.getState().availableResourceKinds || useClusterStore.getState().availableResourceKinds!.includes(type.kind)).map(type => type.kind) as ResourceKind[];
       const results = await Promise.allSettled(kinds.map(async (kind) => {
-        try {
-          const items = await k8s.getResources(currentContext, kind, 'all');
-          if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setResourcesForKind(kind, items);
-        } catch (error) {
-          if (useClusterStore.getState().currentContext === currentContext) useResourceStore.getState().setLoadError(kind, error);
-          throw error;
-        }
+        await syncResourceSnapshot(currentContext, kind, scope);
       }));
-      if (useClusterStore.getState().currentContext !== currentContext) return;
+      if (!current()) return;
       const failed = results.filter((r) => r.status === 'rejected').length;
       if (failed) toast.warn('Sync incomplete', `${failed} resource types could not be refreshed`);
     } catch (error) {
@@ -149,9 +145,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
   ];
 
   return (
-    <header className="h-9 bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-center justify-between px-2 select-none shrink-0 z-30 font-sans">
+    <header data-layout={narrow ? 'narrow' : compact ? 'compact' : 'wide'} className="app-titlebar h-9 bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-center justify-between px-2 select-none shrink-0 z-30 font-sans">
       {/* Left: Main Menu + Brand + Cluster Context Widget */}
-      <div className="flex items-center gap-1 min-w-0">
+      <div className="app-titlebar-context flex items-center gap-1 min-w-0">
         {/* JetBrains Hamburger Main Menu */}
         <Popover
           width={260}
@@ -179,19 +175,16 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         </Popover>
 
         {/* Kubiki Brand Logo */}
-        <div className="flex items-center gap-1.5 px-1">
+        <div className="app-titlebar-brand flex items-center gap-1.5 px-1">
           <span className="w-5 h-5 rounded-[calc(4px*var(--ui-factor))] bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-[length:calc(11px*var(--ui-factor))] font-bold shadow-xs shrink-0">
             ⎈
           </span>
           <span className="font-semibold text-[length:calc(12.5px*var(--ui-factor))] tracking-tight text-[var(--text-primary)]">
             Kubiki
           </span>
-          <span className="text-[length:calc(9px*var(--ui-factor))] font-mono font-medium px-1 py-0.2 rounded bg-blue-500/15 text-blue-400 border border-blue-500/25">
-            IDE
-          </span>
         </div>
 
-        <div className="h-4 w-px bg-[var(--border-default)] mx-1" />
+        <div className="app-titlebar-divider h-4 w-px bg-[var(--border-default)] mx-1" />
 
         {/* JetBrains Cluster Context Widget */}
         <Popover
@@ -199,7 +192,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           trigger={({ open }) => (
             <button
               className={cx(
-                'flex items-center gap-1.5 h-[calc(25px*var(--ui-factor))] px-2 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] font-medium transition-colors max-w-[calc(210px*var(--ui-factor))]',
+                'app-titlebar-cluster flex items-center gap-1.5 h-[calc(25px*var(--ui-factor))] px-2 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] font-medium transition-colors max-w-[calc(210px*var(--ui-factor))]',
                 open
                   ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
@@ -215,7 +208,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
                 )}
               />
               <span className="truncate font-mono text-[length:calc(11.5px*var(--ui-factor))]">{currentContext ?? 'No Context'}</span>
-              <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
+              <span className="app-titlebar-version text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
                 {clusterVersion ? clusterVersion.replace(/^v?/, 'v') : ''}
               </span>
               <ChevronDown size="calc(11px * var(--ui-factor))" className="opacity-50 shrink-0 ml-0.5" />
@@ -233,20 +226,15 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
         </Popover>
 
         {/* Namespace Picker */}
-        <SearchableSelect label="Namespace Scope" value={selectedNamespace} onChange={selectNamespace} icon={Layers}
-          customOption={k8s.supportsResourceWatch ? (name) => isValidNamespaceName(name) && name !== 'all' ? { value: name, label: `Use namespace: ${name}` } : undefined : undefined}
-          customHint={k8s.supportsResourceWatch ? 'Enter a namespace name when it is not listed. This changes the live data scope.' : undefined}
-          className="max-w-[calc(170px*var(--ui-factor))] font-mono" options={[
-          { value: 'all', label: 'All Namespaces' },
-          ...[...new Set([...availableNamespaces, ...(selectedNamespace !== 'all' ? [selectedNamespace] : [])])].sort().map((name) => ({ value: name, label: name })),
-        ]} />
+        <NamespaceSelect value={selectedNamespace} onChange={selectNamespace} options={availableNamespaces}
+          allowCustom={k8s.supportsResourceWatch} className="app-titlebar-namespace max-w-[calc(170px*var(--ui-factor))] font-mono" />
       </div>
 
       {/* Center: JetBrains "Search Everywhere" Widget */}
       <div className="titlebar-search flex-1 flex justify-center min-w-0 px-4">
         <button
           onClick={() => setPaletteOpen(true)}
-          className="group flex items-center gap-2 h-[calc(26px*var(--ui-factor))] w-[calc(380px*var(--ui-factor))] max-w-full px-2.5 rounded-[calc(5px*var(--ui-factor))] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-all shadow-xs"
+          className="group flex items-center gap-2 h-[calc(26px*var(--ui-factor))] w-[calc(380px*var(--ui-factor))] max-w-full px-2.5 rounded-[calc(5px*var(--ui-factor))] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors shadow-xs"
           title={shortcutLabel("Search Everywhere (⌘K)")}
         >
           <Command size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />
@@ -260,13 +248,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
       </div>
 
       {/* Right: Sync Controls + Layout Toggles + Settings */}
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="app-titlebar-tools flex items-center gap-1 shrink-0">
         {/* Refresh Cluster Button */}
         <Tooltip label="Synchronize cluster state" delay={300}>
           <button
             onClick={handleRefresh}
             className={cx(
-              'flex items-center gap-1 h-[calc(25px*var(--ui-factor))] px-2 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] transition-colors',
+              'app-titlebar-sync flex items-center gap-1 h-[calc(25px*var(--ui-factor))] px-2 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] transition-colors',
               'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
             )}
             aria-label="Refresh"
@@ -279,10 +267,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           </button>
         </Tooltip>
 
-        <div className="h-4 w-px bg-[var(--border-default)] mx-1" />
+        <div className="app-titlebar-divider h-4 w-px bg-[var(--border-default)] mx-1" />
 
         {/* JetBrains Layout Switcher: Left, Bottom, Right Tool Windows */}
-        <div className="flex items-center bg-[var(--bg-primary)] p-0.5 rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)]">
+        <div className="app-titlebar-layout flex items-center bg-[var(--bg-primary)] p-0.5 rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)]">
           <Tooltip label={sidebarCollapsed ? 'Show Explorer (⌘B)' : 'Hide Explorer (⌘B)'} delay={300}>
             <button
               onClick={toggleSidebar}
@@ -323,7 +311,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext }) => {
           </Tooltip>
         </div>
 
-        <div className="h-4 w-px bg-[var(--border-default)] mx-0.5" />
+        <div className="app-titlebar-divider h-4 w-px bg-[var(--border-default)] mx-0.5" />
 
         {/* Settings */}
         <Tooltip label="IDE Settings" delay={300}>

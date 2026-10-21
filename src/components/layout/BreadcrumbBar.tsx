@@ -1,3 +1,4 @@
+import { namespaceScopeLabel } from '../../core/resources/namespace_scope';
 import React from 'react';
 import { ChevronRight, Server, Layers, Box, FileCode, Terminal as TermIcon, FileText, LayoutDashboard } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
@@ -51,7 +52,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
       <ChevronRight size="calc(11px * var(--ui-factor))" className="text-[var(--text-muted)] opacity-60 shrink-0" />
 
       {/* Namespace */}
-      <span className="flex items-center gap-1 px-1.5 min-w-0"><Layers size="calc(11px * var(--ui-factor))" className="text-violet-400 shrink-0" /><span className="truncate">{selectedNamespace === 'all' ? 'All Namespaces' : selectedNamespace}</span></span>
+      <span className="flex items-center gap-1 px-1.5 min-w-0"><Layers size="calc(11px * var(--ui-factor))" className="text-violet-400 shrink-0" /><span className="truncate">{namespaceScopeLabel(selectedNamespace)}</span></span>
 
       {activeTab && (
         <>
@@ -65,13 +66,13 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
             {activeTab.type === 'logs' && <FileText size="calc(11px * var(--ui-factor))" className="text-blue-400" />}
             {activeTab.type === 'resource-list' && <KindIcon size="calc(11px * var(--ui-factor))" className="text-blue-400" />}
             {activeTab.type === 'resource-detail' && <KindIcon size="calc(11px * var(--ui-factor))" className="text-purple-400" />}
-            <span>{activeTab.type === 'topology' ? 'Topology' : activeTab.kind ? `${activeTab.kind}s` : activeTab.title}</span>
+            <span>{activeTab.type === 'topology' ? 'Topology' : activeTab.type === 'resource-list' ? activeTab.title : activeTab.kind ? activeTab.kind : activeTab.title}</span>
           </div>
         </>
       )}
 
       {/* Resource Name if selected or viewing detail/yaml */}
-      {activeTab?.type !== 'overview' && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && activeTab?.type !== 'helm-release' && (activeTab?.name || selectedItem?.name) && (
+      {activeTab?.type !== 'overview' && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && (activeTab?.name || selectedItem?.name) && (
         <>
           <ChevronRight size="calc(11px * var(--ui-factor))" className="text-[var(--text-muted)] opacity-60 shrink-0" />
           <span className="font-mono text-[var(--text-primary)] min-w-0 truncate px-1 py-0.5 rounded bg-[var(--bg-surface)]/40 font-medium">

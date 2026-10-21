@@ -20,7 +20,7 @@
 - Контекст/namespace/target входят в ключ запроса; late responses игнорируются. Смена scope сбрасывает selection и offset. Browser fetch отменяется при уходе; native invoke может закончить чтение до backend timeout, но его результат не попадёт в другой scope.
 - Таймаут subprocess — 15 секунд; Rust ограничивает stdout 8 MiB и stderr 64 KiB, browser bridge — output buffer 8 MiB. При ошибке/таймауте Rust child уничтожается через kill-on-drop. History ограничена 256 ревизиями. Документы загружаются при открытии секции и прокручиваются внутри ограниченного блока; содержимое не сохраняется в localStorage.
 - Helm имеет отдельные workspace tabs и собственную панель подробностей; общий Kubernetes Inspector на этих вкладках скрыт. В таблицах нет inline mutation buttons. Статусы подписаны текстом и цветом, поиск занимает свободную ширину, таблицы прокручиваются внутри pane, панели адаптируются к ширине workspace.
-- Прежний `HelmClient` остаётся legacy CLI API. Его mutating wrappers **не зарегистрированы** в Tauri/browser read API. Перед включением мутаций обязателен DOMAIN-02C3: backend review/consent и проверка состояния релиза после подтверждения.
+- Прежний `HelmClient` оставлен только для чтения; неиспользуемые mutating wrappers удалены. Все изменения доступны через `PreparedHelmMutation` с backend review/consent и повторной проверкой релиза; desktop вход — общий `mutate_resource`.
 
 ## Проверки и оставшиеся задачи
 

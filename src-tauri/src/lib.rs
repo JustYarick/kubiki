@@ -4,6 +4,8 @@ mod port_forward_commands;
 use port_forward_commands::*;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
 mod mutation_guard;
+mod mutation_commands;
+use mutation_commands::*;
 mod k8s_commands;
 mod terminal_commands;
 mod node_commands;
@@ -56,7 +58,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_helm_releases,
-            mutate_helm,
+            mutate_resource,
             search_helm_charts,
             get_helm_history,
             get_helm_content,
@@ -71,8 +73,9 @@ pub fn run() {
             get_overview_metrics,
             get_namespaces,
             get_resources,
-            scale_workload,
-            update_secret_data,
+            get_api_resources,
+            get_custom_resources,
+            delete_resource,
             get_pod_logs,
             watch_resources,
             stop_resource_watch,
@@ -88,12 +91,10 @@ pub fn run() {
             ack_host_terminal,
             close_host_terminal,
             stop_host_terminals,
-            prepare_node_debug,
             node_debug_status,
             stop_node_debug,
             stop_node_debugs,
             list_other_debug_pods,
-            remove_other_debug_pod,
             start_node_exec,
             write_node_exec,
             resize_node_exec,

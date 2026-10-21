@@ -14,7 +14,9 @@ pub async fn start_pod_exec(
     window: tauri::WebviewWindow,
     pool: tauri::State<'_, ClusterClientPool>,
     manager: tauri::State<'_, PodTerminalManager>,
+    _guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<(), ApiError> {
+    kubiki_core::pod_ops::terminal::validate_request(&request)?;
     let pool = pool.inner().clone();
     let manager = manager.inner().clone();
     let owner = window.label().to_owned();

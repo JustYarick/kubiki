@@ -15,6 +15,7 @@ pub async fn start_host_terminal(
     on_event: Channel<ExecBatch>,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, HostTerminalManager>,
+    _guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<(), ApiError> {
     let manager = manager.inner().clone();
     let owner = window.label().to_owned();

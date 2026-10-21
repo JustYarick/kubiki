@@ -1,5 +1,5 @@
 import { ContainerLaunchDialog } from './components/k8s/ContainerLaunchDialog';
-import { RESOURCE_TYPES } from './core/resources/resource_types';
+import { RESOURCE_TYPES, setDiscoveredResourceTypes } from './core/resources/resource_types';
 import { closePortForwards, resetPortForwards, listPortForwards } from './providers/port_forward';
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
@@ -28,6 +28,7 @@ import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
 import { closeNodeDebugConnections } from './providers/node_debug';
 import { resetLogSessions, closeLogConnections } from './providers/tauri_logs';
+import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snapshot_sync';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
@@ -51,19 +52,31 @@ export default function App() {
   const setAvailableNamespaces = useClusterStore((s) => s.setAvailableNamespaces);
   const setConnected = useClusterStore((s) => s.setConnected);
   const setLoading = useClusterStore((s) => s.setLoading);
-  const setResourcesForKind = useResourceStore((s) => s.setResourcesForKind);
 
   const connectionGeneration = useRef(0);
+  useEffect(() => useClusterStore.subscribe((state, previous) => {
+    if (k8s.supportsResourceWatch || state.currentContext !== previous.currentContext || state.selectedNamespace === previous.selectedNamespace || !state.currentContext) return;
+    const context = state.currentContext;
+    const scope = state.selectedNamespace;
+    const current = () => useClusterStore.getState().currentContext === context && useClusterStore.getState().selectedNamespace === scope;
+    setLoading(true);
+    void Promise.allSettled(RESOURCE_TYPES.filter(type => type.namespaced && (!useClusterStore.getState().availableResourceKinds || useClusterStore.getState().availableResourceKinds!.includes(type.kind))).map(async type => {
+      await syncResourceSnapshot(context, type.kind, scope);
+    })).finally(() => { if (current()) setLoading(false); });
+  }), [setLoading]);
   const connectToContext = useCallback(async (contextName: string) => {
     const generation = ++connectionGeneration.current;
     const current = () => generation === connectionGeneration.current;
     stopMockWatchEngine();
     stopResourceWatches();
+    cancelResourceSnapshots();
     closeExecConnections();
     closeLogConnections();
     closeNodeDebugConnections();
     closePortForwards();
+    setDiscoveredResourceTypes();
     useClusterStore.getState().selectContext(contextName);
+    useClusterStore.setState({ availableResourceKinds: null });
     useResourceStore.getState().reset();
     useDockStore.getState().clearAllSessions();
     usePfStore.getState().clear();
@@ -86,17 +99,20 @@ export default function App() {
         if (current()) toast.warn('Namespace discovery unavailable', String(error));
       }
       if (!current()) return;
+      let available = RESOURCE_TYPES;
+      try {
+        const discovered = await k8s.getApiResources(contextName);
+        if (!current()) return;
+        available = discovered;
+        setDiscoveredResourceTypes(discovered);
+        useClusterStore.setState({ availableResourceKinds: discovered.map(type => type.kind) });
+      } catch { /* Discovery can be denied independently; keep explicit per-resource reads available. */ }
+      if (!current()) return;
       setConnected(true, ping.version);
-      const kinds = RESOURCE_TYPES.map(type => type.kind) as ResourceKind[];
+      const kinds = available.map(type => type.kind) as ResourceKind[];
       useResourceStore.getState().setSyncMode(k8s.demo ? 'demo' : k8s.supportsResourceWatch ? 'watch' : 'snapshot');
       const results = k8s.supportsResourceWatch ? await startResourceWatches(contextName) : await Promise.allSettled(kinds.map(async (kind) => {
-        try {
-          const items = await k8s.getResources(contextName, kind, 'all');
-          if (current()) setResourcesForKind(kind, items);
-        } catch (error) {
-          if (current()) useResourceStore.getState().setLoadError(kind, error);
-          throw error;
-        }
+        await syncResourceSnapshot(contextName, kind, 'all');
       }));
       if (!current()) return;
       const failures = results.filter((r) => r.status === 'rejected').length;
@@ -109,20 +125,21 @@ export default function App() {
     } finally {
       if (current()) setLoading(false);
     }
-  }, [setAvailableNamespaces, setConnected, setLoading, setResourcesForKind]);
+  }, [setAvailableNamespaces, setConnected, setLoading]);
 
   useEffect(() => {
     let cancelled = false;
     async function initCluster() {
+      setLoading(true);
       try {
         const contexts = await k8s.getContexts();
         if (cancelled) return;
         setContexts(contexts);
         const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
         if (current) await connectToContext(current);
-        else useClusterStore.getState().setError('No Kubernetes contexts found in kubeconfig.');
+        else { useClusterStore.getState().setError('No Kubernetes contexts found in kubeconfig.'); setLoading(false); }
       } catch (error) {
-        if (!cancelled) useClusterStore.getState().setError(error);
+        if (!cancelled) { useClusterStore.getState().setError(error); setLoading(false); }
       }
     }
     void initCluster();
@@ -131,15 +148,16 @@ export default function App() {
       connectionGeneration.current++;
       stopMockWatchEngine();
       stopResourceWatches();
+      cancelResourceSnapshots();
       closeExecConnections();
       closeLogConnections();
       closeNodeDebugConnections();
       closePortForwards();
     };
-  }, [connectToContext, setContexts]);
+  }, [connectToContext, setContexts, setLoading]);
 
   useEffect(() => {
-    const onPageHide = () => { stopResourceWatches(); closeExecConnections(); closeLogConnections(); closeNodeDebugConnections(); closePortForwards(); };
+    const onPageHide = () => { stopResourceWatches(); cancelResourceSnapshots(); closeExecConnections(); closeLogConnections(); closeNodeDebugConnections(); closePortForwards(); };
     window.addEventListener('pagehide', onPageHide);
     return () => window.removeEventListener('pagehide', onPageHide);
   }, []);
@@ -195,7 +213,7 @@ export default function App() {
   }, [toggleDock]);
 
   const activeTabType = useWorkspaceStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.type);
-  const showInspector = !inspectorCollapsed && activeTabType !== 'helm-releases' && activeTabType !== 'helm-repositories' && activeTabType !== 'helm-release';
+  const showInspector = !inspectorCollapsed;
   useEffect(() => {
     if (activeTabType === 'overview' && !inspectorPinned) useUiStore.setState({ inspectorCollapsed: true });
   }, [activeTabType, inspectorPinned]);
@@ -209,7 +227,7 @@ export default function App() {
   }, [compact, showInspector]);
   const panelSpace = logicalViewportWidth - 48 - (showSidebar && !overlaySidebar ? sidebarWidth : 0);
   const overlayInspector = panelSpace < 860;
-  const detailWidth = overlayInspector ? Math.min(inspectorWidth, Math.max(240, logicalViewportWidth - 56)) : Math.min(inspectorWidth, panelSpace - 520);
+  const detailWidth = overlayInspector ? Math.min(inspectorWidth, Math.max(0, logicalViewportWidth - 48)) : Math.min(inspectorWidth, panelSpace - 520);
 
   const onSelectContext = (name: string) => {
     connectToContext(name);
@@ -218,7 +236,7 @@ export default function App() {
   return (
     <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans">
       {/* JetBrains New UI Top TitleBar */}
-      <TitleBar onSelectContext={onSelectContext} />
+      <TitleBar onSelectContext={onSelectContext} compact={compact} narrow={logicalViewportWidth < 500} />
       <ConnectionBanner onRetry={() => {
         const context = useClusterStore.getState().currentContext;
         if (context) void connectToContext(context);
@@ -243,7 +261,7 @@ export default function App() {
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
           <WorkspaceArea onSelectContext={onSelectContext} />
 
-          {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(dockHeight - d / factor)} />}
+          {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
           <BottomDock />
         </main>
 
@@ -251,7 +269,7 @@ export default function App() {
         {showInspector && (
           <>
             {!overlayInspector && <Resizer orientation="vertical" onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />}
-            <div data-testid="inspector-panel" data-layout={overlayInspector ? "overlay" : "docked"} style={{ width: uiPixels(detailWidth), top: overlayInspector ? uiPixels(activeTabType === 'resource-list' ? 134 : 100) : undefined, bottom: overlayInspector && !dockCollapsed ? uiPixels(dockHeight + 4) : undefined }} className={`shrink-0 border-l border-[var(--border-default)] min-h-0 ${overlayInspector ? "absolute right-0 top-0 bottom-0 z-40 shadow-xl" : ""}`}>
+            <div data-testid="inspector-panel" data-layout={overlayInspector ? "overlay" : "docked"} style={{ width: uiPixels(detailWidth) }} className={`shrink-0 border-l border-[var(--border-default)] min-h-0 ${overlayInspector ? "absolute right-0 top-0 bottom-0 z-40 shadow-xl" : ""}`}>
               <InspectorPanel />
             </div>
           </>

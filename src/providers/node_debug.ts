@@ -1,3 +1,4 @@
+import { changeResource, deleteObject } from './mutations';
 import type { ResourceRef } from '../core/resources/resource_types';
 import { normalizeK8sError, requestError, type K8sErrorPayload } from './errors';
 export interface NodeDebugRequest { resource: ResourceRef; namespace: string; image: string }
@@ -18,7 +19,7 @@ export async function prepareNodeDebug(sessionId: string, request: NodeDebugRequ
   if (signal.aborted) throw requestError('conflict', 'Node shell preparation cancelled', { operation: 'node_debug' });
   active.set(sessionId, close);signal.addEventListener('abort', abort, { once: true });
   try {
-    const resource = await native<ResourceRef>('prepare_node_debug', { sessionId, request });
+    const resource = await changeResource<ResourceRef>({ operation: 'node_debug', session_id: sessionId, request });
     if (closed || signal.aborted) { await native('stop_node_debug', { sessionId });throw requestError('conflict', 'Node shell preparation cancelled', { operation: 'node_debug' }); }
     return resource;
   } catch (error) { await close().catch(() => {});throw error; }
@@ -28,4 +29,4 @@ export async function stopNodeDebug(sessionId: string): Promise<void> {
 }
 export function nodeDebugStatus(sessionId: string): Promise<NodeDebugState | null> { return native('node_debug_status', { sessionId }); }
 export function otherDebugPods(context: string, namespace: string): Promise<DebugPod[]> { return native('list_other_debug_pods', { context, namespace }); }
-export function removeOtherDebugPod(resource: ResourceRef): Promise<void> { return native('remove_other_debug_pod', { resource }); }
+export function removeOtherDebugPod(resource: ResourceRef): Promise<void> { return deleteObject({ operation: 'debug_pod', resource }).then(() => {}); }

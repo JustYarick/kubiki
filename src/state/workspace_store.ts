@@ -1,4 +1,10 @@
+import { namespaceScopeLabel } from '../core/resources/namespace_scope';
+import { SIDEBAR_TREE } from '../core/perspectives';
+import { customResourcePlacement, customResourceType } from '../core/resources/custom_resource_types';
+import { useResourceStore } from './resource_store';
 import { useContainerLaunchStore } from './container_launch_store';
+import { findWorkloadPods, preferredWorkloadPod } from '../core/resources/workload_pods';
+import { toast } from './notifications_store';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useClusterStore } from './cluster_store';
@@ -10,7 +16,6 @@ export type WorkspaceTabType =
   | 'overview'        // Follows the global cluster and namespace selection
   | 'helm-releases'
   | 'helm-repositories'
-  | 'helm-release'
   | 'resource-list'   // DataGrip-grade resource table (e.g. Pods, Deployments)
   | 'yaml-editor'     // Full-screen / split Monaco YAML editor
   | 'resource-detail' // Dedicated resource inspector overview
@@ -46,7 +51,6 @@ interface WorkspaceState {
   openTab: (tab: Omit<WorkspaceTab, 'id'> & { id?: string }) => void;
   openOverview: () => void;
   openHelm: (section: import('../providers/helm_types').HelmSection) => void;
-  openHelmRelease: (item: ResourceItem) => void;
   openResourceList: (kind: ResourceKind, namespace?: string) => void;
   openYamlEditor: (item: ResourceItem) => void;
   openResourceDetail: (item: ResourceItem) => void;
@@ -66,30 +70,23 @@ interface WorkspaceState {
   reorderTabs: (sourceIndex: number, destIndex: number) => void;
 }
 
-const DEFAULT_TABS: WorkspaceTab[] = [
-  {
-    id: 'tab-pods',
-    type: 'resource-list',
-    title: 'Pods',
-    subtitle: 'all namespaces',
-    kind: 'Pod',
-    pinned: true,
-  },
-  {
-    id: 'tab-deployments',
-    type: 'resource-list',
-    title: 'Deployments',
-    subtitle: 'all namespaces',
-    kind: 'Deployment',
-  },
-  { id: 'tab-overview', type: 'overview', title: 'Overview' },
-];
+export function restoreWorkspace(persisted: unknown, current: WorkspaceState): WorkspaceState {
+  const saved = persisted as Partial<WorkspaceState> | undefined;
+  const tabs = (saved?.tabs ?? current.tabs).map(tab => {
+    // Previously saved Helm tabs now use the same resource details route.
+    if ((tab.type as string) !== 'helm-release' || !tab.name || !tab.namespace) return tab;
+    const uid = JSON.stringify(['helm', tab.context, tab.namespace, tab.name]);
+    return { ...tab, type: 'resource-detail' as const, kind: 'HelmRelease' as const, apiVersion: 'helm.sh/v1', uid,
+      resource: { context: tab.context ?? '', group: 'helm.sh', version: 'v1', kind: 'HelmRelease', namespace: tab.namespace, name: tab.name, uid } };
+  });
+  return { ...current, ...saved, tabs };
+}
 
 export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set, get) => ({
-      tabs: DEFAULT_TABS,
-      activeTabId: 'tab-pods',
+      tabs: [],
+      activeTabId: '',
       splitTabId: null,
       splitDirection: 'vertical',
 
@@ -121,12 +118,15 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       openOverview: () => get().openTab({ id: 'tab-overview', type: 'overview', title: 'Overview' }),
       openHelm: (section) => get().openTab({ id: `tab-helm-${section}`, type: `helm-${section}`, title: section === 'releases' ? 'Helm Releases' : 'Helm Repositories' }),
-      openHelmRelease: item => get().openTab({ id: resourceTabId('helm', useClusterStore.getState().currentContext, item), type: 'helm-release', title: `Helm: ${item.name}`, name: item.name, namespace: item.namespace, context: useClusterStore.getState().currentContext, item }),
 
       openResourceList: (kind, namespace) => {
         const { tabs } = get();
-        const id = `tab-list-${kind}`;
-        const existing = tabs.find((t) => t.id === id || (t.type === 'resource-list' && t.kind === kind));
+        const definition = [...useResourceStore.getState().resources.CustomResourceDefinition.values()]
+          .map(customResourceType)
+          .find(type => type?.key === kind || type?.name === kind || (kind.startsWith('custom:') ? false : type?.kind === kind));
+        const effectiveKind = definition?.key ?? kind;
+        const id = `tab-list-${effectiveKind}`;
+        const existing = tabs.find((t) => t.id === id || (t.type === 'resource-list' && t.kind === effectiveKind));
 
         if (existing) {
           get().setActiveTab(existing.id);
@@ -134,9 +134,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           const newTab: WorkspaceTab = {
             id,
             type: 'resource-list',
-            title: `${kind}s`,
-            subtitle: namespace || 'all namespaces',
-            kind,
+            title: definition ? customResourcePlacement(definition)?.label ?? definition.plural.charAt(0).toUpperCase() + definition.plural.slice(1) : SIDEBAR_TREE.flatMap(category => category.groups.flatMap(group => group.kinds)).find(entry => entry.kind === effectiveKind)?.label ?? `${effectiveKind}s`,
+            subtitle: definition?.group ?? namespace ?? 'all namespaces',
+            kind: effectiveKind,
           };
           set({
             tabs: [...tabs, newTab],
@@ -152,37 +152,65 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
       }),
-      openResourceDetail: (item) => item.kind === 'HelmRelease' ? get().openHelmRelease(item) : get().openTab({
+      openResourceDetail: (item) => get().openTab({
         id: resourceTabId('detail', useClusterStore.getState().currentContext, item),
-        type: 'resource-detail', title: item.name, subtitle: `${item.kind} · ${item.namespace || 'cluster'}`,
+        type: 'resource-detail', title: item.kind === 'HelmRelease' ? `Helm: ${item.name}` : item.name, subtitle: `${item.kind} · ${item.namespace || 'cluster'}`,
         resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
         kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
       }),
       setTabContainer: (id, container) => set((state) => ({ tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, container, subtitle: `${tab.namespace} · ${container}` } : tab) })),
       openLogsTab: (item, container) => {
-        if (useContainerLaunchStore.getState().request(item, container, false, chosen => get().openLogsTab(item, chosen))) return;
+        let targetItem = item;
+        if (item.kind !== 'Pod') {
+          const resources = useResourceStore.getState().resources;
+          const childPods = findWorkloadPods(item, resources);
+          const activePod = preferredWorkloadPod(childPods);
+          if (activePod) {
+            targetItem = activePod;
+          } else {
+            toast.info(`No active pods found for ${item.kind}/${item.name}`);
+            return;
+          }
+        }
+        if (useContainerLaunchStore.getState().request(targetItem, container, false, chosen => get().openLogsTab(targetItem, chosen))) return;
         get().openTab({
-          id: resourceTabId('logs', useClusterStore.getState().currentContext, item, container),
-          type: 'logs', title: `Logs: ${item.name}`, subtitle: `${item.namespace} · ${container || 'default container'}`,
-          resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
-          kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
+          id: resourceTabId('logs', useClusterStore.getState().currentContext, targetItem, container),
+          type: 'logs',
+          title: item.kind === 'Pod' ? `Logs: ${item.name}` : `Logs: ${item.name} (${targetItem.name})`,
+          subtitle: `${targetItem.namespace} · ${container || 'default container'}`,
+          resource: resourceRef(useClusterStore.getState().currentContext ?? '', targetItem),
+          kind: targetItem.kind, apiVersion: targetItem.apiVersion, name: targetItem.name, namespace: targetItem.namespace, uid: targetItem.uid, item: targetItem, container,
           context: useClusterStore.getState().currentContext,
         });
       },
       openTerminalTab: (item, container) => {
-        if (useContainerLaunchStore.getState().request(item, container, true, chosen => get().openTerminalTab(item, chosen))) return;
+        let targetItem = item;
+        if (item.kind !== 'Pod') {
+          const resources = useResourceStore.getState().resources;
+          const childPods = findWorkloadPods(item, resources);
+          const activePod = preferredWorkloadPod(childPods);
+          if (activePod) {
+            targetItem = activePod;
+          } else {
+            toast.info(`No active pods found for ${item.kind}/${item.name}`);
+            return;
+          }
+        }
+        if (useContainerLaunchStore.getState().request(targetItem, container, true, chosen => get().openTerminalTab(targetItem, chosen))) return;
         get().openTab({
-          id: resourceTabId('terminal', useClusterStore.getState().currentContext, item, container),
-          type: 'terminal', title: `Terminal: ${item.name}`, subtitle: item.namespace,
-          resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
-          kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item, container,
+          id: resourceTabId('terminal', useClusterStore.getState().currentContext, targetItem, container),
+          type: 'terminal',
+          title: item.kind === 'Pod' ? `Terminal: ${item.name}` : `Terminal: ${item.name} (${targetItem.name})`,
+          subtitle: targetItem.namespace,
+          resource: resourceRef(useClusterStore.getState().currentContext ?? '', targetItem),
+          kind: targetItem.kind, apiVersion: targetItem.apiVersion, name: targetItem.name, namespace: targetItem.namespace, uid: targetItem.uid, item: targetItem, container,
           context: useClusterStore.getState().currentContext,
         });
       },
       openTopology: (item, namespace) => get().openTab({
         id: JSON.stringify(['topology', useClusterStore.getState().currentContext, item?.uid, namespace]),
-        type: 'topology', title: item ? `Topology: ${item.name}` : namespace ? `Topology: ${namespace}` : 'Cluster topology',
+        type: 'topology', title: item ? `Topology: ${item.name}` : namespace ? `Topology: ${namespaceScopeLabel(namespace)}` : 'Cluster topology',
         resource: item ? resourceRef(useClusterStore.getState().currentContext ?? '', item) : undefined,
         kind: item?.kind, apiVersion: item?.apiVersion, name: item?.name, uid: item?.uid, namespace: item?.namespace ?? namespace,
         context: useClusterStore.getState().currentContext,
@@ -191,14 +219,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       closeTab: (id) => {
         const { tabs, activeTabId, splitTabId } = get();
         const target = tabs.find((t) => t.id === id);
-        if (target?.pinned) return; // Cannot close pinned tabs
+        if (!target) return;
 
         const newTabs = tabs.filter((t) => t.id !== id);
         if (newTabs.length === 0) {
-          // Keep at least default Pods tab
           set({
-            tabs: DEFAULT_TABS,
-            activeTabId: DEFAULT_TABS[0].id,
+            tabs: [],
+            activeTabId: '',
             splitTabId: null,
           });
           return;
@@ -220,7 +247,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       closeOtherTabs: (id) => {
         const { tabs } = get();
-        const kept = tabs.filter((t) => t.id === id || t.pinned);
+        const kept = tabs.filter((t) => t.id === id);
         set({
           tabs: kept,
           activeTabId: id,
@@ -232,7 +259,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const { tabs } = get();
         const idx = tabs.findIndex((t) => t.id === id);
         if (idx === -1) return;
-        const kept = tabs.filter((t, i) => i <= idx || t.pinned);
+        const kept = tabs.filter((_, i) => i <= idx);
         set({
           tabs: kept,
           activeTabId: id,
@@ -241,12 +268,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       closeAllTabs: () => {
-        const { tabs } = get();
-        const pinned = tabs.filter((t) => t.pinned);
-        const finalTabs = pinned.length > 0 ? pinned : DEFAULT_TABS;
         set({
-          tabs: finalTabs,
-          activeTabId: finalTabs[0].id,
+          tabs: [],
+          activeTabId: '',
           splitTabId: null,
         });
       },
@@ -291,7 +315,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
     }),
     {
-      name: 'kubiki.workspace.v2',
+      name: 'kubiki.workspace.v3',
+      merge: restoreWorkspace,
       partialize: (s) => ({
         tabs: s.tabs.map((t) => ({ ...t, item: undefined })), // Don't persist full mock memory objects
         activeTabId: s.activeTabId,

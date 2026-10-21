@@ -1,0 +1,81 @@
+import { test, expect } from '@playwright/test';
+import { openDiagramSettings } from './helpers/topology';
+
+test('settings stay in one island, both directions apply inside namespaces, and arrows move independently', async ({ page }) => {
+  const workers: string[] = [];
+  page.on('worker', worker => { if (worker.url().includes('layout_worker')) workers.push(worker.url()); });
+  await page.route('**/api/k8s/**', route => {
+    const url = new URL(route.request().url()); const operation = url.pathname.split('/').pop();
+    if (operation === 'contexts') return route.fulfill({ json: [{ name: 'cluster', is_current: true }] });
+    if (operation === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
+    if (operation === 'namespaces') return route.fulfill({ json: ['backend'] });
+    if (operation === 'releases') return route.fulfill({ json: { context: 'cluster', namespace: url.searchParams.get('namespace'), offset: 0, limit: 100, has_more: false, items: [] } });
+    const kind = url.searchParams.get('kind');
+    const metadata = { uid: 'owner', name: 'web-owner', namespace: 'backend' };
+    return route.fulfill({ json: { items: kind === 'Deployment' ? [{ apiVersion: 'apps/v1', kind, metadata }]
+      : kind === 'Pod' ? ['first', 'second'].map(name => ({ apiVersion: 'v1', kind, metadata: { uid: name, name, namespace: 'backend', ownerReferences: [{ apiVersion: 'apps/v1', uid: 'owner', name: 'web-owner', kind: 'Deployment' }] }, spec: { containers: [] } })) : [] } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
+  await expect(page.getByText('Choose a diagram scope', { exact: true })).toBeVisible();
+  expect(workers).toHaveLength(0);
+  await page.getByRole('button', { name: 'All Namespaces', exact: true }).click();
+  await expect(page.locator('.react-flow__node-resource')).toHaveCount(3);
+  const owner = page.locator('.react-flow__node-resource').filter({ hasText: 'web-owner' });
+  const first = page.locator('.react-flow__node-resource').filter({ hasText: 'first' });
+  const second = page.locator('.react-flow__node-resource').filter({ hasText: 'second' });
+  const settings = await openDiagramSettings(page);
+  await expect(page.getByRole('button', { name: 'Diagram namespaces', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Diagram scope', exact: true })).toHaveCount(0);
+  const canvas = await page.locator('.topology-canvas').boundingBox();
+  const before = (await owner.boundingBox())!;
+  expect((await first.boundingBox())!.x).toBeGreaterThan(before.x + before.width);
+  expect((await second.boundingBox())!.x).toBeGreaterThan(before.x + before.width);
+  await settings.getByRole('combobox', { name: 'Diagram direction', exact: true }).selectOption('DOWN');
+  await expect(page.getByText('Arranging topology…', { exact: true })).toHaveCount(0);
+  await expect.poll(async () => {
+    const from = (await owner.boundingBox())!; const to = (await first.boundingBox())!;
+    return to.y > from.y + from.height;
+  }).toBe(true);
+  expect((await second.boundingBox())!.y).toBeGreaterThan((await owner.boundingBox())!.y + (await owner.boundingBox())!.height);
+  await expect(owner.locator('.react-flow__handle-bottom')).toHaveCount(1);
+  await expect(first.locator('.react-flow__handle-top')).toHaveCount(1);
+  await settings.getByRole('combobox', { name: 'Diagram direction', exact: true }).selectOption('RIGHT');
+  await expect.poll(async () => (await first.boundingBox())!.x > (await owner.boundingBox())!.x + (await owner.boundingBox())!.width).toBe(true);
+  await page.getByRole('button', { name: 'Diagram settings', exact: true }).click();
+  expect(await page.locator('.topology-canvas').boundingBox()).toEqual(canvas);
+  const nodePositions = await page.locator('.react-flow__node-resource').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')));
+  const paths = await page.locator('.react-flow__edge-path').evaluateAll(paths => paths.map(path => path.getAttribute('d')));
+  const label = page.getByRole('button', { name: 'Select owns connection', exact: true }).first();
+  await label.click();
+  const bend = page.getByRole('button', { name: 'Move connection bend', exact: true });
+  const box = (await bend.boundingBox())!;
+  const workerCount = workers.length;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 55, box.y + box.height / 2 + 70, { steps: 8 }); await page.mouse.up();
+  await expect(page.locator('.topology-edge-control[data-adjusted="true"]')).toHaveCount(1);
+  expect(await page.locator('.react-flow__edge-path').evaluateAll(paths => paths.map(path => path.getAttribute('d')))).not.toEqual(paths);
+  expect(await page.locator('.react-flow__node-resource').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')))).toEqual(nodePositions);
+  expect(workers.length).toBe(workerCount);
+  await page.screenshot({ path: 'test-results/diagram-direct-arrow-edit.png', animations: 'disabled' });
+  await bend.focus(); await bend.press('ArrowDown');
+  const beforeNudge = await page.locator('.react-flow__edge-path').evaluateAll(paths => paths.map(path => path.getAttribute('d')));
+  const segment = (await page.locator('.react-flow__edge').first().locator('[data-route-segment="0"]').boundingBox())!;
+  await page.mouse.move(segment.x + segment.width / 2, segment.y + segment.height / 2);
+  await page.mouse.down(); await page.mouse.move(segment.x + segment.width / 2 - 30, segment.y + segment.height / 2, { steps: 6 }); await page.mouse.up();
+  expect(await page.locator('.react-flow__edge-path').evaluateAll(paths => paths.map(path => path.getAttribute('d')))).not.toEqual(beforeNudge);
+  const updatedSettings = await openDiagramSettings(page);
+  await updatedSettings.getByRole('checkbox', { name: 'Show Pod', exact: true }).uncheck();
+  await updatedSettings.getByRole('checkbox', { name: 'Show Pod', exact: true }).check();
+  await expect(page.locator('.topology-edge-control[data-adjusted="true"]')).toHaveCount(1);
+  await updatedSettings.getByRole('button', { name: 'Reset arrows', exact: true }).click();
+  await expect(page.locator('.topology-edge-control[data-adjusted="true"]')).toHaveCount(0);
+  const resetPaths = await page.locator('.react-flow__edge-path').evaluateAll(paths => paths.map(path => path.getAttribute('d')));
+  for (let index = 0; index < paths.length; index++) {
+    const coordinates = (path: string | null) => (path?.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+    const original = coordinates(paths[index]); const reset = coordinates(resetPaths[index]);
+    expect(reset).toHaveLength(original.length);
+    reset.forEach((coordinate, offset) => expect(coordinate).toBeCloseTo(original[offset], 2));
+  }
+  await page.screenshot({ path: 'test-results/diagram-settings-and-arrows.png', animations: 'disabled' });
+});

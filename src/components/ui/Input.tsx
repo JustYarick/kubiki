@@ -30,9 +30,20 @@ interface SearchInputProps {
   placeholder?: string;
   className?: string;
   refCb?: React.Ref<HTMLInputElement>;
+  isRegex?: boolean;
+  onToggleRegex?: (isRegex: boolean) => void;
 }
 
-export function SearchInput({ value, onChange, placeholder, className, refCb }: SearchInputProps) {
+export function SearchInput({ value, onChange, placeholder, className, refCb, isRegex = false, onToggleRegex }: SearchInputProps) {
+  let regexError = '';
+  if (isRegex && value.trim()) {
+    try {
+      new RegExp(value.trim());
+    } catch (err) {
+      regexError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
   return (
     <div className={cx('relative flex items-center', className)}>
       <Search size="calc(13px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
@@ -40,20 +51,49 @@ export function SearchInput({ value, onChange, placeholder, className, refCb }: 
         ref={refCb}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => e.key === 'Escape' && onChange('')}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onChange('');
+          if (e.altKey && e.key.toLowerCase() === 'r' && onToggleRegex) {
+            e.preventDefault();
+            onToggleRegex(!isRegex);
+          }
+        }}
         aria-label={placeholder || "Search"}
+        title={regexError ? `Invalid regex: ${regexError}` : placeholder}
         placeholder={placeholder}
         className={cx(
           'h-[calc(26px*var(--ui-factor))] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border outline-none transition-colors',
-          'border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)]',
-          'placeholder:text-[var(--text-muted)] pl-7 pr-6'
+          regexError
+            ? 'border-[var(--status-danger)] focus:border-[var(--status-danger)]'
+            : 'border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)]',
+          'placeholder:text-[var(--text-muted)] pl-7',
+          onToggleRegex ? (value ? 'pr-14' : 'pr-8') : (value ? 'pr-6' : 'pr-2')
         )}
       />
-      {value && (
-        <button aria-label="Clear search" title="Clear search" onClick={() => onChange('')} className="absolute right-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 rounded">
-          <X size="calc(12px * var(--ui-factor))" />
-        </button>
-      )}
+      <div className="absolute right-1 flex items-center gap-0.5">
+        {onToggleRegex && (
+          <button
+            type="button"
+            aria-label="Use regular expression (Alt+R)"
+            aria-pressed={isRegex}
+            title={isRegex ? "Regular expression mode (Alt+R) - Active" : "Use regular expression (Alt+R)"}
+            onClick={() => onToggleRegex(!isRegex)}
+            className={cx(
+              'h-[calc(20px*var(--ui-factor))] px-1 rounded font-mono text-[length:calc(10.5px*var(--ui-factor))] font-semibold leading-none flex items-center justify-center transition-colors',
+              isRegex
+                ? 'bg-[var(--accent)] text-white'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+            )}
+          >
+            .*
+          </button>
+        )}
+        {value && (
+          <button aria-label="Clear search" title="Clear search" onClick={() => onChange('')} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 rounded">
+            <X size="calc(12px * var(--ui-factor))" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,32 +1,41 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ResponsiveToolbar } from '../components/ui/ResponsiveToolbar';
+import { MenuList, Popover, type MenuItem } from '../components/ui/Dropdown';
+import './yaml.css';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { editor, IDisposable } from 'monaco-editor';
-import { Copy, Download, RotateCcw, Save } from 'lucide-react';
+import { Copy, Download, RotateCcw, Save, Search, ArrowRightLeft, AlignLeft, Eye, EyeOff, Loader2, MoreHorizontal } from 'lucide-react';
 import { Button, IconButton, Tooltip } from '../components/ui/Button';
 import { toast } from '../state/notifications_store';
 import type { ResourceItem } from '../types/k8s';
-import { k8s } from '../providers/k8s_provider';
 import { parse, stringify } from 'yaml';
 import { cx } from '../core/utils/cx';
 import { useUiStore } from '../state/ui_store';
+import { cleanYaml, restoreServerFields, sameYaml } from '../core/resources/yaml_document';
 
 interface YamlEditorProps {
   item: ResourceItem;
-  onApply: (yaml: string) => void;
+  onApply: (yaml: string) => Promise<void> | void;
 }
 
 export function YamlEditor({ item, onApply }: YamlEditorProps) {
   const fontSize = useUiStore((state) => state.editorFontSize);
   const original = item.rawYaml ?? '';
-  const [draft, setDraft] = useState(original);
+  const [draft, setDraft] = useState(() => cleanYaml(original));
   const [ready, setReady] = useState(false);
   const [editorError, setEditorError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const [applying, setApplying] = useState(false);
+  const [cleanView, setCleanView] = useState(true);
+  const cleanViewRef = useRef(cleanView);
+  cleanViewRef.current = cleanView;
+  const fullDraftRef = useRef(original);
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<editor.ITextModel | null>(null);
   const draftRef = useRef(draft);
   const previous = useRef({ uid: item.uid, original });
-  const dirty = draft !== original;
+  const baseline = useMemo(() => cleanView ? cleanYaml(original) : original, [cleanView, original]);
+  const dirty = !sameYaml(draft, baseline);
 
   const replaceDraft = useCallback((value: string) => {
     draftRef.current = value;
@@ -38,24 +47,31 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
   // Refresh clean documents; never overwrite a local draft on a background snapshot.
   useEffect(() => {
     const prior = previous.current;
-    if (prior.uid !== item.uid || draftRef.current === prior.original) replaceDraft(original);
+    const pristine = sameYaml(draftRef.current, cleanViewRef.current ? cleanYaml(prior.original) : prior.original);
+    if (prior.uid !== item.uid || pristine) {
+      fullDraftRef.current = original;
+      replaceDraft(cleanViewRef.current ? cleanYaml(original) : original);
+    }
     previous.current = { uid: item.uid, original };
   }, [item.uid, original, replaceDraft]);
 
-  const apply = useCallback(() => {
-    if (draftRef.current === original || !k8s.demo) return;
+  const apply = useCallback(async () => {
+    if (sameYaml(draftRef.current, baseline) || applying) return;
     try {
       const parsed = parse(draftRef.current);
-      if (!parsed || typeof parsed !== 'object' || parsed.metadata?.name !== item.name || parsed.kind !== item.kind || parsed.metadata?.namespace !== item.namespace) {
-        throw new Error('The manifest must keep the resource kind, name and namespace.');
+      if (!parsed || typeof parsed !== 'object' || parsed.metadata?.name !== item.name || parsed.kind !== item.kind) {
+        throw new Error('The manifest must keep the resource kind and name.');
       }
+      setApplying(true);
       const manifest = stringify(parsed);
-      onApply(manifest);
+      await onApply(manifest);
       replaceDraft(manifest);
     } catch (error) {
-      toast.error('Invalid YAML manifest', String(error));
+      toast.error('Apply failed', String(error));
+    } finally {
+      setApplying(false);
     }
-  }, [original, item.kind, item.name, item.namespace, onApply, replaceDraft]);
+  }, [baseline, item.kind, item.name, onApply, replaceDraft, applying]);
   const applyRef = useRef(apply);
   applyRef.current = apply;
 
@@ -75,7 +91,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
       instance = monaco.editor.create(containerRef.current, {
         model,
         theme: 'kubiki-dark',
-        readOnly: !k8s.demo,
+        readOnly: false,
         ariaLabel: `YAML for ${item.kind} ${item.name}`,
         fontSize: useUiStore.getState().editorFontSize,
         fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', Consolas, monospace",
@@ -94,6 +110,11 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
         cursorBlinking: 'smooth',
         lineNumbersMinChars: 3,
         guides: { indentation: true },
+        find: {
+          addExtraSpaceOnTop: false,
+          autoFindInSelection: 'never',
+          seedSearchStringFromSelection: 'always',
+        },
       });
       editorRef.current = instance;
       modelRef.current = model;
@@ -108,7 +129,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
         id: 'kubiki.applyManifest',
         label: 'Apply manifest',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
-        run: () => applyRef.current(),
+        run: () => void applyRef.current(),
       });
       setReady(true);
       instance.focus();
@@ -156,30 +177,106 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
     URL.revokeObjectURL(url);
   };
 
+  const openFind = () => {
+    editorRef.current?.trigger('toolbar', 'actions.find', null);
+  };
+
+  const openReplace = () => {
+    editorRef.current?.trigger('toolbar', 'editor.action.startFindReplaceAction', null);
+  };
+
+  const formatYaml = () => {
+    try {
+      const parsed = parse(draftRef.current);
+      if (parsed) {
+        const formatted = stringify(parsed, { indent: 2 });
+        replaceDraft(formatted);
+        toast.info('YAML formatted');
+      }
+    } catch (err) {
+      toast.error('Cannot format invalid YAML', String(err));
+    }
+  };
+
+  const toggleCleanView = () => {
+    try {
+      // Validate before switching, and retain local edits in both projections.
+      parse(draftRef.current);
+      if (cleanView) replaceDraft(restoreServerFields(draftRef.current, fullDraftRef.current));
+      else {
+        fullDraftRef.current = draftRef.current;
+        replaceDraft(cleanYaml(draftRef.current));
+      }
+      setCleanView(!cleanView);
+    } catch (err) {
+      toast.error('Cannot parse YAML', String(err));
+    }
+  };
+
+  const revert = () => { fullDraftRef.current = original; replaceDraft(baseline); };
+  const actions: MenuItem[] = [
+    { id: 'replace', label: 'Find and Replace', icon: ArrowRightLeft, onSelect: openReplace },
+    { id: 'format', label: 'Format YAML', icon: AlignLeft, onSelect: formatYaml },
+    { id: 'server-fields', label: 'Show server fields', icon: cleanView ? Eye : EyeOff, checked: !cleanView, onSelect: toggleCleanView },
+    { id: 'copy', label: 'Copy YAML', icon: Copy, onSelect: copy },
+    { id: 'download', label: 'Download YAML', icon: Download, onSelect: download },
+    { id: 'revert', label: 'Revert', icon: RotateCcw, disabled: !dirty || applying, onSelect: revert },
+  ];
   return (
-    <div className="h-full flex flex-col min-h-0" data-testid="yaml-editor">
-      <div className="h-9 shrink-0 flex items-center gap-1 px-2 border-b border-[var(--border-subtle)] bg-[var(--bg-sidebar)]/40">
-        <span className={cx('text-[length:calc(10px*var(--ui-factor))] font-mono px-1.5 py-0.5 rounded-full border', dirty ? 'text-[var(--status-warn)] border-[var(--status-warn)]/40' : 'text-[var(--text-muted)] border-[var(--border-default)]')}>
-          {!k8s.demo ? 'read only · live apply pending' : dirty ? 'unsaved demo changes' : 'demo manifest'}
-        </span>
-        <div className="flex-1" />
-        <Tooltip label="Copy full document" delay={400}><IconButton icon={Copy} size="sm" onClick={copy} aria-label="Copy YAML" /></Tooltip>
-        <Tooltip label="Download .yaml" delay={400}><IconButton icon={Download} size="sm" onClick={download} aria-label="Download YAML" /></Tooltip>
-        <Tooltip label="Revert to original manifest" delay={400}><IconButton icon={RotateCcw} size="sm" disabled={!dirty} onClick={() => replaceDraft(original)} aria-label="Revert" /></Tooltip>
-        <Button variant="primary" size="sm" disabled={!dirty || !k8s.demo} onClick={apply} className="ml-1"><Save size="calc(12px * var(--ui-factor))" />Apply</Button>
-      </div>
-      <div className="flex-1 min-h-0 relative">
+    <div className="yaml-editor h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]" data-testid="yaml-editor">
+      <ResponsiveToolbar label="YAML editor toolbar" className="yaml-toolbar"
+        identity={<>
+          <span className="yaml-resource-name" title={`${item.kind}/${item.name}`}>{item.kind}/{item.name}</span>
+          <span className="yaml-manifest-state" data-dirty={dirty} title={dirty ? 'Unsaved edits' : 'Clean manifest'}>
+            <span className="yaml-manifest-state-long">{dirty ? 'Unsaved edits' : 'Clean manifest'}</span>
+            <span className="yaml-manifest-state-short">{dirty ? 'Edited' : 'Clean'}</span>
+          </span>
+        </>}
+        primaryAction={<Button variant="primary" size="sm" disabled={!dirty || applying} onClick={apply} className="yaml-apply" aria-label="Apply" aria-busy={applying} title="Apply manifest (Ctrl+S)">
+          {applying ? <Loader2 size="calc(12px * var(--ui-factor))" className="animate-spin" /> : <Save size="calc(12px * var(--ui-factor))" />}
+          <span className="yaml-apply-label">{applying ? 'Applying…' : 'Apply'}</span>
+        </Button>}>
+        <Tooltip label="Find in document (Ctrl+F)" delay={300}><IconButton icon={Search} size="sm" onClick={openFind} aria-label="Find" /></Tooltip>
+        <div className="yaml-secondary-action flex items-center gap-1">
+          <IconButton icon={ArrowRightLeft} size="sm" onClick={openReplace} aria-label="Replace" tooltip="Find and Replace (Ctrl+H)" />
+          <IconButton icon={AlignLeft} size="sm" onClick={formatYaml} aria-label="Format YAML" tooltip="Format YAML indentation" />
+          <IconButton icon={cleanView ? Eye : EyeOff} size="sm" active={!cleanView} onClick={toggleCleanView} aria-label="Show server fields" aria-pressed={!cleanView} tooltip="Show server fields (status/managedFields)" />
+          <IconButton icon={Copy} size="sm" onClick={copy} aria-label="Copy YAML" tooltip="Copy full document" />
+          <IconButton icon={Download} size="sm" onClick={download} aria-label="Download YAML" tooltip="Download .yaml" />
+          <IconButton icon={RotateCcw} size="sm" disabled={!dirty || applying} onClick={revert} aria-label="Revert" tooltip="Revert to cluster manifest" />
+        </div>
+        <div className="yaml-actions-overflow"><Popover align="end" width={230} trigger={() => <IconButton icon={MoreHorizontal} size="sm" aria-label="More YAML actions" aria-haspopup="menu" tooltip="More YAML actions" />}>
+          {close => <div role="menu" aria-label="YAML actions"><MenuList items={actions} autoFocus onSelect={action => { close(); action.onSelect?.(); }} /></div>}
+        </Popover></div>
+      </ResponsiveToolbar>
+
+      <div className="yaml-editor-content">
         <div ref={containerRef} className={cx('absolute inset-0', editorError && 'hidden')} />
-        {editorError ? <div className="absolute inset-0 flex flex-col min-h-0">
-          <div role="alert" className="p-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] border-b border-[var(--border-default)]">
-            The advanced editor could not load. Your manifest is available below.
-            <button className="ml-2 text-[var(--accent)]" onClick={() => setAttempt((value) => value + 1)}>Retry editor</button>
-            <details className="mt-1"><summary className="cursor-pointer">Error details</summary><pre className="whitespace-pre-wrap break-words mt-1">{editorError}</pre></details>
+        {editorError ? (
+          <div className="absolute inset-0 flex flex-col min-h-0">
+            <div role="alert" className="p-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] border-b border-[var(--border-default)]">
+              The advanced editor could not load. Your manifest is available below.
+              <button className="ml-2 text-[var(--accent)]" onClick={() => setAttempt((value) => value + 1)}>Retry editor</button>
+              <details className="mt-1"><summary className="cursor-pointer">Error details</summary><pre className="whitespace-pre-wrap break-words mt-1">{editorError}</pre></details>
+            </div>
+            <textarea
+              style={{ fontSize }}
+              aria-label={`YAML source for ${item.name}`}
+              spellCheck={false}
+              value={draft}
+              onChange={(event) => replaceDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void apply(); }
+              }}
+              className="flex-1 min-h-0 min-w-0 w-full resize-none p-3 font-mono text-xs bg-[var(--bg-canvas)] text-[var(--text-primary)] outline-none"
+            />
           </div>
-          <textarea style={{ fontSize }} aria-label={`YAML source for ${item.name}`} spellCheck={false} readOnly={!k8s.demo} value={draft} onChange={(event) => replaceDraft(event.target.value)} onKeyDown={(event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); apply(); }
-          }} className="flex-1 min-h-0 resize-none p-3 font-mono text-xs bg-[var(--bg-canvas)] text-[var(--text-primary)] outline-none" />
-        </div> : !ready && <div role="status" className="absolute inset-0 flex items-center justify-center text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">Loading editor…</div>}
+        ) : !ready && (
+          <div role="status" className="absolute inset-0 flex items-center justify-center text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] gap-2">
+            <Loader2 size="calc(14px * var(--ui-factor))" className="animate-spin text-[var(--accent)]" />
+            Loading editor…
+          </div>
+        )}
       </div>
     </div>
   );

@@ -16,6 +16,18 @@ const graph = { items: new Map([[resourceKey(pod), pod]]), relations: [] };
 const ref = { kind: 'Pod', name: 'web', namespace: 'backend', uid: 'current' };
 
 describe('Topology event island', () => {
+  it('includes every namespace and cluster targets for the all namespace graph', () => {
+    const result = topologyEvents([event('backend', ref), event('other', { ...ref, namespace: 'other' }, {}, 'other'), event('node', { kind: 'Node', name: 'worker' }, {}, 'default')], 'all', graph, resources());
+    expect(result.total).toBe(3);
+    expect(result.entries.map(entry => entry.event.uid).sort()).toEqual(['backend', 'node', 'other']);
+    expect(result.entries.find(entry => entry.event.uid === 'backend')?.target).toBe(pod);
+  });
+  it('shows events from all selected namespaces while excluding unselected namespaces', () => {
+    const result = topologyEvents([event('backend-event', ref), event('other-event', { ...ref, namespace: 'other' }, {}, 'other'), event('outside-event', { ...ref, namespace: 'outside' }, {}, 'outside')], 'namespaces:["backend","other"]', graph, resources());
+    expect(result.total).toBe(2);
+    expect(result.entries.map(entry => entry.event.uid).sort()).toEqual(['backend-event', 'other-event']);
+  });
+
   it('keeps the newest bounded window in a namespace and counts warnings outside that window', () => {
     const events = Array.from({ length: 500 }, (_, index) => event(`event-${index}`, ref, { lastTimestamp: new Date(1700000000000 + index * 1000).toISOString(), type: index === 0 ? 'Warning' : 'Normal' }));
     events.push(event('other-namespace', { ...ref, namespace: 'other' }, {}, 'other'));

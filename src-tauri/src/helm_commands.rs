@@ -7,22 +7,6 @@ use kubiki_core::{
 };
 
 #[tauri::command]
-pub async fn mutate_helm(
-    window: tauri::WebviewWindow,
-    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
-    request: kubiki_core::helm::mutations::HelmMutation,
-) -> Result<serde_json::Value, ApiError> {
-    let resource = request.resource();
-    let _guard = guard.acquire(&resource)?;
-    let prepared =
-        kubiki_core::helm::mutations::PreparedHelmMutation::prepare(HelmReader::default(), request)
-            .await?;
-    prepared
-        .confirm_and_commit(|review| crate::mutation_guard::confirm(window, &resource, review))
-        .await
-}
-
-#[tauri::command]
 pub async fn search_helm_charts(query: String) -> Result<serde_json::Value, ApiError> {
     HelmReader::default().search_charts(&query).await
 }

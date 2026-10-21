@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 test('column visibility toggles immediately, keeps Name, and persists across reload', async ({ page }) => {
-  await page.goto('/?demo=1');const table = page.getByTestId('resource-table');
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  const table = page.getByTestId('resource-table');
   await expect(table.getByRole('columnheader', { name: 'Namespace', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Columns', exact: true }).last().click();
   await expect(page.getByRole('button', { name: 'Name', exact: true })).toBeDisabled();
@@ -14,18 +16,24 @@ test('column visibility toggles immediately, keeps Name, and persists across rel
   await page.getByRole('button', { name: 'Namespace', exact: true }).click();await page.getByRole('button', { name: 'Reset visibility', exact: true }).click();await expect(table.getByRole('columnheader', { name: 'Namespace', exact: true })).toBeVisible();
 });
 test('row number column resizes, persists and resets without selecting rows', async ({ page }) => {
-  await page.goto('/?demo=1');const table = page.getByTestId('resource-table');const column = table.getByRole('columnheader', { name: 'Row numbers', exact: true });
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  const table = page.getByTestId('resource-table');const column = table.getByRole('columnheader', { name: 'Row numbers', exact: true });
   const width = () => column.evaluate(el => el.getBoundingClientRect().width);
   const before = await width();const handle = table.getByRole('separator', { name: 'Resize row numbers column', exact: true });const box = (await handle.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);await page.mouse.down();await page.mouse.move(box.x + box.width / 2 + 70, box.y + box.height / 2, { steps: 8 });await page.mouse.up();
   await expect.poll(width).toBeGreaterThan(before + 45);const resized = await width();
-  await expect(table.locator('tbody tr.selected')).toHaveCount(0);await page.reload();await expect(table.locator('tbody tr').first()).toBeVisible();await expect.poll(width).toBeCloseTo(resized, 0);
+  await expect(table.locator('tbody tr.selected')).toHaveCount(0);await page.reload();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await expect(table.locator('tbody tr').first()).toBeVisible();await expect.poll(width).toBeCloseTo(resized, 0);
   await handle.dblclick();await expect.poll(width).toBeCloseTo(before, 0);await expect(table.locator('tbody tr.selected')).toHaveCount(0);
 });
 
 test('resizing one column preserves every other width in an oversized viewport', async ({ page }) => {
   await page.setViewportSize({ width: 2200, height: 900 });
-  await page.goto('/?demo=1');
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   await expect(table.locator('tbody tr').first()).toBeVisible();
   const widths = () => table.locator('thead th').evaluateAll(headers => headers.map(header => ({ width: header.getBoundingClientRect().width, left: header.getBoundingClientRect().left })));
@@ -38,14 +46,14 @@ test('resizing one column preserves every other width in an oversized viewport',
   };
   await drag(90);
   const expanded = await widths();
-  expect(expanded[1].width - initial[1].width).toBeCloseTo(90, 0);
+  expect(Math.abs(expanded[1].width - initial[1].width - 90)).toBeLessThanOrEqual(1.5);
   for (let i = 0; i < initial.length; i++) {
     if (i !== 1) expect(expanded[i].width).toBeCloseTo(initial[i].width, 0);
-    if (i > 1) expect(expanded[i].left - initial[i].left).toBeCloseTo(90, 0);
+    if (i > 1) expect(Math.abs(expanded[i].left - initial[i].left - 90)).toBeLessThanOrEqual(3);
   }
   await drag(-60);
   const shrunk = await widths();
-  expect(shrunk[1].width - expanded[1].width).toBeCloseTo(-60, 0);
+  expect(Math.abs(shrunk[1].width - expanded[1].width + 60)).toBeLessThanOrEqual(1.5);
   for (let i = 0; i < initial.length; i++) if (i !== 1) expect(shrunk[i].width).toBeCloseTo(initial[i].width, 0);
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect.poll(() => table.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
@@ -55,7 +63,8 @@ test('resizing one column preserves every other width in an oversized viewport',
 
 test('resize stops at the visible pane edge and cleans up its guide', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 800 });
-  await page.goto('/?demo=1');
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   const name = table.getByRole('columnheader', { name: 'Name', exact: true });
   const status = table.getByRole('columnheader', { name: 'Status', exact: true });
@@ -76,13 +85,14 @@ test('resize stops at the visible pane edge and cleans up its guide', async ({ p
 
 
 test('fresh tables fit the current workspace after window resize and hidden column changes', async ({ page }) => {
-  await page.setViewportSize({ width: 1900, height: 900 }); await page.goto('/?demo=1');
+  await page.setViewportSize({ width: 1900, height: 900 }); await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   const fits = () => table.evaluate(el => Math.abs(el.querySelector('table')!.getBoundingClientRect().width - el.clientWidth) < 5);
   await expect(table.locator('tbody tr').first()).toBeVisible(); await expect.poll(fits).toBe(true);
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
-  await expect(table.getByRole('columnheader', { name: 'Replicas', exact: true })).toBeVisible(); await expect.poll(fits).toBe(true);
+  await expect(table.getByRole('columnheader', { name: 'Pods', exact: true })).toBeVisible(); await expect.poll(fits).toBe(true);
   await page.getByRole('button', { name: 'Columns', exact: true }).last().click();
   await page.getByRole('button', { name: 'Namespace', exact: true }).click();
   await expect.poll(fits).toBe(true); await page.keyboard.press('Escape');

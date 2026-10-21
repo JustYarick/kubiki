@@ -1,3 +1,4 @@
+import { inNamespaceScope } from './namespace_scope';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import type { WatchState } from '../../providers/watch_types';
 import { RESOURCE_TYPES } from './resource_types';
@@ -6,6 +7,7 @@ import { eventDetails } from './resource_events';
 
 export interface OverviewInput {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
+  availableKinds?: readonly string[] | null;
   namespace: string;
   context: string | null;
   syncMode: string;
@@ -16,11 +18,11 @@ export interface OverviewInput {
 }
 export function buildOverview(input: OverviewInput) {
   const { namespace, context, resources, watchStates, loadErrors } = input;
-  const inventory = RESOURCE_TYPES.filter(type => namespace === 'all' || type.namespaced).map(type => {
+  const inventory = RESOURCE_TYPES.filter(type => (!input.availableKinds || input.availableKinds.includes(type.kind)) && (namespace === 'all' || type.namespaced)).map(type => {
     const kind = type.kind as ResourceKind;
     const watch = watchStates[kind];
     const covered = input.syncMode !== 'watch' || !!watch && watch.query.context === context && (!type.namespaced || watch.query.namespace === null || watch.query.namespace === namespace);
-    const items = covered ? [...resources[kind].values()].filter(item => namespace === 'all' || item.namespace === namespace) : [];
+    const items = covered ? [...resources[kind].values()].filter(item => inNamespaceScope(namespace, item.namespace)) : [];
     const hasSnapshot = input.syncMode === 'watch' ? covered && watch?.hasSnapshot === true : items.length > 0 || input.connected && !input.loading && !loadErrors[kind];
     const state = !covered ? 'loading' : loadErrors[kind] ? hasSnapshot ? 'stale' : 'unavailable'
       : !hasSnapshot ? input.loading || input.syncMode === 'watch' && (!watch || ['connecting', 'syncing'].includes(watch.phase)) ? 'loading' : 'unavailable'

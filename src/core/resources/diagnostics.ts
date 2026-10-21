@@ -15,7 +15,7 @@ export interface DiagnosticContext {
   now?: number;
 }
 
-const WORKLOADS = new Set(['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet']);
+const WORKLOADS = new Set(['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController']);
 const FAILED_STATES = new Set(['Failed', 'Error', 'CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'InvalidImageName', 'CreateContainerConfigError', 'CreateContainerError', 'RunContainerError', 'ContainerCannotRun', 'OOMKilled', 'Evicted']);
 const STARTUP_STATES = new Set(['ContainerCreating', 'PodInitializing']);
 const STUCK_AFTER_MS = 5 * 60 * 1000;

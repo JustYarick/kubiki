@@ -205,7 +205,23 @@ pub fn validate_query(query: &ResourceQuery) -> Result<&'static ResourceType, Ap
             format!("Unsupported resource kind: {}", query.kind),
         )
     })?;
-    if query.group != resource.group || query.version != resource.version {
+    let version = query.version.strip_prefix('v').unwrap_or("");
+    let valid_version = !version.is_empty()
+        && version
+            .chars()
+            .next()
+            .is_some_and(|c| ('1'..='9').contains(&c))
+        && version.chars().all(|c| c.is_ascii_alphanumeric())
+        && (version.chars().all(|c| c.is_ascii_digit())
+            || ["alpha", "beta"].iter().any(|stage| {
+                version.split_once(stage).is_some_and(|(major, minor)| {
+                    !major.is_empty()
+                        && major.chars().all(|c| c.is_ascii_digit())
+                        && !minor.is_empty()
+                        && minor.chars().all(|c| c.is_ascii_digit())
+                })
+            }));
+    if query.group != resource.group || !valid_version {
         return Err(fail(
             ApiErrorCode::Unsupported,
             format!("Unsupported API group/version for {}", query.kind),
@@ -218,10 +234,18 @@ pub fn validate_query(query: &ResourceQuery) -> Result<&'static ResourceType, Ap
         ));
     }
     if let Some(namespace) = &query.namespace {
-        if namespace.is_empty() || namespace.len() > 63
-            || !namespace.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-            || namespace.starts_with('-') || namespace.ends_with('-') {
-            return Err(fail(ApiErrorCode::InvalidRequest, "Invalid namespace name".to_owned()));
+        if namespace.is_empty()
+            || namespace.len() > 63
+            || !namespace
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+            || namespace.starts_with('-')
+            || namespace.ends_with('-')
+        {
+            return Err(fail(
+                ApiErrorCode::InvalidRequest,
+                "Invalid namespace name".to_owned(),
+            ));
         }
     }
     Ok(resource)
@@ -270,7 +294,11 @@ mod tests {
 
     #[test]
     fn validates_group_version_scope_and_context_and_serializes_refs() {
-        assert_eq!(resource_types().len(), 23);
+        assert!(
+            resource_types()
+                .iter()
+                .any(|resource| resource.kind == "HorizontalPodAutoscaler")
+        );
         let mut query = ResourceQuery {
             context: "production".into(),
             group: "apps".into(),
@@ -279,6 +307,16 @@ mod tests {
             namespace: Some("backend".into()),
         };
         assert_eq!(validate_query(&query).unwrap().plural, "deployments");
+        for version in ["v1beta1", "v2", "v1alpha3"] {
+            let mut discovered = query.clone();
+            discovered.version = version.into();
+            assert!(validate_query(&discovered).is_ok());
+        }
+        for version in ["v0", "v1/../secrets", "v1 beta1", "v1beta", "v1alpha-1"] {
+            let mut invalid = query.clone();
+            invalid.version = version.into();
+            assert!(validate_query(&invalid).is_err());
+        }
         let reference = ResourceRef {
             query: query.clone(),
             name: "web".into(),

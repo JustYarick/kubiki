@@ -13,10 +13,12 @@ it('deduplicates concurrent namespace requests, caches for 30 seconds and isolat
   await loadHelmGraph('prod', 'b'); await loadHelmGraph('other', 'a'); expect(list).toHaveBeenCalledTimes(3);
   vi.advanceTimersByTime(30001); await loadHelmGraph('prod', 'a'); expect(list).toHaveBeenCalledTimes(4);
 });
-it('stops namespace expansion at 250 releases and never keeps a partial cached graph', async () => {
-  list.mockImplementation(async (_context, namespace, offset) => page(namespace, offset, 100, true));
-  await expect(loadHelmGraph('prod', 'big')).rejects.toThrow('250'); expect(list).toHaveBeenCalledTimes(3);
-  list.mockResolvedValue(page('big')); expect(await loadHelmGraph('prod', 'big')).toHaveLength(1); expect(list).toHaveBeenCalledTimes(4);
+it('loads all Helm pages beyond 250 releases, including the all-namespace scope', async () => {
+  list.mockImplementation(async (_context, _namespace, offset) => page('backend', offset, 100, offset < 300));
+  const items = await loadHelmGraph('prod', 'all');
+  expect(items).toHaveLength(400);
+  expect(list.mock.calls).toEqual([['prod', null, 0], ['prod', null, 100], ['prod', null, 200], ['prod', null, 300]]);
+  expect(await loadHelmGraph('prod', 'all')).toBe(items);
 });
 it('does not cache a late snapshot after a mutation invalidates the graph', async () => {
   let resolve!: (value: ReturnType<typeof page>) => void;

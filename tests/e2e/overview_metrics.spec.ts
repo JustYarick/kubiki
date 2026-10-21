@@ -1,33 +1,9 @@
 import { test, expect } from '@playwright/test';
-async function fixture(page: import('@playwright/test').Page, unavailable = false, delayed = false) {
-  let sequence = 0;let release: (() => Promise<void>) | undefined;const requests: string[] = [];
-  const base = Date.now() - 90000;
-  await page.route('**/api/k8s/**', async route => {
-    const url = new URL(route.request().url());const op = url.pathname.split('/').pop();const kind = url.searchParams.get('kind');
-    if (op === 'contexts') return route.fulfill({ json: [{ name: 'test', is_current: true }] });
-    if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
-    if (op === 'namespaces') return route.fulfill({ json: ['alpha', 'beta'] });
-    if (op === 'metrics') {
-      const namespace = url.searchParams.get('namespace');requests.push(namespace ?? 'all');sequence++;
-      const timestamp = new Date(base + sequence * 15000).toISOString();
-      const podMetric = (ns: string) => ({ name: `web-${ns}`, namespace: ns, timestamp, window: '30s', containers: [{ name: 'app', cpu: ns === 'alpha' ? '500m' : '250m', memory: '256Mi' }, { name: 'sidecar', cpu: '125m', memory: '64Mi' }] });
-      const data = { context: 'test', namespace, pods: { items: namespace ? [podMetric(namespace)] : [podMetric('alpha'), podMetric('beta')], error: null }, nodes: { items: namespace ? null : [{ name: 'worker', timestamp, window: '30s', cpu: `${1500 + sequence * 100}m`, memory: '3Gi' }], error: null } };
-      if (unavailable) return route.fulfill({ status: 503, json: { error: { code: 'unavailable', message: 'Metrics Server unavailable', status: 503, retryable: true } } });
-      if (delayed && !namespace) { await new Promise<void>(resolve => { release = async () => { await route.fulfill({ json: data });resolve(); }; });return; }
-      return route.fulfill({ json: data });
-    }
-    const metadata = (name: string, namespace?: string) => ({ name, namespace, uid: name, creationTimestamp: new Date(base - 3600000).toISOString() });
-    const resources = { requests: { cpu: '500m', memory: '256Mi' }, limits: { cpu: '2', memory: '1Gi' } };
-    const items = kind === 'Pod' ? ['alpha', 'beta'].map(namespace => ({ apiVersion: 'v1', kind, metadata: metadata(`web-${namespace}`, namespace), spec: { containers: [{ name: 'app', resources }, { name: 'sidecar', resources: { requests: { cpu: '100m', memory: '64Mi' }, limits: { cpu: '1', memory: '512Mi' } } }] }, status: { phase: 'Running', containerStatuses: [{ name: 'app', ready: true, state: { running: {} } }, { name: 'sidecar', ready: true, state: { running: {} } }] } }))
-      : kind === 'Node' ? [{ apiVersion: 'v1', kind, metadata: metadata('worker'), status: { capacity: { cpu: '4', memory: '8Gi' }, allocatable: { cpu: '3500m', memory: '7Gi' }, conditions: [{ type: 'Ready', status: 'True' }] } }] : [];
-    return route.fulfill({ json: { items } });
-  });
-  await page.goto('/');await page.getByRole('button', { name: 'Open Overview', exact: true }).click();return { telemetry: page.getByRole('region', { name: 'CPU and RAM telemetry' }), requests, release: async () => { await release?.(); } };
-}
+import { overviewMetricsFixture as fixture } from './helpers/overview';
 test('CPU/RAM dashboard shows usage, budgets, source history, sorting and container drilldown', async ({ page }) => {
   const { telemetry } = await fixture(page);
   await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('1.6 cores');await expect(telemetry.getByTestId('metric-memory-usage')).toHaveText('3 GiB');
-  const cpu = telemetry.getByRole('region', { name: 'CPU usage', exact: true });await expect(cpu).toContainText('1.2 cores');await expect(cpu).toContainText('3.5 cores');await expect(cpu).toContainText('4 cores');await expect(cpu).toContainText('171.4% of allocatable');
+  const cpu = telemetry.getByRole('region', { name: 'CPU usage', exact: true });await cpu.locator('.telemetry-history > summary').click();await expect(cpu).toContainText('1.2 cores');await expect(cpu).toContainText('3.5 cores');await expect(cpu).toContainText('4 cores');await expect(cpu).toContainText('171.4% of allocatable');
   for (let index = 0; index < 2; index++) { await telemetry.getByRole('button', { name: 'Refresh metrics' }).click();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText((1.7 + index * .1).toFixed(1) + ' cores'); }
   await expect(cpu.getByRole('img', { name: 'CPU usage history' })).toHaveAttribute('data-samples', '3');
   await cpu.getByRole('img', { name: 'CPU usage history' }).hover();await expect(cpu.locator('output')).toBeVisible();
@@ -35,7 +11,8 @@ test('CPU/RAM dashboard shows usage, budgets, source history, sorting and contai
   await telemetry.getByRole('row').filter({ hasText: 'web-alpha' }).click();await expect(telemetry.getByText('app', { exact: true })).toBeVisible();await expect(telemetry.getByText('sidecar', { exact: true })).toBeVisible();await expect(telemetry.getByRole('button', { name: 'Open resource', exact: true })).toBeVisible();
   await page.getByTestId('cluster-overview').evaluate(el => el.scrollTop = 0);
   await page.screenshot({ path: 'test-results/overview-telemetry.png', fullPage: false });
-  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'alpha', exact: true }).click();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');await expect(telemetry.getByRole('button', { name: 'Rank Nodes', exact: true })).toHaveCount(0);await expect(telemetry.getByRole('row').filter({ hasText: 'web-beta' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'alpha', exact: true }).click();await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');await expect(telemetry.getByRole('button', { name: 'Rank Nodes', exact: true })).toHaveCount(0);await expect(telemetry.getByRole('row').filter({ hasText: 'web-beta' })).toHaveCount(0);
+  await cpu.locator('.telemetry-history > summary').click();
   for (const width of [900, 700]) {
     await page.setViewportSize({ width, height: 900 });await expect.poll(() => page.getByTestId('cluster-overview').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     expect((await cpu.getByRole('img', { name: 'CPU usage history' }).boundingBox())!.height).toBeLessThan(125);
@@ -46,7 +23,21 @@ test('missing Metrics Server displays a reason and never turns unavailable usage
 });
 test('late metrics from a previous scope cannot overwrite a selected namespace', async ({ page }) => {
   const { telemetry, requests, release } = await fixture(page, false, true);await expect.poll(() => requests).toContain('all');
-  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'alpha', exact: true }).click();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');await release();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');
+  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'alpha', exact: true }).click();await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');await release();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');
+});
+
+test('combined namespace telemetry shows the sum and keeps both namespaces in the ranking', async ({ page }) => {
+  const { telemetry } = await fixture(page);
+  await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('1.6 cores');
+  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
+  const menu = page.getByRole('dialog', { name: 'Choose Namespace Scope', exact: true });
+  await menu.getByRole('option', { name: 'alpha', exact: true }).click();
+  await menu.getByRole('option', { name: 'beta', exact: true }).click();
+  await menu.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
+  await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('1 cores');
+  await expect(telemetry.getByTestId('metric-memory-usage')).toHaveText('640 MiB');
+  await expect(telemetry.getByRole('row').filter({ hasText: 'web-alpha' })).toBeVisible();
+  await expect(telemetry.getByRole('row').filter({ hasText: 'web-beta' })).toBeVisible();
 });
 
 test('metrics polling pauses when hidden or navigating away and resumes without duplicate requests', async ({ page }) => {
@@ -61,6 +52,7 @@ test('metrics polling pauses when hidden or navigating away and resumes without 
 
 test('history supports keyboard inspection, sampled data and pause/resume without synthetic points', async ({ page }) => {
   const { telemetry, requests } = await fixture(page);
+  await telemetry.getByRole('region', { name: 'CPU usage', exact: true }).locator('.telemetry-history > summary').click();
   const chart = telemetry.getByRole('img', { name: 'CPU usage history', exact: true });
   await expect(chart).toHaveAttribute('data-samples', '1');
   await telemetry.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
@@ -69,16 +61,20 @@ test('history supports keyboard inspection, sampled data and pause/resume withou
   const cpu = telemetry.getByRole('region', { name: 'CPU usage', exact: true });
   await expect(cpu.locator('output')).toContainText('1.6 cores');
   await page.keyboard.press('End'); await expect(cpu.locator('output')).toContainText('1.7 cores');
-  await cpu.locator('summary').click(); await expect(cpu.getByRole('table')).toBeVisible();
+  await cpu.locator('.telemetry-history-data > summary').click(); await expect(cpu.getByRole('table')).toBeVisible();
   await expect(cpu.getByRole('table').locator('tbody tr')).toHaveCount(2);
-  await telemetry.getByLabel('Fixed scale', { exact: true }).check();
+  await telemetry.getByRole('button', { name: 'Metrics display options', exact: true }).click();
+  const options = page.getByRole('dialog', { name: 'Metrics display options', exact: true });
+  await options.getByRole('checkbox', { name: 'Fixed scale', exact: true }).check();
+  await page.keyboard.press('Escape');
   await expect(cpu).toContainText('Fixed to budget');
-  await telemetry.getByRole('button', { name: 'Pause metrics', exact: true }).click();
+  await telemetry.getByRole('button', { name: 'Metrics display options', exact: true }).click();
+  await options.getByRole('button', { name: 'Pause metrics', exact: true }).click();
   const before = requests.length;
   await page.clock.install(); await page.clock.fastForward(31000);
   expect(requests).toHaveLength(before); await expect(chart).toHaveAttribute('data-samples', '2');
   await expect(telemetry.getByRole('button', { name: 'Refresh metrics' })).toBeDisabled();
-  await telemetry.getByRole('button', { name: 'Resume metrics', exact: true }).click();
+  await options.getByRole('button', { name: 'Resume metrics', exact: true }).click();
   await expect.poll(() => requests.length).toBeGreaterThan(before);
   await expect(chart).toHaveAttribute('data-samples', '3');
 });

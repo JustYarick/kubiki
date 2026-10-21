@@ -19,7 +19,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('Resource contract', () => {
   it('defines a complete catalog and normalizes namespace scope', () => {
-    expect(new Set(RESOURCE_TYPES.map((type) => type.kind)).size).toBe(23);
+    expect(new Set(RESOURCE_TYPES.map((type) => type.kind)).size).toBe(RESOURCE_TYPES.length);
     expect(new Set(RESOURCE_TYPES.map((type) => type.kind))).toEqual(new Set(Object.keys(useResourceStore.getState().resources).filter(kind => kind !== 'HelmRelease')));
     expect(resourceQuery('production', 'Deployment', 'backend')).toEqual({ context: 'production', group: 'apps', version: 'v1', kind: 'Deployment', namespace: 'backend' });
     expect(resourceQuery('production', 'Pod', 'all').namespace).toBeNull();
@@ -84,19 +84,16 @@ describe.each(['HTTP', 'Tauri'] as const)('%s provider transport', (transport) =
   it('sends Secret values only in the request body and preserves the exact IPC identity', async () => {
     const request = { resource: { ...resourceQuery('production', 'Secret', 'backend'), name: 'credentials', uid: 'original' }, resource_version: '10', data: { password: 'c2VjcmV0' } };
     respond({ metadata: { uid: 'original' } });
+    if (transport === 'HTTP') { await expect(new K8sProvider().updateSecretData(request)).rejects.toMatchObject({ code: 'forbidden', retryable: false }); expect(fetch).not.toHaveBeenCalled(); return; }
     await new K8sProvider().updateSecretData(request);
-    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('update_secret_data', { request });
-    else {
-      const [url, init] = vi.mocked(fetch).mock.calls[0];
-      expect(String(url)).not.toContain('password'); expect(String(url)).not.toContain('c2VjcmV0');
-      expect(JSON.parse(init!.body as string)).toEqual(request);
-    }
+    expect(invoke).toHaveBeenCalledWith('mutate_resource', { request: { operation: 'secret', request } });
   });
   it('pins scale requests to the displayed UID and resourceVersion without any frontend approval flag', async () => {
-    respond({ success: true });await new K8sProvider().scaleWorkload('production', 'Deployment', 'web', 'backend', 0, 'original', '10');
-    const request = { resource: { ...resourceQuery('production', 'Deployment', 'backend'), name: 'web', uid: 'original' }, resourceVersion: '10', replicas: 0 };
-    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('scale_workload', request);
-    else expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual(request);
+    respond({ success: true });
+    if (transport === 'HTTP') { await expect(new K8sProvider().scaleWorkload('production', 'Deployment', 'web', 'backend', 0, 'original', '10')).rejects.toMatchObject({ code: 'forbidden' }); expect(fetch).not.toHaveBeenCalled(); return; }
+    await new K8sProvider().scaleWorkload('production', 'Deployment', 'web', 'backend', 0, 'original', '10');
+    const request = { operation: 'scale', resource: { ...resourceQuery('production', 'Deployment', 'backend'), name: 'web', uid: 'original' }, resource_version: '10', replicas: 0 };
+    expect(invoke).toHaveBeenCalledWith('mutate_resource', { request });
   });
   it('routes namespace metrics through HTTP/native and validates the response identity', async () => {
     const data = { context: 'production', namespace: 'backend', pods: { items: [], error: null }, nodes: { items: null, error: null } };

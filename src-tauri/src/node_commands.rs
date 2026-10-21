@@ -133,26 +133,33 @@ pub async fn stop_node_debugs(
     Ok(())
 }
 
-#[tauri::command]
 pub async fn prepare_node_debug(
     session_id: String,
     request: NodeDebugRequest,
     window: tauri::WebviewWindow,
     pool: tauri::State<'_, ClusterClientPool>,
     manager: tauri::State<'_, NodeDebugManager>,
-    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<ResourceRef, ApiError> {
-    let _gate = guard.acquire(&request.resource)?;
     let resource = request.resource.clone();
     let dialog_window = window.clone();
     let pool = pool.inner().clone();
     let context = request.resource.query.context.clone();
     manager
-        .prepare(window.label(), &session_id, request, async move {
-            pool.get_client(&context)
-                .await
-                .map_err(|e| ApiError::from_core(e, "node_debug", Some(&context)))
-        }, move |review| { let dialog_window = dialog_window.clone(); let resource = resource.clone(); async move { crate::mutation_guard::confirm(dialog_window, &resource, review).await } })
+        .prepare(
+            window.label(),
+            &session_id,
+            request,
+            async move {
+                pool.get_client(&context)
+                    .await
+                    .map_err(|e| ApiError::from_core(e, "node_debug", Some(&context)))
+            },
+            move |review| {
+                let window = dialog_window.clone();
+                let resource = resource.clone();
+                async move { crate::mutation_guard::confirm(window, &resource, review).await }
+            },
+        )
         .await
 }
 #[tauri::command]
@@ -183,21 +190,4 @@ pub async fn list_other_debug_pods(
         .await
         .map_err(|e| ApiError::from_core(e, "node_debug", Some(&context)))?;
     manager.list_other(client, &context, &namespace).await
-}
-#[tauri::command]
-pub async fn remove_other_debug_pod(
-    resource: ResourceRef,
-    pool: tauri::State<'_, ClusterClientPool>,
-    manager: tauri::State<'_, NodeDebugManager>,
-    window: tauri::WebviewWindow,
-    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
-) -> Result<(), ApiError> {
-    let _gate = guard.acquire(&resource)?;
-    let identity = resource.clone();
-    let context = &resource.query.context;
-    let client = pool
-        .get_client(context)
-        .await
-        .map_err(|e| ApiError::from_core(e, "node_debug", Some(context)))?;
-    manager.remove_other(client, resource, |review| crate::mutation_guard::confirm(window, &identity, review)).await
 }

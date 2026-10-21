@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -17,20 +17,25 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
     sectionRef.current?.querySelector<HTMLElement>(`[data-secret-field="${id}-${field}"]`)?.focus();
   });
   const context = useClusterStore(s => s.currentContext);
-  const [draft, setDraft] = useState<{ rows: SecretRow[]; version: string; context: string }>();
+  const [draft, setDraft] = useState<{ rows: SecretRow[]; version: string; context: string; resource: ReturnType<typeof resourceRef> }>();
   const [reveal, setReveal] = useState(false);
   const [encoding, setEncoding] = useState<SecretRow['mode']>('text');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
+  useEffect(() => {
+    if (!reveal || draft) return;
+    const timer = setTimeout(() => setReveal(false), 60000);
+    return () => clearTimeout(timer);
+  }, [reveal, draft]);
   const rows = draft?.rows ?? formatRows(secretRows(item.raw?.data ?? {}), encoding);
   const rowErrors = useMemo(() => validate ? validateSecretRows(draft?.rows ?? []) : new Map(), [draft, validate]);
   const changed = !!draft && (draft.version !== item.raw?.metadata?.resourceVersion || draft.context !== context);
   const immutable = item.raw?.immutable === true;
   const update = (id: number, patch: Partial<SecretRow>) => setDraft(d => d && ({ ...d, rows: d.rows.map(row => row.id === id ? { ...row, ...patch } : row) }));
-  const edit = () => { setDraft({ rows: formatRows(secretRows(item.raw?.data ?? {}), encoding), version: item.raw?.metadata?.resourceVersion ?? '', context: context ?? '' }); setReveal(false); setError(''); setSaved(''); setValidate(false); if (rows[0]) focusField(rows[0].id); };
+  const edit = () => { setDraft({ rows: formatRows(secretRows(item.raw?.data ?? {}), encoding), version: item.raw?.metadata?.resourceVersion ?? '', context: context ?? '', resource: resourceRef(context ?? '', item) }); setReveal(false); setError(''); setSaved(''); setValidate(false); if (rows[0]) focusField(rows[0].id); };
   async function save() {
-    if (!draft || !context || draft.context !== context) return;
+    if (!draft || !context || draft.context !== context || changed || saving) return;
     setError(''); setSaved(''); setValidate(true);
     const issues = validateSecretRows(draft.rows);
     const firstId = issues.keys().next().value;
@@ -38,7 +43,7 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
     try {
       const data = encodeSecretRows(draft.rows);
       setSaving(true);
-      const raw = k8s.demo ? { ...item.raw, data } : await k8s.updateSecretData({ resource: resourceRef(draft.context, item), resource_version: draft.version, data });
+      const raw = k8s.demo ? { ...item.raw, data } : await k8s.updateSecretData({ resource: draft.resource, resource_version: draft.version, data });
       if (useClusterStore.getState().currentContext !== draft.context) return;
       if (raw?.metadata?.uid !== item.uid || raw?.metadata?.name !== item.name || raw?.metadata?.namespace !== item.namespace) throw new Error('Unexpected Secret identity returned; refresh to verify saved state');
       useResourceStore.getState().updateItem('Secret', item.uid, mapK8sResource(raw, 'Secret'));
@@ -46,7 +51,7 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Secret update failed. Refresh to verify saved state'); }
     finally { setSaving(false); }
   }
-  return <section ref={sectionRef} aria-label="Secret data" className="shrink-0 rounded border border-[var(--border-default)] p-3 min-w-0">
+  return <section ref={sectionRef} aria-label="Secret data" className="details-section p-3 min-w-0">
     <div className="flex flex-wrap items-center gap-2 mb-2"><h3 className="font-medium flex-1">Secret data ({rows.length})</h3><div role="group" aria-label="Secret value encoding" className="inline-flex rounded border border-[var(--border-default)] overflow-hidden shrink-0">{(['text', 'base64'] as const).map(mode => <button key={mode} type="button" aria-pressed={encoding === mode} disabled={saving} className={`px-2 py-1 text-xs ${encoding === mode ? 'bg-[var(--bg-hover)] text-[var(--accent)]' : 'text-[var(--text-secondary)]'}`} onClick={() => {
       try { const converted = formatRows(rows, mode, true); if (draft) setDraft({ ...draft, rows: converted }); setEncoding(mode); setError(''); }
       catch { setError('Invalid base64 value. Fix it before switching to Text.'); if (draft) { setValidate(true); const id = validateSecretRows(rows).keys().next().value; if (id !== undefined) focusField(id, 'value'); } }

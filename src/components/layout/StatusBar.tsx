@@ -1,3 +1,4 @@
+import { namespaceScopeLabel } from '../../core/resources/namespace_scope';
 import { ArrowRightLeft, Bell, Server, Layers, Terminal, GitBranch } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -12,20 +13,20 @@ export function StatusBar() {
   const syncMode = useResourceStore((s) => s.syncMode);
   const watchStates = useResourceStore((s) => s.watchStates);
   const states = Object.values(watchStates);
-  const unavailable = states.filter((state) => state.phase === 'failed' || state.phase === 'reconnecting' || state.phase === 'stopped').length;
-  const watchLabel = unavailable ? `Watch · ${unavailable} unavailable` : states.length && states.every((state) => state.phase === 'live') ? 'Watch · live' : 'Watch · synchronizing';
+  const unavailable = states.filter((state) => state?.phase === 'failed' || state?.phase === 'reconnecting' || state?.phase === 'stopped').length;
+  const watchLabel = unavailable ? `Watch · ${unavailable} unavailable` : states.length && states.every((state) => state?.phase === 'live') ? 'Watch · live' : 'Watch · synchronizing';
   const pfCount = usePfStore((s) => s.sessions.length);
   const { sessions, focusTool, openPorts, openEvents } = useDockStore();
-  return <footer className="h-[calc(26px*var(--ui-factor))] px-3 flex items-center gap-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)] shrink-0">
-    <span className="flex items-center gap-1.5 min-w-0" title={currentContext ?? ''}><Server size="calc(11px * var(--ui-factor))" className={isConnected ? 'text-[var(--status-ok)]' : 'text-[var(--status-warn)]'} /><span className="truncate font-mono">{currentContext || 'No context'}</span></span>
-    <span className="flex items-center gap-1"><Layers size="calc(11px * var(--ui-factor))" />{selectedNamespace === 'all' ? 'All namespaces' : selectedNamespace}</span>
-    <span className="hidden lg:inline">{!isConnected ? 'Disconnected' : syncMode === 'watch' ? watchLabel : isLoading ? 'Loading resources…' : k8s.demo ? 'Demo data' : 'Snapshot · use Sync to refresh'}</span>
-    <span className="hidden xl:inline">Pods: {[...pods.values()].filter((p) => p.status === 'Running').length}/{pods.size}</span>
+  return <footer className="app-statusbar h-[calc(26px*var(--ui-factor))] px-3 flex items-center gap-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)] shrink-0">
+    <span className="status-context flex items-center gap-1.5 min-w-0" title={currentContext ?? ''}><Server size="calc(11px * var(--ui-factor))" className={isConnected ? 'text-[var(--status-ok)]' : 'text-[var(--status-warn)]'} /><span className="truncate font-mono">{currentContext || 'No context'}</span></span>
+    <span className="status-namespace flex items-center gap-1"><Layers size="calc(11px * var(--ui-factor))" /><span>{namespaceScopeLabel(selectedNamespace)}</span></span>
+    <span className="status-sync hidden lg:inline">{!isConnected ? 'Disconnected' : syncMode === 'watch' ? watchLabel : isLoading ? 'Loading resources…' : k8s.demo ? 'Demo data' : 'Snapshot · use Sync to refresh'}</span>
+    <span className="status-pods hidden xl:inline">Pods: {[...pods.values()].filter((p) => p.status === 'Running').length}/{pods.size}</span>
     <div className="flex-1" />
-    <button onClick={() => useWorkspaceStore.getState().openTopology(undefined, selectedNamespace === 'all' ? undefined : selectedNamespace)} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><GitBranch size="calc(11px * var(--ui-factor))" />Topology</button>
-    <button onClick={() => focusTool('terminal')} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><Terminal size="calc(11px * var(--ui-factor))" />Shells {sessions.filter((s) => s.type === 'terminal').length}</button>
-    <button onClick={openPorts} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><ArrowRightLeft size="calc(11px * var(--ui-factor))" />Ports {pfCount}</button>
-    <button onClick={openEvents} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><Bell size="calc(11px * var(--ui-factor))" />Events</button>
-    {clusterVersion && <span className="font-mono">{clusterVersion.replace(/^v?/, 'v')}</span>}
+    <button aria-label="Topology" title="Topology" onClick={() => useWorkspaceStore.getState().openTopology()} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><GitBranch size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Topology</span></button>
+    <button aria-label="Shells" title="Shells" onClick={() => focusTool('terminal')} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><Terminal size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Shells</span> {sessions.filter((s) => s.type === 'terminal').length}</button>
+    <button aria-label="Ports" title="Ports" onClick={openPorts} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><ArrowRightLeft size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Ports</span> {pfCount}</button>
+    <button aria-label="Events" title="Events" onClick={openEvents} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><Bell size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Events</span></button>
+    {clusterVersion && <span className="status-version font-mono">{clusterVersion.replace(/^v?/, 'v')}</span>}
   </footer>;
 }

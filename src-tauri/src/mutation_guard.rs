@@ -207,3 +207,17 @@ async fn show_native(
         .map_err(|_| ())?;
     receiver.await.map_err(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn double_click_does_not_queue_or_reuse_another_changes_consent() {
+        let resource: ResourceRef = serde_json::from_value(serde_json::json!({"context":"prod","group":"","version":"v1","kind":"Pod","namespace":"team","name":"web","uid":"uid"})).unwrap();
+        let guard = MutationGuard::default();
+        let permit = guard.acquire(&resource).unwrap();
+        assert_eq!(guard.acquire(&resource).unwrap_err().status, Some(409));
+        drop(permit);
+        assert!(guard.acquire(&resource).is_ok());
+    }
+}

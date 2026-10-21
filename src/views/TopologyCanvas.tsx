@@ -1,8 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, Handle, Position, MarkerType, useNodesState, type NodeProps, type Node, type Edge, type ReactFlowInstance, type NodeMouseHandler } from '@xyflow/react';
+import { ReactFlow, Background, Controls, MiniMap, Handle, Position, MarkerType, useNodesState, useEdgesState, type NodeProps, type Node, type ReactFlowInstance, type NodeMouseHandler } from '@xyflow/react';
 import ELK from 'elkjs/lib/elk-api.js';
-import { ChevronDown, Filter, Loader2 } from 'lucide-react';
-import { Popover } from '../components/ui/Dropdown';
+import { Loader2 } from 'lucide-react';
 import { ResourceWarnings } from '../components/k8s/ResourceWarnings';
 import { ResourceKindBadge } from '../components/k8s/ResourceKindBadge';
 import { StatusBadge } from '../components/k8s/StatusBadge';
@@ -11,7 +10,7 @@ import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import type { ResourceGraph } from '../core/resources/relationships';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
-import { topologyTypeCounts } from '../core/resources/topology_visibility';
+import { diagramEdgeTypes, type DiagramEdge } from './TopologyEdge';
 import { layoutNodeId, namespaceGroupId, topologyLayout, topologyStructureKey } from '../core/resources/topology_layout';
 
 type ResourceNode = Node<{ item: ResourceItem; direction: 'RIGHT' | 'DOWN' }, 'resource'>;
@@ -37,8 +36,7 @@ const nodeTypes = { resource: ResourceGraphNode, namespace: NamespaceGraphNode }
 const inspectNode: NodeMouseHandler<GraphNode> = (_, node) => {
   const item = node.type === 'namespace' ? [...useResourceStore.getState().resources.Namespace.values()].find((item) => item.name === node.data.name) : node.data.item;
   if (!item) return;
-  if (item.kind === 'HelmRelease') { useWorkspaceStore.getState().openHelmRelease(item); return; }
-  useResourceStore.getState().selectItem(item);
+  useResourceStore.getState().selectItem(item, { origin: `topology:${useWorkspaceStore.getState().activeTabId}` });
   useUiStore.setState({ inspectorCollapsed: false, rightTab: 'overview' });
 };
 const focusNode: NodeMouseHandler<GraphNode> = (_, node) => {
@@ -49,15 +47,13 @@ const focusNode: NodeMouseHandler<GraphNode> = (_, node) => {
 };
 
 /** All high-frequency node updates stay here, away from scope menus, diagnostics and events. */
-export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, revision, focusKey }: {
-  graph: ResourceGraph; direction: 'RIGHT' | 'DOWN'; revision: number; focusKey?: string;
+export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, revision, routeRevision, hiddenKinds, focusKey }: {
+  graph: ResourceGraph; direction: 'RIGHT' | 'DOWN'; revision: number; routeRevision: number; hiddenKinds: ReadonlySet<ResourceKind>; focusKey?: string;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphNode>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<DiagramEdge>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [hiddenKinds, setHiddenKinds] = useState<Set<ResourceKind>>(() => new Set());
-  const typeCounts = useMemo(() => topologyTypeCounts(graph), [graph]);
   const visibleNodes = useMemo(() => nodes.map(node => node.type === 'namespace'
     ? { ...node, style: { ...node.style, opacity: hiddenKinds.has('Namespace') ? 0 : 1, pointerEvents: hiddenKinds.has('Namespace') ? 'none' as const : 'auto' as const } }
     : { ...node, hidden: hiddenKinds.has(node.data.item.kind) }), [nodes, hiddenKinds]);
@@ -66,8 +62,8 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     return edges.map(edge => ({ ...edge, hidden: hidden.has(edge.source) || hidden.has(edge.target) }));
   }, [edges, visibleNodes, hiddenKinds]);
   const containerRef = useRef<HTMLDivElement>(null);
-  const flow = useRef<ReactFlowInstance<GraphNode> | null>(null);
-  const onInit = useCallback((instance: ReactFlowInstance<GraphNode>) => { flow.current = instance; }, []);
+  const flow = useRef<ReactFlowInstance<GraphNode, DiagramEdge> | null>(null);
+  const onInit = useCallback((instance: ReactFlowInstance<GraphNode, DiagramEdge>) => { flow.current = instance; }, []);
   const nodeColor = useCallback((node: Node) => node.type === 'namespace' && hiddenKinds.has('Namespace') ? 'transparent' : node.id === focusKey ? '#3574f0' : '#545d70', [focusKey, hiddenKinds]);
 
   const latestGraph = useRef(graph);
@@ -118,8 +114,11 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
         }
       }
       setNodes(positioned);
+      const bundles = new Map<string, string[]>();
+      for (const edge of graph.relations) { if (!bundles.has(edge.source)) bundles.set(edge.source, []); bundles.get(edge.source)!.push(edge.id); }
+      for (const bundle of bundles.values()) bundle.sort();
       setEdges(graph.relations.map((edge) => ({ id: edge.id, source: layoutNodeId(graph, edge.source), target: layoutNodeId(graph, edge.target), label: edge.label,
-        type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: edge.type === 'owns' ? '#7c9bda' : '#626b7c' },
+        type: 'adjustable', data: { direction, lane: bundles.get(edge.source)!.indexOf(edge.id) - (bundles.get(edge.source)!.length - 1) / 2 }, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: edge.type === 'owns' ? '#7c9bda' : '#626b7c' },
         labelStyle: { fill: '#b5bac4', fontSize: 10 }, labelBgStyle: { fill: '#25272a' },
       })));
       setBusy(false);
@@ -127,7 +126,9 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     }).catch((error) => { clearTimeout(timeout); worker?.terminate(); if (!cancelled) { setError(String(error)); setBusy(false); } });
     worker.onerror = (event) => { clearTimeout(timeout); worker?.terminate(); if (!cancelled) { setError(`Automatic layout failed: ${event.message}`); setBusy(false); } };
     return () => { cancelled = true; clearTimeout(timeout); worker?.terminate(); };
-  }, [structureKey, direction, revision, setNodes]);
+  }, [structureKey, direction, revision, setNodes, setEdges]);
+
+  useEffect(() => { setEdges(edges => edges.map(edge => ({ ...edge, data: { ...edge.data!, bend: undefined } }))); }, [routeRevision, setEdges]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -139,17 +140,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
   }, []);
 
   return <div ref={containerRef} className="topology-canvas relative h-full w-full min-w-0 min-h-0 overflow-hidden">
-    <div className="absolute top-2 right-2 z-10">
-      <Popover align="end" width={240} trigger={({ open }) => <button aria-label="Topology resource types" aria-expanded={open} className="flex items-center gap-2 px-2 py-1.5 text-xs rounded border border-[var(--border-default)] bg-[var(--bg-secondary)] shadow-sm"><Filter size={13} />Types <span className="text-[var(--text-secondary)]">{typeCounts.filter(([kind]) => !hiddenKinds.has(kind)).length}/{typeCounts.length}</span><ChevronDown size={12} /></button>}>
-        {() => <section aria-label="Topology resource types">
-          <div className="px-3 py-2 text-xs font-medium">Resource types</div>
-          <div className="flex gap-3 px-3 pb-2 text-xs"><button className="text-[var(--accent)]" onClick={() => setHiddenKinds(new Set())}>Show all</button><button className="text-[var(--accent)]" onClick={() => setHiddenKinds(new Set(typeCounts.map(([kind]) => kind)))}>Hide all</button></div>
-          <div className="max-h-[40vh] overflow-auto kubiki-scrollbar p-2 space-y-1">{typeCounts.map(([kind, count]) => <label key={kind} className="flex items-center gap-2 p-1.5 rounded hover:bg-[var(--bg-hover)] text-xs"><input type="checkbox" aria-label={`Show ${kind}`} checked={!hiddenKinds.has(kind)} onChange={() => setHiddenKinds(previous => { const next = new Set(previous); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; })} /><span className="truncate flex-1" title={kind}>{kind}</span><span className="font-mono text-[var(--text-secondary)]">{count}</span></label>)}</div>
-          <p className="text-xs text-[var(--text-secondary)] px-3 py-2 border-t border-[var(--border-subtle)]">Visibility only. Positions are preserved.</p>
-        </section>}
-      </Popover>
-    </div>
-    <ReactFlow<GraphNode> nodes={visibleNodes} edges={visibleEdges} onNodesChange={onNodesChange} nodeTypes={nodeTypes} onInit={onInit}
+    <ReactFlow<GraphNode, DiagramEdge> nodes={visibleNodes} edges={visibleEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} edgeTypes={diagramEdgeTypes} nodeTypes={nodeTypes} onInit={onInit}
       colorMode="dark" fitView minZoom={0.1} maxZoom={2} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null}
       onNodeClick={inspectNode} onNodeDoubleClick={focusNode}>
       <Background gap={20} size={1} /><Controls showInteractive={false} /><MiniMap pannable zoomable nodeColor={nodeColor} />

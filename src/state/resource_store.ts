@@ -1,3 +1,6 @@
+import { RESOURCE_TYPES } from '../core/resources/resource_types';
+import { resourceBucket } from '../core/resources/custom_resource_types';
+import { inNamespaceScope } from '../core/resources/namespace_scope';
 import { create } from 'zustand';
 import { ResourceDeltaPayload, ResourceItem, ResourceKind } from '../types/k8s';
 import { useClusterStore } from './cluster_store';
@@ -7,21 +10,26 @@ import type { WatchCommit, WatchState } from '../providers/watch_types';
 interface ResourceState {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
   loadErrors: Partial<Record<ResourceKind, K8sRequestError>>;
+  loadingKinds: Partial<Record<ResourceKind, boolean>>;
+  setKindLoading: (kind: ResourceKind, loading: boolean) => void;
   syncMode: 'snapshot' | 'watch' | 'demo';
   watchStates: Partial<Record<ResourceKind, WatchState>>;
   setSyncMode: (mode: 'snapshot' | 'watch' | 'demo') => void;
   applyWatchCommit: (kind: ResourceKind, update: WatchCommit) => void;
   activeKind: ResourceKind;
   searchQuery: string;
+  searchRegex: boolean;
   selectedItem: ResourceItem | null;
   selectionHistory: ResourceItem[];
+  selectionOrigin: string | null;
   goBack: () => void;
 
   setActiveKind: (kind: ResourceKind) => void;
   reset: () => void;
   setLoadError: (kind: ResourceKind, error: unknown) => void;
   setSearchQuery: (query: string) => void;
-  selectItem: (item: ResourceItem | null) => void;
+  setSearchRegex: (searchRegex: boolean) => void;
+  selectItem: (item: ResourceItem | null, options?: { history?: boolean; origin?: string }) => void;
   setResourcesForKind: (kind: ResourceKind, items: ResourceItem[]) => void;
   updateItem: (kind: ResourceKind, uid: string, patch: Partial<ResourceItem>) => void;
   deleteItem: (kind: ResourceKind, uid: string) => void;
@@ -29,36 +37,13 @@ interface ResourceState {
   getActiveResources: () => ResourceItem[];
 }
 
-const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => ({
-  Pod: new Map(),
-  Deployment: new Map(),
-  ReplicaSet: new Map(),
-  StatefulSet: new Map(),
-  DaemonSet: new Map(),
-  Job: new Map(),
-  CronJob: new Map(),
-  Service: new Map(),
-  Ingress: new Map(),
-  ConfigMap: new Map(),
-  Secret: new Map(),
-  PersistentVolumeClaim: new Map(),
-  PersistentVolume: new Map(),
-  StorageClass: new Map(),
-  Node: new Map(),
-  Namespace: new Map(),
-  Event: new Map(),
-  CustomResourceDefinition: new Map(),
-  ServiceAccount: new Map(),
-  Role: new Map(),
-  RoleBinding: new Map(),
-  ClusterRole: new Map(),
-  ClusterRoleBinding: new Map(),
-  HelmRelease: new Map(),
-});
+const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => Object.fromEntries([...RESOURCE_TYPES.map(type => type.kind), 'HelmRelease'].map(kind => [kind, new Map<string, ResourceItem>()])) as Record<ResourceKind, Map<string, ResourceItem>>;
 
 export const useResourceStore = create<ResourceState>((set, get) => ({
   resources: initialResources(),
   loadErrors: {},
+  loadingKinds: {},
+  setKindLoading: (kind, loading) => set(state => ({ loadingKinds: { ...state.loadingKinds, [kind]: loading } })),
   syncMode: 'snapshot', watchStates: {},
   setSyncMode: (syncMode) => set({ syncMode }),
   applyWatchCommit: (kind, update) => set((state) => {
@@ -66,26 +51,42 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     for (const change of update.changes) { if (change.type === 'apply') map.set(change.item.uid, change.item); else map.delete(change.uid); }
     return {
       resources: map === state.resources[kind] ? state.resources : { ...state.resources, [kind]: map },
-      selectedItem: state.selectedItem?.kind === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
+      selectedItem: state.selectedItem && resourceBucket(state.selectedItem) === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
       // Scope changes must not leave navigation history pointing to stale, unloaded objects.
-      selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => item.kind !== kind) : state.selectionHistory,
+      selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => resourceBucket(item) !== kind) : state.selectionHistory,
       watchStates: { ...state.watchStates, [kind]: update.state },
       loadErrors: { ...state.loadErrors, [kind]: update.error ? normalizeK8sError(update.error, { operation: 'watch', context: useClusterStore.getState().currentContext ?? undefined }) : undefined },
     };
   }),
   activeKind: 'Pod',
   searchQuery: '',
+  searchRegex: false,
   selectedItem: null,
   selectionHistory: [],
-  goBack: () => set((state) => ({ selectedItem: state.selectionHistory[state.selectionHistory.length - 1] ?? state.selectedItem, selectionHistory: state.selectionHistory.slice(0, -1) })),
-  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], loadErrors: {}, searchQuery: '', watchStates: {}, syncMode: 'snapshot' }),
-  setLoadError: (kind, error) => set((state) => ({ loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
+  selectionOrigin: null,
+  goBack: () => set(state => {
+    for (let index = state.selectionHistory.length - 1; index >= 0; index--) {
+      const previous = state.selectionHistory[index];
+      const item = state.resources[resourceBucket(previous)]?.get(previous.uid);
+      if (item && (item.uid !== state.selectedItem?.uid || resourceBucket(item) !== resourceBucket(state.selectedItem!))) return { selectedItem: item, selectionHistory: state.selectionHistory.slice(0, index) };
+    }
+    return { selectionHistory: [] };
+  }),
+  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, searchQuery: '', searchRegex: false, watchStates: {}, syncMode: 'snapshot' }),
+  setLoadError: (kind, error) => set((state) => ({ loadingKinds: error == null ? state.loadingKinds : { ...state.loadingKinds, [kind]: false }, loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
 
   setActiveKind: (activeKind) => set({ activeKind }),
 
   setSearchQuery: (searchQuery) => set({ searchQuery }),
+  setSearchRegex: (searchRegex) => set({ searchRegex }),
 
-  selectItem: (selectedItem) => set((state) => ({ selectedItem, selectionHistory: selectedItem && state.selectedItem && selectedItem.uid !== state.selectedItem.uid ? [...state.selectionHistory, state.selectedItem].slice(-40) : state.selectionHistory })),
+  selectItem: (selectedItem, options) => set(state => {
+    const push = options?.history || !!options?.origin && options.origin === state.selectionOrigin;
+    const previous = state.selectedItem;
+    const different = selectedItem && previous && (selectedItem.uid !== previous.uid || resourceBucket(selectedItem) !== resourceBucket(previous));
+    return { selectedItem, selectionOrigin: options?.origin ?? (options?.history ? state.selectionOrigin : null),
+      selectionHistory: push ? different ? [...state.selectionHistory, previous!].slice(-40) : state.selectionHistory : [] };
+  }),
 
   setResourcesForKind: (kind, items) => {
     set((state) => {
@@ -97,13 +98,15 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
           [kind]: map,
         },
         loadErrors: { ...state.loadErrors, [kind]: undefined },
-        selectedItem: state.selectedItem?.kind === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
+        loadingKinds: { ...state.loadingKinds, [kind]: false },
+        selectedItem: state.selectedItem && resourceBucket(state.selectedItem) === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
       };
     });
   },
 
   updateItem: (kind, uid, patch) => {
     set((state) => {
+      kind = state.resources[kind]?.has(uid) ? kind : Object.keys(state.resources).find(key => state.resources[key].has(uid)) ?? kind;
       const map = new Map(state.resources[kind]);
       const existing = map.get(uid);
       if (!existing) return state;
@@ -118,6 +121,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
 
   deleteItem: (kind, uid) => {
     set((state) => {
+      kind = state.resources[kind]?.has(uid) ? kind : Object.keys(state.resources).find(key => state.resources[key].has(uid)) ?? kind;
       const map = new Map(state.resources[kind]);
       map.delete(uid);
       return {
@@ -136,7 +140,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
         payload.items.forEach((item) => newMap.set(item.uid, item));
         return {
           resources: { ...state.resources, [kind]: newMap },
-          selectedItem: state.selectedItem?.kind === kind ? newMap.get(state.selectedItem.uid) ?? null : state.selectedItem,
+          selectedItem: state.selectedItem && resourceBucket(state.selectedItem) === kind ? newMap.get(state.selectedItem.uid) ?? null : state.selectedItem,
         };
       }
 
@@ -171,7 +175,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     let list = Array.from(map.values());
 
     if (selectedNamespace !== 'all') {
-      list = list.filter((item) => !item.namespace || item.namespace === selectedNamespace);
+      list = list.filter((item) => inNamespaceScope(selectedNamespace, item.namespace));
     }
 
     if (searchQuery.trim()) {

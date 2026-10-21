@@ -321,6 +321,45 @@ async fn a_slow_consumer_backpressures_the_watcher_without_losing_order_or_cance
 }
 
 #[tokio::test]
+async fn all_builtin_collections_can_watch_five_namespaces_and_release_every_subscription() {
+    let manager = InformerManager::new(ResourceStore::new());
+    let mut receivers = Vec::new();
+    for resource in kubiki_core::core::api::resource_types() {
+        let namespaces = if resource.namespaced {
+            vec![
+                Some("alpha"),
+                Some("beta"),
+                Some("gamma"),
+                Some("delta"),
+                Some("epsilon"),
+            ]
+        } else {
+            vec![None]
+        };
+        for namespace in namespaces {
+            let query = ResourceQuery {
+                context: "catalog-test".into(),
+                group: resource.group.clone(),
+                version: resource.version.clone(),
+                kind: resource.kind.clone(),
+                namespace: namespace.map(str::to_owned),
+            };
+            let id = format!("catalog-{}", receivers.len());
+            receivers.push(
+                manager
+                    .start_watch("catalog", &id, query, std::future::pending())
+                    .await
+                    .unwrap(),
+            );
+        }
+    }
+    assert!(receivers.len() > 128);
+    assert_eq!(manager.active_count().await, receivers.len());
+    manager.stop_owner("catalog").await;
+    assert_eq!(manager.active_count().await, 0);
+}
+
+#[tokio::test]
 async fn a_paginated_initial_list_of_3500_pods_is_published_as_one_complete_snapshot() {
     let list = |range: std::ops::Range<usize>, continuation: &str| {
         json!({

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { startResourceWatches, stopResourceWatches, refreshResourceWatches } from '../../src/state/resource_watch';
 import { useClusterStore } from '../../src/state/cluster_store';
 import { useResourceStore } from '../../src/state/resource_store';
-import { isValidNamespaceName, namespaceIsOutsideScope, resourceType, type ResourceQuery } from '../../src/core/resources/resource_types';
+import { RESOURCE_TYPES, isValidNamespaceName, namespaceIsOutsideScope, resourceType, type ResourceQuery } from '../../src/core/resources/resource_types';
 import type { WatchBatch } from '../../src/providers/watch_types';
 
 const mock = vi.hoisted(() => ({ watchResources: vi.fn() }));
@@ -18,12 +18,12 @@ it('subscribes to selected namespace, preserves cluster watches and removes the 
     return vi.fn();
   });
   const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(50); await ready;
-  expect(queries).toHaveLength(23);
+  expect(queries).toHaveLength(RESOURCE_TYPES.length);
   for (const query of queries) expect(query.namespace).toBe(resourceType(query.kind as any).namespaced ? 'backend' : null);
   const cluster = queries.filter((query) => !resourceType(query.kind as any).namespaced);
   useClusterStore.getState().selectNamespace('other'); await vi.advanceTimersByTimeAsync(50);
-  expect(queries.slice(23).every((query) => query.namespace === 'other')).toBe(true);
-  for (let i = 0; i < 23; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced);
+  expect(queries.slice(RESOURCE_TYPES.length).every((query) => query.namespace === 'other')).toBe(true);
+  for (let i = 0; i < RESOURCE_TYPES.length; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced);
   expect(queries.filter((query) => query.namespace === null)).toHaveLength(cluster.length);
   stopResourceWatches(); const count = queries.length;
   useClusterStore.getState().selectNamespace('backend'); await vi.advanceTimersByTimeAsync(50);

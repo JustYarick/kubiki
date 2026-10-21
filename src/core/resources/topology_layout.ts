@@ -31,7 +31,7 @@ export function topologyLayout(graph: ResourceGraph, direction: 'RIGHT' | 'DOWN'
       ...[...namespaces.values()].sort((a, b) => a.name.localeCompare(b.name)).map(({ name, members }) => ({
         id: namespaceGroupId(name), children: members,
         ...(members.length ? {} : { width: 320, height: 144 }),
-        layoutOptions: { 'elk.padding': '[top=48,left=24,bottom=24,right=24]', 'elk.spacing.nodeNode': '32', 'elk.layered.spacing.nodeNodeBetweenLayers': '90' },
+        layoutOptions: { 'elk.algorithm': 'layered', 'elk.direction': direction, 'elk.padding': '[top=48,left=24,bottom=24,right=24]', 'elk.spacing.nodeNode': '32', 'elk.layered.spacing.nodeNodeBetweenLayers': '90' },
       })),
       ...cluster,
     ],

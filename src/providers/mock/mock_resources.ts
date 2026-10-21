@@ -206,11 +206,11 @@ const SC_SEEDS: Array<{ name: string; provisioner: string; reclaim: string; bind
   { name: 'ssd-fast', provisioner: 'csi.kubiki.dev/ssd', reclaim: 'Retain', binding: 'Immediate', age: '30d' },
 ];
 
-const NODE_SEEDS: Array<{ name: string; status: string; roles: string; version: string; cpu: string; mem: string; pods: string; ip: string; os: string }> = [
-  { name: 'node-1a', status: 'Ready', roles: 'control-plane,worker', version: 'v1.31.2', cpu: '4.0 / 8', mem: '9.6 / 16Gi', pods: '14 / 110', ip: '192.168.58.2', os: 'ubuntu 22.04' },
-  { name: 'node-1b', status: 'Ready', roles: 'worker', version: 'v1.31.2', cpu: '1.2 / 8', mem: '6.4 / 16Gi', pods: '9 / 110', ip: '192.168.58.3', os: 'ubuntu 22.04' },
-  { name: 'node-2a', status: 'Ready', roles: 'worker', version: 'v1.31.1', cpu: '3.1 / 8', mem: '11.9 / 16Gi', pods: '12 / 110', ip: '192.168.58.4', os: 'ubuntu 22.04' },
-  { name: 'gpu-node-1', status: 'NotReady', roles: 'worker,gpu', version: 'v1.31.2', cpu: '0.4 / 16', mem: '2.0 / 32Gi', pods: '6 / 110', ip: '192.168.58.5', os: 'ubuntu 22.04' },
+const NODE_SEEDS: Array<{ name: string; status: string; roles: string; version: string; cpu: string; mem: string; pods: string; ip: string; os: string; taints: number }> = [
+  { name: 'node-1a', status: 'Ready', roles: 'control-plane,worker', version: 'v1.31.2', cpu: '4.0 / 8', mem: '9.6 / 16Gi', pods: '14 / 110', ip: '192.168.58.2', os: 'ubuntu 22.04', taints: 1 },
+  { name: 'node-1b', status: 'Ready', roles: 'worker', version: 'v1.31.2', cpu: '1.2 / 8', mem: '6.4 / 16Gi', pods: '9 / 110', ip: '192.168.58.3', os: 'ubuntu 22.04', taints: 0 },
+  { name: 'node-2a', status: 'Ready', roles: 'worker', version: 'v1.31.1', cpu: '3.1 / 8', mem: '11.9 / 16Gi', pods: '12 / 110', ip: '192.168.58.4', os: 'ubuntu 22.04', taints: 0 },
+  { name: 'gpu-node-1', status: 'NotReady', roles: 'worker,gpu', version: 'v1.31.2', cpu: '0.4 / 16', mem: '2.0 / 32Gi', pods: '6 / 110', ip: '192.168.58.5', os: 'ubuntu 22.04', taints: 1 },
 ];
 
 const NS_SEEDS: Array<{ name: string; status: string; labels: number; age: string }> = [
@@ -425,11 +425,18 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
       uid: uid(), name: n.name, namespace: undefined, kind: 'Node', apiVersion: 'v1',
       status: n.status, ready: n.status, age: '16d',
       nodeRoles: n.roles, nodeVersion: n.version, nodeCpu: n.cpu, nodeMem: n.mem, nodePods: n.pods, nodeIp: n.ip, nodeOs: n.os,
+      taintsCount: n.taints,
       rawYaml: j([
         'apiVersion: v1',
         'kind: Node',
         'metadata:',
         `  name: ${n.name}`,
+        ...(n.taints > 0 ? [
+          'spec:',
+          '  taints:',
+          '  - key: node-role.kubernetes.io/control-plane',
+          '    effect: NoSchedule',
+        ] : []),
         'status:',
         '  capacity:',
         `    cpu: "${n.cpu.split('/')[1].trim()}"`,
@@ -484,6 +491,72 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
         '            port:',
         '              number: 3000',
       ]),
+    } satisfies ResourceItem,
+  ];
+
+  out.CustomResourceDefinition = [
+    {
+      uid: 'crd-bucket-1',
+      name: 'buckets.source.toolkit.fluxcd.io',
+      kind: 'CustomResourceDefinition',
+      apiVersion: 'apiextensions.k8s.io/v1',
+      status: 'Established',
+      age: '14d',
+      rawYaml: stringify({
+        apiVersion: 'apiextensions.k8s.io/v1',
+        kind: 'CustomResourceDefinition',
+        metadata: { name: 'buckets.source.toolkit.fluxcd.io', creationTimestamp: new Date(Date.now() - 86400000 * 14).toISOString() },
+        spec: {
+          group: 'source.toolkit.fluxcd.io',
+          scope: 'Namespaced',
+          names: { kind: 'Bucket', plural: 'buckets', singular: 'bucket', shortNames: ['bkt'] },
+          versions: [
+            {
+              name: 'v1beta2',
+              served: true,
+              storage: true,
+              additionalPrinterColumns: [
+                { name: 'Endpoint', type: 'string', jsonPath: '.spec.endpoint' },
+                { name: 'Age', type: 'date', jsonPath: '.metadata.creationTimestamp' },
+                { name: 'Ready', type: 'string', jsonPath: '.status.conditions[?(@.type=="Ready")].status' },
+                { name: 'Status', type: 'string', jsonPath: '.status.conditions[?(@.type=="Ready")].message' },
+              ],
+            },
+          ],
+        },
+        status: { conditions: [{ type: 'Established', status: 'True' }] },
+      }),
+    } satisfies ResourceItem,
+    {
+      uid: 'crd-kustomization-1',
+      name: 'kustomizations.kustomize.toolkit.fluxcd.io',
+      kind: 'CustomResourceDefinition',
+      apiVersion: 'apiextensions.k8s.io/v1',
+      status: 'Established',
+      age: '14d',
+      rawYaml: stringify({
+        apiVersion: 'apiextensions.k8s.io/v1',
+        kind: 'CustomResourceDefinition',
+        metadata: { name: 'kustomizations.kustomize.toolkit.fluxcd.io', creationTimestamp: new Date(Date.now() - 86400000 * 14).toISOString() },
+        spec: {
+          group: 'kustomize.toolkit.fluxcd.io',
+          scope: 'Namespaced',
+          names: { kind: 'Kustomization', plural: 'kustomizations', singular: 'kustomization', shortNames: ['ks'] },
+          versions: [
+            {
+              name: 'v1',
+              served: true,
+              storage: true,
+              additionalPrinterColumns: [
+                { name: 'Age', type: 'date', jsonPath: '.metadata.creationTimestamp' },
+                { name: 'Ready', type: 'string', jsonPath: '.status.conditions[?(@.type=="Ready")].status' },
+                { name: 'Status', type: 'string', jsonPath: '.status.conditions[?(@.type=="Ready")].message' },
+              ],
+            },
+          ],
+        },
+        status: { conditions: [{ type: 'Established', status: 'True' }] },
+      }),
     } satisfies ResourceItem,
   ];
 

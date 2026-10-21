@@ -7,6 +7,19 @@ import { useResourceStore } from '../../src/state/resource_store';
 import type { ResourceItem } from '../../src/types/k8s';
 
 describe('Compound namespace layout', () => {
+  it.each(['RIGHT', 'DOWN'] as const)('applies %s to connected nodes inside the namespace as well as the cluster', async direction => {
+    const owner: ResourceItem = { uid: 'owner', kind: 'Deployment', apiVersion: 'apps/v1', name: 'owner', namespace: 'backend' };
+    const pod: ResourceItem = { uid: 'pod', kind: 'Pod', apiVersion: 'v1', name: 'web', namespace: 'backend', metadata: { ownerReferences: [{ uid: owner.uid, name: owner.name, kind: owner.kind, apiVersion: owner.apiVersion }] } };
+    const resources = { ...useResourceStore.getState().resources, Deployment: new Map([[owner.uid, owner]]), Pod: new Map([[pod.uid, pod]]) };
+    const graph = buildResourceGraph(resources, { includeContains: false, includeMissing: false });
+    const { root } = topologyLayout(graph, direction);
+    const result = await new ELK().layout(root);
+    const members = result.children!.find(node => node.id === namespaceGroupId('backend'))!.children!;
+    const source = members.find(node => node.id === resourceKey(owner))!;
+    const target = members.find(node => node.id === resourceKey(pod))!;
+    if (direction === 'RIGHT') expect(source.x! + source.width!).toBeLessThan(target.x!);
+    else expect(source.y! + source.height!).toBeLessThan(target.y!);
+  });
   it.each(['RIGHT', 'DOWN'] as const)('keeps Pod/config inside its namespace and a referenced Node outside (%s)', async (direction) => {
     const resources = { ...useResourceStore.getState().resources };
     const namespace: ResourceItem = { uid: 'ns', kind: 'Namespace', apiVersion: 'v1', name: 'backend' };
