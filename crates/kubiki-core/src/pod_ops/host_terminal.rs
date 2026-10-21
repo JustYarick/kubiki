@@ -324,9 +324,8 @@ impl Drop for Process {
             self.reaped = true;
         }
         self.master.take();
-        for worker in self.workers.drain(..) {
-            let _ = worker.join();
-        }
+        // Detach worker threads cleanly; they terminate on shutdown/cancellation/EOF without blocking Drop.
+        self.workers.clear();
     }
 }
 fn run(
