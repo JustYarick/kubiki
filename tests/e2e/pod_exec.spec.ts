@@ -50,7 +50,9 @@ async function setup(page: Page, denied = false) {
       },
     };
   }, { name, denied });
-  await page.goto('/'); await page.getByTestId('resource-table').getByText(name, { exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByTestId('resource-table').getByText(name, { exact: true }).click();
 }
 
 test('Pod shell carries real adapter input, resize, UTF-8 and exit; container switch closes the old connection', async ({ page }) => {
@@ -63,6 +65,7 @@ test('Pod shell carries real adapter input, resize, UTF-8 and exit; container sw
   expect((await page.evaluate(() => (window as any).__execHarness.input.join('')))).toContain('\u0003');
   expect((await page.evaluate(() => (window as any).__execHarness.input.join('')))).toContain('\u0017');
   await page.evaluate(() => (window as any).__execHarness.utf8()); await expect(terminal.locator('.xterm-rows')).toContainText('привет 🌍');
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
   await page.setViewportSize({ width: 1100, height: 800 });
   await expect.poll(() => page.evaluate(() => (window as any).__execHarness.sizes.length)).toBeGreaterThan(0);
   await pane.getByRole('button', { name: 'Select Container' }).click();
@@ -86,6 +89,7 @@ test('container indicators and responsive logs toolbar include init/sidecar/ephe
   const details = page.getByTestId('resource-details'); await expect(details.getByRole('button', { name: 'Shell for setup', exact: true })).toBeDisabled();
   await details.getByRole('button', { name: 'Logs for setup', exact: true }).click();
   await expect(page.getByText('setup log output', { exact: true })).toBeVisible();
+  await details.getByRole('button', { name: 'Close details', exact: true }).click();
   const toolbar = page.getByTestId('logs-toolbar'); const search = toolbar.getByPlaceholder('Filter log lines…'); await search.fill('log output');
   await toolbar.getByRole('button', { name: 'Select Container' }).click();
   await expect(page.getByRole('option', { name: /setup/ })).toContainText('Init'); await expect(page.getByRole('option', { name: /shipper/ })).toContainText('Sidecar'); await expect(page.getByRole('option', { name: /debug/ })).toContainText('Ephemeral');

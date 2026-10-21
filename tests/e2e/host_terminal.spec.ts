@@ -4,7 +4,7 @@ async function setup(page: import('@playwright/test').Page, failInfo = false) {
     const w = window as any;let callback = 0;let infoFailure = failInfo;const callbacks = new Map();const active = new Map<string, any>();const closed: any[] = [];const starts: any[] = [];const input: any[] = [];const sizes: any[] = [];const acks: any[] = [];const encoder = new TextEncoder();
     const output = (text: string) => ({ type: 'Output', payload: { data: [...encoder.encode(text)] } });
     const send = (s: any, events: any[]) => s.channel.onmessage({ session_id: s.id, messages: events.map((event) => ({ sequence: ++s.sequence, event })) });
-    w.__hostHarness = { starts, input, sizes, acks, active: () => active.size, callbacks: () => callbacks.size,
+    w.__hostHarness = { starts, input, sizes, acks, active: () => active.size, callbacks: () => callbacks.size, allowInfo: () => { infoFailure = false; },
       finish: () => { for (const s of active.values()) send(s, [{ type: 'Exited', payload: { code: 7 } }]); },
       late: () => { for (const s of closed) send(s, [output('STALE HOST OUTPUT\r\n')]); },
     };
@@ -12,7 +12,7 @@ async function setup(page: import('@playwright/test').Page, failInfo = false) {
       invoke: async (command: string, args: any = {}) => {
         if (command === 'stop_port_forwards') return;
         if (command === 'get_kube_contexts') return [];
-        if (command === 'get_host_terminal_info') { if (infoFailure) { infoFailure = false;throw { code: 'internal', operation: 'host_terminal', message: 'Cannot discover local shells' }; }return { shells: ['/bin/zsh','/bin/sh'], default_shell: '/bin/zsh', cwd: '/home/test' }; }
+        if (command === 'get_host_terminal_info') { if (infoFailure) throw { code: 'internal', operation: 'host_terminal', message: 'Cannot discover local shells' };return { shells: ['/bin/zsh','/bin/sh'], default_shell: '/bin/zsh', cwd: '/home/test' }; }
         if (command === 'start_host_terminal') { const s = { id: args.sessionId, channel: args.onEvent, sequence: 0 };active.set(s.id, s);starts.push(args.request);queueMicrotask(() => send(s, [{ type: 'Started' }, output('local-shell-ready\r\n')]));return; }
         if (command === 'write_host_terminal') { input.push(args);const s = active.get(args.sessionId);if (s) send(s, [output(args.data.includes('\r') ? '\r\nlocal-command-result\r\n' : args.data)]);return; }
         if (command === 'resize_host_terminal') { sizes.push(args);return; }
@@ -23,7 +23,7 @@ async function setup(page: import('@playwright/test').Page, failInfo = false) {
       },
     };
   }, { failInfo });
-  await page.goto('/');await page.getByRole('button', { name: 'Expand bottom panel', exact: true }).click();await page.getByRole('button', { name: 'Open Local Terminal (Host PC)', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();await page.getByRole('button', { name: 'Expand bottom panel', exact: true }).click();await page.getByRole('button', { name: 'Open Local Terminal (Host PC)', exact: true }).click();
 }
 test('host shell works without a cluster, carries keys/resize, preserves hidden sessions and cleans up', async ({ page }) => {
   await setup(page);const pane = page.getByTestId('live-terminal');await expect(pane.getByRole('status')).toHaveText('Connected');
@@ -49,10 +49,11 @@ test('host shell works without a cluster, carries keys/resize, preserves hidden 
 });
 test('host shell metadata error can be retried with Reconnect', async ({ page }) => {
   await setup(page, true);const pane = page.getByTestId('live-terminal');await expect(pane.getByRole('alert')).toContainText('Cannot discover local shells');
+  await page.evaluate(() => (window as any).__hostHarness.allowInfo());
   await pane.getByRole('button', { name: 'Reconnect shell' }).click();await expect(pane.getByRole('status')).toHaveText('Connected');
 });
 test('browser local terminal explains desktop requirement and does not simulate a real shell', async ({ page }) => {
-  await page.route('**/api/k8s/contexts', (route) => route.fulfill({ json: [] }));await page.goto('/');
+  await page.route('**/api/k8s/contexts', (route) => route.fulfill({ json: [] }));await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByRole('button', { name: 'Expand bottom panel', exact: true }).click();await page.getByRole('button', { name: 'Open Local Terminal (Host PC)', exact: true }).click();
   await expect(page.getByTestId('live-terminal').getByRole('alert')).toContainText('Local shell is available in the desktop app');
   await expect(page.getByTestId('live-terminal').getByRole('status')).toHaveText('Failed');

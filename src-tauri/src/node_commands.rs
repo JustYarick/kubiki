@@ -152,7 +152,7 @@ pub async fn prepare_node_debug(
             pool.get_client(&context)
                 .await
                 .map_err(|e| ApiError::from_core(e, "node_debug", Some(&context)))
-        }, move |review| async move { crate::mutation_guard::confirm(dialog_window, &resource, review).await })
+        }, move |review| { let dialog_window = dialog_window.clone(); let resource = resource.clone(); async move { crate::mutation_guard::confirm(dialog_window, &resource, review).await } })
         .await
 }
 #[tauri::command]

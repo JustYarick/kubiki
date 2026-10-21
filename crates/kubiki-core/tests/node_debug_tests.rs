@@ -485,22 +485,25 @@ async fn node_create_requires_consent_to_exact_privileged_manifest_and_rechecks_
                 "review",
                 request(),
                 async move { Ok(client) },
-                move |review| async move {
-                    assert!(
-                        review.contains("CREATE privileged")
-                            && review.contains("node-uid")
-                            && review.contains("ubuntu:24.04")
-                    );
-                    assert!(
-                        review.contains("\"privileged\": true")
-                            && review.contains("automatic deletion")
-                            && review.contains("kubiki-node-debug-review")
-                    );
-                    assert_eq!(state.lock().await.created, 0);
-                    if approve {
-                        state.lock().await.wrong_node = true;
+                move |review| {
+                    let state = state.clone();
+                    async move {
+                        assert!(
+                            review.contains("CREATE privileged")
+                                && review.contains("node-uid")
+                                && review.contains("ubuntu:24.04")
+                        );
+                        assert!(
+                            review.contains("\"privileged\": true")
+                                && review.contains("separate system confirmation")
+                                && review.contains("kubiki-node-debug-review")
+                        );
+                        assert_eq!(state.lock().await.created, 0);
+                        if approve {
+                            state.lock().await.wrong_node = true;
+                        }
+                        Ok(approve)
                     }
-                    Ok(approve)
                 },
             )
             .await
@@ -562,4 +565,63 @@ async fn orphan_delete_cancellation_and_concurrent_changes_never_delete() {
     );
     assert_eq!(f.state.lock().await.deleted, 0);
     manager.stop_owner("main").await;
+}
+
+#[tokio::test]
+async fn creation_consent_never_authorizes_cleanup_and_cancel_is_not_reprompted_in_the_same_stop() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for unavailable in [false, true] {
+        let f = fixture().await;
+        let manager = NodeDebugManager::default();
+        let client = f.client.clone();
+        let prompts = Arc::new(AtomicUsize::new(0));
+        let observed = prompts.clone();
+        manager
+            .prepare(
+                "main",
+                "separate-review",
+                request(),
+                async move { Ok(client) },
+                move |review| {
+                    let prompts = observed.clone();
+                    async move {
+                        prompts.fetch_add(1, Ordering::SeqCst);
+                        if review.starts_with("CREATE") {
+                            return Ok(true);
+                        }
+                        assert!(review.starts_with("DELETE debug Pod"));
+                        assert!(
+                            review.contains("debug-uid")
+                                && review.contains("Resource version: \"10\"")
+                        );
+                        if unavailable {
+                            Err(kubiki_core::core::api::ApiError::from_status(
+                                503,
+                                "Window closed",
+                                "mutation",
+                                None,
+                            ))
+                        } else {
+                            Ok(false)
+                        }
+                    }
+                },
+            )
+            .await
+            .unwrap();
+        assert!(manager.stop("main", "separate-review").await.is_err());
+        assert_eq!(f.state.lock().await.deleted, 0);
+        assert_eq!(prompts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            manager
+                .status("main", "separate-review")
+                .await
+                .unwrap()
+                .phase,
+            "cleanup_failed"
+        );
+        assert!(manager.stop("main", "separate-review").await.is_err());
+        assert_eq!(f.state.lock().await.deleted, 0);
+        assert_eq!(prompts.load(Ordering::SeqCst), 3);
+    }
 }

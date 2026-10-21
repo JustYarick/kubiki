@@ -16,6 +16,7 @@ use serde_json::json;
 use std::{
     collections::{HashMap, VecDeque},
     future::Future,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -54,7 +55,11 @@ pub struct DebugPod {
     pub node: String,
     pub phase: String,
 }
+type Consent = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<bool, ApiError>> + Send>> + Send + Sync,
+>;
 struct Lease {
+    confirm: Consent,
     owner: String,
     id: String,
     request: NodeDebugRequest,
@@ -182,7 +187,7 @@ impl NodeDebugManager {
     ) -> Result<ResourceRef, ApiError>
     where
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
-        C: FnOnce(String) -> CF + Send + 'static,
+        C: Fn(String) -> CF + Send + Sync + 'static,
         CF: Future<Output = Result<bool, ApiError>> + Send + 'static,
     {
         validate_request(&request)?;
@@ -197,7 +202,9 @@ impl NodeDebugManager {
         let (cancel, _) = watch::channel(false);
         let (done, _) = watch::channel(false);
         let name = format!("{PREFIX}{id}");
+        let confirm: Consent = Arc::new(move |review| Box::pin(confirm(review)));
         let lease = Arc::new(Lease {
+            confirm: confirm.clone(),
             owner: owner.into(),
             id: id.into(),
             name: name.clone(),
@@ -244,7 +251,7 @@ impl NodeDebugManager {
                 *lease.client.lock().await=Some(client.clone());
                 verify_node(&request,client.clone()).await?;
                 check_permissions(&request,&lease.name,client.clone()).await?;
-                let review = format!("CREATE privileged node-debug Pod\n{}\n\nManifest to create:\n{}\n\nThis grants root host access (hostPID/IPC/network, privileged, /host mount). Confirming also authorizes automatic deletion of this exact owned helper Pod by UID when the session ends or its window closes.\n\nCreate this Pod and authorize its cleanup?", crate::core::mutations::identity_summary(&request.resource, "(Node UID checked before create)"), serde_json::to_string_pretty(&debug_pod(&request, &lease.id)).expect("Pod serializes"));
+                let review = format!("CREATE privileged node-debug Pod\n{}\n\nManifest to create:\n{}\n\nThis grants root host access (hostPID/IPC/network, privileged, /host mount). Deletion of this helper Pod requires a separate system confirmation when the session ends. If cancelled or its window is closed, the Pod is retained for explicit cleanup.\n\nCreate this exact Pod?", crate::core::mutations::identity_summary(&request.resource, "(Node UID checked before create)"), serde_json::to_string_pretty(&debug_pod(&request, &lease.id)).expect("Pod serializes"));
                 let reviewed_at = std::time::Instant::now();
                 if !confirm(review).await? { return Err(crate::core::mutations::cancelled(&request.resource,"Operation cancelled. Debug Pod was not created")); }
                 if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL { return Err(error(&request,409,"Confirmation expired. Start and review again")); }
@@ -417,6 +424,7 @@ impl NodeDebugManager {
                 }
             }
         };
+        let cleanup_was_done = *lease.done.borrow();
         lease.cancel.send_replace(true);
         let mut done = lease.done.subscribe();
         tokio::time::timeout(Duration::from_secs(70), done.wait_for(|v| *v))
@@ -430,7 +438,13 @@ impl NodeDebugManager {
             })?
             .map_err(|_| error(&lease.request, 503, "Cleanup worker ended"))?;
         if lease.state.lock().await.phase == "cleanup_failed" {
-            cleanup(&lease).await?;
+            if cleanup_was_done {
+                cleanup(&lease).await?;
+            } else {
+                return Err(lease.state.lock().await.error.clone().unwrap_or_else(|| {
+                    error(&lease.request, 409, "Debug Pod cleanup needs confirmation")
+                }));
+            }
         }
         self.inner
             .leases
@@ -516,7 +530,10 @@ impl NodeDebugManager {
         resource: ResourceRef,
         confirm: C,
     ) -> Result<(), ApiError>
-    where C: FnOnce(String) -> CF, CF: Future<Output = Result<bool, ApiError>> {
+    where
+        C: FnOnce(String) -> CF,
+        CF: Future<Output = Result<bool, ApiError>>,
+    {
         validate_query(&resource.query)?;
         if resource.query.kind != "Pod"
             || resource.query.namespace.is_none()
@@ -570,15 +587,40 @@ impl NodeDebugManager {
                 ));
             }
         }
-        let version = pod.metadata.resource_version.clone().filter(|v| !v.is_empty())
-            .ok_or_else(|| error(&request,409,"Debug Pod has no resourceVersion; refresh"))?;
-        let review = format!("DELETE debug Pod\n{}\n\nPod to delete:\n{}\n\nDeletion uses background garbage collection; dependents may also be removed. This action cannot be undone.\n\nDelete this Pod?", crate::core::mutations::identity_summary(&resource, &version), serde_json::to_string_pretty(&pod).expect("Pod serializes"));
+        let version = pod
+            .metadata
+            .resource_version
+            .clone()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| error(&request, 409, "Debug Pod has no resourceVersion; refresh"))?;
+        let review = format!(
+            "DELETE debug Pod\n{}\n\nPod to delete:\n{}\n\nDeletion uses background garbage collection; dependents may also be removed. This action cannot be undone.\n\nDelete this Pod?",
+            crate::core::mutations::identity_summary(&resource, &version),
+            serde_json::to_string_pretty(&pod).expect("Pod serializes")
+        );
         let reviewed_at = std::time::Instant::now();
-        if !confirm(review).await? { return Err(crate::core::mutations::cancelled(&resource,"Operation cancelled. Nothing was deleted")); }
-        if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL { return Err(error(&request,409,"Confirmation expired. Refresh and review again")); }
+        if !confirm(review).await? {
+            return Err(crate::core::mutations::cancelled(
+                &resource,
+                "Operation cancelled. Nothing was deleted",
+            ));
+        }
+        if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL {
+            return Err(error(
+                &request,
+                409,
+                "Confirmation expired. Refresh and review again",
+            ));
+        }
         let current = bounded(&request, pods.get(&resource.name)).await?;
-        if current.metadata.uid != resource.uid || current.metadata.resource_version.as_deref() != Some(&version) {
-            return Err(error(&request,409,"Debug Pod changed during confirmation; refresh and review again"));
+        if current.metadata.uid != resource.uid
+            || current.metadata.resource_version.as_deref() != Some(&version)
+        {
+            return Err(error(
+                &request,
+                409,
+                "Debug Pod changed during confirmation; refresh and review again",
+            ));
         }
         bounded(
             &request,
@@ -745,7 +787,7 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
         Err(e) if e.status == Some(404) => return Ok(()),
         Err(e) => return Err(e),
     };
-    let labels = pod.metadata.labels.unwrap_or_default();
+    let labels = pod.metadata.labels.clone().unwrap_or_default();
     if labels.get(LABEL).map(String::as_str) != Some("true")
         || labels.get(SESSION) != Some(&lease.id)
         || labels.get(NODE_UID) != lease.request.resource.uid.as_ref()
@@ -759,6 +801,7 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
     let uid = pod
         .metadata
         .uid
+        .clone()
         .ok_or_else(|| error(&lease.request, 409, "Debug Pod has no UID for cleanup"))?;
     if lease
         .pod
@@ -773,6 +816,49 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
             "Debug Pod UID changed; refusing to delete its replacement",
         ));
     }
+    let version = pod
+        .metadata
+        .resource_version
+        .clone()
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            error(
+                &lease.request,
+                409,
+                "Debug Pod has no resourceVersion; refresh before cleanup",
+            )
+        })?;
+    let resource = pod_ref(&lease.request, &pod)
+        .ok_or_else(|| error(&lease.request, 409, "Debug Pod has no identity"))?;
+    let review = format!(
+        "DELETE debug Pod\n{}\n\nPod to delete:\n{}\n\nThe shell has stopped. Delete this exact helper Pod? Cancel leaves it in the cluster for later cleanup.",
+        crate::core::mutations::identity_summary(&resource, &version),
+        serde_json::to_string_pretty(&pod).expect("Pod serializes")
+    );
+    let started = std::time::Instant::now();
+    if !(lease.confirm)(review).await? {
+        return Err(crate::core::mutations::cancelled(
+            &resource,
+            "Debug Pod deletion cancelled. The Pod remains for explicit cleanup",
+        ));
+    }
+    if started.elapsed() > crate::core::mutations::REVIEW_TTL {
+        return Err(error(
+            &lease.request,
+            409,
+            "Cleanup confirmation expired; review again",
+        ));
+    }
+    let current = bounded(&lease.request, pods.get(&lease.name)).await?;
+    if current.metadata.uid.as_ref() != Some(&uid)
+        || current.metadata.resource_version.as_ref() != Some(&version)
+    {
+        return Err(error(
+            &lease.request,
+            409,
+            "Debug Pod changed during confirmation; review cleanup again",
+        ));
+    }
     match bounded(
         &lease.request,
         pods.delete(
@@ -780,7 +866,7 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
             &DeleteParams {
                 preconditions: Some(Preconditions {
                     uid: Some(uid.clone()),
-                    resource_version: None,
+                    resource_version: Some(version),
                 }),
                 ..DeleteParams::default()
             },
