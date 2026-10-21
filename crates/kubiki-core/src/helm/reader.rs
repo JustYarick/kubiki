@@ -89,11 +89,34 @@ impl HelmReader {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                ApiError::new(ApiErrorCode::BridgeUnavailable, "Helm is not installed or is not available in PATH. Install Helm and restart Kubiki.", operation, context, Some(503))
-            } else { ApiError::from_status(500, format!("Could not start Helm: {error}"), operation, context) }
-        })?;
+        let mut attempts = 0;
+        let mut child = loop {
+            match command.spawn() {
+                Ok(child) => break child,
+                #[cfg(unix)]
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && attempts < 10 => {
+                    attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                Err(error) => {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        return Err(ApiError::new(
+                            ApiErrorCode::BridgeUnavailable,
+                            "Helm is not installed or is not available in PATH. Install Helm and restart Kubiki.",
+                            operation,
+                            context,
+                            Some(503),
+                        ));
+                    }
+                    return Err(ApiError::from_status(
+                        500,
+                        format!("Could not start Helm: {error}"),
+                        operation,
+                        context,
+                    ));
+                }
+            }
+        };
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let stdin = child.stdin.take();

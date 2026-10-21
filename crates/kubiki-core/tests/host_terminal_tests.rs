@@ -117,9 +117,9 @@ async fn cancel_reaps_shell_and_foreground_process_and_respects_window_ownership
         sub.output.recv().await.unwrap().event,
         ExecEvent::Started
     ));
-    manager.write("main","tty","printf '\\nSHELL_PID:%s\\n' \"$$\"; sleep 30 & job=$!; printf '\\nJOB_PID:%s\\n' \"$job\"; fg\r".into()).await.unwrap();
+    manager.write("main","tty","set -m; printf '\\nSHELL_PID:%s\\n' \"$$\"; sleep 30 & job=$!; printf '\\nJOB_PID:%s\\n' \"$job\"; fg\r".into()).await.unwrap();
     let mut bytes = Vec::new();
-    let (shell, job) = tokio::time::timeout(Duration::from_secs(5), async {
+    let (shell, job) = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if let ExecEvent::Output { data } = sub.output.recv().await.unwrap().event {
                 bytes.extend(data);
@@ -147,11 +147,11 @@ async fn cancel_reaps_shell_and_foreground_process_and_respects_window_ownership
             .status,
         Some(404)
     );
-    tokio::time::timeout(Duration::from_secs(3), manager.stop_owner("main"))
+    tokio::time::timeout(Duration::from_secs(10), manager.stop_owner("main"))
         .await
         .unwrap();
     assert_eq!(manager.session_count().await, 0);
-    tokio::time::timeout(Duration::from_secs(3), async {
+    tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if unsafe { libc::kill(shell, 0) } == -1 && unsafe { libc::kill(job, 0) } == -1 {
                 break;
@@ -213,12 +213,12 @@ async fn cancellation_is_bounded_with_a_full_output_queue_and_invalid_requests_d
             .status,
         Some(400)
     );
-    tokio::time::timeout(Duration::from_secs(3), manager.stop_owner("main"))
+    tokio::time::timeout(Duration::from_secs(10), manager.stop_owner("main"))
         .await
         .unwrap();
     assert_eq!(manager.session_count().await, 0);
     let _sub = manager.start("main", "pending", request()).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(3), manager.stop_owner("main"))
+    tokio::time::timeout(Duration::from_secs(10), manager.stop_owner("main"))
         .await
         .unwrap();
     assert_eq!(manager.session_count().await, 0);

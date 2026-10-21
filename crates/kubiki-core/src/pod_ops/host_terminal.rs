@@ -298,17 +298,25 @@ impl Drop for Process {
                 let foreground = self
                     .master
                     .as_ref()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .process_group_leader();
+                    .and_then(|m| m.lock().ok())
+                    .and_then(|m| m.process_group_leader());
                 unsafe {
                     if let Some(group) = foreground {
-                        if group > 0 && group != pid as i32 && libc::getsid(group) == pid as i32 {
-                            libc::kill(-group, libc::SIGKILL);
+                        if group > 0 && group != pid as i32 {
+                            let session = libc::getsid(group);
+                            // On Linux, getsid(group) returns the session leader PID.
+                            // On macOS / BSD, getsid across sessions returns EPERM (-1);
+                            // since group was returned by tcgetpgrp on our own master PTY, it belongs here.
+                            if session == pid as i32
+                                || (session == -1
+                                    && std::io::Error::last_os_error().raw_os_error()
+                                        == Some(libc::EPERM))
+                            {
+                                libc::kill(-group, libc::SIGKILL);
+                            }
                         }
                     }
-                    libc::kill(-(pid as i32), libc::SIGHUP);
+                    libc::kill(-(pid as i32), libc::SIGKILL);
                 }
             }
             let _ = self.child.kill();
@@ -336,6 +344,24 @@ fn run(
     let pair = native_pty_system()
         .openpty(size(request.cols, request.rows)?)
         .map_err(|e| internal(format!("Cannot create local PTY: {e}")))?;
+    #[cfg(unix)]
+    {
+        let fd = pair
+            .master
+            .as_raw_fd()
+            .ok_or_else(|| internal("PTY has no file descriptor"))?;
+        let result = unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 {
+                -1
+            } else {
+                libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK)
+            }
+        };
+        if result < 0 {
+            return Err(internal(std::io::Error::last_os_error().to_string()));
+        }
+    }
     let mut command = CommandBuilder::new(shell);
     command.cwd(&info.cwd);
     command.env("TERM", "xterm-256color");
@@ -425,7 +451,10 @@ fn run(
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        if has_exited.load(Ordering::Acquire) {
+                        if stop.load(Ordering::Acquire)
+                            || cancellation.load(Ordering::Acquire)
+                            || has_exited.load(Ordering::Acquire)
+                        {
                             break;
                         }
                         thread::sleep(Duration::from_millis(10));
