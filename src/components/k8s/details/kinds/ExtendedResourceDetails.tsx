@@ -1,10 +1,11 @@
-import { ResourceReferences } from '../blocks/ResourceReferences';
-import { Fragment } from 'react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { matchesResourceRef } from '../../../../core/resources/identity';
 import { fieldText, fieldValue, presentationFor } from '../../../../core/resources/resource_presentations';
 import { useResourceStore } from '../../../../state/resource_store';
+import { summaryTitle } from '../../../../core/resources/kind_labels';
+import { KIND_ICONS } from '../../../../core/perspectives';
 import { DetailsSection } from '../DetailsSection';
+import { KindSummary } from '../blocks/KindSummary';
 import { StructuredFields } from '../blocks/StructuredFields';
 import { ConditionsTable } from '../blocks/ConditionsTable';
 import { MetadataBlock } from '../blocks/MetadataBlock';
@@ -27,25 +28,33 @@ function AutoscalingMetrics({ raw }: { raw: any }) {
   })}</tbody></table></div></DetailsSection>;
 }
 
+/** Fallback panel for kinds that only have a field presentation. */
 export function ExtendedResourceDetails({ item, onNavigate }: { item: ResourceItem; onNavigate: (item: ResourceItem) => void }) {
   const resources = useResourceStore(state => state.resources);
   const raw = item.raw ?? { spec: item.spec, status: item.statusRaw };
   const presentation = presentationFor(item);
   const targetRef = raw.spec?.scaleTargetRef ?? raw.spec?.targetRef;
   const target = targetRef ? [...(resources[targetRef.kind]?.values() ?? [])].find(entry => matchesResourceRef(entry, { ...targetRef, namespace: item.namespace })) : undefined;
+
   return <div className="details-stack">
     <ProblemsBanner item={item} />
-    {!!presentation?.fields.length && <DetailsSection title={item.kind === 'HorizontalPodAutoscaler' ? 'Autoscaling' : `${item.kind} summary`}>
-      <dl className="details-properties">{presentation?.fields.map(field => <Fragment key={field.label}><dt>{field.label}</dt><dd>{field.label === 'Target' && target ? <button className="details-link" onClick={() => onNavigate(target)}>{targetRef.kind}/{target.name}</button> : fieldText(fieldValue(raw, field.path)) ?? (field.path === 'spec.minReplicas' ? '1 (default)' : '—')}</dd></Fragment>)}</dl>
-      {item.kind === 'HorizontalPodAutoscaler' && <p className="text-xs text-[var(--text-muted)] mt-2">Current: {raw.status?.currentReplicas ?? '—'} → Desired: {raw.status?.desiredReplicas ?? '—'} replicas</p>}
-    </DetailsSection>}
+    {!!presentation?.fields.length && <KindSummary
+      title={summaryTitle(item.kind)}
+      icon={KIND_ICONS[item.kind]}
+      rows={presentation?.fields.map(field => ({
+        label: field.label,
+        value: field.label === 'Target' && target
+          ? <button type="button" className="details-link" onClick={() => onNavigate(target)}>{targetRef.kind}/{target.name}</button>
+          : fieldText(fieldValue(raw, field.path)) ?? (field.path === 'spec.minReplicas' ? '1 (default)' : '—'),
+      }))}
+      footer={item.kind === 'HorizontalPodAutoscaler' ? <p className="details-caption mt-2">Current: {raw.status?.currentReplicas ?? '—'} → Desired: {raw.status?.desiredReplicas ?? '—'} replicas</p> : undefined}
+    />}
     {item.kind === 'HorizontalPodAutoscaler' && <>
       <AutoscalingMetrics raw={raw} />
       <StructuredFields title="Target metrics" value={raw.spec?.metrics ?? (raw.spec?.targetCPUUtilizationPercentage != null ? { targetCPUUtilizationPercentage: raw.spec.targetCPUUtilizationPercentage } : undefined)} />
       <StructuredFields title="Current metrics" value={raw.status?.currentMetrics ?? (raw.status?.currentCPUUtilizationPercentage != null ? { currentCPUUtilizationPercentage: raw.status.currentCPUUtilizationPercentage } : undefined)} />
     </>}
     {presentation?.sections?.map(section => <StructuredFields key={section.label} title={section.label} value={fieldValue(raw, section.path)} />)}
-    <ResourceReferences key={item.uid} item={item} onNavigate={onNavigate} />
     <ConditionsTable conditions={raw.status?.conditions} />
     <UsedByList item={item} onNavigate={onNavigate} />
     <MetadataBlock item={item} onNavigate={onNavigate} />

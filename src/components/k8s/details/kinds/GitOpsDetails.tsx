@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState } from 'react';
-import { RotateCw, RefreshCw } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { RotateCw, RefreshCw, GitBranch } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
 import { useClusterStore } from '../../../../state/cluster_store';
@@ -8,7 +8,11 @@ import { stringify } from 'yaml';
 import { toast } from '../../../../state/notifications_store';
 import { gitOpsFamily, gitOpsReferences, resolveGitOpsReference } from '../../../../core/resources/gitops';
 import { fieldText, fieldValue, presentationFor } from '../../../../core/resources/resource_presentations';
+import { summaryTitle } from '../../../../core/resources/kind_labels';
 import { DetailsSection } from '../DetailsSection';
+import { KindSummary } from '../blocks/KindSummary';
+import { DetailTable } from '../blocks/DetailTable';
+import { ReferenceRows } from '../blocks/ReferenceRows';
 import { StructuredFields } from '../blocks/StructuredFields';
 import { ConditionsTable } from '../blocks/ConditionsTable';
 import { MetadataBlock } from '../blocks/MetadataBlock';
@@ -17,6 +21,7 @@ import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { Button } from '../../../ui/Button';
 import { SearchInput } from '../../../ui/Input';
 
+/** Flux and Argo CD resources: reconciliation state, sources and managed objects. */
 export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavigate: (item: ResourceItem) => void }) {
   const resources = useResourceStore(state => state.resources);
   const [query, setQuery] = useState('');
@@ -24,15 +29,10 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
   const all = useMemo(() => Object.values(resources).flatMap(map => [...map.values()]), [resources]);
   const references = useMemo(() => gitOpsReferences(item), [item]);
   const raw = item.raw ?? {};
-  const presentation = presentationFor(item)!;
+  const presentation = presentationFor(item);
+  const family = gitOpsFamily(item);
   const managed = references.managed.filter(ref => `${ref.kind} ${ref.name} ${ref.namespace ?? ''}`.toLowerCase().includes(query.toLowerCase()));
-  const renderReference = (ref: typeof references.sources[number], index: number) => {
-    const target = resolveGitOpsReference(ref, all);
-    const label = `${ref.kind}/${ref.name}${ref.namespace ? ` · ${ref.namespace}` : ''}`;
-    return target ? <button key={index} className="details-resource-row details-link break-all" onClick={() => onNavigate(target)}>{label}</button>
-      : <div key={index} className="details-resource-row"><span className="min-w-0 break-all">{label}</span><span className="text-[var(--text-muted)] text-xs shrink-0">{ref.local === false ? 'Other cluster' : 'Not loaded'}</span></div>;
-  };
-  const isArgoApp = gitOpsFamily(item) === 'argocd' && item.kind === 'Application';
+  const isArgoApp = family === 'argocd' && item.kind === 'Application';
   const [syncing, setSyncing] = useState(false);
 
   const handleSync = async () => {
@@ -42,14 +42,7 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
       return;
     }
     setSyncing(true);
-    const updatedRaw = {
-      ...raw,
-      operation: {
-        sync: {
-          prune: true,
-        },
-      },
-    };
+    const updatedRaw = { ...raw, operation: { sync: { prune: true } } };
     try {
       if (k8s.demo) {
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...item, raw: updatedRaw });
@@ -96,43 +89,96 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
     }
   };
 
-  return <div className="details-stack">
-    <ProblemsBanner item={item} />
-    <DetailsSection title={gitOpsFamily(item) === 'flux' ? 'Reconciliation' : 'Sync & health'}>
-      {isArgoApp && (
-        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-[var(--border-subtle)]">
-          <Button size="sm" variant="primary" loading={syncing} disabled={syncing} onClick={handleSync}>
-            <RotateCw size="calc(11px * var(--ui-factor))" />
-            Sync
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => handleRefresh(false)}>
-            <RefreshCw size="calc(11px * var(--ui-factor))" />
-            Refresh
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => handleRefresh(true)}>
-            <RefreshCw size="calc(11px * var(--ui-factor))" />
-            Hard Refresh
-          </Button>
-        </div>
+  const health = raw.status?.health?.status ?? item.status ?? 'Not reported';
+  const syncStatus = raw.status?.sync?.status ?? raw.status?.conditions?.find((condition: any) => condition.type === 'Ready')?.status ?? 'Not reported';
+
+  return (
+    <div className="details-stack">
+      <ProblemsBanner item={item} />
+
+      <KindSummary
+        title={summaryTitle(item.kind)}
+        icon={GitBranch}
+        tiles={[
+          { label: family === 'flux' ? 'Ready' : 'Health', value: health, tone: health === 'Ready' || health === 'Healthy' ? 'ok' : health === 'Not reported' ? 'muted' : 'warn' },
+          { label: 'Sync status', value: syncStatus, tone: syncStatus === 'Synced' || syncStatus === 'True' ? 'ok' : 'muted' },
+          { label: 'Revision', value: raw.status?.sync?.revision ?? raw.status?.artifact?.revision ?? '—', tone: 'muted' },
+          { label: 'Suspended', value: raw.spec?.suspend === true ? 'Yes' : 'No', tone: raw.spec?.suspend === true ? 'warn' : 'muted' },
+        ]}
+        rows={[
+          ...(presentation?.fields ?? []).map(field => ({
+            label: field.label,
+            value: fieldText(fieldValue(raw, field.path)) ?? '—',
+          })),
+          { label: 'Observed generation', value: `${raw.status?.observedGeneration ?? '—'} / ${raw.metadata?.generation ?? '—'}` },
+        ]}
+        footer={isArgoApp ? (
+          <div className="details-actions-row">
+            <Button size="sm" variant="primary" loading={syncing} disabled={syncing} onClick={handleSync}>
+              <RotateCw size="calc(11px * var(--ui-factor))" />
+              Sync
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => handleRefresh(false)}>
+              <RefreshCw size="calc(11px * var(--ui-factor))" />
+              Refresh
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => handleRefresh(true)}>
+              <RefreshCw size="calc(11px * var(--ui-factor))" />
+              Hard Refresh
+            </Button>
+          </div>
+        ) : undefined}
+      />
+
+      {raw.status?.operationState?.message && (
+        <DetailsSection title="Last operation">
+          <p className="details-caption break-words">{raw.status.operationState.message}</p>
+        </DetailsSection>
       )}
-      <dl className="details-properties">
-        <dt>Status</dt><dd>{item.status ?? 'Not reported'}</dd>
-        {presentation.fields.map(field => <Fragment key={field.label}><dt>{field.label}</dt><dd>{fieldText(fieldValue(raw, field.path)) ?? '—'}</dd></Fragment>)}
-        <dt>Observed generation</dt><dd>{raw.status?.observedGeneration ?? '—'} / {raw.metadata?.generation ?? '—'}</dd>
-      </dl>
-      {raw.status?.operationState?.message && <p className="text-xs break-words mt-2">{raw.status.operationState.message}</p>}
-    </DetailsSection>
-    <ConditionsTable conditions={raw.status?.conditions} />
-    {!!references.sources.length && <DetailsSection title="References">{references.sources.map(renderReference)}</DetailsSection>}
-    {!!references.managed.length && <DetailsSection title={`Managed resources (${references.managed.length})`}>
-      <SearchInput aria-label="Find managed resources" placeholder="Find managed resources…" value={query} onChange={value => { setQuery(value); setLimit(30); }} />
-      {managed.slice(0, limit).map(renderReference)}
-      {managed.length > limit && <Button size="sm" onClick={() => setLimit(value => value + 30)}>Show next 30</Button>}
-      {!managed.length && <p className="text-xs text-[var(--text-muted)]">No matching resources.</p>}
-    </DetailsSection>}
-    {presentation.sections?.map(section => <StructuredFields key={section.label} title={section.label} value={fieldValue(raw, section.path)} />)}
-    <StructuredFields title="Last operation" value={raw.status?.operationState} />
-    <UsedByList item={item} onNavigate={onNavigate} />
-    <MetadataBlock item={item} onNavigate={onNavigate} />
-  </div>;
+
+      <ConditionsTable conditions={raw.status?.conditions} />
+
+      {!!references.sources.length && (
+        <DetailsSection title="References">
+          <ReferenceRows
+            entries={references.sources.map(ref => ({
+              kind: ref.kind,
+              name: ref.name,
+              namespace: ref.namespace,
+              item: resolveGitOpsReference(ref, all),
+              note: ref.local === false ? 'Other cluster' : undefined,
+            }))}
+            onNavigate={onNavigate}
+          />
+        </DetailsSection>
+      )}
+
+      {!!references.managed.length && (
+        <DetailsSection title={`Managed resources (${references.managed.length})`}>
+          <SearchInput aria-label="Find managed resources" placeholder="Find managed resources…" value={query} onChange={value => { setQuery(value); setLimit(30); }} />
+          <DetailTable
+            columns={['Kind', 'Name', 'Namespace', 'Group']}
+            rows={managed.slice(0, limit).map(ref => {
+              const target = resolveGitOpsReference(ref, all);
+              return [
+                ref.kind,
+                target
+                  ? <button type="button" className="details-link" onClick={() => onNavigate(target)}>{ref.name}</button>
+                  : ref.name,
+                ref.namespace ?? 'cluster',
+                ref.group ?? '—',
+              ];
+            })}
+          />
+          {managed.length > limit && <Button size="sm" className="mt-2" onClick={() => setLimit(value => value + 30)}>Show next 30</Button>}
+          {!managed.length && <p className="details-caption">No matching resources.</p>}
+        </DetailsSection>
+      )}
+
+      {presentation?.sections?.map(section => <StructuredFields key={section.label} title={section.label} value={fieldValue(raw, section.path)} />)}
+      <StructuredFields title="Last operation state" value={raw.status?.operationState} />
+      <UsedByList item={item} onNavigate={onNavigate} />
+      <MetadataBlock item={item} onNavigate={onNavigate} />
+    </div>
+  );
 }
