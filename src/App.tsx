@@ -3,7 +3,7 @@ import { MutationConfirmModal } from './components/dialogs/MutationConfirmModal'
 import { setupMutationConfirmListener } from './state/mutation_confirm_store';
 import { RESOURCE_TYPES, setDiscoveredResourceTypes } from './core/resources/resource_types';
 import { closePortForwards, resetPortForwards, listPortForwards } from './providers/port_forward';
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useRef, useState, type CSSProperties } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { ActivityBar } from './components/layout/ActivityBar';
 import { Sidebar } from './components/layout/Sidebar';
@@ -230,16 +230,16 @@ export default function App() {
   useEffect(() => {
     if (compact && showInspector) useUiStore.setState({ sidebarCollapsed: true });
   }, [compact, showInspector]);
-  const panelSpace = logicalViewportWidth - 48 - (showSidebar && !overlaySidebar ? sidebarWidth : 0);
-  const overlayInspector = panelSpace < 860;
-  const detailWidth = overlayInspector ? Math.min(inspectorWidth, Math.max(0, logicalViewportWidth - 48)) : Math.min(inspectorWidth, panelSpace - 520);
+  // The details panel always floats above the workspace: it never resizes the resource table.
+  const detailWidth = Math.min(inspectorWidth, Math.max(320, logicalViewportWidth - 56));
+  const [headerHeight, setHeaderHeight] = useState(58);
 
   const onSelectContext = (name: string) => {
     connectToContext(name);
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans">
+    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} compact={compact} narrow={logicalViewportWidth < 500} />
       <ConnectionBanner onRetry={() => {
@@ -264,20 +264,18 @@ export default function App() {
 
         {/* Central Workspace: Tabs + Breadcrumbs + DataGrid/Editor + Bottom Dock */}
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
-          <WorkspaceArea onSelectContext={onSelectContext} />
+          <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
 
           {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
           <BottomDock />
         </main>
 
-        {/* Right Tool Window (Inspector / Details) */}
+        {/* Right Tool Window (Inspector / Details) — floats above the workspace, the table keeps its size */}
         {showInspector && (
-          <>
-            {!overlayInspector && <Resizer orientation="vertical" onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />}
-            <div data-testid="inspector-panel" data-layout={overlayInspector ? "overlay" : "docked"} style={{ width: uiPixels(detailWidth) }} className={`shrink-0 border-l border-[var(--border-default)] min-h-0 ${overlayInspector ? "absolute right-0 top-0 bottom-0 z-40 shadow-xl" : ""}`}>
-              <InspectorPanel />
-            </div>
-          </>
+          <div data-testid="inspector-panel" data-layout="overlay" style={{ width: uiPixels(detailWidth), top: uiPixels(headerHeight) }} className="absolute right-0 bottom-0 z-40 min-h-0 border-l border-[var(--border-default)] shadow-xl">
+            <Resizer orientation="vertical" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, zIndex: 10 }} onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />
+            <InspectorPanel />
+          </div>
         )}
       </div>
 

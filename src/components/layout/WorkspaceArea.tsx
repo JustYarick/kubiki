@@ -1,6 +1,6 @@
 import { useCustomResources } from '../../providers/use_custom_resources';
 import { customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
-import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { MainTabBar } from './MainTabBar';
 import { BreadcrumbBar } from './BreadcrumbBar';
 import { OverviewView } from '../../views/OverviewView';
@@ -10,6 +10,8 @@ import { useResourceStore } from '../../state/resource_store';
 import { ResourceDetails } from './InspectorPanel';
 import { LogsSessionPane, TerminalSessionPane } from './BottomDock';
 import { useClusterStore } from '../../state/cluster_store';
+import { useUiStore } from '../../state/ui_store';
+import { uiFactor } from '../../core/appearance';
 import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
 import { k8s } from '../../providers/k8s_provider';
@@ -28,9 +30,26 @@ const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => (
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
 
-export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => void }> = ({ onSelectContext }) => {
+export const WorkspaceArea: React.FC<{
+  onSelectContext: (context: string) => void;
+  /** Height of the tab bar and breadcrumb row, so overlays can start below them. */
+  onHeaderHeight?: (height: number) => void;
+}> = ({ onSelectContext, onHeaderHeight }) => {
   const { tabs, activeTabId, splitTabId } = useWorkspaceStore();
   const [splitRatio, setSplitRatio] = useState(0.5); // 50% split by default
+  const uiScale = useUiStore((state) => state.uiScale);
+  const factor = uiFactor(uiScale);
+  const headerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = headerRef.current;
+    if (!element || !onHeaderHeight) return;
+    const report = () => onHeaderHeight(Math.round(element.getBoundingClientRect().height / factor));
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [factor, onHeaderHeight]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const splitTab = splitTabId && splitTabId !== activeTab?.id ? tabs.find((t) => t.id === splitTabId) : null;
@@ -44,13 +63,15 @@ export const WorkspaceArea: React.FC<{ onSelectContext: (context: string) => voi
   }); }, [tabs, activeTab?.id, splitTab?.id]);
   const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'logs' || tab.type === 'yaml-editor')));
   return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
-    <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
+    <div ref={headerRef} className="shrink-0 flex flex-col">
+      <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
+    </div>
     <div className="flex-1 min-h-0 min-w-0 relative grid overflow-hidden" style={{ gridTemplateColumns: splitTab ? `minmax(0, ${splitRatio}fr) auto minmax(0, ${1 - splitRatio}fr)` : 'minmax(0, 1fr)', gridTemplateRows: 'minmax(0, 1fr)' }}>
       {!activeTab && <TabContent />}
       {mounted.map((tab) => {
         const split = tab.id === splitTab?.id;
         const visible = tab.id === activeTab?.id || split;
-        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
+        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
           {split && <div className="h-6 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-muted)]"><span className="truncate">{tab.title}</span><span>Split View</span></div>}
           <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
         </div>;

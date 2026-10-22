@@ -186,7 +186,7 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
   await expect(details.getByLabel('Helm values revision 2')).toHaveText('replicas: 0\n');
   await details.getByRole('tab', { name: 'Overview', exact: true }).click();
   await details.getByRole('button', { name: 'Open details in tab', exact: true }).click();
-  const workspace = page.locator('main');
+  const workspace = page.getByTestId('workspace-tab-panel');
   await expect(workspace.getByTestId('resource-details').getByText('HelmRelease · backend', { exact: true })).toBeVisible();
   // Close the list so the normal split command pairs the two resource details tabs.
   await page.getByRole('tab', { name: /^Helm Releases/ }).getByRole('button', { name: 'Close tab', exact: true }).click();
@@ -196,6 +196,6 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
   await expect(workspace.getByRole('tablist', { name: 'Resource details', exact: true })).toHaveCount(2);
   await page.screenshot({ path: 'test-results/helm-shared-details.png' });
   await page.reload();
-  await expect(page.locator('main').getByTestId('resource-details')).toBeVisible();
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
   expect(errors).toEqual([]);
 });

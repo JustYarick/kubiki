@@ -354,3 +354,9 @@ body {
 /* Text links use a lighter tone than selection and button fills. */
 .text-\[var\(--accent\)\] { color: var(--accent-text); }
 [role="tab"]:focus-visible { outline-offset: -3px; }
+
+/* The details panel floats above the table, so keyboard focus must not land under it. */
+.resource-table-scroll { scroll-padding-right: var(--inspector-overlay, 0px); scroll-padding-block: calc(24px * var(--ui-factor)); }
+
+/* Toolbars of the covered view keep their actions reachable next to the overlay. */
+.workspace-toolbar-safe { padding-right: calc(var(--inspector-overlay, 0px) + calc(12px * var(--ui-factor))); }

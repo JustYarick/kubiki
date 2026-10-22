@@ -87,10 +87,10 @@ test('custom kinds have independent group-aware tables, CRD printer columns and 
   await expect(details.getByText('Widget · alpha', { exact: true })).toBeVisible();
   await expect(details.getByRole('region', { name: 'Specification', exact: true })).toContainText('https://alpha.first.example');
   await details.getByRole('button', { name: 'Open details in tab', exact: true }).click();
-  await expect(page.locator('main').getByTestId('resource-details')).toContainText('first.example-alpha');
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toContainText('first.example-alpha');
   await expect(page.getByTestId('inspector-panel').getByTestId('resource-details')).toContainText('first.example-alpha');
   await page.reload();
-  await expect(page.locator('main').getByTestId('resource-details')).toContainText('first.example-alpha');
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toContainText('first.example-alpha');
   await explorer.getByRole('button', { name: /^Widget(?: \d+)?$/ }).last().click();
   await expect(table.getByText('second.example-alpha', { exact: true })).toBeVisible();
   await expect(table.getByText('first.example-alpha', { exact: true })).toHaveCount(0);

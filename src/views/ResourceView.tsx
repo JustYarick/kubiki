@@ -1250,7 +1250,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   return (
     <div ref={paneRef} className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-[var(--bg-canvas)]">
       {/* JetBrains DataGrip-Grade Toolbar */}
-      <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-b border-[var(--border-default)] bg-[var(--bg-canvas)]">
+      <div className="h-9 shrink-0 flex items-center gap-2 pl-3 border-b border-[var(--border-default)] bg-[var(--bg-canvas)] workspace-toolbar-safe">
         <KindIcon size="calc(15px * var(--ui-factor))" strokeWidth={1.75} className="text-blue-400 shrink-0" />
         <span title={listLabel} className="truncate text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">{listLabel}</span>
 
@@ -1328,7 +1328,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         </Button>
       </div>
 
-      <div className="resource-search-row border-b border-[var(--border-default)]" data-testid="resource-search-toolbar">
+      <div className="resource-search-row border-b border-[var(--border-default)] workspace-toolbar-safe" data-testid="resource-search-toolbar">
         <SearchInput
           value={searchQuery}
           onChange={setSearchQuery}
@@ -1343,7 +1343,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       </div>
 
       {/* JetBrains DataGrip Data Table */}
-      <div ref={tableRef} tabIndex={0} aria-label={`${displayKind} resource table`} aria-busy={pending || spinning} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-text" data-testid="resource-table">
+      <div ref={tableRef} tabIndex={0} aria-label={`${displayKind} resource table`} aria-busy={pending || spinning} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-text resource-table-scroll" data-testid="resource-table">
         {k8s.supportsResourceWatch && !customType && resourceType(effectiveKind).watch === false && <p className="px-3 py-1 text-xs text-[var(--text-secondary)]">This API supports snapshots only · refreshed every 30 seconds</p>}
         {loadError && <RequestErrorNotice error={loadError} onRetry={() => void refresh()} retainedData={allItems.length > 0 || watchState?.hasSnapshot === true} />}
         {initialLoading && <ResourceLoading label={`Loading ${displayKind} resources…`} description={watchState ? 'Waiting for the first complete snapshot from Kubernetes.' : 'Waiting for Kubernetes to respond.'} />}

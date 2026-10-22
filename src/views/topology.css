@@ -4,7 +4,7 @@
 .topology-scope-actions { display: flex; flex-wrap: wrap; gap: calc(8px * var(--ui-factor)); margin-top: calc(12px * var(--ui-factor)); }
 .topology-initial-namespace { min-width: 0; max-width: calc(320px * var(--ui-factor)); margin-top: calc(16px * var(--ui-factor)); }
 .topology-initial-namespace > button { width: 100%; max-width: 100%; }
-.topology-islands { position: absolute; top: calc(10px * var(--ui-factor)); right: calc(10px * var(--ui-factor)); z-index: 10; display: flex; flex-direction: column; gap: calc(8px * var(--ui-factor)); width: calc(280px * var(--ui-factor)); max-width: calc(100% - 20px * var(--ui-factor)); max-height: calc(100% - 20px * var(--ui-factor)); pointer-events: none; }
+.topology-islands { position: absolute; top: calc(10px * var(--ui-factor)); right: calc(var(--inspector-overlay, 0px) + 10px * var(--ui-factor)); z-index: 10; display: flex; flex-direction: column; gap: calc(8px * var(--ui-factor)); width: calc(280px * var(--ui-factor)); max-width: calc(100% - 20px * var(--ui-factor)); max-height: calc(100% - 20px * var(--ui-factor)); pointer-events: none; }
 .topology-islands > * { flex: 0 1 auto; }
 .topology-summary { position: absolute; top: calc(12px * var(--ui-factor)); left: calc(12px * var(--ui-factor)); max-width: calc(100% - 24px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); color: var(--text-muted); pointer-events: none; padding: calc(4px * var(--ui-factor)); border-radius: calc(4px * var(--ui-factor)); background: var(--bg-overlay); }
 .topology-settings-fields { display: flex; flex-direction: column; gap: calc(8px * var(--ui-factor)); padding: calc(10px * var(--ui-factor)); min-width: 0; }

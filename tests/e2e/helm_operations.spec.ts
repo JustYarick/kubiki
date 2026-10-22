@@ -127,5 +127,5 @@ test('RBAC diagrams show declared chains; Helm nodes connect to owned objects an
   await expect(page.getByTestId('inspector-panel').getByTestId('resource-details')).toContainText('Managed Kubernetes objects (1 loaded)');
   await page.getByTestId('inspector-panel').getByRole('button', { name: 'Open details in tab', exact: true }).click();
   await expect(page.getByRole('tab', { name: /^Helm: web/ })).toBeVisible();
-  await expect(page.locator('main').getByTestId('resource-details')).toContainText('Managed Kubernetes objects (1 loaded)');
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toContainText('Managed Kubernetes objects (1 loaded)');
 });

@@ -1,6 +1,6 @@
 .overview-page { container-type: inline-size; max-width: 100%; display: flex; flex-direction: column; gap: calc(12px * var(--ui-factor)); padding: calc(12px * var(--ui-factor)); }
 .overview-page > * { min-width: 0; flex: none; }
-.overview-page-header { display: flex; align-items: flex-start; flex-wrap: wrap; gap: calc(10px * var(--ui-factor)); }
+.overview-page-header { display: flex; align-items: flex-start; flex-wrap: wrap; gap: calc(10px * var(--ui-factor)); padding-right: calc(var(--inspector-overlay, 0px) + calc(12px * var(--ui-factor))); }
 .overview-context { margin-top: calc(3px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); overflow-wrap: anywhere; }
 .overview-muted { color: var(--text-muted); font-weight: 400; font-size: calc(10px * var(--ui-factor)); }
 .overview-section, .overview-summary { min-width: 0; border: 1px solid var(--border-default); border-radius: calc(5px * var(--ui-factor)); background: var(--bg-secondary); }

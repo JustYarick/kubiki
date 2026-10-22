@@ -50,12 +50,12 @@ test('a details tab never silently switches to a recreated resource with the sam
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Open details in tab' }).click();
-  await expect(page.locator('main').getByTestId('resource-details')).toBeVisible();
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
   uid = 'replacement';
   await page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.locator('main').getByText('Resource Not Found', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Open details in tab' }).click();
-  await expect(page.locator('main').getByTestId('resource-details')).toBeVisible();
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
 });

@@ -10,11 +10,14 @@ export function Resizer({
   onDelta,
   onStart,
   className,
+  style,
 }: {
   orientation: 'vertical' | 'horizontal';
   onDelta: (delta: number) => void;
   onStart?: () => void;
   className?: string;
+  /** Positions the hit area when the handle belongs to an overlay instead of a flex row. */
+  style?: React.CSSProperties;
 }) {
   const active = useRef(false);
   const last = useRef(0);
@@ -69,6 +72,7 @@ export function Resizer({
         orientation === 'vertical' ? 'w-[calc(5px*var(--ui-factor))] -mx-[calc(2px*var(--ui-factor))] cursor-col-resize' : 'h-[calc(5px*var(--ui-factor))] -my-[calc(2px*var(--ui-factor))] cursor-row-resize',
         className
       )}
+      style={style}
     >
       <span
         className={cx(
