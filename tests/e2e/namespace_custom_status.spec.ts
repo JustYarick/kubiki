@@ -100,21 +100,24 @@ test('custom kinds have independent group-aware tables, CRD printer columns and 
   await page.screenshot({ path: 'test-results/custom-resource-tables.png', animations: 'disabled' });
 });
 
-test('the status header can prioritize every observed status without hiding other rows', async ({ page }) => {
+test('the status header cycles through every observed status without hiding other rows', async ({ page }) => {
   await fixture(page, true);
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await select(page, ['alpha']);
   const table = page.getByTestId('resource-table');
+  const statusHeader = table.getByRole('columnheader', { name: 'Status', exact: true });
   await expect(table.locator('tbody tr')).toHaveCount(7);
-  for (const status of ['Running', 'Pending', 'Succeeded', 'Failed', 'Unknown', 'ImagePullBackOff', 'CrashLoopBackOff']) {
-    await table.getByRole('columnheader', { name: 'Status', exact: true }).click();
-    await page.getByRole('button', { name: `Show ${status} first`, exact: true }).click();
+  // The header cycles through the statuses that are really present, in severity order.
+  const expected = ['Running', 'Succeeded', 'Pending', 'Failed', 'CrashLoopBackOff', 'Unknown', 'ImagePullBackOff'];
+  for (const status of expected) {
+    await statusHeader.click();
     await expect(table.locator('tbody tr').first()).toContainText(`alpha-${status}`);
     await expect(table.locator('tbody tr')).toHaveCount(7);
-    await expect(table.getByRole('columnheader', { name: 'Status', exact: true })).toHaveAttribute('aria-sort', 'other');
+    await expect(statusHeader).toHaveAttribute('aria-sort', 'other');
   }
-  await table.getByRole('columnheader', { name: 'Status', exact: true }).press('Enter');
-  await page.getByRole('button', { name: 'Clear sorting', exact: true }).click();
-  await expect(table.getByRole('columnheader', { name: 'Status', exact: true })).toHaveAttribute('aria-sort', 'none');
+  // The cycle wraps around to the first status.
+  await statusHeader.click();
+  await expect(table.locator('tbody tr').first()).toContainText('alpha-Running');
+  await expect(table.locator('tbody tr')).toHaveCount(7);
 });

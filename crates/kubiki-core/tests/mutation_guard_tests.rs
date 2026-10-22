@@ -1,7 +1,7 @@
 use kube::{Client, client::Body};
 use kubiki_core::core::{
     api::ResourceRef,
-    mutations::{MutationIntent, PreparedMutation},
+    mutations::{BatchIntent, MutationIntent, PreparedBatch, PreparedMutation},
     secret_data::SecretDataRequest,
 };
 use serde_json::{Value, json};
@@ -113,6 +113,92 @@ async fn consent_sees_server_diff_before_any_write_and_scales_only_replicas_with
     );
     assert_eq!(f.reads.load(Ordering::SeqCst), 2);
 }
+#[tokio::test]
+async fn batch_confirms_once_before_any_write_and_commits_every_step() {
+    let f = fixture("Deployment", 200);
+    let resource = resource("Deployment");
+    let steps = vec![
+        BatchIntent::new(MutationIntent::Delete {
+            resource: resource.clone(),
+            resource_version: "10".into(),
+        }),
+        BatchIntent::new(MutationIntent::Delete {
+            resource: resource.clone(),
+            resource_version: "10".into(),
+        }),
+    ];
+    let batch = PreparedBatch::prepare(f.client, resource, steps)
+        .await
+        .unwrap();
+    let writes_before_confirmation = f.writes.clone();
+    let confirmations = Arc::new(AtomicUsize::new(0));
+    let counter = confirmations.clone();
+    let result = batch
+        .confirm_and_commit(|review| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            assert!(review.contains("2 steps"));
+            assert!(writes_before_confirmation.lock().unwrap().is_empty());
+            async { Ok(true) }
+        })
+        .await
+        .unwrap();
+    assert_eq!(confirmations.load(Ordering::SeqCst), 1);
+    assert_eq!(result["succeeded"], 2);
+    assert_eq!(result["failed"], 0);
+    assert_eq!(result["stopped"], false);
+    assert_eq!(f.writes.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn batch_stops_after_a_critical_failure() {
+    let f = fixture("Deployment", 403);
+    let resource = resource("Deployment");
+    let steps = vec![
+        BatchIntent::critical(MutationIntent::Delete {
+            resource: resource.clone(),
+            resource_version: "10".into(),
+        }),
+        BatchIntent::new(MutationIntent::Delete {
+            resource: resource.clone(),
+            resource_version: "10".into(),
+        }),
+    ];
+    let batch = PreparedBatch::prepare(f.client, resource, steps).await.unwrap();
+    let result = batch
+        .confirm_and_commit(|_| async { Ok(true) })
+        .await
+        .unwrap();
+    assert_eq!(result["succeeded"], 0);
+    assert_eq!(result["failed"], 1);
+    assert_eq!(result["stopped"], true);
+    assert_eq!(f.writes.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn batch_continues_after_noncritical_failures() {
+    let f = fixture("Deployment", 403);
+    let resource = resource("Deployment");
+    let steps = vec![
+        BatchIntent::new(MutationIntent::Delete {
+            resource: resource.clone(),
+            resource_version: "10".into(),
+        }),
+        BatchIntent::new(MutationIntent::Delete {
+            resource: resource.clone(),
+            resource_version: "10".into(),
+        }),
+    ];
+    let batch = PreparedBatch::prepare(f.client, resource, steps).await.unwrap();
+    let result = batch
+        .confirm_and_commit(|_| async { Ok(true) })
+        .await
+        .unwrap();
+    assert_eq!(result["succeeded"], 0);
+    assert_eq!(result["failed"], 2);
+    assert_eq!(result["stopped"], false);
+    assert_eq!(f.writes.lock().unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn cancel_and_failed_consent_never_write() {
     for fail in [false, true] {

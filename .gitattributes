@@ -1,0 +1,2 @@
+# Keep publication media out of text diffs and line-ending conversion.
+docs/media/*.png binary

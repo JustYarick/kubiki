@@ -6,9 +6,9 @@ import { useClusterStore } from '../../../../state/cluster_store';
 import { k8s } from '../../../../providers/k8s_provider';
 import { stringify } from 'yaml';
 import { resourceConsumers } from '../../../../core/resources/consumers';
+import { resourceRef } from '../../../../core/resources/identity';
 import { ResourceKindBadge } from '../../ResourceKindBadge';
 import { Button } from '../../../ui/Button';
-import { ConfirmDialog } from '../../../dialogs/ActionDialogs';
 import { toast } from '../../../../state/notifications_store';
 
 interface UsedByListProps {
@@ -21,6 +21,10 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
   const consumers = useMemo(() => resourceConsumers(resources, item), [resources, item]);
   const isBinding = item.kind === 'RoleBinding' || item.kind === 'ClusterRoleBinding';
   const [limit, setLimit] = useState(100);
+  const restartable = useMemo(
+    () => consumers.filter((c) => c.resource && ['Deployment', 'StatefulSet', 'DaemonSet'].includes(c.resource.kind)),
+    [consumers]
+  );
 
   if (consumers.length === 0) {
     return (
@@ -40,12 +44,6 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
     );
   }
 
-  const [confirmRestart, setConfirmRestart] = useState(false);
-  const restartable = useMemo(
-    () => consumers.filter((c) => c.resource && ['Deployment', 'StatefulSet', 'DaemonSet'].includes(c.resource.kind)),
-    [consumers]
-  );
-
   const doRestartConsumers = async () => {
     const currentContext = useClusterStore.getState().currentContext;
     if (!currentContext && !k8s.demo) {
@@ -53,8 +51,7 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
       return;
     }
     const timestamp = new Date().toISOString();
-    let count = 0;
-    for (const consumer of restartable) {
+    const restarted = restartable.map((consumer) => {
       const res = consumer.resource!;
       const raw = JSON.parse(JSON.stringify(res.raw ?? {}));
       raw.spec = raw.spec ?? {};
@@ -62,26 +59,27 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
       raw.spec.template.metadata = raw.spec.template.metadata ?? {};
       raw.spec.template.metadata.annotations = raw.spec.template.metadata.annotations ?? {};
       raw.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = timestamp;
+      return { res, raw };
+    });
 
-      try {
-        if (k8s.demo) {
-          useResourceStore.getState().updateItem(res.kind, res.uid, { ...res, raw });
-          count++;
-        } else {
-          await k8s.applyManifest(currentContext!, stringify(raw), res);
-          count++;
-        }
-      } catch (err: any) {
-        if (err?.code === 'cancelled') {
-          toast.info(`Restart cancelled for ${res.name}`);
-          break;
-        } else {
-          toast.error(`Failed to restart ${res.name}`, String(err?.message || err));
-        }
-      }
+    if (k8s.demo) {
+      for (const { res, raw } of restarted) useResourceStore.getState().updateItem(res.kind, res.uid, { ...res, raw });
+      toast.success(`Rollout restart triggered for ${restarted.length} workload(s) (demo)`);
+      return;
     }
-    if (count > 0) {
-      toast.success(`Rollout restart triggered for ${count} workload(s)`);
+
+    try {
+      const result = await k8s.applyBatch(resourceRef(currentContext!, item), restarted.map(({ res, raw }) => ({
+        operation: 'manifest' as const,
+        context: currentContext!,
+        manifest: stringify(raw),
+        target: { resource: resourceRef(currentContext!, res), resource_version: res.raw?.metadata?.resourceVersion ?? '' },
+      })));
+      if (result.failed > 0) toast.warn('Restart completed with failures', `${result.succeeded} workload(s) restarted, ${result.failed} failed`);
+      else toast.success(`Rollout restart triggered for ${result.succeeded} workload(s)`);
+    } catch (err: any) {
+      if (err?.code === 'cancelled') toast.info('Restart consumers cancelled');
+      else toast.error('Failed to restart consumers', String(err?.message || err));
     }
   };
 
@@ -90,7 +88,7 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
       toast.info('No consuming Deployments, StatefulSets or DaemonSets found to restart');
       return;
     }
-    setConfirmRestart(true);
+    void doRestartConsumers();
   };
 
   return (
@@ -117,7 +115,7 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
         </div>
         {consumers.slice(0, limit).map((consumer) => {
           const content = <>
-            <ResourceKindBadge kind={consumer.kind} />
+            <ResourceKindBadge kind={consumer.kind} apiVersion={consumer.resource?.apiVersion} />
             <span className="details-resource-name" title={consumer.name}>
               {consumer.name}
             </span>
@@ -142,23 +140,6 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
         {consumers.length > limit && <Button size="sm" onClick={() => setLimit(value => value + 100)}>Show next 100</Button>}
       </div>
 
-      <ConfirmDialog
-        open={confirmRestart}
-        title="Restart consuming workloads"
-        confirmLabel="Restart"
-        onClose={() => setConfirmRestart(false)}
-        onConfirm={doRestartConsumers}
-        message={
-          <div>
-            Trigger rolling restart for <strong className="font-mono text-[var(--text-primary)]">{restartable.length}</strong> consuming workload(s)?
-            <ul className="mt-2 text-xs list-disc pl-4 font-mono space-y-0.5">
-              {restartable.map((c) => (
-                <li key={c.key}>{c.kind}/{c.name}</li>
-              ))}
-            </ul>
-          </div>
-        }
-      />
     </section>
   );
 }

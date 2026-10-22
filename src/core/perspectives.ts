@@ -33,6 +33,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { ResourceKind } from '../types/k8s';
 import type { HelmSection } from '../providers/helm_types';
+import { GROUP_BASE, NEUTRAL_TONE, familyBase, groupTone, lookupTone, registerTone, shade, toneOf, type GroupId, type Tone } from './palette';
 
 export const HELM_VIEWS: Record<HelmSection, string> = { releases: 'Releases', repositories: 'Repositories' };
 
@@ -53,7 +54,14 @@ export interface KindEntry {
   kind: ResourceKind;
   label: string;
   icon: LucideIcon;
-  hue: string;
+  /** Top-level group the kind belongs to — decides its base hue. */
+  group: GroupId;
+  /** Resolved color of this kind: a shade of the group hue. */
+  tone: Tone;
+  /** API group of a dynamically discovered kind — decides the hue of its family. */
+  apiGroup?: string;
+  /** Plain kind name of a dynamically discovered kind (its `kind` is a bucket key). */
+  nativeKind?: string;
   keywords?: string;
 }
 
@@ -135,52 +143,92 @@ export const KIND_ICONS: Record<ResourceKind, LucideIcon> = {
   BackendTLSPolicy: ShieldCheck,
 };
 
-const k = (kind: ResourceKind, label: string, hue: string): KindEntry => ({ kind, label, icon: KIND_ICONS[kind] ?? Boxes, hue });
+const k = (kind: ResourceKind, label: string, group: GroupId): KindEntry => ({ kind, label, icon: KIND_ICONS[kind] ?? Boxes, group, tone: groupTone(group) });
 
 /** Lens ordering and one level from category to resource; only CRD API groups add a level. */
 export const SIDEBAR_TREE: TreeCategory[] = [
-  { id: 'nodes', label: 'Nodes', icon: Server, directKind: 'Node', groups: [{ id: 'nodes', kinds: [k('Node', 'Nodes', 'text-[var(--status-info)]')] }] },
+  { id: 'nodes', label: 'Nodes', icon: Server, directKind: 'Node', groups: [{ id: 'nodes', kinds: [k('Node', 'Nodes', 'nodes')] }] },
   { id: 'workloads', label: 'Workloads', icon: Boxes, groups: [{ id: 'workloads', kinds: [
-    k('Pod', 'Pods', 'text-[var(--status-ok)]'),
-    k('Deployment', 'Deployments', 'text-[var(--status-info)]'),
-    k('DaemonSet', 'DaemonSets', 'text-purple-400'),
-    k('StatefulSet', 'StatefulSets', 'text-violet-400'),
-    k('ReplicaSet', 'ReplicaSets', 'text-[var(--status-info)]'),
-    k('ReplicationController', 'Replication Controllers', 'text-blue-400'),
-    k('Job', 'Jobs', 'text-amber-400'), k('CronJob', 'CronJobs', 'text-cyan-400'),
+    k('Pod', 'Pods', 'workloads'),
+    k('Deployment', 'Deployments', 'workloads'),
+    k('DaemonSet', 'DaemonSets', 'workloads'),
+    k('StatefulSet', 'StatefulSets', 'workloads'),
+    k('ReplicaSet', 'ReplicaSets', 'workloads'),
+    k('ReplicationController', 'Replication Controllers', 'workloads'),
+    k('Job', 'Jobs', 'workloads'), k('CronJob', 'CronJobs', 'workloads'),
   ] }] },
   { id: 'config', label: 'Config', icon: FileCode, groups: [{ id: 'config', kinds: [
-    k('ConfigMap', 'ConfigMaps', 'text-sky-400'), k('Secret', 'Secrets', 'text-amber-400'),
-    k('ResourceQuota', 'Resource Quotas', 'text-violet-400'), k('LimitRange', 'Limit Ranges', 'text-violet-400'),
-    k('HorizontalPodAutoscaler', 'Horizontal Pod Autoscalers', 'text-sky-400'), k('PodDisruptionBudget', 'Pod Disruption Budgets', 'text-amber-400'),
-    k('PriorityClass', 'Priority Classes', 'text-cyan-400'), k('RuntimeClass', 'Runtime Classes', 'text-cyan-400'), k('Lease', 'Leases', 'text-cyan-400'),
-    k('MutatingWebhookConfiguration', 'Mutating Webhook Configurations', 'text-violet-400'), k('ValidatingWebhookConfiguration', 'Validating Webhook Configurations', 'text-violet-400'),
+    k('ConfigMap', 'ConfigMaps', 'config'), k('Secret', 'Secrets', 'config'),
+    k('ResourceQuota', 'Resource Quotas', 'config'), k('LimitRange', 'Limit Ranges', 'config'),
+    k('HorizontalPodAutoscaler', 'Horizontal Pod Autoscalers', 'config'), k('PodDisruptionBudget', 'Pod Disruption Budgets', 'config'),
+    k('PriorityClass', 'Priority Classes', 'config'), k('RuntimeClass', 'Runtime Classes', 'config'), k('Lease', 'Leases', 'config'),
+    k('MutatingWebhookConfiguration', 'Mutating Webhook Configurations', 'config'), k('ValidatingWebhookConfiguration', 'Validating Webhook Configurations', 'config'),
   ] }] },
-  { id: 'network', label: 'Network', icon: Network, groups: [{ id: 'network', kinds: [k('Service', 'Services', 'text-[var(--status-info)]'), k('Ingress', 'Ingresses', 'text-indigo-400'), k('IngressClass', 'Ingress Classes', 'text-indigo-400'), k('Endpoints', 'Endpoints', 'text-cyan-400'), k('EndpointSlice', 'Endpoint Slices', 'text-cyan-400'), k('NetworkPolicy', 'Network Policies', 'text-sky-400')] }] },
+  { id: 'network', label: 'Network', icon: Network, groups: [{ id: 'network', kinds: [k('Service', 'Services', 'network'), k('Ingress', 'Ingresses', 'network'), k('IngressClass', 'Ingress Classes', 'network'), k('Endpoints', 'Endpoints', 'network'), k('EndpointSlice', 'Endpoint Slices', 'network'), k('NetworkPolicy', 'Network Policies', 'network')] }] },
   { id: 'storage', label: 'Storage', icon: Database, groups: [{ id: 'storage', kinds: [
-    k('PersistentVolumeClaim', 'Persistent Volume Claims', 'text-amber-400'),
-    k('PersistentVolume', 'Persistent Volumes', 'text-[var(--text-secondary)]'),
-    k('StorageClass', 'Storage Classes', 'text-sky-400'),
+    k('PersistentVolumeClaim', 'Persistent Volume Claims', 'storage'),
+    k('PersistentVolume', 'Persistent Volumes', 'storage'),
+    k('StorageClass', 'Storage Classes', 'storage'),
   ] }] },
-  { id: 'namespaces', label: 'Namespaces', icon: Globe, directKind: 'Namespace', groups: [{ id: 'namespaces', kinds: [k('Namespace', 'Namespaces', 'text-emerald-400')] }] },
-  { id: 'events', label: 'Events', icon: Bell, directKind: 'Event', groups: [{ id: 'events', kinds: [k('Event', 'Events', 'text-[var(--text-secondary)]')] }] },
+  { id: 'namespaces', label: 'Namespaces', icon: Globe, directKind: 'Namespace', groups: [{ id: 'namespaces', kinds: [k('Namespace', 'Namespaces', 'namespaces')] }] },
+  { id: 'events', label: 'Events', icon: Bell, directKind: 'Event', groups: [{ id: 'events', kinds: [k('Event', 'Events', 'events')] }] },
   { id: 'helm', label: 'Helm', icon: Anchor, groups: [{ id: 'helm', kinds: [], helmViews: ['releases', 'repositories'] }] },
   { id: 'access', label: 'Access Control', icon: ShieldCheck, groups: [{ id: 'access', kinds: [
-    k('ServiceAccount', 'Service Accounts', 'text-amber-400'),
-    k('ClusterRole', 'Cluster Roles', 'text-indigo-400'),
-    k('Role', 'Roles', 'text-violet-400'),
-    k('ClusterRoleBinding', 'Cluster Role Bindings', 'text-purple-400'),
-    k('RoleBinding', 'Role Bindings', 'text-fuchsia-400'),
+    k('ServiceAccount', 'Service Accounts', 'access'),
+    k('ClusterRole', 'Cluster Roles', 'access'),
+    k('Role', 'Roles', 'access'),
+    k('ClusterRoleBinding', 'Cluster Role Bindings', 'access'),
+    k('RoleBinding', 'Role Bindings', 'access'),
   ] }] },
-  { id: 'admission', label: 'Admission Policies', icon: ShieldCheck, groups: [{ id: 'admission', kinds: RESOURCE_TYPES.filter(type => type.kind.includes('AdmissionPolicy')).map(type => k(type.kind, type.kind.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/Policy$/, 'Policies') + (type.kind.endsWith('Policy') ? '' : 's'), 'text-violet-400')) }] },
+  { id: 'admission', label: 'Admission Policies', icon: ShieldCheck, groups: [{ id: 'admission', kinds: RESOURCE_TYPES.filter(type => type.kind.includes('AdmissionPolicy')).map(type => k(type.kind, type.kind.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/Policy$/, 'Policies') + (type.kind.endsWith('Policy') ? '' : 's'), 'admission')) }] },
   { id: 'gateway', label: 'Gateway API', icon: Network, groups: [] },
-  { id: 'devices', label: 'Device Resources', icon: Server, groups: [{ id: 'devices', kinds: RESOURCE_TYPES.filter(type => type.group === 'resource.k8s.io').map(type => k(type.kind, type.kind.replace(/([a-z])([A-Z])/g, '$1 $2') + (type.kind.endsWith('Class') ? 'es' : 's'), 'text-sky-400')) }] },
+  { id: 'devices', label: 'Device Resources', icon: Server, groups: [{ id: 'devices', kinds: RESOURCE_TYPES.filter(type => type.group === 'resource.k8s.io').map(type => k(type.kind, type.kind.replace(/([a-z])([A-Z])/g, '$1 $2') + (type.kind.endsWith('Class') ? 'es' : 's'), 'devices')) }] },
   { id: 'flux', label: 'Flux', icon: GitBranch, groups: [] },
   { id: 'argocd', label: 'Argo CD', icon: Boxes, groups: [] },
-  { id: 'crd', label: 'Custom Resources', icon: Puzzle, groups: [{ id: 'crd', kinds: [k('CustomResourceDefinition', 'Definitions', 'text-violet-400')] }] },
+  { id: 'crd', label: 'Custom Resources', icon: Puzzle, groups: [{ id: 'crd', kinds: [k('CustomResourceDefinition', 'Definitions', 'crd')] }] },
 ];
 
 export const PERSPECTIVES: TreeCategory[] = SIDEBAR_TREE;
+
+/**
+ * Assign shades to the kinds of every category and publish them in the shared
+ * registry: kinds that share a base hue are shaded along their own ramp, so a
+ * group reads as one family while its members stay distinguishable.
+ */
+export function assignCategoryTones(categories: TreeCategory[]): void {
+  for (const category of categories) {
+    const entries = category.groups.flatMap((group) => group.kinds);
+    const byBase = new Map<string, KindEntry[]>();
+    for (const entry of entries) {
+      const base = entry.apiGroup ? familyBase(entry.apiGroup) : GROUP_BASE[entry.group];
+      const bucket = byBase.get(base);
+      if (bucket) bucket.push(entry);
+      else byBase.set(base, [entry]);
+    }
+    for (const [base, bucket] of byBase) {
+      bucket.forEach((entry, index) => {
+        entry.tone = toneOf(shade(base, index, bucket.length));
+        registerTone(entry.apiGroup && entry.nativeKind ? `${entry.apiGroup}/${entry.nativeKind}` : String(entry.kind), entry.tone);
+      });
+    }
+  }
+}
+
+assignCategoryTones(SIDEBAR_TREE);
+
+/** Color of a kind anywhere in the app — the sidebar, badges, tables and details share it. */
+export function kindTone(kind: string, apiGroup?: string): Tone {
+  if (kind.startsWith('custom:')) {
+    const [group, nativeKind] = kind.slice('custom:'.length).split('/');
+    const scoped = group && nativeKind ? lookupTone(`${group}/${nativeKind}`) : undefined;
+    if (scoped) return scoped;
+  }
+  if (apiGroup) {
+    const scoped = lookupTone(`${apiGroup}/${kind}`);
+    if (scoped) return scoped;
+  }
+  return lookupTone(kind) ?? NEUTRAL_TONE;
+}
 
 export const perspectiveById = (id: Perspective): TreeCategory | undefined => PERSPECTIVES.find((p) => p.id === id);
 

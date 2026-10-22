@@ -179,7 +179,7 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
           <DetailsSection title={`Managed Kubernetes objects (${managed.length} loaded)`} label="Managed Kubernetes objects" icon={Boxes}>
             <p className="details-caption mb-1">Objects with Helm ownership annotations in the loaded scope.</p>
             {managed.slice(0, 50).map(resource => <button key={resource.uid} className="details-resource-row" aria-label={`Inspect ${resource.kind} ${resource.name} in ${resource.namespace ?? 'cluster'}`} onClick={() => navigate(resource)}>
-              <ResourceKindBadge kind={resource.kind} /><span className="details-resource-name" title={resource.name}>{resource.name}</span><span className="details-resource-namespace">{resource.namespace || 'cluster'}</span>
+              <ResourceKindBadge kind={resource.kind} apiVersion={resource.apiVersion} /><span className="details-resource-name" title={resource.name}>{resource.name}</span><span className="details-resource-namespace">{resource.namespace || 'cluster'}</span>
             </button>)}
             {!managed.length && <p className="details-caption">No managed objects loaded.</p>}
             {managed.length > 50 && <p className="details-caption">First 50 objects shown. Open topology for more.</p>}

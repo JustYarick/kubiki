@@ -304,28 +304,50 @@ impl Drop for Process {
                     if let Some(group) = foreground {
                         if group > 0 && group != pid as i32 {
                             let session = libc::getsid(group);
-                            // On Linux, getsid(group) returns the session leader PID.
-                            // On macOS / BSD, getsid across sessions returns EPERM (-1);
-                            // since group was returned by tcgetpgrp on our own master PTY, it belongs here.
+                            // Some systems may deny getsid across sessions. The group
+                            // was obtained from our own PTY, so EPERM is safe here too.
                             if session == pid as i32
                                 || (session == -1
                                     && std::io::Error::last_os_error().raw_os_error()
                                         == Some(libc::EPERM))
                             {
                                 libc::kill(-group, libc::SIGKILL);
+                                // Let the shell reap its foreground job before killing
+                                // the shell itself, rather than leaving an orphan zombie.
+                                for _ in 0..20 {
+                                    if libc::kill(-group, 0) == -1 {
+                                        break;
+                                    }
+                                    thread::sleep(Duration::from_millis(10));
+                                }
                             }
                         }
                     }
                     libc::kill(-(pid as i32), libc::SIGKILL);
                 }
             }
+        }
+        // Unix workers use O_NONBLOCK and observe shutdown even under backpressure.
+        // Join them to close every duplicated master fd before waiting for the child.
+        // On macOS a dying session leader can wait for unread PTY output to drain;
+        // retaining the master while stopping its reader deadlocks waitpid().
+        #[cfg(unix)]
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+        #[cfg(unix)]
+        self.master.take();
+        if !self.reaped {
             let _ = self.child.kill();
             let _ = self.child.wait();
             self.reaped = true;
         }
-        self.master.take();
-        // Detach worker threads cleanly; they terminate on shutdown/cancellation/EOF without blocking Drop.
-        self.workers.clear();
+        // ConPTY uses blocking I/O; close it after terminating the child.
+        #[cfg(windows)]
+        {
+            self.master.take();
+            self.workers.clear();
+        }
     }
 }
 fn run(
@@ -377,14 +399,15 @@ fn run(
     drop(pair.slave);
     let shutdown = Arc::new(AtomicBool::new(false));
     let exited = Arc::new(AtomicBool::new(false));
-    let master = Arc::new(StdMutex::new(pair.master));
     let mut process = Process {
         child,
-        master: Some(master.clone()),
+        master: Some(Arc::new(StdMutex::new(pair.master))),
         shutdown: shutdown.clone(),
         reaped: false,
         workers: Vec::new(),
     };
+    // Keep the sole strong reference in Process, including on setup errors.
+    let master = process.master.as_ref().unwrap();
     let mut reader = master
         .lock()
         .unwrap()
@@ -395,26 +418,6 @@ fn run(
         .unwrap()
         .take_writer()
         .map_err(|e| internal(e.to_string()))?;
-    #[cfg(unix)]
-    {
-        let fd = master
-            .lock()
-            .unwrap()
-            .as_raw_fd()
-            .ok_or_else(|| internal("PTY has no file descriptor"))?;
-        // Duplicated PTY handles share status flags; both reader and writer become cancellable.
-        let result = unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFL);
-            if flags < 0 {
-                -1
-            } else {
-                libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK)
-            }
-        };
-        if result < 0 {
-            return Err(internal(std::io::Error::last_os_error().to_string()));
-        }
-    }
     if !send(output, &sequence, ExecEvent::Started, &cancel, None) {
         return Ok(());
     }
@@ -476,8 +479,7 @@ fn run(
     let stop = shutdown.clone();
     let cancellation = cancel.clone();
     let input_events = events.clone();
-    let resize_master = Arc::downgrade(&master);
-    drop(master);
+    let resize_master = Arc::downgrade(process.master.as_ref().unwrap());
     let worker = thread::Builder::new()
         .name("kubiki-pty-write".into())
         .spawn(move || {
@@ -572,5 +574,75 @@ fn run(
             return Ok(());
         }
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use portable_pty::{ChildKiller, ExitStatus};
+    use std::sync::Weak;
+
+    #[derive(Clone, Debug)]
+    struct DrainSensitiveChild {
+        master: Weak<StdMutex<Box<dyn MasterPty + Send>>>,
+        worker_finished: Arc<AtomicBool>,
+    }
+    impl ChildKiller for DrainSensitiveChild {
+        fn kill(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(self.clone())
+        }
+    }
+    impl Child for DrainSensitiveChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+            Ok(None)
+        }
+        fn wait(&mut self) -> std::io::Result<ExitStatus> {
+            // Model macOS's waitpid dependency without hanging the test runner.
+            assert!(
+                self.worker_finished.load(Ordering::Acquire),
+                "PTY I/O handles must close before wait"
+            );
+            assert!(
+                self.master.upgrade().is_none(),
+                "PTY master must close before wait"
+            );
+            Ok(ExitStatus::with_exit_code(0))
+        }
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+    }
+
+    #[test]
+    fn cancellation_closes_all_pty_handles_before_waiting_for_child() {
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let reader = pair.master.try_clone_reader().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        let master = Arc::new(StdMutex::new(pair.master));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_finished = Arc::new(AtomicBool::new(false));
+        let child = DrainSensitiveChild {
+            master: Arc::downgrade(&master),
+            worker_finished: worker_finished.clone(),
+        };
+        let stop = shutdown.clone();
+        let worker = thread::spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            drop((reader, writer));
+            worker_finished.store(true, Ordering::Release);
+        });
+        drop(Process {
+            child: Box::new(child),
+            master: Some(master),
+            shutdown,
+            reaped: false,
+            workers: vec![worker],
+        });
     }
 }

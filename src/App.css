@@ -360,3 +360,13 @@ body {
 
 /* Toolbars of the covered view keep their actions reachable next to the overlay. */
 .workspace-toolbar-safe { padding-right: calc(var(--inspector-overlay, 0px) + calc(12px * var(--ui-factor))); }
+
+/*
+ * The resource table keeps its full width and scrolls under the floating
+ * details panel. Every other view is pushed to the left of the panel so no
+ * control ever ends up hidden behind it.
+ */
+.workspace-overlay-inset {
+  margin-right: var(--inspector-width, 0px);
+  --inspector-overlay: 0px;
+}

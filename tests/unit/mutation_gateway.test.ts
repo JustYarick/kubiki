@@ -15,6 +15,17 @@ it('deletes custom resources through the shared delete gateway with the exact se
   await new K8sProvider().deleteResource('prod', item.kind, item.name, item.namespace, item.uid, '10', item.apiVersion);
   expect(invoke).toHaveBeenCalledExactlyOnceWith('delete_resource', { request: { operation: 'resource', resource: resourceRef('prod', item), resource_version: '10' } });
 });
+it('sends every batch step through one backend call so the user confirms once', async () => {
+  const node = mapK8sResource({ apiVersion: 'v1', kind: 'Node', metadata: { name: 'worker', uid: 'node-uid', resourceVersion: '10' } }, 'Node' as any);
+  const primary = resourceRef('prod', node);
+  const steps = [
+    { operation: 'drain' as const, resource: primary, resource_version: '10', critical: true },
+    { operation: 'evict' as const, resource: { ...primary, kind: 'Pod', namespace: 'team', name: 'web' }, resource_version: '11' },
+  ];
+  invoke.mockResolvedValue({ steps: [], succeeded: 0, failed: 0, stopped: false });
+  await new K8sProvider().applyBatch(primary, steps);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('mutate_resource', { request: { operation: 'batch', primary, steps } });
+});
 it('routes Helm uninstall through the same backend review as other changes', async () => {
   const request = { operation: 'uninstall' as const, context: 'prod', namespace: 'team', name: 'web', expected_revision: 2, keep_history: false, run_hooks: false };
   await new K8sProvider().mutateHelm(request);

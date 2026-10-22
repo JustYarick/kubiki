@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useWorkspaceStore, type WorkspaceTab } from '../../state/workspace_store';
 import { useResourceStore } from '../../state/resource_store';
-import { KIND_ICONS } from '../../core/perspectives';
+import { KIND_ICONS, kindTone } from '../../core/perspectives';
 import { FixedMenu, Popover, type MenuItem } from '../ui/Dropdown';
 import { Tooltip, IconButton } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
@@ -73,7 +73,7 @@ export const MainTabBar: React.FC = () => {
     if (tab.type === 'logs') return <FileText size="calc(13px * var(--ui-factor))" className="text-blue-400 shrink-0" />;
     if (tab.kind && KIND_ICONS[tab.kind]) {
       const Icon = KIND_ICONS[tab.kind];
-      return <Icon size="calc(13px * var(--ui-factor))" className="text-[var(--text-secondary)] shrink-0" />;
+      return <Icon size="calc(13px * var(--ui-factor))" className="shrink-0" style={{ color: kindTone(tab.kind).color }} />;
     }
     return <Boxes size="calc(13px * var(--ui-factor))" className="text-[var(--text-muted)] shrink-0" />;
   };

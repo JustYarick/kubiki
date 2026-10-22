@@ -149,7 +149,7 @@ async fn cancel_reaps_shell_and_foreground_process_and_respects_window_ownership
     );
     tokio::time::timeout(Duration::from_secs(10), manager.stop_owner("main"))
         .await
-        .unwrap();
+        .expect("Stopping the shell and foreground job must finish within 10 seconds");
     assert_eq!(manager.session_count().await, 0);
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -160,7 +160,9 @@ async fn cancel_reaps_shell_and_foreground_process_and_respects_window_ownership
         }
     })
     .await
-    .unwrap();
+    .unwrap_or_else(|_| {
+        panic!("Shell {shell} or foreground job {job} still exists after cancellation")
+    });
 }
 #[tokio::test]
 async fn cancellation_is_bounded_with_a_full_output_queue_and_invalid_requests_do_not_spawn() {
@@ -196,7 +198,13 @@ async fn cancellation_is_bounded_with_a_full_output_queue_and_invalid_requests_d
         .write("main", "busy", "yes KUBIKI_BACKPRESSURE\r".into())
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while sub.output.len() < sub.output.max_capacity() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("The output queue must be full before testing cancellation");
     assert_eq!(
         manager
             .write("main", "busy", "x".repeat(65537))
@@ -215,7 +223,7 @@ async fn cancellation_is_bounded_with_a_full_output_queue_and_invalid_requests_d
     );
     tokio::time::timeout(Duration::from_secs(10), manager.stop_owner("main"))
         .await
-        .unwrap();
+        .expect("Cancellation must finish even when the output queue is full");
     assert_eq!(manager.session_count().await, 0);
     let _sub = manager.start("main", "pending", request()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), manager.stop_owner("main"))

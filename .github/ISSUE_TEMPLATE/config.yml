@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Development and setup
+    url: https://github.com/JustYarick/kubiki#development
+    about: Local setup, test commands, and troubleshooting.
+  - name: Security policy
+    url: https://github.com/JustYarick/kubiki#security
+    about: How to report a vulnerability privately.

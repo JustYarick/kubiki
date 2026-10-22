@@ -1,4 +1,4 @@
-import { namespaceScopeLabel } from '../../core/resources/namespace_scope';
+import { namespaceScopeLabel, inNamespaceScope } from '../../core/resources/namespace_scope';
 import { ArrowRightLeft, Bell, Server, Layers, Terminal, GitBranch } from 'lucide-react';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
@@ -21,7 +21,7 @@ export function StatusBar() {
     <span className="status-context flex items-center gap-1.5 min-w-0" title={currentContext ?? ''}><Server size="calc(11px * var(--ui-factor))" className={isConnected ? 'text-[var(--status-ok)]' : 'text-[var(--status-warn)]'} /><span className="truncate font-mono">{currentContext || 'No context'}</span></span>
     <span className="status-namespace flex items-center gap-1"><Layers size="calc(11px * var(--ui-factor))" /><span>{namespaceScopeLabel(selectedNamespace)}</span></span>
     <span className="status-sync hidden lg:inline">{!isConnected ? 'Disconnected' : syncMode === 'watch' ? watchLabel : isLoading ? 'Loading resources…' : k8s.demo ? 'Demo data' : 'Snapshot · use Sync to refresh'}</span>
-    <span className="status-pods hidden xl:inline">Pods: {[...pods.values()].filter((p) => p.status === 'Running').length}/{pods.size}</span>
+    <span className="status-pods hidden xl:inline">Pods: {[...pods.values()].filter((p) => p.status === 'Running' && inNamespaceScope(selectedNamespace, p.namespace)).length}/{[...pods.values()].filter((p) => inNamespaceScope(selectedNamespace, p.namespace)).length}</span>
     <div className="flex-1" />
     <button aria-label="Topology" title="Topology" onClick={() => useWorkspaceStore.getState().openTopology()} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><GitBranch size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Topology</span></button>
     <button aria-label="Shells" title="Shells" onClick={() => focusTool('terminal')} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><Terminal size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Shells</span> {sessions.filter((s) => s.type === 'terminal').length}</button>

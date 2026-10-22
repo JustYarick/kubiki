@@ -31,8 +31,9 @@ test('cancelled backend review preserves YAML draft and resource row; saves and 
   await expect(editor.locator('.view-lines')).toContainText('replicas: 3');
   await expect.poll(() => page.evaluate(() => (window as any).__mutationIntents.length)).toBe(1);
   await row.click({ button: 'right' }); await page.getByRole('group', { name: 'Actions', exact: true }).getByRole('button', { name: /Delete…/ }).click();
-  await page.getByRole('dialog', { name: 'Delete deployment', exact: true }).getByRole('button', { name: 'Delete', exact: true }).click();
+  // No renderer dialog: the backend review is the only confirmation.
   await expect.poll(() => page.evaluate(() => (window as any).__mutationIntents.length)).toBe(2);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(row).toBeVisible();
   const intents = await page.evaluate(() => (window as any).__mutationIntents);
   const resource = { context: 'prod', group: 'apps', version: 'v1', kind: 'Deployment', namespace: 'team', name: 'web', uid: 'original' };

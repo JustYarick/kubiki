@@ -16,7 +16,7 @@ import {
   LayoutDashboard,
   Anchor,
 } from 'lucide-react';
-import { SIDEBAR_TREE, HELM_VIEWS, type KindEntry, type TreeGroup, type TreeCategory } from '../../core/perspectives';
+import { SIDEBAR_TREE, HELM_VIEWS, assignCategoryTones, type KindEntry, type TreeGroup, type TreeCategory } from '../../core/perspectives';
 import { useResourceStore } from '../../state/resource_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useUiStore } from '../../state/ui_store';
@@ -24,6 +24,7 @@ import { useWorkspaceStore } from '../../state/workspace_store';
 import { FixedMenu, type MenuItem } from '../ui/Dropdown';
 import { Tooltip, IconButton } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
+import { groupTone } from '../../core/palette';
 import type { ResourceKind } from '../../types/k8s';
 
 const key = (cat: string, group?: string) => (group ? `${cat}/${group}` : cat);
@@ -65,7 +66,10 @@ export const Sidebar: React.FC = () => {
           kind: type.key,
           label: placement.label,
           icon: placement.category === 'gateway' ? Network : Boxes,
-          hue: 'text-sky-400',
+          group: placement.category,
+          tone: groupTone(placement.category),
+          apiGroup: type.group,
+          nativeKind: type.kind,
           keywords,
         });
       }
@@ -77,7 +81,10 @@ export const Sidebar: React.FC = () => {
           kind: type.key,
           label: type.kind,
           icon: Puzzle,
-          hue: 'text-sky-400',
+          group: family,
+          tone: groupTone(family),
+          apiGroup: type.group,
+          nativeKind: type.kind,
           keywords,
         });
       }
@@ -88,17 +95,23 @@ export const Sidebar: React.FC = () => {
         kind: type.key,
         label: type.kind,
         icon: Puzzle,
-        hue: 'text-violet-400',
+        group: 'crd',
+        tone: groupTone('crd'),
+        apiGroup: type.group,
+        nativeKind: type.kind,
         keywords,
       });
     }
-    return SIDEBAR_TREE.map(category => {
+    const tree = SIDEBAR_TREE.map(category => {
       if (category.id === 'flux' || category.id === 'argocd') return { ...category, groups: [...gitops[category.id]].map(([group, kinds]) => ({ id: group || category.id, label: group || undefined, kinds })) };
       if (category.id === 'gateway') return { ...category, groups: [{ id: 'gateway', kinds: featured.gateway }] };
       if (category.id === 'config') return { ...category, groups: category.groups.map(group => ({ ...group, kinds: [...group.kinds.slice(0, 5), ...featured.config, ...group.kinds.slice(5)] })) };
       if (category.id === 'crd') return { ...category, groups: [...category.groups, ...[...byGroup].sort(([a], [b]) => a.localeCompare(b)).map(([group, kinds]) => ({ id: `custom-${group}`, label: group, kinds }))] };
       return category;
     }).map(category => ({ ...category, groups: category.groups.map(group => ({ ...group, kinds: group.kinds.filter(entry => !availableKinds || entry.kind.startsWith('custom:') || availableKinds.includes(entry.kind)) })) })).filter(category => category.groups.some(group => group.kinds.length || (group as TreeGroup).helmViews?.length));
+    // Shades are resolved after the dynamic kinds are in place, so every view shows the same color.
+    assignCategoryTones(tree);
+    return tree;
   }, [resources.CustomResourceDefinition, availableKinds]);
 
   const matchKind = (e: KindEntry) => {
@@ -312,7 +325,7 @@ export const Sidebar: React.FC = () => {
                               {selected && (
                                 <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
                               )}
-                              <Icon size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className={cx('shrink-0', entry.hue)} />
+                              <Icon size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="shrink-0" style={{ color: entry.tone.color }} />
                               <span className="truncate flex-1 text-left">{entry.label}</span>
                               {total > 0 && (
                                 <span className={cx(

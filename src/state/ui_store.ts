@@ -29,6 +29,8 @@ interface UIState {
   hiddenColumns: Record<string, string[]>;
   /* per-kind/column pixel widths (Lens-like column resize) */
   columnWidths: Record<string, number>;
+  /* per-kind column order — user-defined column sequence */
+  columnOrder: Record<string, string[]>;
   /* transient */
   rightTab: RightTab;
   paletteOpen: boolean;
@@ -50,6 +52,8 @@ interface UIState {
   setHiddenColumns: (kind: string, hidden: string[]) => void;
   setColumnWidth: (kind: string, colId: string, width: number) => void;
   resetColumnWidths: (kind?: string) => void;
+  setColumnOrder: (kind: string, order: string[]) => void;
+  resetColumnOrder: (kind?: string) => void;
   setRightTab: (t: RightTab) => void;
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -62,7 +66,7 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
 
 export const DEFAULT_LAYOUT = {
   sidebarWidth: 246,
-  inspectorWidth: 440,
+  inspectorWidth: 520,
   dockHeight: 260,
 };
 
@@ -84,6 +88,7 @@ export const useUiStore = create<UIState>()(
       sidebarTreeVersion: 2,
       hiddenColumns: {},
       columnWidths: {},
+      columnOrder: {},
       rightTab: 'overview',
       paletteOpen: false,
       settingsOpen: false,
@@ -98,7 +103,9 @@ export const useUiStore = create<UIState>()(
       resetAppearance: () => set({ ...DEFAULT_APPEARANCE, terminalFontFamily: DEFAULT_TERMINAL_FONT, terminalLineHeight: 1.2 }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 420), sidebarCollapsed: false }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-      setInspectorWidth: (w) => set({ inspectorWidth: clamp(w, 340, 800), inspectorCollapsed: false }),
+      // The panel can be narrowed further; the header actions collapse into a
+      // menu instead of overflowing when the width drops below the button row.
+      setInspectorWidth: (w) => set({ inspectorWidth: clamp(w, 320, 1000), inspectorCollapsed: false }),
       toggleInspector: () => set((s) => ({ inspectorCollapsed: !s.inspectorCollapsed })),
       toggleGroup: (title) =>
         set((s) => ({ sidebarGroups: { ...s.sidebarGroups, [title]: !(s.sidebarGroups[title] ?? s.sidebarGroups['*'] ?? false) } })),
@@ -113,6 +120,14 @@ export const useUiStore = create<UIState>()(
             if (key.startsWith(`${kind}:`)) delete next[key];
           }
           return { columnWidths: next };
+        }),
+      setColumnOrder: (kind, order) => set((s) => ({ columnOrder: { ...s.columnOrder, [kind]: order } })),
+      resetColumnOrder: (kind) =>
+        set((s) => {
+          if (!kind) return { columnOrder: {} };
+          const next = { ...s.columnOrder };
+          delete next[kind];
+          return { columnOrder: next };
         }),
       setRightTab: (rightTab) => set({ rightTab }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
@@ -132,7 +147,7 @@ export const useUiStore = create<UIState>()(
     }),
     {
       name: 'kubiki.settings.v3',
-      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, sidebarGroups: (persisted as Partial<UIState> | undefined)?.sidebarTreeVersion === 2 ? (persisted as Partial<UIState>).sidebarGroups ?? {} : {}, sidebarTreeVersion: 2, ...normalizeAppearance(persisted as Partial<UIState> | undefined), terminalFontFamily: normalizeTerminalFont((persisted as Partial<UIState> | undefined)?.terminalFontFamily), terminalLineHeight: normalizeTerminalLineHeight((persisted as Partial<UIState> | undefined)?.terminalLineHeight) }),
+      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, inspectorWidth: clamp((persisted as Partial<UIState> | undefined)?.inspectorWidth ?? current.inspectorWidth, 320, 1000), sidebarGroups: (persisted as Partial<UIState> | undefined)?.sidebarTreeVersion === 2 ? (persisted as Partial<UIState>).sidebarGroups ?? {} : {}, sidebarTreeVersion: 2, ...normalizeAppearance(persisted as Partial<UIState> | undefined), terminalFontFamily: normalizeTerminalFont((persisted as Partial<UIState> | undefined)?.terminalFontFamily), terminalLineHeight: normalizeTerminalLineHeight((persisted as Partial<UIState> | undefined)?.terminalLineHeight) }),
       partialize: (s) => ({
         density: s.density,
         uiScale: s.uiScale,
@@ -148,6 +163,7 @@ export const useUiStore = create<UIState>()(
         sidebarTreeVersion: 2,
         hiddenColumns: s.hiddenColumns,
         columnWidths: s.columnWidths,
+        columnOrder: s.columnOrder,
       }),
     }
   )

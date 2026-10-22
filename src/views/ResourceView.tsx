@@ -2,7 +2,7 @@ import { syncResourceSnapshot } from '../providers/snapshot_sync';
 import { ResourceLoading } from '../components/ui/ResourceLoading';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { presentationFor, fieldText, fieldValue } from '../core/resources/resource_presentations';
-import { resourceType, apiVersionFor as typeApiVersion } from '../core/resources/resource_types';
+import { resourceType, apiVersionFor as typeApiVersion, parseApiVersion } from '../core/resources/resource_types';
 import { customResourcePlacement, customColumnValue, customResourceType, type CustomResourceType } from '../core/resources/custom_resource_types';
 import { useCustomResources } from '../providers/use_custom_resources';
 import { defaultNamespace } from '../core/resources/namespace_scope';
@@ -15,13 +15,16 @@ import {
   ArrowUp,
   Boxes,
   Braces,
+  ChevronDown,
   Copy,
   FileText,
+  Filter,
   Maximize2,
   Minimize2,
   Plus,
   RefreshCw,
   RotateCw,
+  RotateCcw,
   SlidersHorizontal,
   Terminal,
   Trash2,
@@ -45,23 +48,24 @@ import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { useDockStore } from '../state/dock_store';
 import { k8s } from '../providers/k8s_provider';
-import { SIDEBAR_TREE, KIND_ICONS, defaultKindFor, kindsFor } from '../core/perspectives';
+import { SIDEBAR_TREE, KIND_ICONS, defaultKindFor, kindTone, kindsFor } from '../core/perspectives';
 import { ResourceWarnings } from '../components/k8s/ResourceWarnings';
 import { StatusBadge } from '../components/k8s/StatusBadge';
+import { ColumnFilterPopup } from '../components/k8s/ColumnFilterPopup';
 import { IconButton, Tooltip } from '../components/ui/Button';
 import { Popover, MenuList, FixedMenu, type MenuItem } from '../components/ui/Dropdown';
 import { SearchInput, Input, Label } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import { PFDialog } from '../components/dialogs/PFDialog';
-import { ScaleDialog, ConfirmDialog, RestartDialog, DeleteResourceDialog } from '../components/dialogs/ActionDialogs';
+import { ScaleDialog } from '../components/dialogs/ActionDialogs';
 import { toast } from '../state/notifications_store';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { uiFactor, uiPixels } from '../core/appearance';
-import { resourceTabId } from '../core/resources/identity';
+import { resourceTabId, resourceRef } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
-import { compareCreation, compareStatusFirst, issuePriority } from '../core/resources/resource_sort';
+import { compareCreation, compareRows, issuePriority, statusChoices, type SortKey } from '../core/resources/resource_sort';
 import { ContainerIndicators } from '../components/k8s/ContainerSelect';
 import { podContainers } from '../core/resources/containers';
 import { refreshResourceWatches } from '../state/resource_watch';
@@ -79,6 +83,8 @@ interface ColumnDef {
   mono?: boolean;
   /** Default pixel width for table-layout:fixed (resizable by the user). */
   size?: number;
+  /** Tooltip shown on the cell — explains where the value comes from. */
+  hint?: string;
   get: (i: ResourceItem) => string | undefined;
 }
 
@@ -229,7 +235,7 @@ const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<string, num
         { id: 'ip', label: 'Internal IP', mono: true, get: (i) => i.nodeIp || i.ip },
         { id: 'cpu', label: 'CPU cores', get: (i) => i.nodeCpu },
         { id: 'mem', label: 'Memory (used / total)', get: (i) => { const bytes = quantity(i.nodeMem); return bytes === null ? i.nodeMem : memoryText(bytes); } },
-        { id: 'pods', label: 'Pods', get: (i) => {
+        { id: 'pods', label: 'Pods', hint: 'Pods running on the node · cluster-wide, not affected by the namespace selection', get: (i) => {
           if (i.nodePods?.includes('/')) return i.nodePods;
           const running = options?.podsByNode?.get(i.name);
           const allocatable = (i.raw as any)?.status?.allocatable?.pods || (i.raw as any)?.status?.capacity?.pods || i.nodePods;
@@ -297,6 +303,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const { selectedNamespace, selectNamespace, isConnected, isLoading } = useClusterStore();
   const {
     density, uiScale, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidth, resetColumnWidths,
+    columnOrder, setColumnOrder, resetColumnOrder,
     setRightTab, activePerspective, inspectorCollapsed, toggleInspector,
   } = useUiStore();
   const { openYamlEditor, openResourceDetail, openLogsTab, openTerminalTab, toggleSplit } = useWorkspaceStore();
@@ -353,26 +360,22 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const resizeCleanup = useRef<() => void>(() => {});
   useEffect(() => () => resizeCleanup.current(), []);
   const paneRef = useRef<HTMLDivElement>(null);
-  const [compactFilters, setCompactFilters] = useState(true);
   const currentContext = useClusterStore((s) => s.currentContext);
   const watchState = useResourceStore((s) => s.watchStates[effectiveKind]);
   const loadError = useResourceStore((s) => s.loadErrors[effectiveKind]);
   const kindLoading = useResourceStore(state => state.loadingKinds[effectiveKind]);
   const syncMode = useResourceStore(state => state.syncMode);
 
-  const [sortId, setSortId] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<1 | -1>(1);
-  const [healthFilter, setHealthFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [statusPriority, setStatusPriority] = useState('');
+  const [sorts, setSorts] = useState<SortKey[]>([]);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [menu, setMenu] = useState<{ item: ResourceItem; x: number; y: number } | null>(null);
   const [headerMenu, setHeaderMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
+  const [filterMenu, setFilterMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
+  const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [pfFor, setPfFor] = useState<ResourceItem | null>(null);
   const [scaleFor, setScaleFor] = useState<ResourceItem | null>(null);
-  const [restartFor, setRestartFor] = useState<ResourceItem | null>(null);
-  const [confirmFor, setConfirmFor] = useState<ResourceItem | null>(null);
-  const [drainFor, setDrainFor] = useState<ResourceItem | null>(null);
-  const [evictFor, setEvictFor] = useState<ResourceItem | null>(null);
+
   const [newOpen, setNewOpen] = useState(false);
   const [spinning, setSpinning] = useState(false);
   useEffect(() => setSpinning(false), [currentContext, selectedNamespace, effectiveKind]);
@@ -384,15 +387,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
 
   const perspective = kindsFor(activePerspective);
   const noKinds = !explicitKind && perspective.length === 0;
-  useEffect(() => {
-    const pane = paneRef.current;
-    if (!pane) return;
-    const update = () => setCompactFilters(pane.clientWidth / uiFactor(uiScale) < 760);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(pane);
-    return () => observer.disconnect();
-  }, [uiScale, noKinds]);
 
   useEffect(() => {
     const dk = defaultKindFor(activePerspective);
@@ -405,10 +399,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
 
   useEffect(() => {
     setSearchQuery('');
-    setSortId(null);
-    setHealthFilter('all');
-    setStatusFilter('');
-    setStatusPriority('');
+    setSorts([]);
+    setColumnFilters({});
     setSelectedUids(new Set());
     setFocusedIndex(0);
 
@@ -418,12 +410,11 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const allItems = useMemo(() => Array.from(kindResources?.values() ?? []), [kindResources]);
   const pending = !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
-  const statuses = useMemo(() => [...new Set(allItems.filter(item => inNamespaceScope(selectedNamespace, item.namespace)).map(item => tableColumns.find(column => column.id === 'status')?.get(item) || '—'))].sort(), [allItems, tableColumns, selectedNamespace]);
   const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
   const podError = useResourceStore((state) => state.loadErrors.Pod);
   const issueRanks = useMemo(() => {
     const ranks = new Map<string, number>();
-    if (healthFilter !== 'issues' && sortId !== '__issues') return ranks;
+    if (!sorts.some((key) => key.columnId === '__issues')) return ranks;
     const podsByNamespace = new Map<string | undefined, ResourceItem[]>();
     if (effectiveKind === 'Service') for (const pod of resources.Pod.values()) {
       if (!podsByNamespace.has(pod.namespace)) podsByNamespace.set(pod.namespace, []);
@@ -439,7 +430,58 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       })));
     }
     return ranks;
-  }, [allItems, effectiveKind, healthFilter, sortId, resources.Pod, resources.StorageClass, isConnected, isLoading, podsCurrent, podError]);
+  }, [allItems, effectiveKind, sorts, resources.Pod, resources.StorageClass, isConnected, isLoading, podsCurrent, podError]);
+
+  /** Values of one column with their occurrence counts — the filter popup lists them. */
+  const columnValues = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
+    // Count values over the namespace + search scoped set so the popup only offers
+    // values that are actually present in the current result set (not stale ones).
+    let list = allItems;
+    if (selectedNamespace !== 'all') list = list.filter((item) => inNamespaceScope(selectedNamespace, item.namespace));
+    const q = searchQuery.trim();
+    if (q) {
+      if (searchRegex) {
+        try {
+          const rx = new RegExp(q, 'i');
+          list = list.filter((item) => rx.test(item.name) || (item.namespace && rx.test(item.namespace)));
+        } catch {
+          list = [];
+        }
+      } else {
+        const qLower = q.toLowerCase();
+        list = list.filter((item) => item.name.toLowerCase().includes(qLower) || (item.namespace ?? '').toLowerCase().includes(qLower));
+      }
+    }
+    const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.length > 0);
+    for (const column of tableColumns) {
+      const counts = new Map<string, number>();
+      // Apply every other column's filter so the offered values match the rows the
+      // user can actually reach — but skip this column's own filter, otherwise its
+      // remaining values would disappear as soon as one value is selected.
+      let candidates = list;
+      for (const [colId, values] of activeFilters) {
+        if (colId === column.id) continue;
+        const filterColumn = tableColumns.find((c) => c.id === colId);
+        if (!filterColumn) continue;
+        const allowed = new Set(values);
+        candidates = candidates.filter((item) => allowed.has(filterColumn.get(item) ?? '—'));
+      }
+      for (const item of candidates) {
+        const value = column.get(item);
+        if (value === undefined || value === '') continue;
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+      }
+      map.set(column.id, counts);
+    }
+    return map;
+  }, [allItems, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters]);
+
+  const statusValues = useMemo(() => {
+    const column = tableColumns.find((c) => c.id === 'status');
+    if (!column) return [];
+    return statusChoices([...(columnValues.get('status')?.keys() ?? [])]);
+  }, [tableColumns, columnValues]);
 
   const rows = useMemo(() => {
     let list = allItems;
@@ -469,38 +511,56 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         });
       }
     }
-    if (healthFilter === 'issues') list = list.filter((item) => (issueRanks.get(item.uid) ?? 0) > 0);
-    if (statusFilter) list = list.filter(item => (tableColumns.find(column => column.id === 'status')?.get(item) || '—') === statusFilter);
+    // Column filters: OR inside one column, AND across columns.
+    const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.length > 0);
+    for (const [columnId, values] of activeFilters) {
+      const column = tableColumns.find((c) => c.id === columnId);
+      if (!column) continue;
+      const allowed = new Set(values);
+      list = list.filter((item) => allowed.has(column.get(item) ?? '—'));
+    }
 
     const hidden = new Set(hiddenColumns[effectiveKind] ?? []);
-    const cols = tableColumns.filter((c) => c.id === 'name' || !hidden.has(c.id));
-    if (sortId === '__issues') {
-      list = [...list].sort((a, b) => (issueRanks.get(b.uid) ?? 0) - (issueRanks.get(a.uid) ?? 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
-    } else if (sortId === '__created' || sortId === 'age') {
-      list = [...list].sort((a, b) => compareCreation(a, b, sortId === 'age' ? sortDir === 1 ? -1 : 1 : sortDir));
-    } else if (sortId === 'status' && statusPriority) {
-      const column = tableColumns.find(column => column.id === 'status');
-      list = [...list].sort((a, b) => compareStatusFirst(column?.get(a), column?.get(b), statusPriority) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
-    } else if (sortId) {
-      const col = cols.find((c) => c.id === sortId);
-      if (col) {
-        list = [...list].sort((a, b) => {
-          const av = col.get(a) ?? '';
-          const bv = col.get(b) ?? '';
-          const an = parseFloat(av);
-          const bn = parseFloat(bv);
-          const numeric = !Number.isNaN(an) && !Number.isNaN(bn) && /^[\d.]/.test(av) && /^[\d.]/.test(bv);
-          const cmp = numeric ? (an === bn ? 0 : an < bn ? -1 : 1) : av.localeCompare(bv);
-          return cmp * sortDir || (a.namespace && b.namespace && a.namespace !== b.namespace ? a.namespace.localeCompare(b.namespace) : 0) || a.name.localeCompare(b.name);
-        });
-      }
+    const visible = tableColumns.filter((c) => c.id === 'name' || !hidden.has(c.id));
+    // Saved order wins; columns the user has never moved keep their natural place.
+    const saved = columnOrder[effectiveKind] ?? [];
+    const cols = visible.length
+      ? [...visible].sort((a, b) => {
+          const ai = saved.indexOf(a.id);
+          const bi = saved.indexOf(b.id);
+          if (ai === -1 && bi === -1) return 0;
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+          return ai - bi;
+        })
+      : visible;
+    if (sorts.length) {
+      const value = (key: SortKey, item: ResourceItem): string | undefined =>
+        tableColumns.find((column) => column.id === key.columnId)?.get(item);
+      // Keys are evaluated in click order: the first key groups the rows, later keys order each group.
+      list = [...list].sort((a, b) => {
+        for (const key of sorts) {
+          if (key.columnId === '__issues') {
+            const diff = (issueRanks.get(b.uid) ?? 0) - (issueRanks.get(a.uid) ?? 0);
+            if (diff !== 0) return diff;
+            continue;
+          }
+          if (key.columnId === '__created' || key.columnId === 'age') {
+            const diff = compareCreation(a, b, key.direction === 'asc' ? 1 : -1);
+            if (diff !== 0) return diff;
+            continue;
+          }
+          const diff = compareRows(a, b, [key], value);
+          if (diff !== 0) return diff;
+        }
+        return (a.namespace && b.namespace && a.namespace !== b.namespace ? a.namespace.localeCompare(b.namespace) : 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid);
+      });
     } else {
       list = [...list].sort((a, b) => (a.namespace && b.namespace && a.namespace !== b.namespace ? a.namespace.localeCompare(b.namespace) : 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
     }
     return { list, cols };
-  }, [allItems, selectedNamespace, searchQuery, searchRegex, effectiveKind, sortId, sortDir, hiddenColumns, healthFilter, statusFilter, statusPriority, issueRanks, tableColumns]);
-  useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, healthFilter, statusFilter, statusPriority, sortId, sortDir]);
-  const order = sortId === '__issues' ? 'issues' : sortId === '__created' ? sortDir === -1 ? 'newest' : 'oldest' : sortId === 'name' ? sortDir === 1 ? 'name-asc' : 'name-desc' : sortId ? 'column' : 'default';
+  }, [allItems, selectedNamespace, searchQuery, searchRegex, effectiveKind, sorts, hiddenColumns, columnFilters, issueRanks, tableColumns, columnOrder]);
+  useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, columnFilters, sorts]);
 
   const virtualized = rows.list.length > 200;
   const rowHeight = Math.ceil(Math.max((density === 'compact' ? 25 : 30) * uiFactor(uiScale), (11.5 * 1.45 + 8) * uiFactor(uiScale) + 1));
@@ -596,6 +656,17 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const [autoWidths, setAutoWidths] = useState<Record<string, number>>({});
   const visibleColumnIds = ['__index', ...rows.cols.map(column => column.id)];
   const columnsSignature = visibleColumnIds.join('|');
+
+  /** Move a column left/right — the keyboard alternative to dragging the header. */
+  const moveColumn = (colId: string, offset: number) => {
+    const order = rows.cols.map((column) => column.id);
+    const index = order.indexOf(colId);
+    const target = index + offset;
+    if (index === -1 || target < 0 || target >= order.length) return;
+    const next = [...order];
+    next.splice(target, 0, ...next.splice(index, 1));
+    setColumnOrder(effectiveKind, next);
+  };
   const fitColumns = (force = false) => {
     const pane = paneRef.current; if (!pane?.clientWidth) return;
     const stored = useUiStore.getState().columnWidths;
@@ -675,15 +746,79 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     el.addEventListener('lostpointercapture', up);
   };
 
+  /* ------------------- Sorting & filtering ------------------- */
+
+  /**
+   * Sort cycle for a column header.
+   *
+   * The first click adds the column to the hierarchy (outermost grouping),
+   * the next clicks switch the direction and finally remove it. The Status
+   * column cycles through the statuses that are really present in the data.
+   */
+  const cycleSort = (colId: string) => {
+    setSorts((previous) => {
+      const index = previous.findIndex((key) => key.columnId === colId);
+      if (colId === 'status') {
+        const choices = statusValues.length ? statusValues : ['—'];
+        if (index === -1) return [...previous, { columnId: colId, direction: 'asc', statusFirst: choices[0] }];
+        const current = previous[index];
+        const next = choices[(choices.indexOf(current.statusFirst ?? choices[0]) + 1) % choices.length];
+        const copy = [...previous];
+        copy[index] = { ...current, statusFirst: next };
+        return copy;
+      }
+      if (index === -1) return [...previous, { columnId: colId, direction: 'desc' }];
+      const current = previous[index];
+      if (current.direction === 'desc') {
+        const copy = [...previous];
+        copy[index] = { ...current, direction: 'asc' };
+        return copy;
+      }
+      return previous.filter((_, position) => position !== index);
+    });
+  };
+
+  const sortPriority = (colId: string): number => sorts.findIndex((key) => key.columnId === colId);
+
+  const toggleFilterValue = (colId: string, value: string) => {
+    setColumnFilters((previous) => {
+      const current = previous[colId] ?? [];
+      const next = current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value];
+      const updated = { ...previous };
+      if (next.length) updated[colId] = next;
+      else delete updated[colId];
+      return updated;
+    });
+  };
+
+  const clearFilterColumn = (colId: string) => {
+    setColumnFilters((previous) => {
+      const updated = { ...previous };
+      delete updated[colId];
+      return updated;
+    });
+  };
+
+  const resetAll = () => {
+    setSorts([]);
+    setColumnFilters({});
+    setSearchQuery('');
+  };
+
+  const activeFilterCount = Object.values(columnFilters).reduce((sum, values) => sum + values.length, 0);
+
   const buildHeaderMenu = (colId: string): MenuItem[] => {
     const col = tableColumns.find((c) => c.id === colId);
+    const index = rows.cols.findIndex((c) => c.id === colId);
+    const canMoveLeft = index > 0;
+    const canMoveRight = index >= 0 && index < rows.cols.length - 1;
     return [
-      ...(colId === 'status' ? statuses.map(status => ({ id: `status-${status}`, label: `Show ${status} first`, checked: sortId === 'status' && statusPriority === status, onSelect: () => { setStatusPriority(status); setSortId('status'); setSortDir(1); } })) : []),
-      ...(colId === 'status' ? [{ id: 'status-separator', label: '', separator: true }] : []),
-      { id: 'asc', label: 'Sort ascending', icon: ArrowUp, kbd: sortId === colId && sortDir === 1 && !(colId === 'status' && statusPriority) ? '✓' : undefined, onSelect: () => { setStatusPriority(''); setSortId(colId); setSortDir(1); } },
-      { id: 'desc', label: 'Sort descending', icon: ArrowDown, kbd: sortId === colId && sortDir === -1 && !(colId === 'status' && statusPriority) ? '✓' : undefined, onSelect: () => { setStatusPriority(''); setSortId(colId); setSortDir(-1); } },
-      ...(sortId === colId ? [{ id: 'sort-clear', label: 'Clear sorting', onSelect: () => setSortId(null) } as MenuItem] : []),
+      { id: 'asc', label: 'Sort ascending', icon: ArrowUp, kbd: sortPriority(colId) >= 0 && sorts[sortPriority(colId)]?.direction === 'asc' ? '✓' : undefined, onSelect: () => cycleSort(colId) },
+      { id: 'desc', label: 'Sort descending', icon: ArrowDown, kbd: sortPriority(colId) >= 0 && sorts[sortPriority(colId)]?.direction === 'desc' ? '✓' : undefined, onSelect: () => cycleSort(colId) },
+      ...(sortPriority(colId) >= 0 ? [{ id: 'sort-clear', label: 'Remove from sorting', onSelect: () => setSorts((previous) => previous.filter((key) => key.columnId !== colId)) } as MenuItem] : []),
       { id: 'sep-h1', label: '', separator: true, onSelect: () => {} },
+      { id: 'move-left', label: 'Move column left', icon: ArrowRightLeft, disabled: !canMoveLeft, onSelect: () => moveColumn(colId, -1) },
+      { id: 'move-right', label: 'Move column right', icon: ArrowRightLeft, disabled: !canMoveRight, onSelect: () => moveColumn(colId, 1) },
       {
         id: 'hide',
         label: `Hide “${col?.label ?? colId}”`,
@@ -841,47 +976,46 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       toast.error('No active cluster context');
       return;
     }
-    if (!node.raw?.spec?.unschedulable) {
-      const outcome = await doToggleCordon(node);
-      if (outcome !== 'success') {
+    if (k8s.demo) {
+      const allPods = [...(useResourceStore.getState().resources.Pod?.values() ?? [])];
+      const nodePods = allPods.filter(
+        (p) => (p.raw?.spec?.nodeName === node.name || p.node === node.name) &&
+          !p.raw?.metadata?.ownerReferences?.some((o: any) => o.kind === 'DaemonSet')
+      );
+      if (nodePods.length === 0) {
+        toast.success(`Node ${node.name} cordoned; no non-daemonset pods to drain`);
         return;
       }
-    }
-    const allPods = [...(useResourceStore.getState().resources.Pod?.values() ?? [])];
-    const nodePods = allPods.filter(
-      (p) => (p.raw?.spec?.nodeName === node.name || p.node === node.name) &&
-        !p.raw?.metadata?.ownerReferences?.some((o: any) => o.kind === 'DaemonSet')
-    );
-
-    if (nodePods.length === 0) {
-      toast.success(`Node ${node.name} cordoned; no non-daemonset pods to drain`);
+      for (const pod of nodePods) {
+        useResourceStore.getState().deleteItem('Pod', pod.uid);
+      }
+      toast.success(`Drained ${nodePods.length} pod(s) from node ${node.name} (demo)`);
       return;
     }
-
-    let evicted = 0;
-    let failed = 0;
-    for (const pod of nodePods) {
-      try {
-        if (k8s.demo) {
-          useResourceStore.getState().deleteItem('Pod', pod.uid);
-          evicted++;
-        } else {
-          await k8s.evictPod(currentContext!, pod.name, pod.namespace ?? 'default', pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
-          evicted++;
-        }
-      } catch (err: any) {
-        if (err?.code === 'cancelled') {
-          toast.info(`Drain cancelled. ${evicted} pod(s) evicted.`);
-          if (!k8s.demo && evicted > 0) await refresh();
-          return;
-        }
-        failed++;
-        toast.error(`Eviction failed for pod ${pod.name}`, String(err?.message || err));
+    try {
+      const primary = resourceRef(currentContext!, node);
+      const result = await k8s.applyBatch(primary, [{
+        operation: 'drain',
+        resource: primary,
+        resource_version: node.raw?.metadata?.resourceVersion ?? '',
+        critical: true,
+      }]);
+      if (result.stopped) {
+        toast.error(`Drain failed for ${node.name}`, 'The node could not be cordoned. Nothing was evicted.');
+        return;
       }
-    }
-    if (evicted > 0 || failed === 0) {
-      if (!k8s.demo) await refresh();
-      toast.success(`Drained ${evicted} pod(s) from node ${node.name}${failed > 0 ? ` (${failed} failed)` : ''}`);
+      const evicted = result.steps.filter((step) => step.action === 'EVICT' && step.ok).length;
+      const failed = result.steps.filter((step) => step.action === 'EVICT' && !step.ok).length;
+      const summary = `Drained node ${node.name}: ${evicted} pod(s) evicted${failed > 0 ? `, ${failed} failed` : ''}`;
+      if (failed > 0) toast.warn('Drain completed with eviction failures', summary);
+      else toast.success('Drain complete', summary);
+      await refresh();
+    } catch (err: any) {
+      if (err?.code === 'cancelled') {
+        toast.info('Drain cancelled');
+        return;
+      }
+      toast.error(`Drain failed for ${node.name}`, String(err?.message || err));
     }
   };
 
@@ -1120,7 +1254,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       opItems.push({ id: 'scale', label: 'Scale replicas…', icon: Maximize2, onSelect: () => setScaleFor(item) });
     }
     if (!customType && ['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
-      opItems.push({ id: 'restart', label: 'Restart rollout', icon: RotateCw, onSelect: () => setRestartFor(item) });
+      opItems.push({ id: 'restart', label: 'Restart rollout', icon: RotateCw, onSelect: () => { void doRestart(item); } });
     }
     if (!customType && item.kind === 'ReplicaSet') {
       opItems.push({ id: 'scale', label: 'Scale replicas…', icon: Maximize2, onSelect: () => setScaleFor(item) });
@@ -1149,7 +1283,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
           label: 'Drain Node…',
           icon: ShieldAlert,
           danger: true,
-          onSelect: () => setDrainFor(item),
+          onSelect: () => { void doDrain(item); },
         },
       );
     }
@@ -1194,9 +1328,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     // Danger zone
     const dangerItems: MenuItem[] = [];
     if (!customType && item.kind === 'Pod') {
-      dangerItems.push({ id: 'evict', label: 'Evict Pod…', icon: Trash2, danger: true, onSelect: () => setEvictFor(item) });
+      dangerItems.push({ id: 'evict', label: 'Evict Pod…', icon: Trash2, danger: true, onSelect: () => { void doEvictPod(item); } });
     }
-    dangerItems.push({ id: 'delete', disabled: !!customType, label: k8s.demo ? 'Delete (demo)…' : 'Delete…', icon: Trash2, danger: true, kbd: '⌫', onSelect: () => setConfirmFor(item) });
+    dangerItems.push({ id: 'delete', disabled: !!customType, label: k8s.demo ? 'Delete (demo)…' : 'Delete…', icon: Trash2, danger: true, kbd: '⌫', onSelect: () => { void doDelete(item); } });
 
     items.push(
       { id: 'sep-danger', label: '', separator: true },
@@ -1224,28 +1358,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const KindIcon = KIND_ICONS[effectiveKind] || Boxes;
   const rowH = density === 'compact' ? 'h-[calc(25px*var(--ui-factor))]' : 'h-[calc(30px*var(--ui-factor))]';
   const hiddenForKind = new Set(hiddenColumns[effectiveKind] ?? []);
-  const activeFilters = Number(healthFilter !== 'all') + Number(Boolean(statusFilter)) + Number(order !== 'default');
-  const filterControls = (
-        <div className={cx('resource-filter-controls', compactFilters && 'resource-filter-controls-popup')}>
-          <label className="resource-filter-field">{compactFilters && <span>Health</span>}<select aria-label="Resource health filter" className="ide-select max-w-full" value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)}>
-            <option value="all">All resources</option><option value="issues">With issues only</option>
-          </select></label>
-          {(statuses.length > 1 || statusFilter) && <label className="resource-filter-field">{compactFilters && <span>Status</span>}<select aria-label="Resource status filter" className="ide-select max-w-full" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="">All statuses</option>
-            {(statusFilter && !statuses.includes(statusFilter) ? [...statuses, statusFilter] : statuses).map((status) => <option key={status} value={status}>{status}</option>)}
-          </select></label>}
-          <label className="resource-filter-field">{compactFilters && <span>Order</span>}<select aria-label="Resource order" className="ide-select max-w-full" value={order} onChange={(event) => {
-            const value = event.target.value;
-            setSortId(value === 'issues' ? '__issues' : ['newest', 'oldest'].includes(value) ? '__created' : value.startsWith('name-') ? 'name' : null);
-            setSortDir(value === 'newest' || value === 'name-desc' ? -1 : 1);
-          }}>
-            <option value="default">Sort: default</option><option value="issues">Issues first</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option>
-            <option value="name-asc">Name: A–Z</option><option value="name-desc">Name: Z–A</option>
-            {order === 'column' && <option value="column">Sort: {tableColumns.find((column) => column.id === sortId)?.label}</option>}
-          </select></label>
-          {compactFilters && <Button size="sm" onClick={() => { setHealthFilter('all'); setStatusFilter(''); setSortId(null); }}>Reset filters and order</Button>}
-        </div>
-  );
+  const activeFilters = activeFilterCount + sorts.length;
 
   return (
     <div ref={paneRef} className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-[var(--bg-canvas)]">
@@ -1306,13 +1419,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
               <div className="my-1 h-px bg-[var(--border-subtle)]" />
               <MenuList
                 items={[
+                  { id: 'issues', label: 'Sort: issues first', checked: sorts.some((key) => key.columnId === '__issues'), onSelect: () => setSorts((previous) => previous.some((key) => key.columnId === '__issues') ? previous.filter((key) => key.columnId !== '__issues') : [...previous, { columnId: '__issues', direction: 'desc' }]) },
                   { id: 'reset', label: 'Reset visibility', onSelect: () => setHiddenColumns(effectiveKind, []) },
                   { id: 'reset-widths', label: 'Reset column widths', onSelect: resetWidths },
+                  { id: 'reset-order', label: 'Reset column order', disabled: !(columnOrder[effectiveKind]?.length), onSelect: () => { resetColumnOrder(effectiveKind); toast.info('Column order reset', effectiveKind); } },
                 ]}
                 onSelect={(item) => { item.onSelect?.(); close(); }}
               />
               <div className="px-2.5 pb-1 pt-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] leading-relaxed">
-                Drag column borders to resize · right-click headers to sort or hide
+                Drag headers to reorder · drag borders to resize · right-click a header to filter
               </div>
             </>
           )}
@@ -1337,13 +1452,27 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
           placeholder={`Filter ${displayKind.toLowerCase()}s…`}
           className="resource-search-field"
         />
-        {compactFilters ? <Popover align="end" width={280} trigger={({ open }) => <button aria-label="Resource filters and sorting" aria-expanded={open} className={cx('resource-filter-trigger', open && 'border-[var(--accent)]')}>
-          <SlidersHorizontal size="calc(13px * var(--ui-factor))" /><span>Filters</span>{activeFilters > 0 && <span className="text-[var(--accent)]">{activeFilters}</span>}
-        </button>}>{() => <div role="group" aria-label="Resource filter options" className="p-3">{filterControls}</div>}</Popover> : filterControls}
+        {activeFilters > 0 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={resetAll}
+            aria-label="Reset all filters and sorting"
+            title="Reset all filters and sorting"
+            className="!h-[calc(24px*var(--ui-factor))] shrink-0 gap-1.5 text-[var(--text-secondary)]"
+          >
+            <RotateCcw size="calc(12px * var(--ui-factor))" />
+            <span>Reset</span>
+            <span className="font-mono text-[length:calc(10px*var(--ui-factor))] tabular-nums text-[var(--accent)]">{activeFilters}</span>
+          </Button>
+        )}
+        <span className="shrink-0 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] hidden lg:inline">
+          Click a header to sort · right-click to filter
+        </span>
       </div>
 
       {/* JetBrains DataGrip Data Table */}
-      <div ref={tableRef} tabIndex={0} aria-label={`${displayKind} resource table`} aria-busy={pending || spinning} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-text resource-table-scroll" data-testid="resource-table">
+      <div ref={tableRef} tabIndex={0} aria-label={`${displayKind} resource table`} aria-busy={pending || spinning} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-none resource-table-scroll" data-testid="resource-table">
         {k8s.supportsResourceWatch && !customType && resourceType(effectiveKind).watch === false && <p className="px-3 py-1 text-xs text-[var(--text-secondary)]">This API supports snapshots only · refreshed every 30 seconds</p>}
         {loadError && <RequestErrorNotice error={loadError} onRetry={() => void refresh()} retainedData={allItems.length > 0 || watchState?.hasSnapshot === true} />}
         {initialLoading && <ResourceLoading label={`Loading ${displayKind} resources…`} description={watchState ? 'Waiting for the first complete snapshot from Kubernetes.' : 'Waiting for Kubernetes to respond.'} />}
@@ -1352,8 +1481,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         {rows.list.length === 0 ? !initialLoading && !loadError && (
           <EmptyState
             kind={displayKind}
-            filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery || healthFilter !== 'all' || !!statusFilter}
-            onClear={() => { selectNamespace('all'); setSearchQuery(''); setHealthFilter('all'); setStatusFilter(''); }}
+            filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery || activeFilterCount > 0 || sorts.length > 0}
+            onClear={() => { selectNamespace('all'); resetAll(); }}
             isNew={!customType && k8s.demo && allItems.length === 0 && !loadError}
             onNew={() => setNewOpen(true)}
           />
@@ -1373,7 +1502,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
             <thead>
               <tr>
                 {/* Index & Selection Column */}
-                <th aria-label="Row numbers" className="datagrip-th text-center p-0" style={{ width: uiPixels(widthFor('__index')) }}>
+                <th aria-label="Row numbers" className="datagrip-th select-none text-center p-0" style={{ width: uiPixels(widthFor('__index')) }}>
                   <div
                     onClick={toggleSelectAll}
                     className="w-full h-full flex items-center justify-center cursor-pointer text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -1395,35 +1524,108 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                 </th>
 
                 {rows.cols.map((c) => {
-                  const active = sortId === c.id;
+                  const priority = sortPriority(c.id);
+                  const key = priority >= 0 ? sorts[priority] : undefined;
+                  const filterValues = columnFilters[c.id] ?? [];
+                  const filtered = filterValues.length > 0;
                   return (
                     <th
                       key={c.id}
                       aria-label={c.label}
-                      aria-sort={active ? c.id === 'status' && statusPriority ? 'other' : sortDir === 1 ? 'ascending' : 'descending' : 'none'}
-                      tabIndex={c.id === 'status' ? 0 : undefined}
-                      onKeyDown={event => { if (c.id === 'status' && ['Enter', ' '].includes(event.key)) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); setHeaderMenu({ colId: c.id, x: rect.left, y: rect.bottom }); } }}
-                      title={c.id === 'status' ? statusPriority && active ? `${statusPriority} first · choose another status` : 'Choose which status to show first' : undefined}
+                      aria-sort={key ? (key.statusFirst !== undefined ? 'other' : key.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                      tabIndex={0}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', c.id);
+                        setDraggingColumn(c.id);
+                      }}
+                      onDragOver={(event) => {
+                        if (!draggingColumn) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = 'move';
+                        setDropTarget(c.id);
+                      }}
+                      onDragLeave={() => setDropTarget((current) => (current === c.id ? null : current))}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const source = draggingColumn;
+                        setDraggingColumn(null);
+                        setDropTarget(null);
+                        if (!source || source === c.id) return;
+                        const order = rows.cols.map((column) => column.id);
+                        const from = order.indexOf(source);
+                        const to = order.indexOf(c.id);
+                        if (from === -1 || to === -1) return;
+                        const next = [...order];
+                        next.splice(to, 0, ...next.splice(from, 1));
+                        setColumnOrder(effectiveKind, next);
+                      }}
+                      onDragEnd={() => { setDraggingColumn(null); setDropTarget(null); }}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); cycleSort(c.id); }
+                        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                          event.preventDefault();
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setFilterMenu({ colId: c.id, x: rect.left, y: rect.bottom });
+                        }
+                      }}
+                      title={key?.statusFirst ? `${key.statusFirst} first` : c.hint}
                       style={{ width: uiPixels(widthFor(c.id)) }}
                       onClick={event => {
-                        if (c.id === 'status') { const rect = event.currentTarget.getBoundingClientRect(); setHeaderMenu({ colId: c.id, x: rect.left, y: rect.bottom }); return; }
-                        if (active && sortDir === -1) { setSortId(null); }
-                        else if (active) { setSortDir(-1); }
-                        else { setSortId(c.id); setSortDir(1); }
+                        if ((event.target as HTMLElement).closest('[data-column-caret]')) return;
+                        cycleSort(c.id);
                       }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        setHeaderMenu({ colId: c.id, x: e.clientX, y: e.clientY });
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setFilterMenu({ colId: c.id, x: event.clientX, y: event.clientY });
                       }}
                       className={cx(
-                        'datagrip-th relative text-left font-medium cursor-pointer hover:text-[var(--text-primary)] transition-colors',
-                        c.align === 'right' && 'text-right'
+                        'datagrip-th select-none px-2.5 relative text-left font-medium cursor-pointer hover:text-[var(--text-primary)] transition-colors',
+                        c.align === 'right' && 'text-right',
+                        draggingColumn === c.id && 'opacity-50',
+                        dropTarget === c.id && draggingColumn && draggingColumn !== c.id && 'ring-1 ring-inset ring-[var(--accent)]',
                       )}
                     >
-                      <span className="inline-flex items-center gap-1">
-                        {c.label}
-                        {active && c.id === 'status' && statusPriority ? <span className="truncate text-[var(--accent)] text-[length:calc(10px*var(--ui-factor))]">{statusPriority} ↑</span> : active && (sortDir === 1 ? <ArrowUp size="calc(10px * var(--ui-factor))" className="text-[var(--accent)]" /> : <ArrowDown size="calc(10px * var(--ui-factor))" className="text-[var(--accent)]" />)}
+                      <span className="inline-flex items-center gap-1 min-w-0">
+                        <span className="truncate">{c.label}</span>
+                        {key && (
+                          <span className="shrink-0 inline-flex items-center gap-0.5 text-[var(--accent)]" title={key.statusFirst ? `${key.statusFirst} first` : key.direction === 'asc' ? 'Sorted ascending' : 'Sorted descending'}>
+                            <span className="font-mono text-[length:calc(9px*var(--ui-factor))] tabular-nums">{priority + 1}</span>
+                            {key.statusFirst !== undefined
+                              ? <span className="truncate max-w-[calc(80px*var(--ui-factor))] text-[length:calc(10px*var(--ui-factor))]">{key.statusFirst} ↑</span>
+                              : key.direction === 'asc' ? <ArrowUp size="calc(10px * var(--ui-factor))" /> : <ArrowDown size="calc(10px * var(--ui-factor))" />}
+                          </span>
+                        )}
+                        {filtered && (
+                          <span className="shrink-0 inline-flex items-center gap-0.5 text-[var(--accent)]" title={`Filtered: ${filterValues.join(', ')}`}>
+                            <Filter size="calc(10px * var(--ui-factor))" />
+                            <span className="font-mono text-[length:calc(9px*var(--ui-factor))] tabular-nums">{filterValues.length}</span>
+                          </span>
+                        )}
                       </span>
+                      <button
+                        type="button"
+                        data-column-caret
+                        aria-label={`${c.label} column actions`}
+                        aria-haspopup="menu"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          event.preventDefault();
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setHeaderMenu({ colId: c.id, x: rect.left, y: rect.bottom });
+                        }}
+                        className={cx(
+                          'absolute top-1/2 -translate-y-1/2 rounded-[calc(3px*var(--ui-factor))] text-[var(--text-muted)] opacity-60 hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] hover:opacity-100 focus-visible:opacity-100 transition-opacity',
+                          // The caret sits on the opposite edge from the label so it never
+                          // merges with right-aligned headers; it uses the empty side.
+                          c.align === 'right'
+                            ? 'left-[calc(0px*var(--ui-factor))] p-[calc(1px*var(--ui-factor))]'
+                            : 'right-[calc(7px*var(--ui-factor))] p-[calc(2px*var(--ui-factor))]'
+                        )}
+                      >
+                        <ChevronDown size="calc(10px * var(--ui-factor))" />
+                      </button>
                       {/* Drag handle for resizing column */}
                       <span
                         role="separator" aria-label={`Resize ${c.label} column`} tabIndex={0} aria-valuenow={widthFor(c.id)} onKeyDown={(e) => resizeColumnWithKeyboard(e, c.id)} aria-orientation="vertical"
@@ -1497,7 +1699,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                       <td
                         key={c.id}
                         className={cx(
-                          'datagrip-cell px-2.5',
+                          'datagrip-cell select-none px-2.5',
                           c.align === 'right' && 'text-right',
                           c.mono && 'font-mono text-[length:calc(11px*var(--ui-factor))]'
                         )}
@@ -1518,44 +1720,28 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       {/* Row context menu */}
       {menu && <FixedMenu rect={{ x: menu.x, y: menu.y }} items={buildRowMenu(menu.item)} onClose={() => setMenu(null)} />}
 
-      {/* Column header context menu */}
+      {/* Column actions menu */}
       {headerMenu && (
         <FixedMenu rect={{ x: headerMenu.x, y: headerMenu.y }} items={buildHeaderMenu(headerMenu.colId)} onClose={() => setHeaderMenu(null)} />
+      )}
+
+      {/* Column filter popup — right-click on a header */}
+      {filterMenu && (
+        <ColumnFilterPopup
+          rect={{ x: filterMenu.x, y: filterMenu.y }}
+          columnLabel={tableColumns.find((column) => column.id === filterMenu.colId)?.label ?? filterMenu.colId}
+          values={columnValues.get(filterMenu.colId) ?? new Map()}
+          selected={columnFilters[filterMenu.colId] ?? []}
+          quick={filterMenu.colId === 'status' ? statusValues.filter((status) => status !== '—').slice(0, 6) : undefined}
+          onToggle={(value) => toggleFilterValue(filterMenu.colId, value)}
+          onClear={() => clearFilterColumn(filterMenu.colId)}
+          onClose={() => setFilterMenu(null)}
+        />
       )}
 
       {/* Action Dialogs */}
       <PFDialog item={pfFor} onClose={() => setPfFor(null)} />
       <ScaleDialog item={scaleFor} onClose={() => setScaleFor(null)} onApply={(n) => scaleFor && doScale(scaleFor, n)} />
-      <RestartDialog item={restartFor} onClose={() => setRestartFor(null)} onConfirm={() => restartFor && doRestart(restartFor)} />
-      <DeleteResourceDialog
-        item={confirmFor}
-        onClose={() => setConfirmFor(null)}
-        onConfirm={() => confirmFor && doDelete(confirmFor)}
-      />
-      <ConfirmDialog
-        open={!!drainFor}
-        title={`Drain node ${drainFor?.name ?? ''}`}
-        confirmLabel="Drain Node"
-        onClose={() => setDrainFor(null)}
-        onConfirm={() => drainFor && doDrain(drainFor)}
-        message={
-          <div>
-            Cordon <strong className="font-mono text-[var(--text-primary)]">{drainFor?.name}</strong> and evict non-daemonset pods running on it?
-          </div>
-        }
-      />
-      <ConfirmDialog
-        open={!!evictFor}
-        title={`Evict pod ${evictFor?.name ?? ''}`}
-        confirmLabel="Evict Pod"
-        onClose={() => setEvictFor(null)}
-        onConfirm={() => evictFor && doEvictPod(evictFor)}
-        message={
-          <div>
-            Evict pod <strong className="font-mono text-[var(--text-primary)]">{evictFor?.name}</strong> from namespace <span className="font-mono">{evictFor?.namespace}</span>? This operation honors PodDisruptionBudgets.
-          </div>
-        }
-      />
       <NewResourceDialog
         open={newOpen}
         kind={effectiveKind}
@@ -1583,6 +1769,13 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   );
 };
 
+/** Kind icon colored by the shared group palette — the same color as in the sidebar. */
+function KindIcon({ item }: { item: ResourceItem }) {
+  const Icon = KIND_ICONS[item.kind as ResourceKind] ?? Boxes;
+  const tone = kindTone(item.kind, item.apiVersion ? parseApiVersion(item.apiVersion).group : undefined);
+  return <Icon size="calc(12px * var(--ui-factor))" className="shrink-0" style={{ color: tone.color }} aria-hidden="true" />;
+}
+
 function CellValue({
   col,
   item,
@@ -1592,7 +1785,7 @@ function CellValue({
 }) {
   const v = col.get(item);
   if (v === undefined || v === '') return <span className="text-[var(--text-disabled)]">—</span>;
-
+  if (col.hint && col.id !== 'name') return <span title={col.hint} className="block truncate">{v}</span>;
   if (col.id === 'name') {
     if (item.kind === 'CustomResourceDefinition') {
       const crdType = customResourceType(item);
@@ -1615,7 +1808,7 @@ function CellValue({
         );
       }
     }
-    return <span className="inline-flex min-w-0 items-center gap-2 max-w-full align-middle"><ResourceWarnings item={item} /><span className="min-w-0 truncate text-[var(--text-primary)] font-mono text-[length:calc(11.5px*var(--ui-factor))] font-medium" title={v}>{v}</span></span>;
+    return <span className="inline-flex min-w-0 items-center gap-2 max-w-full align-middle"><KindIcon item={item} /><ResourceWarnings item={item} /><span className="min-w-0 truncate text-[var(--text-primary)] font-mono text-[length:calc(11.5px*var(--ui-factor))] font-medium" title={v}>{v}</span></span>;
   }
   if (col.id === 'namespace') return <span className="text-[var(--text-secondary)]">{v}</span>;
   if (col.id === 'status' || col.id === 'conditions') return <StatusBadge status={v} />;

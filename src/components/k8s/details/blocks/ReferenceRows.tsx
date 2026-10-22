@@ -32,7 +32,7 @@ export function ReferenceRows({ entries, onNavigate, empty }: ReferenceRowsProps
         const target = entry.item;
         const content = (
           <>
-            <ResourceKindBadge kind={entry.kind} />
+            <ResourceKindBadge kind={entry.kind} apiVersion={entry.item?.apiVersion} />
             <span className="details-resource-name" title={entry.name}>{entry.name}</span>
             <span className="details-resource-namespace">{entry.namespace ?? 'cluster'}</span>
           </>

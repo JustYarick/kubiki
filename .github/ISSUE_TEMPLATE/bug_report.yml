@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible problem with Kubiki.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include kubeconfig credentials, access tokens, Secret values, or private cluster dumps.
+        For vulnerabilities, follow the [security policy](https://github.com/JustYarick/kubiki#security).
+  - type: input
+    id: version
+    attributes:
+      label: Kubiki version or commit
+      placeholder: "For example: v0.1.0 or a commit hash"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: "For example: macOS on Apple Silicon"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Application mode
+      options:
+        - Desktop application
+        - Browser development bridge
+        - Browser demo mode
+        - CLI
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal example and any relevant Kubernetes version.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include relevant errors or sanitized screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Additional diagnostics
+      description: For hangs, include the test or command and its last output. For Linux rendering issues, include graphics diagnostics.

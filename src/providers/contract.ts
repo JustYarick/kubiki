@@ -1,5 +1,7 @@
 import type { ResourceWatchProvider } from './watch_types';
 import type { KubeContextInfo, ResourceItem, ResourceKind } from '../types/k8s';
+import type { ResourceRef } from '../core/resources/resource_types';
+import type { BatchResult, BatchStep } from './mutations';
 
 /** The transport must reject with K8sRequestError; reads never substitute demo data. */
 export interface KubernetesProvider extends ResourceWatchProvider {
@@ -23,4 +25,6 @@ export interface KubernetesProvider extends ResourceWatchProvider {
   applyManifest(context: string, manifest: string, item?: ResourceItem): Promise<string>;
   deleteResource(context: string, kind: string, name: string, namespace: string | undefined, uid: string, resourceVersion: string, apiVersion?: string): Promise<string>;
   evictPod(context: string, name: string, namespace: string, uid: string, resourceVersion: string): Promise<string>;
+  /** One user action, one confirmation, for every step in the batch. */
+  applyBatch(primary: ResourceRef, steps: BatchStep[]): Promise<BatchResult>;
 }

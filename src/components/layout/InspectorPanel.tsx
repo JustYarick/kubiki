@@ -8,7 +8,7 @@ import { useUiStore } from '../../state/ui_store';
 import { useDockStore } from '../../state/dock_store';
 import { buildResourceGraph } from '../../core/resources/relationships';
 import { useHelmGraph } from '../../providers/use_helm_graph';
-import { resourceKey } from '../../core/resources/identity';
+import { resourceKey, resourceRef } from '../../core/resources/identity';
 import { resourceEvents } from '../../core/resources/resource_events';
 import { podContainers } from '../../core/resources/containers';
 import { findWorkloadPods, preferredWorkloadPod } from '../../core/resources/workload_pods';
@@ -18,7 +18,6 @@ import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
 import { IconButton, Button } from '../ui/Button';
 import { SearchInput } from '../ui/Input';
 import { PFDialog } from '../dialogs/PFDialog';
-import { ConfirmDialog, RestartDialog, DeleteResourceDialog } from '../dialogs/ActionDialogs';
 import { toast } from '../../state/notifications_store';
 import { parse, stringify } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
@@ -97,9 +96,6 @@ function KubernetesResourceDetails({
   );
   const childPods = useMemo(() => item ? findWorkloadPods(item, resources) : [], [item, resources]);
   const currentContext = useClusterStore((s) => s.currentContext);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmRestart, setConfirmRestart] = useState(false);
-  const [confirmDrain, setConfirmDrain] = useState(false);
 
   if (!item) {
     return (
@@ -256,46 +252,45 @@ function KubernetesResourceDetails({
       toast.error('No active cluster context');
       return;
     }
-    if (!item.raw?.spec?.unschedulable) {
-      const outcome = await doToggleCordon();
-      if (outcome !== 'success') {
+    if (k8s.demo) {
+      const allPods = [...(useResourceStore.getState().resources.Pod?.values() ?? [])];
+      const nodePods = allPods.filter(
+        (p) => (p.raw?.spec?.nodeName === item.name || p.node === item.name) &&
+          !p.raw?.metadata?.ownerReferences?.some((o: any) => o.kind === 'DaemonSet')
+      );
+      if (nodePods.length === 0) {
+        toast.success(`Node ${item.name} cordoned; no non-daemonset pods to drain`);
         return;
       }
-    }
-    const allPods = [...(useResourceStore.getState().resources.Pod?.values() ?? [])];
-    const nodePods = allPods.filter(
-      (p) => (p.raw?.spec?.nodeName === item.name || p.node === item.name) &&
-        !p.raw?.metadata?.ownerReferences?.some((o: any) => o.kind === 'DaemonSet')
-    );
-
-    if (nodePods.length === 0) {
-      toast.success(`Node ${item.name} cordoned; no non-daemonset pods to drain`);
+      for (const pod of nodePods) {
+        useResourceStore.getState().deleteItem('Pod', pod.uid);
+      }
+      toast.success(`Drained ${nodePods.length} pod(s) from node ${item.name} (demo)`);
       return;
     }
-
-    toast.info(`Evicting ${nodePods.length} pods from ${item.name}…`);
-    let evicted = 0;
-    let failed = 0;
-    for (const pod of nodePods) {
-      try {
-        if (k8s.demo) {
-          useResourceStore.getState().deleteItem('Pod', pod.uid);
-          evicted++;
-        } else {
-          await k8s.evictPod(currentContext!, pod.name, pod.namespace ?? 'default', pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
-          evicted++;
-        }
-      } catch (err: any) {
-        if (err?.code === 'cancelled') {
-          toast.info(`Drain cancelled. ${evicted} pod(s) evicted.`);
-          return;
-        }
-        failed++;
-        toast.error(`Eviction failed for pod ${pod.name}`, String(err?.message || err));
+    try {
+      const primary = resourceRef(currentContext!, item);
+      const result = await k8s.applyBatch(primary, [{
+        operation: 'drain',
+        resource: primary,
+        resource_version: item.raw?.metadata?.resourceVersion ?? '',
+        critical: true,
+      }]);
+      if (result.stopped) {
+        toast.error(`Drain failed for ${item.name}`, 'The node could not be cordoned. Nothing was evicted.');
+        return;
       }
-    }
-    if (evicted > 0 || failed === 0) {
-      toast.success(`Drain completed for ${item.name} (${evicted} pods evicted${failed > 0 ? `, ${failed} failed` : ''})`);
+      const evicted = result.steps.filter((step) => step.action === 'EVICT' && step.ok).length;
+      const failed = result.steps.filter((step) => step.action === 'EVICT' && !step.ok).length;
+      const summary = `Drained node ${item.name}: ${evicted} pod(s) evicted${failed > 0 ? `, ${failed} failed` : ''}`;
+      if (failed > 0) toast.warn('Drain completed with eviction failures', summary);
+      else toast.success('Drain complete', summary);
+    } catch (err: any) {
+      if (err?.code === 'cancelled') {
+        toast.info('Drain cancelled');
+        return;
+      }
+      toast.error(`Drain failed for ${item.name}`, String(err?.message || err));
     }
   };
 
@@ -315,10 +310,10 @@ function KubernetesResourceDetails({
         onLogs={() => logs()}
         onShell={() => shell()}
         onAttach={item.kind === 'Pod' ? () => attach() : undefined}
-        onRestart={['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind) ? () => setConfirmRestart(true) : undefined}
-        onDelete={() => setConfirmDelete(true)}
+        onRestart={['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind) ? () => { void doRestart(); } : undefined}
+        onDelete={() => { void doDelete(); }}
         onCordon={item.kind === 'Node' ? doToggleCordon : undefined}
-        onDrain={item.kind === 'Node' ? () => setConfirmDrain(true) : undefined}
+        onDrain={item.kind === 'Node' ? () => void doDrain() : undefined}
         onPorts={() => setPfOpen(true)}
         rightTab={rightTab}
         setTab={setTab}
@@ -327,28 +322,6 @@ function KubernetesResourceDetails({
         footer={
           <>
             <PFDialog key={`pf-${item.uid}`} item={pfOpen ? item : null} onClose={() => setPfOpen(false)} />
-            <DeleteResourceDialog
-              item={confirmDelete ? item : null}
-              onClose={() => setConfirmDelete(false)}
-              onConfirm={doDelete}
-            />
-            <RestartDialog
-              item={confirmRestart ? item : null}
-              onClose={() => setConfirmRestart(false)}
-              onConfirm={doRestart}
-            />
-            <ConfirmDialog
-              open={confirmDrain}
-              title={`Drain Node ${item.name}`}
-              confirmLabel="Drain Node"
-              message={
-                <>
-                  Draining will cordon <span className="font-mono text-[var(--text-primary)] font-medium">{item.name}</span> and evict all non-daemonset pods running on it.
-                </>
-              }
-              onClose={() => setConfirmDrain(false)}
-              onConfirm={doDrain}
-            />
           </>
         }
       >
@@ -421,7 +394,7 @@ function KubernetesResourceDetails({
                         <span>{target?.name ?? edge.missing?.name}</span>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)]">
-                        <ResourceKindBadge kind={target?.kind ?? edge.missing?.kind ?? 'Resource'} />
+                        <ResourceKindBadge kind={target?.kind ?? edge.missing?.kind ?? 'Resource'} apiVersion={target?.apiVersion} />
                         <span>{target?.namespace ?? edge.missing?.namespace ?? 'cluster'}{!target && ' · not loaded'}</span>
                       </div>
                     </div>

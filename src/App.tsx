@@ -1,7 +1,7 @@
 import { ContainerLaunchDialog } from './components/k8s/ContainerLaunchDialog';
 import { MutationConfirmModal } from './components/dialogs/MutationConfirmModal';
 import { setupMutationConfirmListener } from './state/mutation_confirm_store';
-import { RESOURCE_TYPES, setDiscoveredResourceTypes } from './core/resources/resource_types';
+import { RESOURCE_TYPES, SCOPE_INDEPENDENT_KINDS, setDiscoveredResourceTypes } from './core/resources/resource_types';
 import { closePortForwards, resetPortForwards, listPortForwards } from './providers/port_forward';
 import { useEffect, useCallback, useRef, useState, type CSSProperties } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
@@ -65,7 +65,7 @@ export default function App() {
     const scope = state.selectedNamespace;
     const current = () => useClusterStore.getState().currentContext === context && useClusterStore.getState().selectedNamespace === scope;
     setLoading(true);
-    void Promise.allSettled(RESOURCE_TYPES.filter(type => type.namespaced && (!useClusterStore.getState().availableResourceKinds || useClusterStore.getState().availableResourceKinds!.includes(type.kind))).map(async type => {
+    void Promise.allSettled(RESOURCE_TYPES.filter(type => type.namespaced && !SCOPE_INDEPENDENT_KINDS.has(type.kind) && (!useClusterStore.getState().availableResourceKinds || useClusterStore.getState().availableResourceKinds!.includes(type.kind))).map(async type => {
       await syncResourceSnapshot(context, type.kind, scope);
     })).finally(() => { if (current()) setLoading(false); });
   }), [setLoading]);
@@ -231,6 +231,7 @@ export default function App() {
     if (compact && showInspector) useUiStore.setState({ sidebarCollapsed: true });
   }, [compact, showInspector]);
   // The details panel always floats above the workspace: it never resizes the resource table.
+  // The store keeps it at least 520px wide, but a narrow viewport still wins over that floor.
   const detailWidth = Math.min(inspectorWidth, Math.max(320, logicalViewportWidth - 56));
   const [headerHeight, setHeaderHeight] = useState(58);
 
@@ -239,7 +240,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
+    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px', '--inspector-width': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} compact={compact} narrow={logicalViewportWidth < 500} />
       <ConnectionBanner onRetry={() => {

@@ -1,12 +1,9 @@
 use kubiki_core::cluster::client::ClusterClientPool;
-use kubiki_core::core::api::ResourceRef;
+use kubiki_core::core::api::{ApiError, ResourceRef};
 use kubiki_core::pod_ops::node_debug::{
     DebugPod, NodeDebugManager, NodeDebugRequest, NodeDebugState, NodeExecRequest,
 };
-use kubiki_core::{
-    core::api::ApiError,
-    pod_ops::terminal::{ExecBatch, ExecEvent, ExecMessage},
-};
+use kubiki_core::pod_ops::terminal::{ExecBatch, ExecEvent, ExecMessage};
 use std::time::Duration;
 use tauri::ipc::Channel;
 

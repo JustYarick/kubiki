@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { startResourceWatches, stopResourceWatches, refreshResourceWatches } from '../../src/state/resource_watch';
 import { useClusterStore } from '../../src/state/cluster_store';
 import { useResourceStore } from '../../src/state/resource_store';
-import { RESOURCE_TYPES, isValidNamespaceName, namespaceIsOutsideScope, resourceType, type ResourceQuery } from '../../src/core/resources/resource_types';
+import { RESOURCE_TYPES, SCOPE_INDEPENDENT_KINDS, isValidNamespaceName, namespaceIsOutsideScope, resourceType, type ResourceQuery } from '../../src/core/resources/resource_types';
 import type { WatchBatch } from '../../src/providers/watch_types';
 
 const mock = vi.hoisted(() => ({ watchResources: vi.fn() }));
@@ -19,12 +19,13 @@ it('subscribes to selected namespace, preserves cluster watches and removes the 
   });
   const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(50); await ready;
   expect(queries).toHaveLength(RESOURCE_TYPES.length);
-  for (const query of queries) expect(query.namespace).toBe(resourceType(query.kind as any).namespaced ? 'backend' : null);
+  // Scope-independent kinds stay cluster-wide; every other namespaced kind follows the selection.
+  for (const query of queries) expect(query.namespace).toBe(SCOPE_INDEPENDENT_KINDS.has(query.kind as any) || !resourceType(query.kind as any).namespaced ? null : 'backend');
   const cluster = queries.filter((query) => !resourceType(query.kind as any).namespaced);
   useClusterStore.getState().selectNamespace('other'); await vi.advanceTimersByTimeAsync(50);
-  expect(queries.slice(RESOURCE_TYPES.length).every((query) => query.namespace === 'other')).toBe(true);
-  for (let i = 0; i < RESOURCE_TYPES.length; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced);
-  expect(queries.filter((query) => query.namespace === null)).toHaveLength(cluster.length);
+  expect(queries.slice(RESOURCE_TYPES.length).every((query) => query.namespace === 'other' || query.namespace === null)).toBe(true);
+  for (let i = 0; i < RESOURCE_TYPES.length; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced && !SCOPE_INDEPENDENT_KINDS.has(queries[i].kind as any));
+  expect(queries.filter((query) => query.namespace === null)).toHaveLength(cluster.length + SCOPE_INDEPENDENT_KINDS.size);
   stopResourceWatches(); const count = queries.length;
   useClusterStore.getState().selectNamespace('backend'); await vi.advanceTimersByTimeAsync(50);
   expect(queries).toHaveLength(count); expect(signals.every((signal) => signal.aborted)).toBe(true);

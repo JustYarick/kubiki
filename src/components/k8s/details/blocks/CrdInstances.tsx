@@ -47,7 +47,7 @@ export function CrdInstances({ item }: { item: ResourceItem }) {
             store.selectItem(instance);
             useUiStore.setState({ rightTab: 'overview' });
           }}>
-            <ResourceKindBadge kind={instance.kind} /><span className="font-mono flex-1 min-w-0 break-all">{instance.name}</span><span className="text-[var(--text-secondary)]">{instance.namespace ?? 'cluster'}</span>
+            <ResourceKindBadge kind={instance.kind} apiVersion={instance.apiVersion} /><span className="font-mono flex-1 min-w-0 break-all">{instance.name}</span><span className="text-[var(--text-secondary)]">{instance.namespace ?? 'cluster'}</span>
           </button>)}{current.items.length > limit && <Button size="sm" onClick={() => setLimit(value => value + 100)}>Show next 100</Button>}</>}
     </div>
   </section>;

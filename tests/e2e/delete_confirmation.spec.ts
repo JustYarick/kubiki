@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('single in-app delete confirmation shows cascading deletion warnings and metadata without secondary prompt', async ({ page }) => {
+test('delete enters the single backend confirmation gateway without a renderer prompt', async ({ page }) => {
   await page.addInitScript(() => {
     const w = window as any;
     const deployment = {
@@ -62,49 +62,26 @@ test('single in-app delete confirmation shows cascading deletion warnings and me
 
   await page.goto('/');
   await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
-
-  // 1. Delete Deployment: verify styled dialog, garbage collection warning, and metadata
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
   const depRow = page.getByTestId('resource-table').getByTitle('web-frontend', { exact: true });
   await depRow.click({ button: 'right' });
   await page.getByRole('group', { name: 'Actions', exact: true }).getByRole('button', { name: /Delete…/ }).click();
 
-  const depDialog = page.getByRole('dialog', { name: 'Delete deployment', exact: true });
-  await expect(depDialog).toBeVisible();
-  // Check garbage collection warning
-  await expect(depDialog.getByText('Background Garbage Collection', { exact: true })).toBeVisible();
-  await expect(depDialog.getByText(/dependent Pods and ReplicaSets/)).toBeVisible();
-  // Check metadata RV and labels
-  await expect(depDialog.getByText('RV: 42')).toBeVisible();
-  await expect(depDialog.getByText('app=web-frontend')).toBeVisible();
+  // The renderer must not open its own confirmation: the native backend review is the only prompt.
+  await expect.poll(() => page.evaluate(() => (window as any).__deleted.length)).toBe(1);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
-  // Cancel first: must close without deleting
-  await depDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(depDialog).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).__deleted.length)).toBe(0);
+  const intent = await page.evaluate(() => (window as any).__deleted[0]);
+  expect(intent).toEqual({
+    operation: 'resource',
+    resource: { context: 'prod', group: 'apps', version: 'v1', kind: 'Deployment', namespace: 'team', name: 'web-frontend', uid: 'dep-uid-100' },
+    resource_version: '42',
+  });
+  expect(JSON.stringify(intent)).not.toMatch(/confirmed|approved/);
 
-  // Re-open and confirm: single click deletes immediately without second dialog
+  // One click is one delete request; there is no confirm-then-commit chain.
   await depRow.click({ button: 'right' });
   await page.getByRole('group', { name: 'Actions', exact: true }).getByRole('button', { name: /Delete…/ }).click();
-  await page.getByRole('dialog', { name: 'Delete deployment', exact: true }).getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).__deleted.length)).toBe(1);
-  const deletedDep = await page.evaluate(() => (window as any).__deleted[0]);
-  expect(deletedDep.resource.name).toBe('web-frontend');
-  expect(deletedDep.resource.uid).toBe('dep-uid-100');
-
-  // 2. Delete CRD: verify cascading CRD deletion warning
-  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Definitions(?: \d+)?$/ }).click();
-  const crdRow = page.getByTestId('resource-table').getByTitle('buckets.source.toolkit.fluxcd.io', { exact: true });
-  await crdRow.click({ button: 'right' });
-  await page.getByRole('group', { name: 'Actions', exact: true }).getByRole('button', { name: /Delete…/ }).click();
-
-  const crdDialog = page.getByRole('dialog', { name: 'Delete customresourcedefinition', exact: true });
-  await expect(crdDialog).toBeVisible();
-  await expect(crdDialog.getByText('Cascading CRD Deletion', { exact: true })).toBeVisible();
-  await expect(crdDialog.getByText(/all custom resources.*across all namespaces/)).toBeVisible();
-  await crdDialog.getByRole('button', { name: 'Delete', exact: true }).click();
-
   await expect.poll(() => page.evaluate(() => (window as any).__deleted.length)).toBe(2);
-  const deletedCrd = await page.evaluate(() => (window as any).__deleted[1]);
-  expect(deletedCrd.resource.name).toBe('buckets.source.toolkit.fluxcd.io');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });

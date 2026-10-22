@@ -1,6 +1,6 @@
 import { inNamespaceScope } from '../core/resources/namespace_scope';
 import type { ResourceKind } from '../types/k8s';
-import { apiVersionFor, resourceQuery, resourceType, type ResourceQuery } from '../core/resources/resource_types';
+import { apiVersionFor, resourceQuery, resourceType, SCOPE_INDEPENDENT_KINDS, scopeForKind, type ResourceQuery } from '../core/resources/resource_types';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { normalizeK8sError, requestError, type K8sRequestError } from './errors';
 import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchPhase } from './watch_types';
@@ -21,15 +21,23 @@ interface Subscription {
 export class ResourceWatchSession {
   private active = true;
   private subscriptions = new Map<ResourceKind, Subscription>();
+  /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
+  private scopedFallback = new Set<ResourceKind>();
   constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all') {}
 
   async start(kinds: ResourceKind[]): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled(kinds.map((kind) => this.refresh(kind))); }
 
-  refresh(kind: ResourceKind): Promise<void> {
+  /**
+   * Subscribe to a kind. Scope-independent kinds read the whole cluster so global
+   * objects keep stable metrics; when the API denies that, they fall back to the
+   * selected namespaces.
+   */
+  async refresh(kind: ResourceKind, forcedScope?: string): Promise<void> {
     if (!this.active) return Promise.resolve();
     const previous = this.subscriptions.get(kind);
     if (previous) this.closeSubscription(previous);
-    const query = resourceQuery(this.context, kind, this.namespace);
+    const scope = forcedScope ?? (this.scopedFallback.has(kind) ? this.namespace : scopeForKind(kind, this.namespace));
+    const query = resourceQuery(this.context, kind, scope);
     const sameScope = previous && sameQuery(previous.query, query);
     let resolve!: () => void; let reject!: (error: K8sRequestError) => void;
     const ready = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
@@ -43,7 +51,19 @@ export class ResourceWatchSession {
       subscription.close = close;
       if (!this.current(kind, subscription)) close();
     }).catch((error) => { if (this.current(kind, subscription)) this.fail(kind, subscription, normalizeK8sError(error, { operation: 'watch', context: this.context, resource: query })); });
-    return ready;
+    try {
+      await ready;
+    } catch (error) {
+      // Cluster-wide access can be denied by RBAC: keep the namespace-scoped read.
+      if (SCOPE_INDEPENDENT_KINDS.has(kind) && !this.scopedFallback.has(kind) && query.namespace === null && (error as K8sRequestError)?.code === 'forbidden') {
+        this.scopedFallback.add(kind);
+        if (this.namespace !== 'all') {
+          await this.refresh(kind, this.namespace);
+          return;
+        }
+      }
+      throw error;
+    }
   }
 
   private current(kind: ResourceKind, subscription: Subscription): boolean { return this.active && !subscription.abort.signal.aborted && this.subscriptions.get(kind) === subscription; }
@@ -129,7 +149,10 @@ export class ResourceWatchSession {
   async setNamespace(namespace: string): Promise<PromiseSettledResult<void>[]> {
     if (!this.active || namespace === this.namespace) return [];
     this.namespace = namespace;
-    return Promise.allSettled([...this.subscriptions.keys()].filter((kind) => resourceType(kind).namespaced).map((kind) => this.refresh(kind)));
+    // Scope-independent kinds keep their cluster-wide watch — unless RBAC denied it,
+    // in which case they follow the selected namespace like every other namespaced kind.
+    const scoped = [...this.subscriptions.keys()].filter((kind) => resourceType(kind).namespaced && (this.scopedFallback.has(kind) || !SCOPE_INDEPENDENT_KINDS.has(kind)));
+    return Promise.allSettled(scoped.map((kind) => this.refresh(kind)));
   }
 
   async refreshAll(): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled([...this.subscriptions.keys()].map((kind) => this.refresh(kind))); }

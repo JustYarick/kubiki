@@ -17,6 +17,7 @@ import { mapK8sResource } from '../../core/utils/k8s_mapper';
 import { k8s } from '../../providers/k8s_provider';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
+import { cx } from '../../core/utils/cx';
 import { toast } from '../../state/notifications_store';
 import { FileCode, Loader2, LayoutDashboard, Boxes, Layers, Network } from 'lucide-react';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
@@ -71,7 +72,11 @@ export const WorkspaceArea: React.FC<{
       {mounted.map((tab) => {
         const split = tab.id === splitTab?.id;
         const visible = tab.id === activeTab?.id || split;
-        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
+        // The resource table keeps its full width and scrolls under the floating
+        // details panel; every other view is pushed to the left of the panel so
+        // no control ends up hidden behind it.
+        const underOverlay = tab.type === 'resource-list';
+        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className={cx('min-h-0 min-w-0 flex-col overflow-hidden', !underOverlay && 'workspace-overlay-inset')} style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
           {split && <div className="h-6 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-muted)]"><span className="truncate">{tab.title}</span><span>Split View</span></div>}
           <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
         </div>;

@@ -1,6 +1,5 @@
 /** `all`, a single name, or a canonical JSON array. API calls always expand arrays first. */
-export function namespaceNames(scope: string): string[] | null {
-  if (!scope || scope === 'all') return null;
+export function namespaceNames(scope: string): string[] | null {  if (!scope || scope === 'all') return null;
   if (!scope.startsWith('[')) return [scope];
   try {
     const values: unknown = JSON.parse(scope);

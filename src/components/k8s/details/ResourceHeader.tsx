@@ -20,7 +20,8 @@ import {
   ShieldBan,
 } from 'lucide-react';
 import type { ResourceItem } from '../../../types/k8s';
-import { KIND_ICONS } from '../../../core/perspectives';
+import { KIND_ICONS, kindTone } from '../../../core/perspectives';
+import { parseApiVersion } from '../../../core/resources/resource_types';
 import { useResourceStore } from '../../../state/resource_store';
 import { useUiStore } from '../../../state/ui_store';
 import { useWorkspaceStore } from '../../../state/workspace_store';
@@ -164,7 +165,7 @@ export function ResourceHeader({
           /></div>
         )}
 
-        <Icon size="calc(16px * var(--ui-factor))" className="details-kind-icon text-[var(--accent)] shrink-0" />
+        <Icon size="calc(16px * var(--ui-factor))" className="details-kind-icon shrink-0" style={{ color: kindTone(item.kind, item.apiVersion ? parseApiVersion(item.apiVersion).group : undefined).color }} />
 
         {/* Breadcrumb + Title Area */}
         <div className="min-w-0 flex-1">

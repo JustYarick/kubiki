@@ -29,6 +29,7 @@ import '@xterm/xterm/css/xterm.css';
 import { LogBuffer, type LogLine } from '../../core/utils/log_buffer';
 import { connectPodLogs } from '../../providers/tauri_logs';
 import { resourceRef } from '../../core/resources/identity';
+import { inNamespaceScope } from '../../core/resources/namespace_scope';
 import { LogsToolbar } from '../k8s/LogsToolbar';
 import { NodeShellPane } from '../k8s/NodeShellPane';
 import { LiveTerminalPane } from '../k8s/LiveTerminalPane';
@@ -37,6 +38,7 @@ import { useSessionContainers } from '../k8s/useSessionContainers';
 import { k8s } from '../../providers/k8s_provider';
 import { usePfStore } from '../../state/pf_store';
 import { useResourceStore } from '../../state/resource_store';
+import { useClusterStore } from '../../state/cluster_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { uiPixels, uiFactor } from '../../core/appearance';
@@ -944,11 +946,12 @@ function PortsPane() {
   const sessions = usePfStore((s) => s.sessions);
   const remove = usePfStore((s) => s.remove);
   const resources = useResourceStore(state => state.resources);
+  const scope = useClusterStore((s) => s.selectedNamespace);
   const [addOpen, setAddOpen] = useState(false);
   const [targetSearch, setTargetSearch] = useState('');
   const [target, setTarget] = useState<ResourceItem | null>(null);
   const [stopping, setStopping] = useState<string>();
-  const candidates = [...resources.Pod.values(), ...resources.Service.values()].filter(item => item.name.toLowerCase().includes(targetSearch.trim().toLowerCase()) || (item.namespace ?? '').toLowerCase().includes(targetSearch.trim().toLowerCase()));
+  const candidates = [...resources.Pod.values(), ...resources.Service.values()].filter(item => inNamespaceScope(scope, item.namespace) && (item.name.toLowerCase().includes(targetSearch.trim().toLowerCase()) || (item.namespace ?? '').toLowerCase().includes(targetSearch.trim().toLowerCase())));
 
   useEffect(() => {
     if (!k8s.demo) return;

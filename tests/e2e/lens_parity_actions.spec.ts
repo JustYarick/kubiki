@@ -42,6 +42,7 @@ test('Lens parity menu items and PV details route correctly', async ({ page }) =
       status: { phase: 'Bound' },
     };
 
+    w.__mutations = [];
     w.__TAURI_INTERNALS__ = {
       transformCallback: () => 1,
       unregisterCallback: () => {},
@@ -58,6 +59,10 @@ test('Lens parity menu items and PV details route correctly', async ({ page }) =
           if (args.kind === 'PersistentVolume') return { items: [pv] };
           return { items: [] };
         }
+        if (command === 'mutate_resource') {
+          w.__mutations.push(args.request);
+          return { steps: [], succeeded: 0, failed: 0, stopped: false };
+        }
         if (command.startsWith('stop_')) return;
         return {};
       },
@@ -67,7 +72,7 @@ test('Lens parity menu items and PV details route correctly', async ({ page }) =
   await page.goto('/');
   await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
 
-  // 1. Check Deployments row context menu (ПКМ)
+  // 1. Check Deployments row context menu (right-click)
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
   const depRow = page.getByTestId('resource-table').getByTitle('my-deploy', { exact: true });
   await depRow.click({ button: 'right' });
@@ -85,7 +90,18 @@ test('Lens parity menu items and PV details route correctly', async ({ page }) =
   const nodeMenu = page.getByRole('group', { name: 'Actions', exact: true });
   await expect(nodeMenu.getByRole('button', { name: 'Cordon Node' })).toBeVisible();
   await expect(nodeMenu.getByRole('button', { name: 'Drain Node…' })).toBeVisible();
-  await page.keyboard.press('Escape');
+  await nodeMenu.getByRole('button', { name: 'Drain Node…' }).click();
+
+  // Drain is one batch intent, so the native backend can show one confirmation for the whole operation.
+  await expect.poll(() => page.evaluate(() => (window as any).__mutations.length)).toBe(1);
+  const drain = await page.evaluate(() => (window as any).__mutations[0]);
+  expect(drain).toMatchObject({
+    operation: 'batch',
+    primary: { kind: 'Node', name: 'node-worker-1' },
+    steps: [{ operation: 'drain', resource: { kind: 'Node', name: 'node-worker-1' }, resource_version: '1' }],
+  });
+  expect(drain.steps).toHaveLength(1);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // 3. Check CronJob row context menu (Run Now, Suspend)
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^CronJobs(?: \d+)?$/ }).click();

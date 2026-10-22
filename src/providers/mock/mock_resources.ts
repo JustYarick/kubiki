@@ -2,7 +2,7 @@ import { parse, stringify } from 'yaml';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 
 /* ------------------------------------------------------------ */
-/* Детерминированный mock-кластер: правдоподобный объём данных.   */
+/* Deterministic mock cluster: realistic data volume. */
 /* ------------------------------------------------------------ */
 
 export const MOCK_NAMESPACES = ['default', 'backend', 'frontend', 'monitoring', 'kube-system', 'logging'];

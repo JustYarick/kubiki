@@ -1,4 +1,4 @@
-import { changeResource, deleteObject } from './mutations';
+import { applyBatch as applyBatchRequest, changeResource, deleteObject, type BatchResult, type BatchStep } from './mutations';
 import { resourceRef } from '../core/resources/identity';
 import { namespaceNames, inNamespaceScope } from '../core/resources/namespace_scope';
 import { parseApiResources } from './api_discovery';
@@ -11,7 +11,7 @@ import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
 import { parseApiVersion, resourceQuery, resourceType } from '../core/resources/resource_types';
 import type { KubernetesProvider } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
-import type { ResourceQuery } from '../core/resources/resource_types';
+import type { ResourceQuery, ResourceRef } from '../core/resources/resource_types';
 import type { WatchBatch } from './watch_types';
 import { parseCustomResources, type CustomResourceInstance } from './custom_resources';
 import { parseHelmPage, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmOffset, validateHelmDocument, type HelmDocument } from './helm_types';
@@ -252,6 +252,10 @@ export class K8sProvider implements KubernetesProvider {
       resource_version: resourceVersion,
     });
     return 'Pod evicted';
+  }
+
+  async applyBatch(primary: ResourceRef, steps: BatchStep[]): Promise<BatchResult> {
+    return applyBatchRequest(primary, steps);
   }
 }
 

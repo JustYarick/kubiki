@@ -11,7 +11,10 @@ export function MutationConfirmModal() {
   const parsed = useMemo(() => {
     if (!pending) return null;
     const review = pending.review;
-    const isDelete = review.includes('DELETE this Kubernetes object') || review.includes('DELETE this exact change');
+    const isBatch = review.includes('All steps are confirmed together');
+    const batchCount = isBatch ? Number(review.match(/Batch operation in context .*?: (\d+) steps?/)?.[1] ?? 0) : 0;
+    const batchDeletes = isBatch && /^\d+\. DELETE /m.test(review);
+    const isDelete = review.includes('DELETE this Kubernetes object') || review.includes('DELETE this exact change') || batchDeletes;
     const isScale = review.includes('spec.replicas:');
     const isSecret = review.includes('data/') && review.includes('(base64):');
     const isCrd = review.includes('Deleting a CRD deletes all custom resources');
@@ -41,6 +44,8 @@ export function MutationConfirmModal() {
     }
 
     return {
+      isBatch,
+      batchCount,
       isDelete,
       isScale,
       isSecret,
@@ -51,16 +56,19 @@ export function MutationConfirmModal() {
       name,
       namespace,
       context,
-      diffText: diffLines.join('\n').trim(),
+      // A batch review is already a compact, human-readable list of every step.
+      diffText: isBatch ? review : diffLines.join('\n').trim(),
       raw: review,
     };
   }, [pending]);
 
   if (!pending || !parsed) return null;
 
-  const title = parsed.isDelete
-    ? `Confirm Deletion: ${parsed.kind} ${parsed.name}`
-    : `Confirm Change: ${parsed.kind} ${parsed.name}`;
+  const title = parsed.isBatch
+    ? `Confirm Batch${parsed.batchCount ? ` (${parsed.batchCount} ${parsed.batchCount === 1 ? 'step' : 'steps'})` : ''}: ${parsed.kind} ${parsed.name}`
+    : parsed.isDelete
+      ? `Confirm Deletion: ${parsed.kind} ${parsed.name}`
+      : `Confirm Change: ${parsed.kind} ${parsed.name}`;
 
   return (
     <Modal
@@ -71,7 +79,7 @@ export function MutationConfirmModal() {
         <span className="flex items-center gap-2">
           {parsed.isDelete ? (
             <Trash2 size="calc(15px * var(--ui-factor))" className="text-[var(--status-error)]" />
-          ) : parsed.isScale ? (
+          ) : parsed.isBatch || parsed.isScale ? (
             <Layers size="calc(15px * var(--ui-factor))" className="text-[var(--accent)]" />
           ) : parsed.isSecret ? (
             <KeyRound size="calc(15px * var(--ui-factor))" className="text-[var(--status-warn)]" />
@@ -88,7 +96,7 @@ export function MutationConfirmModal() {
             variant={parsed.isDelete ? 'danger' : 'primary'}
             onClick={() => resolve(true)}
           >
-            {parsed.isDelete ? 'Confirm Delete' : 'Apply Change'}
+            {parsed.isDelete ? 'Confirm Delete' : parsed.isBatch ? 'Confirm Batch' : 'Apply Change'}
           </Button>
         </>
       }
@@ -163,7 +171,7 @@ export function MutationConfirmModal() {
         {parsed.diffText && (
           <div className="flex flex-col gap-1.5">
             <span className="font-medium text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)]">Review Changes:</span>
-            <pre className="font-mono text-[length:calc(11px*var(--ui-factor))] leading-relaxed p-3 rounded-[calc(6px*var(--ui-factor))] bg-[var(--bg-canvas)] border border-[var(--border-subtle)] overflow-x-auto max-h-56 text-[var(--text-primary)] whitespace-pre-wrap select-text">
+            <pre className={`font-mono text-[length:calc(11px*var(--ui-factor))] leading-relaxed p-3 rounded-[calc(6px*var(--ui-factor))] bg-[var(--bg-canvas)] border border-[var(--border-subtle)] overflow-x-auto text-[var(--text-primary)] whitespace-pre-wrap select-text ${parsed.isBatch ? 'max-h-96' : 'max-h-56'}`}>
               {parsed.diffText}
             </pre>
           </div>

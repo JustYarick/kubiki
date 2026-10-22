@@ -14,6 +14,21 @@ export function setDiscoveredResourceTypes(resources: readonly ResourceType[] = 
   for (const type of resources) discoveredVersions.set(type.kind, { version: type.version, watch: type.watch });
 }
 
+/**
+ * Kinds loaded cluster-wide regardless of the namespace selection.
+ *
+ * Global objects report metrics derived from these objects — a Node counts the
+ * Pods running on it — so narrowing the namespace must not change their numbers.
+ * When the API denies cluster-wide access the load falls back to the selected
+ * namespaces.
+ */
+export const SCOPE_INDEPENDENT_KINDS: ReadonlySet<ResourceKind> = new Set<ResourceKind>(['Pod']);
+
+/** Scope to request for a kind — scope-independent kinds are always read cluster-wide. */
+export function scopeForKind(kind: ResourceKind, scope: string): string {
+  return SCOPE_INDEPENDENT_KINDS.has(kind) ? 'all' : scope;
+}
+
 export function resourceType(kind: ResourceKind): ResourceType {
   if (kind === 'HelmRelease') return { group: 'helm.sh', version: 'v1', kind, plural: 'releases', namespaced: true };
   const type = RESOURCE_TYPES.find((type) => type.kind === kind);

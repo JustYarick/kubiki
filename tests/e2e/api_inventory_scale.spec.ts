@@ -115,7 +115,6 @@ test('3500 Pods, 3500 ConfigMaps and 3500 custom resources remain usable through
   await search.fill('');
   await expect(table.locator('table')).toHaveAttribute('aria-rowcount', '3501');
   await table.getByRole('columnheader', { name: 'Status', exact: true }).press('Enter');
-  await page.getByRole('button', { name: 'Show Running first', exact: true }).click();
   await expect(table.locator('tr[data-resource-uid]').first()).toContainText('Running');
   await expect(table.locator('table')).toHaveAttribute('aria-rowcount', '3501');
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
