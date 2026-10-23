@@ -1,0 +1,22 @@
+{
+  "manifestVersion": 1,
+  "id": "kubiki.sdk-test",
+  "name": "SDK Diagnostics",
+  "version": "0.1.0",
+  "description": "Checks the public SDK, backend calls, settings, notifications and panel lifecycle.",
+  "hostApi": "^1.0.0",
+  "main": "backend/index.cjs",
+  "contributes": {
+    "panels": [
+      {
+        "id": "hello",
+        "title": "SDK Diagnostics",
+        "entry": "ui/index.html"
+      }
+    ]
+  },
+  "requestedCapabilities": [
+    "settings",
+    "notifications"
+  ]
+}

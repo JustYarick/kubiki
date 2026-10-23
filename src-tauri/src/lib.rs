@@ -7,6 +7,8 @@ mod mutation_guard;
 use mutation_guard::resolve_mutation_confirm;
 mod mutation_commands;
 use mutation_commands::*;
+mod extension_commands;
+use extension_commands::{ExtensionManager, extension_cancel, extension_request};
 mod exec_ack;
 mod exec_stream;
 mod helm_commands;
@@ -54,10 +56,13 @@ pub fn run() {
         .manage(NodeDebugManager::default())
         .manage(HostTerminalManager::default())
         .manage(PortForwardManager::default())
+        .manage(ExtensionManager::default())
         .manage(mutation_guard::MutationGuard::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            extension_request,
+            extension_cancel,
             list_helm_releases,
             mutate_resource,
             search_helm_charts,
@@ -110,6 +115,7 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                let extensions = window.state::<ExtensionManager>().inner().clone();
                 let manager = window.state::<InformerManager>().inner().clone();
                 let terminals = window.state::<PodTerminalManager>().inner().clone();
                 let hosts = window.state::<HostTerminalManager>().inner().clone();
@@ -117,6 +123,7 @@ pub fn run() {
                 let forwards = window.state::<PortForwardManager>().inner().clone();
                 let owner = window.label().to_owned();
                 tauri::async_runtime::spawn(async move {
+                    extensions.close().await;
                     manager.stop_owner(&owner).await;
                     terminals.stop_owner(&owner).await;
                     nodes.stop_owner(&owner).await;

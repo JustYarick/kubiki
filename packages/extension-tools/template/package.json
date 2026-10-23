@@ -1,0 +1,6 @@
+{
+  "name": "my-kubiki-extension", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": { "build": "kubiki-extension pack ." },
+  "dependencies": { "@kubiki/extension-sdk": "^0.1.0" },
+  "devDependencies": { "@kubiki/extension-tools": "^0.1.0" }
+}

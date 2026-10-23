@@ -41,3 +41,6 @@ dist-ssr
 # Browser test artifacts
 /test-results/
 /playwright-report/
+
+# Generated extension host, packages and bundled runtime
+.kubiki-build/

@@ -1,0 +1,23 @@
+{
+  "name": "@kubiki/extension-tools",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "kubiki-extension": "src/cli.mjs"
+  },
+  "files": [
+    "src",
+    "template",
+    "README.md",
+    "dist"
+  ],
+  "dependencies": {
+    "@kubiki/extension-sdk": "workspace:^",
+    "esbuild": "^0.25.0",
+    "fflate": "^0.8.2"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/build-extension-tools.mjs"
+  }
+}

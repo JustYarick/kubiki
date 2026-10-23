@@ -1,0 +1,5 @@
+{
+  "name": "@kubiki/extension-host", "version": "0.1.0", "private": true, "type": "module",
+  "dependencies": { "@kubiki/extension-sdk": "workspace:*", "fflate": "^0.8.2", "semver": "^7.7.2" },
+  "devDependencies": { "esbuild": "^0.25.0" }
+}

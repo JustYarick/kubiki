@@ -1,0 +1,7 @@
+{
+  "manifestVersion": 1, "id": "example.hello", "name": "Hello Kubiki", "version": "0.1.0",
+  "description": "An independent extension using only the public SDK.",
+  "hostApi": "^1.0.0", "main": "backend/index.cjs",
+  "contributes": { "panels": [{ "id": "hello", "title": "Hello", "entry": "ui/index.html" }] },
+  "requestedCapabilities": ["settings", "notifications"]
+}

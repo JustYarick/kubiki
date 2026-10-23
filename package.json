@@ -6,12 +6,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "pnpm typecheck && vite build",
+    "build": "pnpm extensions:build && pnpm typecheck && vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "extensions:build": "pnpm --filter @kubiki/extension-sdk build && node scripts/build-extensions.mjs",
+    "desktop:prepare": "node scripts/prepare-extension-runtime.mjs",
+    "test:extensions": "pnpm extensions:build && node --test tests/extensions/*.test.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -34,7 +37,8 @@
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.7.0",
     "yaml": "^2.9.1",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "@kubiki/extension-sdk": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
@@ -44,9 +48,13 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
+    "esbuild": "^0.25.12",
+    "fflate": "^0.8.3",
+    "semver": "^7.8.5",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "vite": "^8.0.16",
     "vitest": "^5.0.5"
-  }
+  },
+  "packageManager": "pnpm@12.14.0"
 }

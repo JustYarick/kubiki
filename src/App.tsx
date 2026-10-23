@@ -1,3 +1,5 @@
+import { refreshExtensions } from './extensions/registry';
+import { desktopExtensions } from './providers/extensions';
 import { ContainerLaunchDialog } from './components/k8s/ContainerLaunchDialog';
 import { MutationConfirmModal } from './components/dialogs/MutationConfirmModal';
 import { setupMutationConfirmListener } from './state/mutation_confirm_store';
@@ -34,6 +36,7 @@ import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snaps
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
+  useEffect(() => { if (desktopExtensions()) void refreshExtensions(); }, []);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   useEffect(() => {
     let closed = false;

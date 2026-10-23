@@ -1,0 +1,24 @@
+:root {
+  color-scheme: dark light;
+  font:
+    13px Inter,
+    system-ui,
+    sans-serif;
+  color: var(--text-primary, #ddd);
+  background: var(--bg-canvas, #18181b);
+}
+body {
+  margin: 16px;
+}
+button {
+  padding: 8px 12px;
+  color: inherit;
+  background: var(--bg-secondary, #29292d);
+  border: 1px solid var(--border-default, #777);
+  border-radius: 4px;
+  cursor: pointer;
+}
+button:focus-visible {
+  outline: 2px solid var(--accent, #7abaff);
+  outline-offset: 2px;
+}

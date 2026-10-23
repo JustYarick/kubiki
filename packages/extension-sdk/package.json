@@ -1,0 +1,13 @@
+{
+  "name": "@kubiki/extension-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" },
+    "./panel": { "types": "./dist/panel.d.ts", "import": "./dist/panel.js" }
+  },
+  "scripts": { "build": "tsc -p tsconfig.json && node build.mjs" },
+  "devDependencies": { "esbuild": "^0.25.0", "typescript": "~6.0.3" }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@kubiki/sdk-test-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "kubiki-extension pack ."
+  },
+  "dependencies": {
+    "@kubiki/extension-sdk": "workspace:*"
+  },
+  "devDependencies": {}
+}

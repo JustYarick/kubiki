@@ -1,3 +1,6 @@
+import { useExtensions } from '../extensions/registry';
+import { extensionRequest } from '../providers/extensions';
+import { usePanelRegistry, openWorkspacePanel } from '../core/workspace_panels';
 import { useTableViewStore } from '../state/table_view_store';
 import { inNamespaceScope, namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { shortcutLabel } from '../core/shortcuts';
@@ -50,6 +53,8 @@ function TextWithRanges({ text, query }: { text: string; query: string }) {
 }
 
 export const CommandPalette: React.FC = () => {
+  const extensions = useExtensions(s => s.installed);
+  const panels = usePanelRegistry(s => s.panels);
   const open = useUiStore((s) => s.paletteOpen);
   const setOpen = useUiStore((s) => s.setPaletteOpen);
   const [query, setQuery] = useState('');
@@ -71,6 +76,12 @@ export const CommandPalette: React.FC = () => {
 
   /* ------------------- command list ------------------- */
   const commands: Command[] = [{ id: 'overview', label: 'Open Overview', section: 'Go to', icon: Layout, keywords: 'cluster namespace statistics summary', run: () => useWorkspaceStore.getState().openOverview() }];
+
+  for (const panel of panels) commands.push({ id: `panel:${panel.id}`, label: `Open ${panel.title}`, section: 'Extensions', icon: panel.icon, run: () => openWorkspacePanel(panel) });
+  for (const extension of extensions.filter(entry => entry.enabled)) for (const command of extension.manifest.contributes.commands ?? []) commands.push({
+    id: `${extension.manifest.id}:${command.id}`, label: command.title, section: extension.manifest.name, icon: Command,
+    run: () => { void extensionRequest('call', { id: extension.manifest.id, method: command.method, params: null }).catch(error => toast.error('Extension command failed', error.message)); },
+  });
 
   // Navigate: perspectives
   for (const p of PERSPECTIVES) {

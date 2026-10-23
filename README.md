@@ -338,3 +338,7 @@ Bundled fonts retain their respective licenses:
 | Inter | [SIL Open Font License 1.1](public/licenses/Inter-OFL.txt) |
 | JetBrains Mono | [SIL Open Font License 1.1](public/licenses/JetBrainsMono-OFL.txt) |
 | Nerd Fonts Symbols Only Mono | [MIT License](public/licenses/NerdFontsSymbolsOnly-LICENSE.txt) |
+
+### Extensions
+
+Kubiki desktop includes an Extensions manager, a local Node extension host and SDK Diagnostics. Install prepared packages from GitHub Releases or a local file. The SDK and author tools are independent workspace packages; see [extension documentation](docs/EXTENSIONS.md). Before desktop development run `pnpm desktop:prepare` and `pnpm extensions:build`.

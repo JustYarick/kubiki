@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ComponentType } from 'react';
-import { GitBranch, type LucideIcon } from 'lucide-react';
+import { GitBranch, Puzzle, type LucideIcon } from 'lucide-react';
 import { create } from 'zustand';
 import { useWorkspaceStore, type WorkspaceTab } from '../state/workspace_store';
 import { useClusterStore } from '../state/cluster_store';
@@ -18,12 +18,14 @@ export interface WorkspacePanel {
   open?: () => void;
 }
 const TopologyView = lazy(() => import('../views/TopologyView').then(module => ({ default: module.TopologyView })));
+const ExtensionsView = lazy(() => import('../views/ExtensionsView').then(module => ({ default: module.ExtensionsView })));
+const extensions: WorkspacePanel = { id: 'extensions', title: 'Extensions', icon: Puzzle, context: 'global', component: () => <ExtensionsView /> };
 const topology: WorkspacePanel = {
   id: 'topology', title: 'Cluster topology', icon: GitBranch, context: 'cluster', tabType: 'topology',
   open: () => useWorkspaceStore.getState().openTopology(),
   component: ({ tab, item }) => <TopologyView item={item} namespace={tab.namespace} />,
 };
-export const usePanelRegistry = create<{ panels: readonly WorkspacePanel[] }>(() => ({ panels: [topology] }));
+export const usePanelRegistry = create<{ panels: readonly WorkspacePanel[] }>(() => ({ panels: [topology, extensions] }));
 export function registerWorkspacePanel(panel: WorkspacePanel): () => void {
   if (!/^[a-z][a-z0-9.-]*$/.test(panel.id) || !panel.title.trim()) throw new Error('Panel requires a stable ID and title');
   if (usePanelRegistry.getState().panels.some(entry => entry.id === panel.id || panel.tabType && entry.tabType === panel.tabType)) throw new Error(`Panel already registered: ${panel.id}`);
