@@ -1,3 +1,4 @@
+import { performResourceAction } from '../../../../providers/resource_actions';
 import { resourceIcon } from '../../../../core/resource_icons';
 import { useMemo, useState } from 'react';
 import { RotateCw, RefreshCw } from 'lucide-react';
@@ -5,7 +6,6 @@ import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
 import { useClusterStore } from '../../../../state/cluster_store';
 import { k8s } from '../../../../providers/k8s_provider';
-import { stringify } from 'yaml';
 import { toast } from '../../../../state/notifications_store';
 import { gitOpsFamily, gitOpsReferences, resolveGitOpsReference } from '../../../../core/resources/gitops';
 import { fieldText, fieldValue, presentationFor } from '../../../../core/resources/resource_presentations';
@@ -49,7 +49,7 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...item, raw: updatedRaw });
         toast.success(`Sync requested for ${item.name} (demo)`);
       } else {
-        await k8s.applyManifest(currentContext!, stringify(updatedRaw), item);
+        await performResourceAction(currentContext!, item, { type: 'argo_sync' });
         toast.success(`Sync requested for ${item.name}`);
       }
     } catch (err: any) {
@@ -81,7 +81,7 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...item, raw: updatedRaw });
         toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${item.name} (demo)`);
       } else {
-        await k8s.applyManifest(currentContext!, stringify(updatedRaw), item);
+        await performResourceAction(currentContext!, item, { type: 'argo_refresh', hard });
         toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${item.name}`);
       }
     } catch (err: any) {

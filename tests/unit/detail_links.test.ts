@@ -38,6 +38,15 @@ describe('detail links', () => {
     expect(resourceByRef(resources, { name: 'web' }, { kinds: ['Deployment'] })?.kind).toBe('Deployment');
   });
 
+  it('keeps references to identical kind names isolated by API group', () => {
+    const gateway = item('Gateway', 'web', { apiVersion: 'gateway.networking.k8s.io/v1' });
+    const other = item('Gateway', 'web', { apiVersion: 'example.org/v1' });
+    const cache = { 'custom:gateway.networking.k8s.io/Gateway': new Map([[gateway.uid, gateway]]), 'custom:example.org/Gateway': new Map([[other.uid, other]]) };
+    expect(resourceByRef(cache, { kind: 'Gateway', name: 'web', group: 'gateway.networking.k8s.io' })).toBe(gateway);
+    expect(resourceByRef(cache, { kind: 'Gateway', name: 'web', apiVersion: 'example.org/v1' })).toBe(other);
+    expect(resourceByRef(cache, { kind: 'Gateway', name: 'web', group: 'unknown.org' })).toBeUndefined();
+  });
+
   it('matches pods by label selector inside a namespace', () => {
     expect(podsForSelector(resources, { matchLabels: { app: 'web' } }, 'backend').map(pod => pod.name)).toEqual(['web-1']);
     expect(podsForSelector(resources, { matchLabels: { app: 'web' } }, 'other')).toEqual([]);

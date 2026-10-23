@@ -1,3 +1,4 @@
+import { ResourceReferences } from '../blocks/ResourceReferences';
 import { type ReactNode } from 'react';
 import { Gauge, TrendingUp } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
@@ -129,6 +130,7 @@ export function ScalingDetails({ item, onNavigate }: ScalingDetailsProps) {
         </DetailsSection>
       )}
 
+      <ResourceReferences item={item} onNavigate={onNavigate} />
       <UsedByList item={item} onNavigate={onNavigate} />
       <ConditionsTable conditions={status.conditions} />
       <MetadataBlock item={item} onNavigate={onNavigate} />
@@ -202,6 +204,7 @@ function VerticalAutoscaler({
       )}
 
       {!!status.conditions?.length && <ConditionsTable conditions={status.conditions} />}
+      <ResourceReferences item={item} onNavigate={onNavigate} />
       <UsedByList item={item} onNavigate={onNavigate} />
       <MetadataBlock item={item} onNavigate={onNavigate} />
     </div>

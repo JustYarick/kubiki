@@ -1,3 +1,4 @@
+import type { ResourceAction } from './resource_actions';
 import type { ResourceRef } from '../core/resources/resource_types';
 import type { HelmMutation } from './helm_types';
 import type { NodeDebugRequest } from './node_debug';
@@ -6,6 +7,7 @@ import { normalizeK8sError, requestError } from './errors';
 
 export interface ManifestTarget { resource: ResourceRef; resource_version: string }
 export type BatchStep =
+  | { operation: 'action'; resource: ResourceRef; resource_version: string; action: ResourceAction; critical?: boolean }
   | { operation: 'manifest'; context: string; manifest: string; target?: ManifestTarget; critical?: boolean }
   | { operation: 'scale'; resource: ResourceRef; resource_version: string; replicas: number; critical?: boolean }
   | { operation: 'evict'; resource: ResourceRef; resource_version: string; critical?: boolean }
@@ -28,6 +30,7 @@ export interface BatchResult {
   stopped: boolean;
 }
 export type ChangeRequest =
+  | { operation: 'action'; resource: ResourceRef; resource_version: string; action: ResourceAction; critical?: boolean }
   | { operation: 'manifest'; context: string; manifest: string; target?: ManifestTarget }
   | { operation: 'scale'; resource: ResourceRef; resource_version: string; replicas: number }
   | { operation: 'evict'; resource: ResourceRef; resource_version: string }

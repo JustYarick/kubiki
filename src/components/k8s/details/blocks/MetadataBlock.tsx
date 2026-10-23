@@ -1,3 +1,4 @@
+import { ResourceAnnotations } from '../../ResourceAnnotations';
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, Info, Tag, ShieldAlert } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
@@ -66,6 +67,8 @@ export function MetadataBlock({ item, defaultExpanded = false }: MetadataBlockPr
   return (
     <section aria-label="Metadata" className="details-section">
       <div
+        role="button" tabIndex={0} aria-expanded={expanded}
+        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setExpanded(!expanded); } }}
         onClick={() => setExpanded(!expanded)}
         className="details-section-heading text-[length:calc(11px*var(--ui-factor))] font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] flex items-center justify-between cursor-pointer hover:bg-[var(--bg-hover)] transition-colors select-none"
       >
@@ -180,19 +183,10 @@ export function MetadataBlock({ item, defaultExpanded = false }: MetadataBlockPr
 
           {/* Annotations */}
           {metadata.annotations && Object.keys(metadata.annotations).length > 0 && (
-            <div>
-              <div className="text-[length:calc(10.5px*var(--ui-factor))] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">
-                Annotations ({Object.keys(metadata.annotations).length})
-              </div>
-              <div className="max-h-40 overflow-y-auto kubiki-scrollbar space-y-1">
-                {Object.entries(metadata.annotations).map(([k, v]) => (
-                  <div key={k} className="p-1 rounded bg-[var(--bg-secondary)]/50 text-[length:calc(10px*var(--ui-factor))] font-mono break-all">
-                    <span className="text-[var(--text-muted)]">{k}:</span>
-                    <span className="text-[var(--text-secondary)] ml-1">{String(v)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <section aria-label={`Annotations (${Object.keys(metadata.annotations).length})`}>
+              <h4 className="text-xs font-medium text-[var(--text-muted)] mb-2">Annotations ({Object.keys(metadata.annotations).length})</h4>
+              <ResourceAnnotations values={metadata.annotations} />
+            </section>
           )}
         </div>
       )}

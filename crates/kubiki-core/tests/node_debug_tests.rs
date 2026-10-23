@@ -107,6 +107,8 @@ struct Fixture {
     state: Arc<Mutex<State>>,
     created: Arc<Notify>,
     create_gate: Arc<Semaphore>,
+    node_gate: Arc<Semaphore>,
+    node_read: Arc<Notify>,
     server: tokio::task::JoinHandle<()>,
 }
 impl Drop for Fixture {
@@ -140,6 +142,9 @@ async fn fixture() -> Fixture {
     let create_notify = created.clone();
     let create_gate = Arc::new(Semaphore::new(100));
     let gate = create_gate.clone();
+    let node_gate = Arc::new(Semaphore::new(1000));
+    let node_read = Arc::new(Notify::new());
+    let (node_gate_server, node_read_server) = (node_gate.clone(), node_read.clone());
     let server = tokio::spawn(async move {
         loop {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -201,8 +206,13 @@ async fn fixture() -> Fixture {
             let data = data.clone();
             let gate = gate.clone();
             let notify = create_notify.clone();
+            let (node_gate, node_read) = (node_gate_server.clone(), node_read_server.clone());
             tokio::spawn(async move {
                 let (line, body) = read_request(&mut socket).await;
+                if line.starts_with("GET /api/v1/nodes/worker ") {
+                    node_read.notify_one();
+                    node_gate.acquire().await.unwrap().forget();
+                }
                 let (status, response) = {
                     let mut s = data.lock().await;
                     if line.starts_with("GET /api/v1/nodes/worker ") {
@@ -264,7 +274,7 @@ async fn fixture() -> Fixture {
                         panic!("Unexpected request {line}")
                     }
                 };
-            reply(&mut socket, status, response).await;
+                reply(&mut socket, status, response).await;
             });
         }
     });
@@ -273,6 +283,8 @@ async fn fixture() -> Fixture {
         state,
         created,
         create_gate,
+        node_gate,
+        node_read,
         server,
     }
 }
@@ -283,12 +295,9 @@ async fn provisions_uid_bound_privileged_helper_and_real_exec_uses_host_chroot_t
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
     let result = manager
-        .prepare(
-            "main",
-            request(),
-            async move { Ok(client) },
-            |_| async { Ok(true) },
-        )
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
         .await
         .unwrap();
     assert!(!result.reused);
@@ -350,12 +359,9 @@ async fn second_terminal_reuses_the_pod_and_refcounted_close_keeps_it_until_the_
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
     let prepared = manager
-        .prepare(
-            "main",
-            request(),
-            async move { Ok(client) },
-            |_| async { Ok(true) },
-        )
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
         .await
         .unwrap();
     let session_id = prepared.session_id.clone();
@@ -385,9 +391,7 @@ async fn second_terminal_reuses_the_pod_and_refcounted_close_keeps_it_until_the_
     manager.release_exec("main", &session_id, "one").await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(f.state.lock().await.deleted, 0);
-    assert!(
-        manager.status("main", &session_id).await.unwrap().phase == "ready"
-    );
+    assert!(manager.status("main", &session_id).await.unwrap().phase == "ready");
     // The last shell leaves: the helper Pod is deleted without any dialog.
     manager.release_exec("main", &session_id, "two").await;
     deleted_with(f.state.clone(), 1).await;
@@ -407,12 +411,9 @@ async fn denies_rbac_and_replaced_nodes_before_any_pod_create() {
         let manager = NodeDebugManager::default();
         let client = f.client.clone();
         let err = manager
-            .prepare(
-                "main",
-                request(),
-                async move { Ok(client) },
-                |_| async { Ok(true) },
-            )
+            .prepare("main", request(), async move { Ok(client) }, |_| async {
+                Ok(true)
+            })
             .await
             .unwrap_err();
         assert_eq!(err.status, Some(if bad_node { 409 } else { 403 }));
@@ -433,7 +434,9 @@ async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_read
     let req = request();
     let preparing = tokio::spawn(async move {
         task_manager
-            .prepare("main", req, async move { Ok(client) }, |_| async { Ok(true) })
+            .prepare("main", req, async move { Ok(client) }, |_| async {
+                Ok(true)
+            })
             .await
     });
     f.created.notified().await;
@@ -448,7 +451,9 @@ async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_read
     f.create_gate.add_permits(1);
     let client = f.client.clone();
     let again = manager
-        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
         .await
         .unwrap();
     assert_eq!(again.pod.uid.as_deref(), Some("debug-uid"));
@@ -459,7 +464,9 @@ async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_read
     manager.stop("main", &again.session_id).await.unwrap();
     let client = f.client.clone();
     let latched = manager
-        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
         .await
         .unwrap_err();
     assert_eq!(latched.status, Some(409));
@@ -468,7 +475,9 @@ async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_read
     f.create_gate.add_permits(1);
     let client = f.client.clone();
     let third = manager
-        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
         .await
         .unwrap();
     assert_eq!(third.pod.uid.as_deref(), Some("debug-uid"));
@@ -483,12 +492,9 @@ async fn cleanup_failure_is_retained_retryable_and_never_deletes_a_replacement()
         let manager = NodeDebugManager::default();
         let client = f.client.clone();
         let prepared = manager
-            .prepare(
-                "main",
-                request(),
-                async move { Ok(client) },
-                |_| async { Ok(true) },
-            )
+            .prepare("main", request(), async move { Ok(client) }, |_| async {
+                Ok(true)
+            })
             .await
             .unwrap();
         {
@@ -529,12 +535,9 @@ async fn lists_and_deletes_only_inactive_marked_debug_pods_with_atomic_uid_preco
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
     let prepared = manager
-        .prepare(
-            "main",
-            request(),
-            async move { Ok(client) },
-            |_| async { Ok(true) },
-        )
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
         .await
         .unwrap();
     let resource = prepared.pod.clone();
@@ -615,7 +618,9 @@ async fn orphan_delete_cancellation_and_concurrent_changes_never_delete() {
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
     let prepared = manager
-        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
         .await
         .unwrap();
     let resource = prepared.pod.clone();
@@ -684,4 +689,57 @@ async fn create_consent_covers_lifecycle_and_cleanup_never_prompts() {
     assert_eq!(prompts.load(Ordering::SeqCst), 1);
     assert_eq!(f.state.lock().await.deleted, 1);
     assert!(manager.status("main", &prepared.session_id).await.is_none());
+}
+
+#[tokio::test]
+async fn opening_shell_reserves_the_lease_before_the_last_existing_shell_closes() {
+    let f = fixture().await;
+    let manager = NodeDebugManager::default();
+    let client = f.client.clone();
+    let prepared = manager
+        .prepare("main", request(), async move { Ok(client) }, |_| async {
+            Ok(true)
+        })
+        .await
+        .unwrap();
+    let first = manager
+        .attach("main", "first", exec(&prepared.session_id))
+        .await
+        .unwrap();
+    f.node_gate.forget_permits(f.node_gate.available_permits());
+    // Consume notifications from preparation and the first attach.
+    while tokio::time::timeout(Duration::from_millis(1), f.node_read.notified())
+        .await
+        .is_ok()
+    {}
+    let (second_manager, session) = (manager.clone(), prepared.session_id.clone());
+    let opening = tokio::spawn(async move {
+        second_manager
+            .attach("main", "second", exec(&session))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), f.node_read.notified())
+        .await
+        .unwrap();
+    manager
+        .release_exec("main", &prepared.session_id, "first")
+        .await;
+    drop(first);
+    assert_eq!(f.state.lock().await.deleted, 0);
+    assert_eq!(
+        manager
+            .status("main", &prepared.session_id)
+            .await
+            .unwrap()
+            .phase,
+        "ready"
+    );
+    f.node_gate.add_permits(1);
+    let second = opening.await.unwrap().unwrap();
+    assert_eq!(f.state.lock().await.deleted, 0);
+    manager
+        .release_exec("main", &prepared.session_id, "second")
+        .await;
+    drop(second);
+    deleted_with(f.state.clone(), 1).await;
 }

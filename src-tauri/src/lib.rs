@@ -1,34 +1,35 @@
 #[cfg(target_os = "linux")]
 mod graphics;
 mod port_forward_commands;
-use port_forward_commands::*;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
+use port_forward_commands::*;
 mod mutation_guard;
 use mutation_guard::resolve_mutation_confirm;
 mod mutation_commands;
 use mutation_commands::*;
-mod k8s_commands;
-mod terminal_commands;
 mod exec_ack;
-mod node_commands;
-mod host_terminal_commands;
-mod log_commands;
-mod watch_commands;
+mod exec_stream;
 mod helm_commands;
+mod host_terminal_commands;
+mod k8s_commands;
+mod log_commands;
+mod node_commands;
+mod terminal_commands;
+mod watch_commands;
 use helm_commands::*;
 
+use host_terminal_commands::*;
 use k8s_commands::*;
 use kubiki_core::cluster::client::ClusterClientPool;
 use kubiki_core::cluster::kubeconfig::KubeConfigManager;
+use kubiki_core::pod_ops::host_terminal::HostTerminalManager;
+use kubiki_core::pod_ops::node_debug::NodeDebugManager;
 use kubiki_core::pod_ops::terminal::PodTerminalManager;
 use kubiki_core::{InformerManager, ResourceStore};
+use log_commands::*;
+use node_commands::*;
 use tauri::Manager;
 use terminal_commands::*;
-use node_commands::*;
-use kubiki_core::pod_ops::node_debug::NodeDebugManager;
-use host_terminal_commands::*;
-use kubiki_core::pod_ops::host_terminal::HostTerminalManager;
-use log_commands::*;
 use watch_commands::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

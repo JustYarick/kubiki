@@ -1,3 +1,4 @@
+import { useTableViewStore } from './table_view_store';
 import { namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { SIDEBAR_TREE } from '../core/perspectives';
 import { customResourcePlacement, customResourceType } from '../core/resources/custom_resource_types';
@@ -15,6 +16,7 @@ import type { ResourceItem, ResourceKind } from '../types/k8s';
 import type { DockSession } from './dock_store';
 
 export type WorkspaceTabType =
+  | 'extension'
   | 'overview'        // Follows the global cluster and namespace selection
   | 'flux-dashboard'
   | 'argocd-dashboard'
@@ -30,6 +32,7 @@ export type WorkspaceTabType =
   | 'topology';       // Pod interactive terminal session
 
 export interface WorkspaceTab {
+  panelId?: string;
   session?: DockSession;
   id: string;
   type: WorkspaceTabType;
@@ -92,6 +95,7 @@ export function restoreWorkspace(persisted: unknown, current: WorkspaceState): W
 }
 
 function clearDraftForTab(tab?: WorkspaceTab) {
+  if (tab) useTableViewStore.getState().clear(tab.id);
   if (tab?.type === 'yaml-editor') {
     useYamlDraftStore.getState().clearDraft(
       yamlDraftKey(tab.context ?? '', tab.kind, tab.namespace, tab.name, tab.uid)
@@ -113,6 +117,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const existing = tabs.find((t) =>
           t.id === id ||
           (t.type === tabInput.type &&
+            (tabInput.type !== 'extension' || t.panelId === tabInput.panelId) &&
             t.kind === tabInput.kind &&
             (tabInput.type === 'resource-list' || (t.name === tabInput.name && t.namespace === tabInput.namespace && t.context === tabInput.context && t.container === tabInput.container && t.uid === tabInput.uid && t.apiVersion === tabInput.apiVersion)))
         );

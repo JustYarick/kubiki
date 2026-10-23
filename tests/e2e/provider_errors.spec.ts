@@ -15,7 +15,7 @@ for (const [status, code, hint] of [[403, 'forbidden', 'RBAC'], [404, 'not_found
   test(`resource error ${status} has a useful reason and retry recovers`, async ({ page }) => {
     let failed = true;
     await api(page, () => failed ? { status, json: { error: { code, status, message: `API request failed (${status})` } } } : { json: { items: [pod()] } });
-    await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+    await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
     const table = page.getByTestId('resource-table');
     const notice = table.getByRole('alert');
     await expect(notice).toHaveAttribute('data-error-code', code);
@@ -32,7 +32,7 @@ for (const [status, code, hint] of [[403, 'forbidden', 'RBAC'], [404, 'not_found
 test('a failed refresh retains the previous snapshot with an explicit stale notice', async ({ page }) => {
   let failed = false;
   await api(page, () => failed ? { status: 504, json: { error: { code: 'timeout', status: 504, message: 'Request timed out' } } } : { json: { items: [pod()] } });
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   await expect(table.getByText('live-web', { exact: true })).toBeVisible();
   failed = true;
@@ -47,7 +47,7 @@ test('a failed refresh retains the previous snapshot with an explicit stale noti
 test('a details tab never silently switches to a recreated resource with the same name', async ({ page }) => {
   let uid = 'original';
   await api(page, () => ({ json: { items: [pod(uid)] } }));
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Open details in tab' }).click();
   await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();

@@ -23,7 +23,9 @@ impl KubeConfigManager {
     }
 
     pub fn with_custom_path(path: PathBuf) -> Self {
-        Self { custom_path: Some(path) }
+        Self {
+            custom_path: Some(path),
+        }
     }
 
     /// Returns the resolved path to kubeconfig file, or first existing path if multiple are configured
@@ -46,6 +48,30 @@ impl KubeConfigManager {
 
         let default_path = home.join(".kube").join("config");
         Ok(default_path)
+    }
+
+    /// Metadata of all merged files determines when cached parsing must be refreshed.
+    pub(crate) fn configuration_signature(&self) -> Result<u64, KubikiError> {
+        use std::hash::{Hash, Hasher};
+        let paths = if let Some(path) = &self.custom_path {
+            vec![path.clone()]
+        } else if let Some(paths) = std::env::var_os("KUBECONFIG").filter(|v| !v.is_empty()) {
+            std::env::split_paths(&paths).collect()
+        } else {
+            vec![self.get_config_path()?]
+        };
+        let mut signature = std::collections::hash_map::DefaultHasher::new();
+        for path in paths {
+            path.hash(&mut signature);
+            match std::fs::metadata(&path) {
+                Ok(metadata) => {
+                    metadata.len().hash(&mut signature);
+                    metadata.modified().ok().hash(&mut signature);
+                }
+                Err(error) => error.kind().hash(&mut signature),
+            }
+        }
+        Ok(signature.finish())
     }
 
     /// Read and parse kubeconfig.
@@ -142,7 +168,10 @@ users:
         let dir = std::env::temp_dir().join(format!(
             "kubiki-multi-kcfg-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
 

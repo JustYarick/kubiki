@@ -59,3 +59,7 @@ export function isValidNamespaceName(value: string): boolean {
 export function namespaceIsOutsideScope(namespace: string | undefined, selectedNamespace: string, syncMode: string): boolean {
   return syncMode === 'watch' && selectedNamespace !== 'all' && namespace !== undefined && !inNamespaceScope(selectedNamespace, namespace);
 }
+
+export function namespaceFallback(kind: ResourceKind, requestedScope: string | null, selectedScope: string, code?: string): string | undefined {
+  return SCOPE_INDEPENDENT_KINDS.has(kind) && (requestedScope === null || requestedScope === 'all') && code === 'forbidden' ? selectedScope : undefined;
+}

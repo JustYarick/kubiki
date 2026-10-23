@@ -90,7 +90,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `port_forward_commands.rs` | Starting, listing, and stopping TCP forwards. |
 | `graphics.rs` | Linux graphics runtime initialization and diagnostics. |
 
-The desktop shell owns transport and application lifecycle concerns. Kubernetes request logic and reusable session managers reside in `kubiki-core`.
+The desktop shell owns transport and application lifecycle concerns. Kubernetes request logic and reusable session managers reside in `kubiki-core`. Native discovery and snapshot/CRD reads use `core/reads.rs`; node drain orchestration lives in `core/drain.rs`. Terminal command adapters share `exec_stream.rs` for IPC batching and acknowledgements.
 
 ## Kubernetes engine
 
@@ -116,7 +116,7 @@ The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reus
 
 The frontend starts resource subscriptions for the active context and namespace scope. Each subscription identifies its query and receives batches through a Tauri channel.
 
-The Rust informer layer maintains resource snapshots and processes Kubernetes watch changes. The frontend watch session applies the resulting batches to the resource store. Components subscribe to that store to render the current resource state.
+The Rust informer layer maintains resource snapshots and processes Kubernetes watch changes. The frontend watch session applies the resulting batches to the resource store. Table searches belong to workspace tabs in `table_view_store.ts`, separate from the shared resource cache. Components subscribe to that store to render the current resource state.
 
 Changing the context stops the old frontend session before starting another. Namespace selection updates subscription scope. The transport checks subscription and query identity before delivering a batch, preventing a closed subscription from updating an unrelated view.
 
@@ -124,7 +124,7 @@ Custom resources use the discovery and dynamic access modules. Resource types an
 
 ## Resource mutations
 
-Resource actions enter the native backend through the mutation command module. Supported operations are represented as structured requests rather than arbitrary shell commands.
+Resource actions enter the native backend through the mutation command module. `ResourceAction` commands construct common actions against live objects in core; only manual YAML edits use the arbitrary manifest path. Structured review DTOs carry all targets, action summaries and warnings to the interface, while YAML edits additionally carry a complete diff. Review strings are not parsed as a protocol. Supported operations are represented as structured requests rather than arbitrary shell commands.
 
 The core mutation implementation prepares the requested change against live resource state. For existing objects, it records identity and concurrency information and produces a review. The desktop guard emits a confirmation request to the frontend and waits for the user's decision.
 
@@ -155,3 +155,11 @@ The CI workflow checks TypeScript, frontend tests and builds, Rust core tests, a
 `docs/media/` contains the screenshots used by the README: overview, resources, YAML, topology, and Helm. Native application icons are stored in `src-tauri/icons/`.
 
 Font license notices are stored in `public/licenses/`. The project's own license is defined in the root `LICENSE` file.
+
+## Workspace extension points
+
+`src/core/workspace_panels.tsx` registers bundled feature panels and their activity-bar navigation. Topology uses this same registration path. Extensions receive their workspace tab, current visibility and an optional resolved Kubernetes resource. Unknown or removed registrations show an unavailable-panel state instead of falling back to a resource table.
+
+Topology relationship construction runs in `topology_graph_worker.ts`; ELK layout runs in a separate worker. The graph bridge strips lazy YAML getters from worker input, retains at most one current build and one latest pending snapshot, and rejects responses from superseded scopes.
+
+See [Workspace extensions](EXTENSIONS.md) for the registration contract and a staged Redis/Kafka integration plan.

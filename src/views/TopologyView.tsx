@@ -1,3 +1,4 @@
+import { useTopologyGraph } from '../providers/use_topology_graph';
 import './topology.css';
 import { namespaceNames, namespaceScope } from '../core/resources/namespace_scope';
 import { topologyNamespaces } from '../core/resources/topology';
@@ -9,7 +10,7 @@ import { TriangleAlert } from 'lucide-react';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
 import { useUiStore } from '../state/ui_store';
-import { buildTopology, EMPTY_GRAPH, MAX_TOPOLOGY_EDGES } from '../core/resources/topology';
+import { MAX_TOPOLOGY_EDGES } from '../core/resources/topology';
 import { DEFAULT_TOPOLOGY_HIDDEN_KINDS } from '../core/resources/topology_visibility';
 import { resourceKey } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
@@ -65,11 +66,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
     }
     return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [resources, namespaces, selectedNamespace]);
-  const { graph, notice } = useMemo(() => {
-    if (outsideScope) return { graph: EMPTY_GRAPH, notice: '' };
-    try { return { graph: buildTopology(resources, graphScope, item, depth), notice: '' }; }
-    catch (error) { return { graph: EMPTY_GRAPH, notice: error instanceof Error ? error.message : String(error) }; }
-  }, [resources, graphScope, item, depth, outsideScope]);
+  const { graph, notice, building } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope);
   const chooseScope = !graphScope || scope === 'overview';
   const typeCounts = useMemo(() => topologyTypeCounts(graph), [graph]);
   const chooseNamespaces = (selection: string) => setScope(selection === 'all' ? 'all' : `namespaces:${selection}`);
@@ -92,6 +89,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
     </div> : <NamespaceScopeNotice /> }
     {helm.loading && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Loading Helm relationships…</p>}
     {helm.error && <p className="px-3 py-1 text-xs text-[var(--status-warn)]">Helm relationships unavailable: {helm.error} Kubernetes resources are still shown.</p>}
+    {building && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Updating topology relationships…</p>}
     {synchronizing && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Resources are synchronizing. Counts and relationships may be incomplete.</p>}
     {!!Object.values(errors).filter(Boolean).length && <div className="px-3 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Some resource types are unavailable. This diagram shows loaded resources only.</div>}
     <div className="topology-body relative overflow-hidden">

@@ -25,10 +25,13 @@ async function nativeApi(page: Page, holdPod = false, restricted = false) {
       active: () => subscriptions.size,
       callbacks: () => callbacks.size,
     };
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (_event: string, id: number) => callbacks.delete(id) };
     w.__TAURI_INTERNALS__ = {
       transformCallback: (callback: unknown) => { callbacks.set(++callbackId, callback); return callbackId; },
       unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
+        if (command === 'plugin:event|listen') return args.handler;
+        if (command === 'plugin:event|unlisten') return;
         if (command === 'stop_port_forwards') return;
         if (command === 'stop_pod_execs' || command === 'stop_pod_logs') return;
         if (command === 'stop_host_terminals' || command === 'stop_node_debugs') return;
@@ -60,7 +63,7 @@ async function nativeApi(page: Page, holdPod = false, restricted = false) {
 }
 
 test('native watch updates the table/inspector, retains stale data, then recovers with an authoritative empty list', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   const table = page.getByTestId('resource-table');
   await table.getByText('live-web', { exact: true }).click();
@@ -79,7 +82,7 @@ test('native watch updates the table/inspector, retains stale data, then recover
 });
 
 test('Sync replaces subscriptions, ignores old messages, and pagehide releases callbacks and watches', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Auto-refresh interval')).toHaveCount(0);
   await page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true }).click();
@@ -96,7 +99,7 @@ test('Sync replaces subscriptions, ignores old messages, and pagehide releases c
 
 test('status updates preserve manual graph positions and viewport without another layout worker', async ({ page }) => {
   const workers: string[] = []; page.on('worker', (worker) => { if (worker.url().includes('layout_worker')) workers.push(worker.url()); });
-  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await selectDiagramNamespaces(page, ['backend']);
   const node = page.locator('.react-flow__node-resource'); await expect(node).toHaveCount(1);
@@ -117,7 +120,7 @@ test('status updates preserve manual graph positions and viewport without anothe
 });
 
 test('context A → B → A isolates old subscriptions, including late callbacks', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   for (const context of ['native-other', 'native-test']) {
     await page.getByTitle('Switch Kubernetes Cluster Context', { exact: true }).click();
     await page.getByText(context, { exact: true }).click();
@@ -127,12 +130,12 @@ test('context A → B → A isolates old subscriptions, including late callbacks
     await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
     await expect(page.getByTestId('resource-table').getByText('stale-web', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(resourceCount);
-    expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(resourceCount);
+    expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(resourceCount + 1);
   }
 });
 
 test('first sync is visibly pending and does not pretend the namespace is empty', async ({ page }) => {
-  await nativeApi(page, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await nativeApi(page, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
   await expect(table.getByRole('status')).toContainText('Waiting for the first complete snapshot');
   await expect(table.getByText('No pods found', { exact: true })).toHaveCount(0);
@@ -149,7 +152,7 @@ async function namespace(page: Page, name: string) {
 }
 
 test('namespace changes replace only scoped watches; pinned tabs keep their resource and ignore late snapshots', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await namespace(page, 'backend'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   const cluster = await page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => ['Node', 'Namespace', 'StorageClass', 'CustomResourceDefinition'].includes(s.kind)));
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
@@ -170,7 +173,7 @@ test('namespace changes replace only scoped watches; pinned tabs keep their reso
 });
 
 test('a restricted user can enter an unlisted namespace and recover namespaced reads after 403', async ({ page }) => {
-  await nativeApi(page, false, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await nativeApi(page, false, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByTestId('resource-table').getByRole('alert')).toHaveAttribute('data-error-code', 'forbidden');
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Choose Namespace Scope' });
@@ -191,7 +194,7 @@ test('a restricted user can enter an unlisted namespace and recover namespaced r
 });
 
 test('a diagram outside the selected namespace explains missing data and loads its scope explicitly', async ({ page }) => {
-  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await namespace(page, 'backend'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await selectDiagramNamespaces(page, ['other']);
@@ -203,7 +206,7 @@ test('a diagram outside the selected namespace explains missing data and loads i
 });
 
 test('Overview derives live phase/issue counts from existing watches without adding subscriptions', async ({ page }) => {
-  await nativeApi(page);await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  await nativeApi(page);await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const overview = page.getByTestId('cluster-overview');const phases = overview.getByRole('region', { name: 'Pod phases', exact: true });
   await expect(overview.getByTestId('overview-count-Pod')).toHaveText('2');await expect(phases.getByText('Running', { exact: true }).locator('..')).toHaveText('Running2');
   expect(await page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(resourceCount);
@@ -215,7 +218,7 @@ test('Overview derives live phase/issue counts from existing watches without add
 
 test('multiple selected namespaces use independent desktop watches and commit one complete combined snapshot', async ({ page }) => {
   await nativeApi(page);
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();

@@ -791,10 +791,8 @@ fn release_diff(before: &Value, after: &Value, namespace: &str) -> Result<String
         if let Some(hooks) = value["hooks"].as_array() {
             for hook in hooks {
                 result.push_str(&format!(
-                    "\n{label}: events={} delete_policies={}\n{}\n",
-                    hook["events"],
-                    hook["delete_policies"],
-                    hook["manifest"].as_str().unwrap_or("")
+                    "\n{label}: name={} events={} delete_policies={}\n",
+                    hook["name"], hook["events"], hook["delete_policies"]
                 ));
             }
         }
@@ -834,27 +832,18 @@ fn manifest_diff(before: &str, after: &str, namespace: &str) -> Result<String, A
     let b = documents(after, namespace)?;
     let mut result = String::from("\nRendered object changes:\n");
     for key in a.keys().chain(b.keys()).collect::<BTreeSet<_>>() {
-        match (a.get(key), b.get(key)) {
-            (None, Some(value)) => result.push_str(&format!(
-                "CREATE {key}\n{}\n",
-                serde_json::to_string_pretty(value).unwrap()
-            )),
-            (Some(value), None) => {
-                if value["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep" {
-                    result.push_str(&format!("KEEP {key} (resource-policy=keep)\n"));
-                } else {
-                    result.push_str(&format!(
-                        "DELETE {key}\n{}\n",
-                        serde_json::to_string_pretty(value).unwrap()
-                    ));
-                }
+        let action = match (a.get(key), b.get(key)) {
+            (None, Some(_)) => "CREATE",
+            (Some(value), None)
+                if value["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep" =>
+            {
+                "KEEP (resource-policy=keep)"
             }
-            (Some(old), Some(new)) if old != new => {
-                result.push_str(&format!("UPDATE {key}\n"));
-                json_diff("", old, new, &mut result);
-            }
-            _ => (),
-        }
+            (Some(_), None) => "DELETE",
+            (Some(old), Some(new)) if old != new => "UPDATE",
+            _ => continue,
+        };
+        result.push_str(&format!("{action} {key}\n"));
     }
     Ok(result)
 }

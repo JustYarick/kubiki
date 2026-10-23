@@ -168,7 +168,7 @@ The listener binds to `127.0.0.1`. Open the forwarded address locally and stop t
 
 ### Reviewing changes
 
-Resource changes pass through a backend preparation and confirmation flow. The dialog identifies the target and describes the proposed operation. Manifest updates include a review of the changes.
+Resource changes pass through a backend preparation and confirmation flow. The dialog identifies the target and describes the proposed operation. Manual YAML edits include a complete review of the changes. Built-in actions show the operation, its parameters, every target, and relevant warnings. Secret and ConfigMap data edits list changed key names without exposing their values in the confirmation. Batch reviews retain every step; operations whose complete review exceeds the size limit are rejected rather than truncated.
 
 For existing Kubernetes objects, mutation checks use the object identity, UID, and resource version to detect replacement or concurrent edits. If the target changes during review, refresh the resource and review the operation again. Grouped actions share a review and execute their steps sequentially; they are not Kubernetes transactions.
 
@@ -285,7 +285,7 @@ Run these commands from the repository root:
 | `cargo check --manifest-path src-tauri/Cargo.toml` | Desktop Rust backend compilation. |
 | `pnpm test:e2e` | Browser-driven interface tests run by Playwright. |
 
-For Playwright tests, start the frontend test server with `pnpm dev` in a separate terminal, then run `pnpm test:e2e`. The default test URL is `http://127.0.0.1:1420`; the configuration also accepts `PLAYWRIGHT_BASE_URL`. A browser supported by the Playwright configuration must be available. These tests exercise the interface; native backend checks are listed separately above.
+Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, or reuses an existing local server. The default test URL is `http://127.0.0.1:1420`; the configuration also accepts `PLAYWRIGHT_BASE_URL`. A browser supported by the Playwright configuration must be available. These tests exercise the interface; native backend checks are listed separately above.
 
 ## Repository structure
 

@@ -163,7 +163,9 @@ async fn batch_stops_after_a_critical_failure() {
             resource_version: "10".into(),
         }),
     ];
-    let batch = PreparedBatch::prepare(f.client, resource, steps).await.unwrap();
+    let batch = PreparedBatch::prepare(f.client, resource, steps)
+        .await
+        .unwrap();
     let result = batch
         .confirm_and_commit(|_| async { Ok(true) })
         .await
@@ -188,7 +190,9 @@ async fn batch_continues_after_noncritical_failures() {
             resource_version: "10".into(),
         }),
     ];
-    let batch = PreparedBatch::prepare(f.client, resource, steps).await.unwrap();
+    let batch = PreparedBatch::prepare(f.client, resource, steps)
+        .await
+        .unwrap();
     let result = batch
         .confirm_and_commit(|_| async { Ok(true) })
         .await
@@ -250,7 +254,7 @@ async fn stale_or_recreated_objects_rejected_before_prompt_and_after_consent() {
     }
 }
 #[tokio::test]
-async fn secret_diff_lists_added_changed_removed_keys_and_commits_only_the_reviewed_payload() {
+async fn secret_review_lists_changed_keys_without_values_and_commits_only_the_reviewed_payload() {
     let f = fixture("Secret", 200);
     f.state.lock().unwrap()["data"] =
         json!({"old":"c2VjcmV0","change":"YmVmb3Jl","keep":"c2FtZQ=="});
@@ -262,13 +266,14 @@ async fn secret_diff_lists_added_changed_removed_keys_and_commits_only_the_revie
     .unwrap();
     let review = plan.review();
     assert!(
-        review.contains("data/old")
-            && review.contains("(removed)")
-            && review.contains("data/new")
-            && review.contains("(absent)")
+        review.contains("old")
+            && review.contains("removed")
+            && review.contains("new")
+            && review.contains("added")
     );
-    assert!(!review.contains("data/keep"));
-    assert!(review.contains("YmVmb3Jl") && review.contains("YWZ0ZXI="));
+    assert!(!review.contains("keep"));
+    assert!(!review.contains("YmVmb3Jl") && !review.contains("YWZ0ZXI="));
+    assert!(plan.details().steps[0].diff.is_none());
     plan.confirm_and_commit(|_| async { Ok(true) })
         .await
         .unwrap();
@@ -282,8 +287,8 @@ async fn secret_diff_lists_added_changed_removed_keys_and_commits_only_the_revie
     );
 }
 #[tokio::test]
-async fn no_op_immutable_and_unreviewably_large_changes_never_prompt_or_write() {
-    for mode in ["noop", "immutable", "large"] {
+async fn no_op_and_immutable_changes_never_prompt_or_write() {
+    for mode in ["noop", "immutable"] {
         let f = fixture("Secret", 200);
         if mode == "immutable" {
             f.state.lock().unwrap()["immutable"] = json!(true);
@@ -381,4 +386,57 @@ async fn prepared_delete_shows_server_identity_and_propagation_before_commit_and
     assert_eq!(request.1["preconditions"]["uid"], "original", "{request:?}");
     assert_eq!(request.1["preconditions"]["resourceVersion"], "10");
     assert_eq!(request.1["propagationPolicy"], "Background");
+}
+
+#[tokio::test]
+async fn large_secret_values_do_not_expand_or_leak_into_the_review() {
+    let f = fixture("Secret", 200);
+    let plan = PreparedMutation::prepare(f.client, secret(json!({"large":"YWFh".repeat(7000)})))
+        .await
+        .unwrap();
+    assert!(plan.review().len() < 1000);
+    assert!(!plan.review().contains("YWFh"));
+    assert!(plan.details().steps[0].diff.is_none());
+    assert!(f.writes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn generated_restart_reviews_intent_without_expanding_large_resource_bodies() {
+    use kubiki_core::core::mutations::{ResourceAction, ReviewKind};
+    let f = fixture("Deployment", 200);
+    f.state.lock().unwrap()["metadata"]["annotations"]["large"] = json!("x".repeat(40000));
+    f.state.lock().unwrap()["spec"]["template"] = json!({"metadata":{"labels":{"app":"web"}},"spec":{"containers":[{"name":"app","image":"nginx"}]}});
+    let prepared = PreparedMutation::prepare(
+        f.client,
+        MutationIntent::Action {
+            resource: resource("Deployment"),
+            resource_version: "10".into(),
+            action: ResourceAction::Restart,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(prepared.details().kind, ReviewKind::Action);
+    assert_eq!(prepared.details().steps[0].operation, "RESTART");
+    assert!(prepared.details().steps[0].diff.is_none());
+    assert!(prepared.review().len() < 1000);
+    prepared
+        .confirm_and_commit(|_| async { Ok(true) })
+        .await
+        .unwrap();
+    let writes = f.writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(
+        writes[0].1["metadata"]["annotations"]["large"]
+            .as_str()
+            .unwrap()
+            .len(),
+        40000
+    );
+    assert!(
+        writes[0]
+            .1
+            .pointer("/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt")
+            .is_some()
+    );
 }

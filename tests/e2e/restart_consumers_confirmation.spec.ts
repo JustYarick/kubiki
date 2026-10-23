@@ -79,10 +79,10 @@ test('restart consumers sends all workloads as one batch confirmation', async ({
   });
   expect(batch.steps).toHaveLength(1);
   expect(batch.steps[0]).toMatchObject({
-    operation: 'manifest',
-    context: 'prod',
-    target: { resource: { kind: 'Deployment', name: 'web', namespace: 'team' }, resource_version: '7' },
+    operation: 'action',
+    resource: { kind: 'Deployment', name: 'web', namespace: 'team', context: 'prod' },
+    resource_version: '7',
+    action: { type: 'restart' },
   });
-  expect(batch.steps[0].manifest).toContain('kubectl.kubernetes.io/restartedAt');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });

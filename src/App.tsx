@@ -36,7 +36,12 @@ import { startResourceWatches, stopResourceWatches } from './state/resource_watc
 export default function App() {
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   useEffect(() => {
-    void setupMutationConfirmListener();
+    let closed = false;
+    let cleanup: (() => void) | undefined;
+    void setupMutationConfirmListener().then(close => { if (closed) close(); else cleanup = close; });
+    const close = () => { closed = true; cleanup?.(); cleanup = undefined; };
+    window.addEventListener('pagehide', close);
+    return () => { window.removeEventListener('pagehide', close); close(); };
   }, []);
   useEffect(() => {
     const resize = () => setViewportWidth(window.innerWidth);
@@ -234,7 +239,7 @@ export default function App() {
   }, [compact, showInspector]);
   // The details panel always floats above the workspace: it never resizes the resource table.
   // The store keeps it at least 520px wide, but a narrow viewport still wins over that floor.
-  const detailWidth = Math.min(inspectorWidth, Math.max(320, logicalViewportWidth - 56));
+  const detailWidth = Math.min(inspectorWidth, Math.max(0, logicalViewportWidth - 56 / factor));
   const [headerHeight, setHeaderHeight] = useState(58);
 
   const onSelectContext = (name: string) => {

@@ -17,8 +17,6 @@ interface ResourceState {
   setSyncMode: (mode: 'snapshot' | 'watch' | 'demo') => void;
   applyWatchCommit: (kind: ResourceKind, update: WatchCommit) => void;
   activeKind: ResourceKind;
-  searchQuery: string;
-  searchRegex: boolean;
   selectedItem: ResourceItem | null;
   selectionHistory: ResourceItem[];
   selectionOrigin: string | null;
@@ -27,8 +25,6 @@ interface ResourceState {
   setActiveKind: (kind: ResourceKind) => void;
   reset: () => void;
   setLoadError: (kind: ResourceKind, error: unknown) => void;
-  setSearchQuery: (query: string) => void;
-  setSearchRegex: (searchRegex: boolean) => void;
   selectItem: (item: ResourceItem | null, options?: { history?: boolean; origin?: string }) => void;
   setResourcesForKind: (kind: ResourceKind, items: ResourceItem[]) => void;
   updateItem: (kind: ResourceKind, uid: string, patch: Partial<ResourceItem>) => void;
@@ -59,8 +55,6 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     };
   }),
   activeKind: 'Pod',
-  searchQuery: '',
-  searchRegex: false,
   selectedItem: null,
   selectionHistory: [],
   selectionOrigin: null,
@@ -72,13 +66,11 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     }
     return { selectionHistory: [] };
   }),
-  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, searchQuery: '', searchRegex: false, watchStates: {}, syncMode: 'snapshot' }),
+  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, watchStates: {}, syncMode: 'snapshot' }),
   setLoadError: (kind, error) => set((state) => ({ loadingKinds: error == null ? state.loadingKinds : { ...state.loadingKinds, [kind]: false }, loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
 
   setActiveKind: (activeKind) => set({ activeKind }),
 
-  setSearchQuery: (searchQuery) => set({ searchQuery }),
-  setSearchRegex: (searchRegex) => set({ searchRegex }),
 
   selectItem: (selectedItem, options) => set(state => {
     const push = options?.history || !!options?.origin && options.origin === state.selectionOrigin;
@@ -169,7 +161,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
   },
 
   getActiveResources: () => {
-    const { resources, activeKind, searchQuery } = get();
+    const { resources, activeKind } = get();
     const selectedNamespace = useClusterStore.getState().selectedNamespace;
     const map = resources[activeKind] || new Map();
     let list = Array.from(map.values());
@@ -178,15 +170,6 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
       list = list.filter((item) => inNamespaceScope(selectedNamespace, item.namespace));
     }
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(
-        (item) =>
-          item.name.toLowerCase().includes(q) ||
-          (item.namespace && item.namespace.toLowerCase().includes(q)) ||
-          (item.status && item.status.toLowerCase().includes(q))
-      );
-    }
 
     return list;
   },

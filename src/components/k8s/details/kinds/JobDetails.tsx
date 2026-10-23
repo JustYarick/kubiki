@@ -1,3 +1,4 @@
+import { performResourceAction } from '../../../../providers/resource_actions';
 import { useState } from 'react';
 import { Play, Clock, Layers, Activity } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
@@ -10,7 +11,6 @@ import { ContainerCard } from '../blocks/ContainerCard';
 import { ConditionsTable } from '../blocks/ConditionsTable';
 import { MetadataBlock } from '../blocks/MetadataBlock';
 import { Button } from '../../../ui/Button';
-import { stringify } from 'yaml';
 
 interface JobDetailsProps {
   item: ResourceItem;
@@ -86,7 +86,7 @@ export function JobDetails({ item, onNavigate, onLogs, onShell }: JobDetailsProp
         });
         toast.success(`CronJob ${item.name} ${nextSuspended ? 'suspended' : 'resumed'} (demo)`);
       } else {
-        await k8s.applyManifest(currentContext!, stringify(updatedRaw), item);
+        await performResourceAction(currentContext!, item, { type: 'suspend', suspend: nextSuspended });
         toast.success(`CronJob ${item.name} ${nextSuspended ? 'suspended' : 'resumed'}`);
       }
     } catch (err: any) {
@@ -100,19 +100,6 @@ export function JobDetails({ item, onNavigate, onLogs, onShell }: JobDetailsProp
     try {
       setTriggering(true);
       const manualJobName = `${item.name}-manual-${Math.floor(Date.now() / 1000).toString().slice(-4)}`;
-      const jobManifest = {
-        apiVersion: 'batch/v1',
-        kind: 'Job',
-        metadata: {
-          name: manualJobName,
-          namespace: item.namespace,
-          annotations: {
-            'cronjob.kubernetes.io/instantiate': 'manual',
-          },
-        },
-        spec: spec.jobTemplate?.spec ?? {},
-      };
-      const yamlStr = stringify(jobManifest);
       if (k8s.demo) {
         toast.success(`Job ${manualJobName} triggered (demo simulation)`);
       } else {
@@ -120,7 +107,7 @@ export function JobDetails({ item, onNavigate, onLogs, onShell }: JobDetailsProp
           toast.error('No active cluster context');
           return;
         }
-        await k8s.applyManifest(currentContext, yamlStr);
+        await performResourceAction(currentContext, item, { type: 'run_cron_job', name: manualJobName });
         toast.success(`Spawned Job ${manualJobName}`);
       }
     } catch (err: any) {

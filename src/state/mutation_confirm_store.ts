@@ -1,3 +1,4 @@
+import type { MutationReview } from '../providers/mutation_review';
 import { create } from 'zustand';
 import type { ResourceRef } from '../core/resources/resource_types';
 
@@ -5,6 +6,7 @@ export interface MutationConfirmRequest {
   id: string;
   resource: ResourceRef;
   review: string;
+  details?: MutationReview;
 }
 
 interface MutationConfirmState {
@@ -32,26 +34,20 @@ export const useMutationConfirmStore = create<MutationConfirmState>((set, get) =
   },
 }));
 
-let unlistenFn: (() => void) | null = null;
-
+let listener: Promise<() => void> | undefined;
+let subscribers = 0;
 export async function setupMutationConfirmListener(): Promise<() => void> {
-  if (unlistenFn) return unlistenFn;
-  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return () => {};
+  subscribers++;
+  listener ??= import('@tauri-apps/api/event').then(({ listen }) => listen<MutationConfirmRequest>('mutation-confirm-request', event => useMutationConfirmStore.getState().setPending(event.payload))).catch(error => {
+    console.error('Failed to setup mutation confirm listener', error);
     return () => {};
-  }
-
-  try {
-    const { listen } = await import('@tauri-apps/api/event');
-    const unlisten = await listen<MutationConfirmRequest>('mutation-confirm-request', (event) => {
-      useMutationConfirmStore.getState().setPending(event.payload);
-    });
-    unlistenFn = () => {
-      unlisten();
-      unlistenFn = null;
-    };
-    return unlistenFn;
-  } catch (err) {
-    console.error('Failed to setup mutation confirm listener', err);
-    return () => {};
-  }
+  });
+  const registration = listener;
+  const unlisten = await registration;
+  let closed = false;
+  return () => {
+    if (closed) return; closed = true;
+    if (--subscribers === 0 && listener === registration) { unlisten(); listener = undefined; }
+  };
 }

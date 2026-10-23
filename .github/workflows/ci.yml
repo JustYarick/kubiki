@@ -35,11 +35,33 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Run Vitest Unit Tests (293 tests)
+      - name: Run Vitest Unit Tests
         run: pnpm test
 
       - name: Build frontend production bundle
         run: pnpm build
+
+  interface:
+    name: Browser Interface Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: interface-test-results
+          path: test-results/
+          retention-days: 7
 
   rust-test:
     name: Rust Core Tests (${{ matrix.os }})

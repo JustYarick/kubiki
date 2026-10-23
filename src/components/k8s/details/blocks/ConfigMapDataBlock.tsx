@@ -1,3 +1,4 @@
+import { performResourceAction } from '../../../../providers/resource_actions';
 import { useState } from 'react';
 import { FileCode, Copy, Plus, Trash2, Search, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
@@ -54,19 +55,7 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
       const context = baseline.context;
       if (!context) return;
       const original = baseline.item;
-      const manifest = JSON.stringify({
-        ...original.raw,
-        apiVersion: original.apiVersion,
-        kind: 'ConfigMap',
-        metadata: {
-          ...original.raw?.metadata,
-          name: original.name,
-          namespace: original.namespace,
-        },
-        data: dataObj,
-      });
-
-      await k8s.applyManifest(context, manifest, original);
+      await performResourceAction(context, original, { type: 'config_map_data', data: dataObj });
       setEditing(false);
       toast.success('ConfigMap saved to cluster');
     } catch (err) {

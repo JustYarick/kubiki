@@ -48,7 +48,7 @@ async function fixture(page: Page, withCustom = true) {
   const hold = (key: string) => { let release!: () => void; waits.set(key, new Promise<void>(resolve => { release = resolve; })); return () => { waits.delete(key); release(); }; };
   return { requests, errors, hold, fail: (key: string) => failures.add(key) };
 }
-async function open(page: Page, type: string) { await page.getByTestId('explorer-panel').locator(`[data-resource-type="${type}"]`).click(); return page.getByTestId('resource-table'); }
+async function open(page: Page, type: string) { await page.getByTestId('explorer-panel').locator(`[data-resource-type="${type}"]`).first().click(); return page.getByTestId('resource-table'); }
 
 test('all 45 Lens builtin collections use valid API queries and open their details', async ({ page }) => {
   test.setTimeout(60000); const state = await fixture(page);
@@ -58,7 +58,8 @@ test('all 45 Lens builtin collections use valid API queries and open their detai
     if (['Node','Namespace','Event'].includes(kind)) { await explorer.getByRole('button', { name: new RegExp(`^${kind === 'Namespace' ? 'Namespaces' : kind + 's'}(?: \\d+)?$`) }).click(); table = page.getByTestId('resource-table'); }
     else table = await open(page, kind);
     const name = kind === 'CustomResourceDefinition' ? 'verticalpodautoscalers.autoscaling.k8s.io' : kind === 'Namespace' ? ns : resourceName(kind);
-    await table.getByText(name, { exact: true }).click();
+    if (kind === 'CustomResourceDefinition') await table.locator('tbody tr').filter({ hasText: name }).locator('td').first().click();
+    else await table.getByText(name, { exact: true }).click();
     const details = page.getByTestId('resource-details'); await expect(details.locator('.details-title')).toHaveText(name);
     if (kind !== 'Event') {
       await expect(details.getByRole('tab', { name: 'Related', exact: true })).toBeVisible();
@@ -79,7 +80,7 @@ test('VPA and all ten Gateway kinds have dedicated tree locations and resolve na
   const state = await fixture(page); await page.goto('/'); const explorer = page.getByTestId('explorer-panel'); await explorer.getByRole('button', { name: 'Expand All', exact: true }).click();
   await expect(explorer.locator('#sidebar-category-config').getByRole('button', { name: 'Vertical Pod Autoscalers', exact: true })).toBeVisible();
   await expect(explorer.locator('#sidebar-category-gateway').locator('[data-resource-type]')).toHaveCount(10);
-  await expect(explorer.locator('#sidebar-category-crd').getByRole('button', { name: 'gateway.networking.k8s.io', exact: true })).toHaveCount(0);
+  await expect(explorer.locator('#sidebar-category-crd').getByRole('button', { name: 'gateway.networking.k8s.io', exact: true })).toHaveCount(1);
   const details = page.getByTestId('resource-details');
   for (const type of custom) {
     const table = await open(page, `custom:${type.group}/${type.kind}`); await table.getByText(resourceName(type.kind), { exact: true }).click();

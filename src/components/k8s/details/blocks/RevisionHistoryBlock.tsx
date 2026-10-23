@@ -1,10 +1,11 @@
+import { performResourceAction } from '../../../../providers/resource_actions';
+import { resourceRef } from '../../../../core/resources/identity';
 import { useMemo } from 'react';
 import { History, RotateCcw, Check } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
 import { useClusterStore } from '../../../../state/cluster_store';
 import { k8s } from '../../../../providers/k8s_provider';
-import { stringify } from 'yaml';
 import { Button } from '../../../ui/Button';
 import { toast } from '../../../../state/notifications_store';
 
@@ -68,7 +69,7 @@ export function RevisionHistoryBlock({ workload, item }: RevisionHistoryBlockPro
         });
         toast.success(`Rolled back ${targetWorkload.name} to revision #${rev} (demo)`);
       } else {
-        await k8s.applyManifest(currentContext!, stringify(updatedRaw), targetWorkload);
+        await performResourceAction(currentContext!, targetWorkload, { type: 'rollback', revision: resourceRef(currentContext!, rs), resource_version: rs.raw?.metadata?.resourceVersion ?? '' });
         toast.success(`Rollback to revision #${rev} applied for ${targetWorkload.name}`);
       }
     } catch (err: any) {

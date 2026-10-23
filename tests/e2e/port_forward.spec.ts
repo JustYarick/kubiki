@@ -57,6 +57,8 @@ test('Pod and Service forwards use native assigned ports, show errors and stop e
   await expect(service).toContainText('web:8080');
   await page.clock.install(); await page.evaluate(() => (window as any).__pfHarness.failure()); await page.clock.fastForward(2100);
   await expect(service).toContainText('Application connection refused');
+  while (await page.getByRole('button', { name: /^Dismiss / }).count()) await page.getByRole('button', { name: /^Dismiss / }).first().click();
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
   await service.getByRole('button', { name: 'Stop forward web-service' }).click(); await expect(service).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).__pfHarness.active())).toBe(1);
   await page.screenshot({ path: 'test-results/port-forwards.png' });
@@ -91,6 +93,7 @@ test('Ports picker filters targets and compact sessions stay inside the dock', a
   const table = page.getByRole('table', { name: 'Port forward sessions', exact: true });
   await expect(table).toBeVisible();
   expect(await table.evaluate(el => el.scrollWidth <= el.parentElement!.clientWidth)).toBe(true);
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
   await page.getByRole('button', { name: 'Add Tunnel', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Choose a port-forward target' });
   await picker.getByPlaceholder('Find Pod or Service…').fill('service');

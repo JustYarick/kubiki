@@ -18,6 +18,14 @@ it('discovers supported collections with and without shortnames and uses the ser
   expect(() => parseApiResources({ items: [] })).toThrow();
   expect(() => parseApiResources('pods example.com/v1 true Pod list')).toThrow();
 });
+it('validates native discovery identities and preserves watch capabilities and served versions', () => {
+  const pod = { kind: 'Pod', plural: 'pods', group: '', version: 'v1', namespaced: true, watch: false };
+  expect(parseApiResources([pod])).toEqual([expect.objectContaining(pod)]);
+  for (const patch of [{ group: 'example.org' }, { namespaced: false }, { version: 'invalid' }, { watch: 'false' }]) {
+    expect(() => parseApiResources([{ ...pod, ...patch }])).toThrow('Invalid Kubernetes API discovery response');
+  }
+  expect(() => parseApiResources([])).toThrow('did not return any supported collections');
+});
 it('reads label keys containing dots without treating them as nested paths', () => {
   expect(fieldValue({ metadata: { labels: { 'kubernetes.io/service-name': 'web' } } }, 'metadata.labels[kubernetes.io/service-name]')).toBe('web');
 });

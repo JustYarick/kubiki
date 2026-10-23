@@ -147,6 +147,7 @@ async fn preview_cancel_and_upgrade_consent_own_the_exact_payload() {
             .contains("UPDATE v1/ConfigMap/backend/web")
     );
     assert!(prepared.review().contains("BEFORE \"old\" → AFTER \"new\""));
+    assert!(!prepared.review().contains("/data/key"));
     assert!(!fixture.wrote());
     assert_eq!(
         prepared

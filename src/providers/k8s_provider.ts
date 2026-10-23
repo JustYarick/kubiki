@@ -1,3 +1,4 @@
+import { environmentReadTransport, type KubernetesReadTransport } from './read_transport';
 import { applyBatch as applyBatchRequest, changeResource, deleteObject, type BatchResult, type BatchStep } from './mutations';
 import { resourceRef } from '../core/resources/identity';
 import { namespaceNames, inNamespaceScope } from '../core/resources/namespace_scope';
@@ -19,6 +20,7 @@ import { parseHelmPage, parseHelmHistory, parseHelmRepositories, validateHelmTar
 export const DEMO_CONTEXT = 'kubiki-demo';
 
 export class K8sProvider implements KubernetesProvider {
+  constructor(private readonly transport: KubernetesReadTransport = environmentReadTransport) {}
   readonly demo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
   private mock: ReturnType<typeof buildMockResources> | undefined;
   get supportsResourceWatch(): boolean { return !this.demo && this.isTauriEnv(); }
@@ -39,7 +41,7 @@ export class K8sProvider implements KubernetesProvider {
   }
 
   private isTauriEnv(): boolean {
-    return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    return this.transport.native;
   }
 
   private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown, nativeArgs?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
@@ -48,36 +50,7 @@ export class K8sProvider implements KubernetesProvider {
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
     try {
       if (path !== 'contexts' && path !== 'helm/repositories' && path !== 'helm/charts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
-      if (this.isTauriEnv()) {
-        const { invoke } = await import('@tauri-apps/api/core');
-        return await invoke<T>(command, nativeArgs ?? args);
-      }
-      const query = new URLSearchParams();
-      for (const [key, value] of Object.entries(args)) if (value != null) query.set(key, String(value));
-      let response: Response;
-      const controller = new AbortController();
-      const abort = () => controller.abort();
-      if (signal?.aborted) controller.abort();
-      signal?.addEventListener('abort', abort, { once: true });
-      const timer = setTimeout(abort, 20000);
-      try {
-        // A signal also bounds reading the response body.
-        response = await fetch(`/api/k8s/${path}?${query}`, { signal: controller.signal, ...(body === undefined ? {} : {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        }) });
-        let data: unknown;
-        try { data = await response.json(); }
-        catch {
-          if (controller.signal.aborted) throw requestError('timeout', 'Kubernetes bridge request timed out', info, 504);
-          throw requestError('bridge_unavailable', 'Kubernetes bridge unavailable. Start the desktop app or development server; use ?demo=1 for a demo.', info, response.status);
-        }
-        if (!response.ok) throw normalizeK8sError(data, info, response.status);
-        return data as T;
-      } catch (error) {
-        if (controller.signal.aborted) throw requestError('timeout', 'Kubernetes bridge request timed out', info, 504);
-        if (error instanceof TypeError) throw requestError('unavailable', error.message, info);
-        throw error;
-      } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+      return await this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, signal);
     } catch (error) { throw normalizeK8sError(error, info); }
   }
 

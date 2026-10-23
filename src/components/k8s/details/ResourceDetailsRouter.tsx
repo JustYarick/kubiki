@@ -51,111 +51,53 @@ const GATEWAY_API_KINDS = new Set([
   'ListenerSet', 'ReferenceGrant', 'BackendTLSPolicy',
 ]);
 
+
+const DETAIL_RENDERERS: Record<string, import('react').ComponentType<ResourceDetailsRouterProps>> = {
+  Pod: PodDetails,
+  Deployment: WorkloadDetails,
+  StatefulSet: WorkloadDetails,
+  DaemonSet: WorkloadDetails,
+  ReplicaSet: WorkloadDetails,
+  ReplicationController: WorkloadDetails,
+  Service: ServiceDetails,
+  Ingress: IngressDetails,
+  Secret: SecretDetails,
+  ConfigMap: ConfigMapDetails,
+  Node: NodeDetails,
+  PersistentVolumeClaim: PvcDetails,
+  PersistentVolume: PvDetails,
+  Job: JobDetails,
+  CronJob: JobDetails,
+  HorizontalPodAutoscaler: ScalingDetails,
+  VerticalPodAutoscaler: ScalingDetails,
+  PodDisruptionBudget: BudgetDetails,
+  ResourceQuota: QuotaDetails,
+  LimitRange: LimitRangeDetails,
+  NetworkPolicy: NetworkPolicyDetails,
+  Endpoints: EndpointDetails,
+  EndpointSlice: EndpointDetails,
+  IngressClass: IngressClassDetails,
+  PriorityClass: PriorityClassDetails,
+  RuntimeClass: RuntimeClassDetails,
+  Lease: LeaseDetails,
+  MutatingWebhookConfiguration: WebhookConfigurationDetails,
+  ValidatingWebhookConfiguration: WebhookConfigurationDetails,
+  ValidatingAdmissionPolicy: AdmissionPolicyDetails,
+  MutatingAdmissionPolicy: AdmissionPolicyDetails,
+  ValidatingAdmissionPolicyBinding: AdmissionPolicyBindingDetails,
+  MutatingAdmissionPolicyBinding: AdmissionPolicyBindingDetails,
+  DeviceClass: DeviceClassDetails,
+  ResourceClaim: ResourceClaimDetails,
+  ResourceClaimTemplate: ResourceClaimTemplateDetails,
+  ResourceSlice: ResourceSliceDetails,
+};
+
 export function ResourceDetailsRouter({ item, onNavigate, onLogs, onShell }: ResourceDetailsRouterProps) {
   if (gitOpsFamily(item)) return <GitOpsDetails key={item.uid} item={item} onNavigate={onNavigate} />;
-  switch (item.kind) {
-    case 'Pod':
-      return <PodDetails item={item} onNavigate={onNavigate} onLogs={onLogs} onShell={onShell} />;
-
-    case 'Deployment':
-    case 'StatefulSet':
-    case 'DaemonSet':
-    case 'ReplicaSet':
-    case 'ReplicationController':
-      return <WorkloadDetails item={item} onNavigate={onNavigate} onLogs={onLogs} onShell={onShell} />;
-
-    case 'Service':
-      return <ServiceDetails item={item} onNavigate={onNavigate} />;
-
-    case 'Ingress':
-      return <IngressDetails item={item} onNavigate={onNavigate} />;
-
-    case 'Secret':
-      return <SecretDetails item={item} onNavigate={onNavigate} />;
-
-    case 'ConfigMap':
-      return <ConfigMapDetails item={item} onNavigate={onNavigate} />;
-
-    case 'Node':
-      return <NodeDetails item={item} onNavigate={onNavigate} />;
-
-    case 'PersistentVolumeClaim':
-      return <PvcDetails item={item} onNavigate={onNavigate} />;
-
-    case 'PersistentVolume':
-      return <PvDetails item={item} onNavigate={onNavigate} />;
-
-    case 'Job':
-    case 'CronJob':
-      return <JobDetails item={item} onNavigate={onNavigate} onLogs={onLogs} onShell={onShell} />;
-
-    /* Autoscaling */
-    case 'HorizontalPodAutoscaler':
-    case 'VerticalPodAutoscaler':
-      return <ScalingDetails item={item} onNavigate={onNavigate} />;
-
-    /* Availability */
-    case 'PodDisruptionBudget':
-      return <BudgetDetails item={item} onNavigate={onNavigate} />;
-
-    /* Quotas and limits */
-    case 'ResourceQuota':
-      return <QuotaDetails item={item} onNavigate={onNavigate} />;
-
-    case 'LimitRange':
-      return <LimitRangeDetails item={item} onNavigate={onNavigate} />;
-
-    /* Network */
-    case 'NetworkPolicy':
-      return <NetworkPolicyDetails item={item} onNavigate={onNavigate} />;
-
-    case 'Endpoints':
-    case 'EndpointSlice':
-      return <EndpointDetails item={item} onNavigate={onNavigate} />;
-
-    case 'IngressClass':
-      return <IngressClassDetails item={item} onNavigate={onNavigate} />;
-
-    /* Scheduling */
-    case 'PriorityClass':
-      return <PriorityClassDetails item={item} onNavigate={onNavigate} />;
-
-    case 'RuntimeClass':
-      return <RuntimeClassDetails item={item} onNavigate={onNavigate} />;
-
-    case 'Lease':
-      return <LeaseDetails item={item} onNavigate={onNavigate} />;
-
-    /* Admission control */
-    case 'MutatingWebhookConfiguration':
-    case 'ValidatingWebhookConfiguration':
-      return <WebhookConfigurationDetails item={item} onNavigate={onNavigate} />;
-
-    case 'ValidatingAdmissionPolicy':
-    case 'MutatingAdmissionPolicy':
-      return <AdmissionPolicyDetails item={item} onNavigate={onNavigate} />;
-
-    case 'ValidatingAdmissionPolicyBinding':
-    case 'MutatingAdmissionPolicyBinding':
-      return <AdmissionPolicyBindingDetails item={item} onNavigate={onNavigate} />;
-
-    /* Dynamic resource allocation */
-    case 'DeviceClass':
-      return <DeviceClassDetails item={item} onNavigate={onNavigate} />;
-
-    case 'ResourceClaim':
-      return <ResourceClaimDetails item={item} onNavigate={onNavigate} />;
-
-    case 'ResourceClaimTemplate':
-      return <ResourceClaimTemplateDetails item={item} onNavigate={onNavigate} />;
-
-    case 'ResourceSlice':
-      return <ResourceSliceDetails item={item} onNavigate={onNavigate} />;
-
-    default:
-      break;
-  }
-  if (GATEWAY_API_KINDS.has(item.kind)) return <GatewayDetails key={item.uid} item={item} onNavigate={onNavigate} />;
+  const builtin = !resourceBucket(item).startsWith('custom:');
+  const Renderer = builtin ? DETAIL_RENDERERS[item.kind] : item.apiVersion.startsWith('autoscaling.k8s.io/') && item.kind === 'VerticalPodAutoscaler' ? ScalingDetails : undefined;
+  if (Renderer) return <Renderer item={item} onNavigate={onNavigate} onLogs={onLogs} onShell={onShell} />;
+  if (item.apiVersion.startsWith('gateway.networking.k8s.io/') && GATEWAY_API_KINDS.has(item.kind)) return <GatewayDetails key={item.uid} item={item} onNavigate={onNavigate} />;
   if (presentationFor(item)) return <ExtendedResourceDetails item={item} onNavigate={onNavigate} />;
   if (resourceBucket(item).startsWith('custom:')) return <GenericResourceDetails item={item} onNavigate={onNavigate} />;
   return <GenericResourceDetails item={item} onNavigate={onNavigate} />;

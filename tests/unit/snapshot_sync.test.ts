@@ -36,3 +36,32 @@ it('does not publish a late response into another cluster', async () => {
   useClusterStore.getState().selectContext('other'); useResourceStore.getState().reset(); finish([pod('old')]);
   expect(await pending).toBe(false); expect(useResourceStore.getState().resources.Pod.size).toBe(0);
 });
+
+it('falls back to the selected namespace when cluster-wide Pod reads are forbidden', async () => {
+  const get = vi.spyOn(k8s, 'getResources').mockImplementation(async (_context, _kind, scope) => {
+    if (scope === 'all') throw { code: 'forbidden', message: 'Cluster-wide read denied', retryable: false };
+    return [pod('allowed')];
+  });
+  expect(await syncResourceSnapshot('prod', 'Pod', 'a')).toBe(true);
+  expect(get.mock.calls.map(call => call[2])).toEqual(['all', 'a']);
+  expect(useResourceStore.getState().resources.Pod.has('allowed')).toBe(true);
+});
+it('does not publish namespace fallback data after the namespace changes', async () => {
+  let finish!: (items: ResourceItem[]) => void;
+  vi.spyOn(k8s, 'getResources').mockImplementation(async (_context, _kind, scope) => {
+    if (scope === 'all') throw { code: 'forbidden', message: 'Denied', retryable: false };
+    return new Promise(resolve => { finish = resolve; });
+  });
+  const request = syncResourceSnapshot('prod', 'Pod', 'a');
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  useClusterStore.getState().selectNamespace('b'); finish([pod('outdated')]);
+  expect(await request).toBe(false);
+  expect(useResourceStore.getState().resources.Pod.size).toBe(0);
+});
+
+it('does not repeat a forbidden all-namespaces request without a selected namespace', async () => {
+  useClusterStore.getState().selectNamespace('all');
+  const get = vi.spyOn(k8s, 'getResources').mockRejectedValue({ code: 'forbidden', message: 'Denied', retryable: false });
+  await expect(syncResourceSnapshot('prod', 'Pod', 'all')).rejects.toMatchObject({ code: 'forbidden' });
+  expect(get).toHaveBeenCalledTimes(1);
+});

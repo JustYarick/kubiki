@@ -1,5 +1,6 @@
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { matchesSelector } from './relationships';
+import { parseApiVersion, RESOURCE_TYPES } from './resource_types';
 
 export type ResourceMap = Partial<Record<ResourceKind, Map<string, ResourceItem>>>;
 
@@ -12,14 +13,16 @@ function mapOf(resources: ResourceMap, kind: string): ResourceItem[] {
 /** Exact object lookup by kind and name inside a namespace. */
 export function resourceByRef(
   resources: ResourceMap,
-  ref: { kind?: string; name?: string; namespace?: string } | undefined,
+  ref: { kind?: string; name?: string; namespace?: string; group?: string; apiVersion?: string } | undefined,
   options: { kinds?: ResourceKind[]; namespace?: string } = {},
 ): ResourceItem | undefined {
   if (!ref?.name) return undefined;
   const namespace = ref.namespace ?? options.namespace;
   const kinds = ref.kind ? [ref.kind as ResourceKind] : options.kinds ?? [];
   for (const kind of kinds) {
-    const match = mapOf(resources, kind).find(item =>
+    const group = ref.group ?? (ref.apiVersion ? parseApiVersion(ref.apiVersion).group : undefined);
+    const bucket = group === undefined || RESOURCE_TYPES.some(type => type.kind === kind && type.group === group) ? kind : `custom:${group}/${kind}`;
+    const match = mapOf(resources, bucket).find(item =>
       item.name === ref.name && (namespace ? item.namespace === namespace : true));
     if (match) return match;
   }

@@ -7,3 +7,6 @@ pub mod api;
 pub mod secret_data;
 
 pub mod mutations;
+
+pub mod drain;
+pub mod reads;

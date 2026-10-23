@@ -190,7 +190,7 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
         externalIP,
         selectorText,
         status: spec.type || 'ClusterIP',
-        ready: ports || '-',
+        ports: ports || '-',
       };
     }
 
@@ -257,7 +257,7 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
       return {
         ...base,
         status: suspend,
-        ready: spec.schedule || '-',
+        schedule: spec.schedule || '-',
         activeJobs,
         lastScheduleTime,
       };
@@ -278,7 +278,6 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
         status: 'Active',
         dataKeys,
         sizeBytes,
-        ready: `${dataKeys} keys`,
       };
     }
 
@@ -298,7 +297,6 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
         secretType: raw.type || 'Opaque',
         dataKeys,
         sizeBytes,
-        ready: `${dataKeys} keys`,
       };
     }
 
@@ -308,7 +306,7 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
         status: status.phase || 'Bound',
         storageClass: spec.storageClassName || '-',
         volume: spec.volumeName || '-',
-        ready: spec.resources?.requests?.storage || '-',
+        capacity: spec.resources?.requests?.storage || '-',
       };
     }
 
@@ -318,14 +316,15 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
         status: status.phase || 'Available',
         storageClass: spec.storageClassName || '-',
         reclaimPolicy: spec.persistentVolumeReclaimPolicy || 'Retain',
-        ready: spec.capacity?.storage || '-',
+        capacity: spec.capacity?.storage || '-',
       };
     }
 
     case 'StorageClass': {
       return {
         ...base,
-        status: raw.provisioner || '-',
+        status: 'Active',
+        provisioner: raw.provisioner || '-',
         reclaimPolicy: raw.reclaimPolicy || 'Delete',
       };
     }
@@ -335,7 +334,6 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
       return {
         ...base,
         status: hosts || '*',
-        ready: hosts || '*',
         ingressHosts: hosts || '*',
         ingressClass: spec.ingressClassName,
       };

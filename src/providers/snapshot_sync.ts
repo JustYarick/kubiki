@@ -1,5 +1,5 @@
 import type { ResourceKind } from '../types/k8s';
-import { resourceType, scopeForKind, SCOPE_INDEPENDENT_KINDS } from '../core/resources/resource_types';
+import { resourceType, scopeForKind, namespaceFallback } from '../core/resources/resource_types';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
 import { k8s } from './k8s_provider';
@@ -17,7 +17,8 @@ export async function syncResourceSnapshot(context: string, kind: ResourceKind, 
   const namespaced = resourceType(kind).namespaced;
   // Scope-independent kinds always read the whole cluster, so the selection does not change their numbers.
   const effectiveScope = scopeForKind(kind, scope);
-  const current = () => !controller.signal.aborted && requests.get(kind) === controller && useClusterStore.getState().currentContext === context && (!namespaced || effectiveScope === 'all' || useClusterStore.getState().selectedNamespace === scope);
+  let scopedFallback = false;
+  const current = () => !controller.signal.aborted && requests.get(kind) === controller && useClusterStore.getState().currentContext === context && (!namespaced || effectiveScope === 'all' && !scopedFallback || useClusterStore.getState().selectedNamespace === scope);
   useResourceStore.getState().setKindLoading(kind, true);
   try {
     let items: Awaited<ReturnType<typeof k8s.getResources>>;
@@ -25,8 +26,8 @@ export async function syncResourceSnapshot(context: string, kind: ResourceKind, 
       items = await k8s.getResources(context, kind, effectiveScope, controller.signal);
     } catch (error) {
       // Cluster-wide access can be denied by RBAC: keep the namespace-scoped read.
-      if (!SCOPE_INDEPENDENT_KINDS.has(kind) || effectiveScope === 'all' || scope === 'all') throw error;
-      if (normalizeK8sError(error).code !== 'forbidden') throw error;
+      if (scope === 'all' || !namespaceFallback(kind, effectiveScope, scope, normalizeK8sError(error).code)) throw error;
+      scopedFallback = true;
       items = await k8s.getResources(context, kind, scope, controller.signal);
     }
     if (!current()) return false;

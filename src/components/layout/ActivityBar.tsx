@@ -1,19 +1,19 @@
+import { usePanelRegistry, openWorkspacePanel } from '../../core/workspace_panels';
 import React from 'react';
 import {
   FolderOpen,
-  GitBranch,
   PanelRight,
   Search,
   Settings,
   Terminal,
 } from 'lucide-react';
 import { useDockStore } from '../../state/dock_store';
-import { useWorkspaceStore } from '../../state/workspace_store';
 import { useUiStore } from '../../state/ui_store';
 import { Tooltip } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
 
 export const ActivityBar: React.FC = () => {
+  const panels = usePanelRegistry(s => s.panels);
   const { dockCollapsed, toggleDock } = useDockStore();
   const {
     sidebarCollapsed,
@@ -52,7 +52,7 @@ export const ActivityBar: React.FC = () => {
         </Tooltip>
       </div>
 
-      <Tooltip label="Cluster topology" side="bottom" delay={300}><button className={cxRail(false)} aria-label="Cluster topology" onClick={() => useWorkspaceStore.getState().openTopology()}><GitBranch size="calc(16px * var(--ui-factor))" /></button></Tooltip>
+      {panels.map(panel => <Tooltip key={panel.id} label={panel.title} side="bottom" delay={300}><button className={cxRail(false)} aria-label={panel.title} onClick={() => openWorkspacePanel(panel)}><panel.icon size="calc(16px * var(--ui-factor))" /></button></Tooltip>)}
       {/* Bottom tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full mt-auto">
         <Tooltip label={dockCollapsed ? 'Bottom Panel (⌘J)' : 'Hide Bottom Panel (⌘J)'} side="top" delay={300}>

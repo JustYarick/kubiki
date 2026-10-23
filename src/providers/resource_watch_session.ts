@@ -1,6 +1,6 @@
 import { inNamespaceScope } from '../core/resources/namespace_scope';
 import type { ResourceKind } from '../types/k8s';
-import { apiVersionFor, resourceQuery, resourceType, SCOPE_INDEPENDENT_KINDS, scopeForKind, type ResourceQuery } from '../core/resources/resource_types';
+import { apiVersionFor, resourceQuery, resourceType, SCOPE_INDEPENDENT_KINDS, namespaceFallback, scopeForKind, type ResourceQuery } from '../core/resources/resource_types';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { normalizeK8sError, requestError, type K8sRequestError } from './errors';
 import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchPhase } from './watch_types';
@@ -55,7 +55,7 @@ export class ResourceWatchSession {
       await ready;
     } catch (error) {
       // Cluster-wide access can be denied by RBAC: keep the namespace-scoped read.
-      if (SCOPE_INDEPENDENT_KINDS.has(kind) && !this.scopedFallback.has(kind) && query.namespace === null && (error as K8sRequestError)?.code === 'forbidden') {
+      if (!this.scopedFallback.has(kind) && namespaceFallback(kind, query.namespace, this.namespace, (error as K8sRequestError)?.code)) {
         this.scopedFallback.add(kind);
         if (this.namespace !== 'all') {
           await this.refresh(kind, this.namespace);

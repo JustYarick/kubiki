@@ -46,15 +46,19 @@ export interface ResourceContainer {
   port: string;
 }
 
-export interface ResourceItem {
-  uid: string;
-  name: string;
-  namespace?: string;
-  kind: ResourceKind;
-  apiVersion: string;
+export interface ResourceIdentity {
+  uid: string; name: string; namespace?: string; kind: ResourceKind; apiVersion: string;
+}
+
+export interface ResourceItem extends ResourceIdentity {
   creationTimestamp?: string;
   status?: string;
+  /** Readiness/completion ratio for Pods and workloads only. */
   ready?: string;
+  ports?: string;
+  schedule?: string;
+  capacity?: string;
+  provisioner?: string;
   restarts?: number;
   cpu?: string;
   memory?: string;

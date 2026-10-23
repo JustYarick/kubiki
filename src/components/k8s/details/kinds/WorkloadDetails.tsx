@@ -1,3 +1,4 @@
+import { performResourceAction, restartManifest } from '../../../../providers/resource_actions';
 import { useState } from 'react';
 import { Layers, Activity, Users, Plus, Minus, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
@@ -11,7 +12,6 @@ import { RevisionHistoryBlock } from '../blocks/RevisionHistoryBlock';
 import { ConditionsTable } from '../blocks/ConditionsTable';
 import { MetadataBlock } from '../blocks/MetadataBlock';
 import { Button } from '../../../ui/Button';
-import { stringify } from 'yaml';
 
 interface WorkloadDetailsProps {
   item: ResourceItem;
@@ -77,7 +77,6 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
           replicas: targetReplicas,
         },
       };
-      const yamlStr = stringify(updatedManifest);
       if (k8s.demo) {
         useResourceStore.getState().updateItem(item.kind, item.uid, {
           ...item,
@@ -90,7 +89,7 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
           toast.error('No active cluster context');
           return;
         }
-        await k8s.applyManifest(currentContext, yamlStr, item);
+        await k8s.scaleWorkload(currentContext, item.kind, item.name, item.namespace!, targetReplicas, item.uid, item.raw?.metadata?.resourceVersion ?? '');
         toast.success(`Scale requested for ${item.name} (${targetReplicas} replicas)`);
       }
     } catch (err: any) {
@@ -110,12 +109,7 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
       toast.error('No active cluster context');
       return;
     }
-    const rawCopy = JSON.parse(JSON.stringify(item.raw ?? {}));
-    rawCopy.spec = rawCopy.spec ?? {};
-    rawCopy.spec.template = rawCopy.spec.template ?? {};
-    rawCopy.spec.template.metadata = rawCopy.spec.template.metadata ?? {};
-    rawCopy.spec.template.metadata.annotations = rawCopy.spec.template.metadata.annotations ?? {};
-    rawCopy.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
+    const rawCopy = restartManifest(item);
 
     try {
       setRestarting(true);
@@ -123,7 +117,7 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...item, raw: rawCopy });
         toast.success(`Rollout restart triggered for ${item.kind}/${item.name} (demo)`);
       } else {
-        await k8s.applyManifest(currentContext!, stringify(rawCopy), item);
+        await performResourceAction(currentContext!, item, { type: 'restart' });
         toast.success(`Rollout restart triggered for ${item.kind}/${item.name}`);
       }
     } catch (err: any) {

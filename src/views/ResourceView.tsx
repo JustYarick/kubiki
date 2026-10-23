@@ -1,15 +1,20 @@
+import { useResourceActions } from '../components/k8s/useResourceActions';
+import { useResourceColumns } from '../components/k8s/table/useResourceColumns';
+import { useResourceTableModel } from '../components/k8s/table/useResourceTableModel';
+import { useColumnLayout } from '../components/k8s/table/useColumnLayout';
+import { CellValue } from '../components/k8s/table/CellValue';
+import { NewResourceDialog } from '../components/dialogs/NewResourceDialog';
+import { useShallow } from 'zustand/react/shallow';
+import { useTableView } from '../state/table_view_store';
 import { resourceIcon } from '../core/resource_icons';
 import { syncResourceSnapshot } from '../providers/snapshot_sync';
 import { ResourceLoading } from '../components/ui/ResourceLoading';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { presentationFor, fieldText, fieldValue } from '../core/resources/resource_presentations';
-import { resourceType, apiVersionFor as typeApiVersion, parseApiVersion } from '../core/resources/resource_types';
-import { customResourcePlacement, customColumnValue, customResourceType, type CustomResourceType } from '../core/resources/custom_resource_types';
+import { resourceType, apiVersionFor as typeApiVersion } from '../core/resources/resource_types';
+import { customResourcePlacement, customResourceType, type CustomResourceType } from '../core/resources/custom_resource_types';
 import { useCustomResources } from '../providers/use_custom_resources';
 import { defaultNamespace } from '../core/resources/namespace_scope';
-import { inNamespaceScope } from '../core/resources/namespace_scope';
-import { memoryText, quantity } from '../core/resources/quantities';
-import React, { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowDown,
   ArrowRightLeft,
@@ -40,7 +45,6 @@ import {
   Share2,
   ShieldAlert,
 } from 'lucide-react';
-import { stringify } from 'yaml';
 import { findWorkloadPods, preferredWorkloadPod } from '../core/resources/workload_pods';
 import { gitOpsFamily } from '../core/resources/gitops';
 import { useResourceStore } from '../state/resource_store';
@@ -49,14 +53,11 @@ import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { useDockStore } from '../state/dock_store';
 import { k8s } from '../providers/k8s_provider';
-import { SIDEBAR_TREE, defaultKindFor, kindTone, kindsFor } from '../core/perspectives';
-import { ResourceWarnings } from '../components/k8s/ResourceWarnings';
-import { StatusBadge } from '../components/k8s/StatusBadge';
+import { SIDEBAR_TREE, defaultKindFor, kindsFor } from '../core/perspectives';
 import { ColumnFilterPopup } from '../components/k8s/ColumnFilterPopup';
 import { IconButton, Tooltip } from '../components/ui/Button';
 import { Popover, MenuList, FixedMenu, type MenuItem } from '../components/ui/Dropdown';
-import { SearchInput, Input, Label } from '../components/ui/Input';
-import { Modal } from '../components/ui/Modal';
+import { SearchInput } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { PFDialog } from '../components/dialogs/PFDialog';
 import { ScaleDialog } from '../components/dialogs/ActionDialogs';
@@ -64,252 +65,44 @@ import { toast } from '../state/notifications_store';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { uiFactor, uiPixels } from '../core/appearance';
-import { resourceTabId, resourceRef } from '../core/resources/identity';
-import { resourceIssues } from '../core/resources/diagnostics';
-import { compareCreation, compareRows, issuePriority, statusChoices, type SortKey } from '../core/resources/resource_sort';
-import { ContainerIndicators } from '../components/k8s/ContainerSelect';
+import { resourceTabId } from '../core/resources/identity';
+import type { SortKey } from '../core/resources/resource_sort';
 import { podContainers } from '../core/resources/containers';
 import { refreshResourceWatches } from '../state/resource_watch';
 import { cx } from '../core/utils/cx';
-import { fitTableColumns } from '../core/resources/table_fit';
 
 /* ------------------------------------------------------------------ */
 /* Column model                                                        */
 /* ------------------------------------------------------------------ */
 
-interface ColumnDef {
-  id: string;
-  label: string;
-  align?: 'right';
-  mono?: boolean;
-  /** Default pixel width for table-layout:fixed (resizable by the user). */
-  size?: number;
-  /** Tooltip shown on the cell — explains where the value comes from. */
-  hint?: string;
-  get: (i: ResourceItem) => string | undefined;
-}
-
-const DEFAULT_COL_SIZE: Record<string, number> = {
-  __index: 38,
-  containers: 112, name: 240, namespace: 130, ready: 66, restarts: 84, status: 132, ip: 112, node: 96, age: 64,
-  ports: 132, type: 112, clusterIP: 120, image: 220, keys: 74, volume: 132, claim: 168,
-  storageclass: 132, reclaim: 92, roles: 152, version: 98, cpu: 112, mem: 172, pods: 130, replicas: 125,
-  provisioner: 184, hosts: 220, class: 100, capacity: 90, group: 110,
-  controlledBy: 140, qos: 80, duration: 80, suspend: 80, active: 64, lastSchedule: 100, externalIP: 140,
-  selector: 150, address: 140, size: 80, taints: 64, nodeSelector: 140,
-};
-
-const MIN_COL = 56;
-const MAX_COL = 520;
-
-const BASE_COLUMNS: ColumnDef[] = [
-  { id: 'name', label: 'Name', mono: true, get: (i) => i.name },
-  { id: 'namespace', label: 'Namespace', get: (i) => i.namespace },
-];
-
-const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<string, number> }): ColumnDef[] => {
-  const presentation = presentationFor({ kind, apiVersion: typeApiVersion(resourceType(kind)) });
-  if (presentation) return [BASE_COLUMNS[0], ...(resourceType(kind).namespaced ? [BASE_COLUMNS[1]] : []), ...presentation.fields.map((field, index) => ({ id: `field-${index}`, label: field.label, get: (item: ResourceItem) => fieldText(fieldValue(item.raw, field.path)) })), { id: 'status', label: 'Status', get: item => item.status }, { id: 'age', label: 'Age', get: item => item.age }];
-  switch (kind) {
-    case 'Pod':
-      return [
-        BASE_COLUMNS[0],
-        { id: 'status', label: 'Status', get: (i) => i.status },
-        { id: 'ready', label: 'Ready', align: 'right', mono: true, get: (i) => i.ready },
-        { id: 'restarts', label: 'Restarts', align: 'right', mono: true, get: (i) => (i.restarts === undefined ? undefined : String(i.restarts)) },
-        BASE_COLUMNS[1],
-        { id: 'containers', label: 'Containers', get: (i) => String(i.containers?.length ?? 0) },
-        { id: 'ip', label: 'IP', mono: true, get: (i) => i.ip },
-        { id: 'node', label: 'Node', mono: true, get: (i) => i.node },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'Deployment':
-    case 'StatefulSet':
-    case 'ReplicationController':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'pods', label: 'Pods', get: (i) => i.ready },
-        { id: 'status', label: 'Conditions', get: (i) => i.status },
-        { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'DaemonSet':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'pods', label: 'Pods', get: (i) => i.ready },
-        { id: 'nodeSelector', label: 'Node Selector', mono: true, get: (i) => i.selectorText || '—' },
-        { id: 'status', label: 'Conditions', get: (i) => i.status },
-        { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'ReplicaSet':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'pods', label: 'Pods', get: (i) => i.ready },
-        { id: 'controlledBy', label: 'Controlled By', mono: true, get: (i) => i.controlledBy },
-        { id: 'status', label: 'Conditions', get: (i) => i.status },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'Job':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'ready', label: 'Completions', align: 'right', mono: true, get: (i) => i.ready },
-        { id: 'duration', label: 'Duration', align: 'right', mono: true, get: (i) => i.duration || '—' },
-        { id: 'status', label: 'Conditions', get: (i) => i.status },
-        { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'CronJob':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'ready', label: 'Schedule', mono: true, get: (i) => i.ready },
-        { id: 'suspend', label: 'Suspend', get: (i) => i.status },
-        { id: 'active', label: 'Active', align: 'right', mono: true, get: (i) => (i.activeJobs === undefined ? '0' : String(i.activeJobs)) },
-        { id: 'lastSchedule', label: 'Last Schedule', align: 'right', get: (i) => i.lastScheduleTime || '—' },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'Service':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'status', label: 'Type', get: (i) => i.serviceType },
-        { id: 'clusterIP', label: 'Cluster IP', mono: true, get: (i) => i.clusterIP },
-        { id: 'externalIP', label: 'External IP', mono: true, get: (i) => i.externalIP || '—' },
-        { id: 'ports', label: 'Ports', mono: true, get: (i) => i.ready },
-        { id: 'selector', label: 'Selector', mono: true, get: (i) => i.selectorText || '—' },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'Ingress':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'hosts', label: 'Hosts', get: (i) => i.ingressHosts },
-        { id: 'address', label: 'Address', mono: true, get: (i) => i.loadBalancer || '—' },
-        { id: 'class', label: 'Class', get: (i) => i.ingressClass },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'ConfigMap':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'keys', label: 'Keys', align: 'right', mono: true, get: (i) => (i.dataKeys === undefined ? undefined : String(i.dataKeys)) },
-        { id: 'size', label: 'Size', align: 'right', mono: true, get: (i) => (i.sizeBytes ? memoryText(i.sizeBytes) : '—') },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'Secret':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'type', label: 'Type', get: (i) => i.secretType },
-        { id: 'keys', label: 'Keys', align: 'right', mono: true, get: (i) => (i.dataKeys === undefined ? undefined : String(i.dataKeys)) },
-        { id: 'size', label: 'Size', align: 'right', mono: true, get: (i) => (i.sizeBytes ? memoryText(i.sizeBytes) : '—') },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'PersistentVolumeClaim':
-      return [
-        ...BASE_COLUMNS,
-        { id: 'status', label: 'Status', get: (i) => i.status },
-        { id: 'capacity', label: 'Capacity', align: 'right', mono: true, get: (i) => memoryText(quantity(i.ready)) },
-        { id: 'volume', label: 'Volume', mono: true, get: (i) => i.volume },
-        { id: 'storageclass', label: 'Storage class', get: (i) => i.storageClass },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'PersistentVolume':
-      return [
-        ...BASE_COLUMNS.slice(0, 1),
-        { id: 'status', label: 'Status', get: (i) => i.status },
-        { id: 'claim', label: 'Claim', mono: true, get: (i) => i.volume },
-        { id: 'capacity', label: 'Capacity', align: 'right', mono: true, get: (i) => memoryText(quantity(i.ready)) },
-        { id: 'storageclass', label: 'Storage class', get: (i) => i.storageClass },
-        { id: 'reclaim', label: 'Reclaim', get: (i) => i.reclaimPolicy },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'StorageClass':
-      return [
-        ...BASE_COLUMNS.slice(0, 1),
-        { id: 'provisioner', label: 'Provisioner', get: (i) => i.ready },
-        { id: 'reclaim', label: 'Reclaim', get: (i) => i.reclaimPolicy },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'Node':
-      return [
-        ...BASE_COLUMNS.slice(0, 1),
-        { id: 'status', label: 'Status', get: (i) => i.status },
-        { id: 'roles', label: 'Roles', get: (i) => i.nodeRoles },
-        { id: 'version', label: 'Version', mono: true, get: (i) => i.nodeVersion },
-        { id: 'ip', label: 'Internal IP', mono: true, get: (i) => i.nodeIp || i.ip },
-        { id: 'cpu', label: 'CPU cores', get: (i) => i.nodeCpu },
-        { id: 'mem', label: 'Memory (used / total)', get: (i) => { const bytes = quantity(i.nodeMem); return bytes === null ? i.nodeMem : memoryText(bytes); } },
-        { id: 'pods', label: 'Pods', hint: 'Pods running on the node · cluster-wide, not affected by the namespace selection', get: (i) => {
-          if (i.nodePods?.includes('/')) return i.nodePods;
-          const running = options?.podsByNode?.get(i.name);
-          const allocatable = (i.raw as any)?.status?.allocatable?.pods || (i.raw as any)?.status?.capacity?.pods || i.nodePods;
-          if (running !== undefined && allocatable) return `${running} / ${allocatable}`;
-          if (running !== undefined) return String(running);
-          return i.nodePods || (allocatable ? `0 / ${allocatable}` : '—');
-        } },
-        { id: 'taints', label: 'Taints', align: 'right', mono: true, get: (i) => {
-          const rawTaints = (i.raw as any)?.spec?.taints;
-          const count = Array.isArray(rawTaints) ? rawTaints.length : (i.taintsCount ?? 0);
-          return String(count);
-        } },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'Namespace':
-      return [
-        ...BASE_COLUMNS.slice(0, 1),
-        { id: 'status', label: 'Status', get: (i) => i.status },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    case 'CustomResourceDefinition':
-      return [
-        { id: 'name', label: 'Resource', get: (i) => i.name },
-        { id: 'group', label: 'Group', get: (i) => (i.raw as any)?.spec?.group ?? i.spec?.group },
-        { id: 'version', label: 'Version', get: (i) => {
-          const spec = (i.raw as any)?.spec ?? i.spec;
-          const versions = Array.isArray(spec?.versions) ? spec.versions : [];
-          const pref = versions.find((v: any) => v.storage) ?? versions.find((v: any) => v.served !== false) ?? versions[0];
-          return pref?.name ?? spec?.version ?? '—';
-        } },
-        { id: 'scope', label: 'Scope', get: (i) => (i.raw as any)?.spec?.scope ?? i.spec?.scope ?? 'Namespaced' },
-        { id: 'status', label: 'Status', get: (i) => i.status },
-        { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
-      ];
-    default:
-      return [...BASE_COLUMNS, { id: 'status', label: 'Status', get: (i) => i.status }, { id: 'age', label: 'Age', align: 'right', get: (i) => i.age }];
-  }
-};
-
-const apiVersionFor = (kind: ResourceKind): string => typeApiVersion(resourceType(kind));
-
-const templateFor = (kind: ResourceKind, name: string, ns: string): string => {
-  const head = [`apiVersion: ${apiVersionFor(kind)}`, `kind: ${kind}`, 'metadata:', `  name: ${name}`, ...(ns ? [`  namespace: ${ns}`] : []), 'spec:'];
-  if (['Deployment', 'StatefulSet'].includes(kind))
-    return [...head, '  replicas: 1', '  selector:', '    matchLabels:', `      app: ${name}`, '  template:', '    metadata:', '      labels:', `        app: ${name}`, '    spec:', '      containers:', '      - name: app', '        image: nginx:1.27-alpine', '        ports:', '        - containerPort: 80'].join('\n') + '\n';
-  if (kind === 'Service')
-    return [...head, '  type: ClusterIP', '  selector:', `    app: ${name}`, '  ports:', '  - port: 80', '    targetPort: 8080'].join('\n') + '\n';
-  return [...head, '  # edit me…'].join('\n') + '\n';
-};
 
 /* ------------------------------------------------------------------ */
 /* Component                                                           */
 /* ------------------------------------------------------------------ */
 
 interface ResourceViewProps {
+  viewId?: string;
   explicitKind?: ResourceKind;
   customType?: CustomResourceType;
 }
 
-export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, customType }) => {
+export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind, customType }) => {
+  const activeKind = useResourceStore(s => s.activeKind);
+  const effectiveKind = explicitKind || activeKind;
+  const resources = useResourceStore(useShallow(s => ({ [effectiveKind]: s.resources[effectiveKind], Pod: s.resources.Pod, StorageClass: s.resources.StorageClass })));
   const {
-    resources, activeKind, setActiveKind, setSearchQuery, searchQuery, searchRegex, setSearchRegex, selectItem, selectedItem,
-    updateItem, deleteItem, applyDelta,
-  } = useResourceStore();
+    setActiveKind, selectItem, selectedItem,
+    applyDelta,
+  } = useResourceStore(useShallow(s => ({ setActiveKind: s.setActiveKind, selectItem: s.selectItem, selectedItem: s.selectedItem, applyDelta: s.applyDelta })));
   const { selectedNamespace, selectNamespace, isConnected, isLoading } = useClusterStore();
   const {
-    density, uiScale, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidth, resetColumnWidths,
+    density, uiScale, hiddenColumns, setHiddenColumns,
     columnOrder, setColumnOrder, resetColumnOrder,
     setRightTab, activePerspective, inspectorCollapsed, toggleInspector,
   } = useUiStore();
   const { openYamlEditor, openResourceDetail, openLogsTab, openTerminalTab, toggleSplit } = useWorkspaceStore();
 
-  const effectiveKind = explicitKind || activeKind;
+  const { searchQuery, searchRegex, setSearchQuery, setSearchRegex } = useTableView(viewId ?? `resource:${effectiveKind}`);
   const displayKind = customType?.kind ?? effectiveKind;
   const listLabel = customType ? `${customResourcePlacement(customType)?.label ?? customType.kind} · ${customType.group}` : SIDEBAR_TREE.flatMap(category => category.groups.flatMap(group => group.kinds)).find(entry => entry.kind === effectiveKind)?.label ?? `${effectiveKind}s`;
   const custom = useCustomResources(customType);
@@ -324,42 +117,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     return map;
   }, [resources.Pod]);
 
-  const tableColumns = useMemo<ColumnDef[]>(() => {
-    if (!customType) return columnsFor(effectiveKind, { podsByNode });
-    const printers = customType.columns.filter(column => column.name.toLowerCase() !== 'age').map((column, index) => ({
-      id: /^(status|phase)$/i.test(column.name) ? 'status' : `printer-${index}`,
-      label: column.name,
-      get: (item: ResourceItem) => customColumnValue(item.raw, column.jsonPath),
-    }));
-    if (printers.length > 0) {
-      return [
-        BASE_COLUMNS[0],
-        ...(customType.namespaced ? [BASE_COLUMNS[1]] : []),
-        ...(printers.some(column => column.id === 'status') ? [] : [{ id: 'status', label: 'Status', get: (item: ResourceItem) => item.status }]),
-        ...printers,
-        { id: 'age', label: 'Age', align: 'right', get: (item: ResourceItem) => item.age },
-      ];
-    }
-    const presentation = presentationFor({ kind: customType.kind, apiVersion: `${customType.group}/${customType.version}` });
-    if (presentation && presentation.fields.length > 0) {
-      return [
-        BASE_COLUMNS[0],
-        ...(customType.namespaced ? [BASE_COLUMNS[1]] : []),
-        { id: 'status', label: 'Status', get: item => item.status },
-        ...presentation.fields.map((field, index) => ({ id: `gitops-${index}`, label: field.label, get: (item: ResourceItem) => fieldText(fieldValue(item.raw, field.path)) })),
-        { id: 'age', label: 'Age', align: 'right', get: (item: ResourceItem) => item.age },
-      ];
-    }
-    return [
-      BASE_COLUMNS[0],
-      ...(customType.namespaced ? [BASE_COLUMNS[1]] : []),
-      { id: 'status', label: 'Status', get: (item: ResourceItem) => item.status },
-      { id: 'age', label: 'Age', align: 'right', get: (item: ResourceItem) => item.age },
-    ];
-  }, [effectiveKind, customType]);
+  const tableColumns = useResourceColumns(effectiveKind, customType, podsByNode);
   const tableRef = useRef<HTMLDivElement>(null);
-  const resizeCleanup = useRef<() => void>(() => {});
-  useEffect(() => () => resizeCleanup.current(), []);
   const paneRef = useRef<HTMLDivElement>(null);
   const currentContext = useClusterStore((s) => s.currentContext);
   const watchState = useResourceStore((s) => s.watchStates[effectiveKind]);
@@ -399,7 +158,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   }, [activePerspective, explicitKind]);
 
   useEffect(() => {
-    setSearchQuery('');
     setSorts([]);
     setColumnFilters({});
     setSelectedUids(new Set());
@@ -407,160 +165,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
 
   }, [effectiveKind, currentContext, setSearchQuery]);
 
-  const kindResources = resources[effectiveKind];
-  const allItems = useMemo(() => Array.from(kindResources?.values() ?? []), [kindResources]);
+  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading });
   const pending = !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
-  const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
-  const podError = useResourceStore((state) => state.loadErrors.Pod);
-  const issueRanks = useMemo(() => {
-    const ranks = new Map<string, number>();
-    if (!sorts.some((key) => key.columnId === '__issues')) return ranks;
-    const podsByNamespace = new Map<string | undefined, ResourceItem[]>();
-    if (effectiveKind === 'Service') for (const pod of resources.Pod.values()) {
-      if (!podsByNamespace.has(pod.namespace)) podsByNamespace.set(pod.namespace, []);
-      podsByNamespace.get(pod.namespace)!.push(pod);
-    }
-    const storageClasses = new Map([...resources.StorageClass.values()].map((entry) => [entry.name, entry]));
-    const now = Date.now();
-    for (const item of allItems) {
-      const storageClassName = item.spec?.storageClassName ?? item.storageClass;
-      ranks.set(item.uid, issuePriority(resourceIssues(item, {
-        now, pods: podsByNamespace.get(item.namespace) ?? [], podsLoaded: isConnected && !isLoading && podsCurrent && !podError,
-        storageClass: typeof storageClassName === 'string' ? storageClasses.get(storageClassName) : undefined,
-      })));
-    }
-    return ranks;
-  }, [allItems, effectiveKind, sorts, resources.Pod, resources.StorageClass, isConnected, isLoading, podsCurrent, podError]);
-
-  /** Values of one column with their occurrence counts — the filter popup lists them. */
-  const columnValues = useMemo(() => {
-    const map = new Map<string, Map<string, number>>();
-    // Count values over the namespace + search scoped set so the popup only offers
-    // values that are actually present in the current result set (not stale ones).
-    let list = allItems;
-    if (selectedNamespace !== 'all') list = list.filter((item) => inNamespaceScope(selectedNamespace, item.namespace));
-    const q = searchQuery.trim();
-    if (q) {
-      if (searchRegex) {
-        try {
-          const rx = new RegExp(q, 'i');
-          list = list.filter((item) => rx.test(item.name) || (item.namespace && rx.test(item.namespace)));
-        } catch {
-          list = [];
-        }
-      } else {
-        const qLower = q.toLowerCase();
-        list = list.filter((item) => item.name.toLowerCase().includes(qLower) || (item.namespace ?? '').toLowerCase().includes(qLower));
-      }
-    }
-    const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.length > 0);
-    for (const column of tableColumns) {
-      const counts = new Map<string, number>();
-      // Apply every other column's filter so the offered values match the rows the
-      // user can actually reach — but skip this column's own filter, otherwise its
-      // remaining values would disappear as soon as one value is selected.
-      let candidates = list;
-      for (const [colId, values] of activeFilters) {
-        if (colId === column.id) continue;
-        const filterColumn = tableColumns.find((c) => c.id === colId);
-        if (!filterColumn) continue;
-        const allowed = new Set(values);
-        candidates = candidates.filter((item) => allowed.has(filterColumn.get(item) ?? '—'));
-      }
-      for (const item of candidates) {
-        const value = column.get(item);
-        if (value === undefined || value === '') continue;
-        counts.set(value, (counts.get(value) ?? 0) + 1);
-      }
-      map.set(column.id, counts);
-    }
-    return map;
-  }, [allItems, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters]);
-
-  const statusValues = useMemo(() => {
-    const column = tableColumns.find((c) => c.id === 'status');
-    if (!column) return [];
-    return statusChoices([...(columnValues.get('status')?.keys() ?? [])]);
-  }, [tableColumns, columnValues]);
-
-  const rows = useMemo(() => {
-    let list = allItems;
-    if (selectedNamespace !== 'all') list = list.filter((i) => inNamespaceScope(selectedNamespace, i.namespace));
-    const q = searchQuery.trim();
-    if (q) {
-      if (searchRegex) {
-        try {
-          const rx = new RegExp(q, 'i');
-          list = list.filter((i) => rx.test(i.name) || (i.namespace && rx.test(i.namespace)));
-        } catch {
-          list = [];
-        }
-      } else {
-        const qLower = q.toLowerCase();
-        list = list.filter((i) => {
-          if (i.name.toLowerCase().includes(qLower) || (i.namespace ?? '').toLowerCase().includes(qLower)) return true;
-          if (effectiveKind === 'CustomResourceDefinition') {
-            const spec = (i.raw as any)?.spec ?? i.spec;
-            if (spec?.group && String(spec.group).toLowerCase().includes(qLower)) return true;
-            if (spec?.names?.kind && String(spec.names.kind).toLowerCase().includes(qLower)) return true;
-            if (spec?.names?.plural && String(spec.names.plural).toLowerCase().includes(qLower)) return true;
-            if (spec?.names?.singular && String(spec.names.singular).toLowerCase().includes(qLower)) return true;
-            if (Array.isArray(spec?.names?.shortNames) && spec.names.shortNames.some((s: string) => String(s).toLowerCase().includes(qLower))) return true;
-          }
-          return false;
-        });
-      }
-    }
-    // Column filters: OR inside one column, AND across columns.
-    const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.length > 0);
-    for (const [columnId, values] of activeFilters) {
-      const column = tableColumns.find((c) => c.id === columnId);
-      if (!column) continue;
-      const allowed = new Set(values);
-      list = list.filter((item) => allowed.has(column.get(item) ?? '—'));
-    }
-
-    const hidden = new Set(hiddenColumns[effectiveKind] ?? []);
-    const visible = tableColumns.filter((c) => c.id === 'name' || !hidden.has(c.id));
-    // Saved order wins; columns the user has never moved keep their natural place.
-    const saved = columnOrder[effectiveKind] ?? [];
-    const cols = visible.length
-      ? [...visible].sort((a, b) => {
-          const ai = saved.indexOf(a.id);
-          const bi = saved.indexOf(b.id);
-          if (ai === -1 && bi === -1) return 0;
-          if (ai === -1) return 1;
-          if (bi === -1) return -1;
-          return ai - bi;
-        })
-      : visible;
-    if (sorts.length) {
-      const value = (key: SortKey, item: ResourceItem): string | undefined =>
-        tableColumns.find((column) => column.id === key.columnId)?.get(item);
-      // Keys are evaluated in click order: the first key groups the rows, later keys order each group.
-      list = [...list].sort((a, b) => {
-        for (const key of sorts) {
-          if (key.columnId === '__issues') {
-            const diff = (issueRanks.get(b.uid) ?? 0) - (issueRanks.get(a.uid) ?? 0);
-            if (diff !== 0) return diff;
-            continue;
-          }
-          if (key.columnId === '__created' || key.columnId === 'age') {
-            const diff = compareCreation(a, b, key.direction === 'asc' ? 1 : -1);
-            if (diff !== 0) return diff;
-            continue;
-          }
-          const diff = compareRows(a, b, [key], value);
-          if (diff !== 0) return diff;
-        }
-        return (a.namespace && b.namespace && a.namespace !== b.namespace ? a.namespace.localeCompare(b.namespace) : 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid);
-      });
-    } else {
-      list = [...list].sort((a, b) => (a.namespace && b.namespace && a.namespace !== b.namespace ? a.namespace.localeCompare(b.namespace) : 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
-    }
-    return { list, cols };
-  }, [allItems, selectedNamespace, searchQuery, searchRegex, effectiveKind, sorts, hiddenColumns, columnFilters, issueRanks, tableColumns, columnOrder]);
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, columnFilters, sorts]);
 
   const virtualized = rows.list.length > 200;
@@ -570,14 +177,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const virtualRows = rowVirtualizer.getVirtualItems();
   const renderedRows = virtualized ? virtualRows.map(row => ({ item: rows.list[row.index], index: row.index })) : rows.list.map((item, index) => ({ item, index }));
   useEffect(() => { if (virtualized && rows.list.length) rowVirtualizer.scrollToIndex(Math.min(focusedIndex, rows.list.length - 1), { align: 'auto' }); }, [focusedIndex, virtualized, rows.list.length]);
-
-  const resizeColumnWithKeyboard = (event: React.KeyboardEvent, id: string) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
-    event.preventDefault(); event.stopPropagation();
-    const width = event.key === 'Home' ? DEFAULT_COL_SIZE[id] ?? 120
-      : widthFor(id) + (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 40 : 10);
-    setColumnWidth(effectiveKind, id, Math.max(id === '__index' ? 28 : MIN_COL, Math.min(MAX_COL, (tableRef.current?.clientWidth ?? MAX_COL * uiFactor(uiScale)) / uiFactor(uiScale), width)));
-  };
 
   /* ------------------- Keyboard Navigation ------------------- */
   useEffect(() => {
@@ -654,98 +253,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   };
 
   /* ------------------- Column widths (Lens-style) ------------------- */
-  const [autoWidths, setAutoWidths] = useState<Record<string, number>>({});
-  const visibleColumnIds = ['__index', ...rows.cols.map(column => column.id)];
-  const columnsSignature = visibleColumnIds.join('|');
-
-  /** Move a column left/right — the keyboard alternative to dragging the header. */
-  const moveColumn = (colId: string, offset: number) => {
-    const order = rows.cols.map((column) => column.id);
-    const index = order.indexOf(colId);
-    const target = index + offset;
-    if (index === -1 || target < 0 || target >= order.length) return;
-    const next = [...order];
-    next.splice(target, 0, ...next.splice(index, 1));
-    setColumnOrder(effectiveKind, next);
-  };
-  const fitColumns = (force = false) => {
-    const pane = paneRef.current; if (!pane?.clientWidth) return;
-    const stored = useUiStore.getState().columnWidths;
-    const manual = Object.fromEntries(visibleColumnIds.filter(id => Number.isFinite(stored[`${effectiveKind}:${id}`])).map(id => [id, stored[`${effectiveKind}:${id}`]]));
-    if (!force && Object.keys(manual).length) return;
-    const available = Math.max(300, pane.clientWidth / uiFactor(uiScale) - 2);
-    setAutoWidths(fitTableColumns(visibleColumnIds, available, DEFAULT_COL_SIZE, manual));
-  };
-  const fitRef = useRef(fitColumns); fitRef.current = fitColumns;
-  useLayoutEffect(() => {
-    fitRef.current(true);
-    if (!paneRef.current) return;
-    const observer = new ResizeObserver(() => fitRef.current()); observer.observe(paneRef.current);
-    return () => observer.disconnect();
-  }, [effectiveKind, columnsSignature, uiScale]);
-  const resetWidths = () => { resetColumnWidths(effectiveKind); fitRef.current(true); };
-  const widthFor = (colId: string): number =>
-    Math.max(colId === '__index' ? 28 : MIN_COL, Math.min(MAX_COL, columnWidths[`${effectiveKind}:${colId}`] ?? autoWidths[colId] ?? DEFAULT_COL_SIZE[colId] ?? 120));
-
-  const startColResize = (e: React.PointerEvent, colId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    resizeCleanup.current();
-    const pane = tableRef.current;
-    if (!pane) return;
-    const bounds = pane.getBoundingClientRect();
-    const guide = document.createElement('div');
-    guide.dataset.testid = 'column-resize-guide';
-    guide.setAttribute('aria-hidden', 'true');
-    Object.assign(guide.style, {
-      position: 'fixed',
-      width: '2px',
-      background: 'var(--accent)',
-      top: `${bounds.top}px`,
-      height: `${pane.clientHeight}px`,
-      pointerEvents: 'none',
-      zIndex: '65',
-    });
-    document.body.append(guide);
-
-    const scale = uiFactor(useUiStore.getState().uiScale);
-    const th = (e.currentTarget as HTMLElement).closest('th');
-    const headerLeft = th?.getBoundingClientRect().left ?? bounds.left;
-    const startW = widthFor(colId);
-    const startX = e.clientX;
-    const el = e.currentTarget as HTMLElement;
-    el.setPointerCapture(e.pointerId);
-    guide.style.left = `${Math.min(bounds.right - 2, headerLeft + startW * scale)}px`;
-    el.style.background = 'var(--accent)';
-
-    let finalW = startW;
-    const minW = colId === '__index' ? 28 : MIN_COL;
-    const maxW = MAX_COL;
-
-    const move = (ev: PointerEvent) => {
-      const currentScale = uiFactor(useUiStore.getState().uiScale);
-      const delta = (ev.clientX - startX) / currentScale;
-      finalW = Math.round(Math.max(minW, Math.min(maxW, startW + delta)));
-      guide.style.left = `${Math.max(bounds.left + minW * currentScale, headerLeft + finalW * currentScale)}px`;
-    };
-
-    const up = () => {
-      guide.remove();
-      el.style.background = '';
-      if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-      el.removeEventListener('pointermove', move);
-      el.removeEventListener('pointerup', up);
-      el.removeEventListener('pointercancel', up);
-      el.removeEventListener('lostpointercapture', up);
-      setColumnWidth(effectiveKind, colId, finalW);
-    };
-
-    resizeCleanup.current = up;
-    el.addEventListener('pointermove', move);
-    el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', up);
-    el.addEventListener('lostpointercapture', up);
-  };
+  const { widthFor, moveColumn, resetColumn, resetWidths, startColResize, resizeColumnWithKeyboard } = useColumnLayout({ effectiveKind, columns: rows.cols, uiScale, tableRef, paneRef });
 
   /* ------------------- Sorting & filtering ------------------- */
 
@@ -866,295 +374,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     } finally { setSpinning(false); }
   };
 
-  const doDelete = async (item: ResourceItem) => {
-    try {
-      if (k8s.demo) {
-        deleteItem(item.kind, item.uid);
-        toast.warn('Deleted from demo memory', `${item.kind}/${item.name}`);
-      } else {
-        if (!currentContext) return;
-        await k8s.deleteResource(
-          currentContext,
-          item.kind,
-          item.name,
-          item.namespace,
-          item.uid,
-          item.raw?.metadata?.resourceVersion ?? '',
-          item.apiVersion
-        );
-        deleteItem(item.kind, item.uid);
-        toast.success('Resource deleted', `${item.kind}/${item.name}`);
-        await refresh();
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') {
-        toast.info('Delete cancelled');
-      } else {
-        toast.error('Delete failed', String(err?.message || err));
-      }
-    }
-  };
-
-  const doScale = async (item: ResourceItem, replicas: number) => {
-    if (!currentContext || !['Deployment', 'StatefulSet', 'ReplicaSet'].includes(item.kind)) return;
-    try {
-      await k8s.scaleWorkload(currentContext, item.kind, item.name, item.namespace || 'default', replicas, item.uid, item.raw?.metadata?.resourceVersion ?? '');
-      if (useClusterStore.getState().currentContext !== currentContext) return;
-      if (k8s.demo) updateItem(item.kind, item.uid, { replicas });
-      else await refresh();
-      toast.success(`Desired replicas updated to ${replicas}`, `${item.kind}/${item.name}`);
-    } catch (error) {
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'cancelled') toast.info('Scale cancelled');
-      else toast.error('Scale failed', String(error));
-    }
-  };
-
-  const doRestart = async (item: ResourceItem) => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return;
-    }
-    const raw = JSON.parse(JSON.stringify(item.raw ?? {}));
-    raw.spec = raw.spec ?? {};
-    raw.spec.template = raw.spec.template ?? {};
-    raw.spec.template.metadata = raw.spec.template.metadata ?? {};
-    raw.spec.template.metadata.annotations = raw.spec.template.metadata.annotations ?? {};
-    raw.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
-
-    try {
-      if (k8s.demo) {
-        updateItem(item.kind, item.uid, { ...item, raw });
-        toast.success(`Rollout restart triggered for ${item.kind}/${item.name} (demo)`);
-      } else {
-        await k8s.applyManifest(currentContext!, stringify(raw), item);
-        await refresh();
-        toast.success(`Rollout restart triggered for ${item.kind}/${item.name}`);
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') {
-        toast.info('Restart cancelled');
-      } else {
-        toast.error('Restart failed', String(err?.message || err));
-      }
-    }
-  };
-
-  const doToggleCordon = async (node: ResourceItem): Promise<'success' | 'cancelled' | 'failed'> => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return 'failed';
-    }
-    const currentlyUnschedulable = node.raw?.spec?.unschedulable === true;
-    const nextUnschedulable = !currentlyUnschedulable;
-    const raw = JSON.parse(JSON.stringify(node.raw ?? {}));
-    raw.spec = raw.spec ?? {};
-    raw.spec.unschedulable = nextUnschedulable;
-
-    try {
-      if (k8s.demo) {
-        updateItem('Node', node.uid, { ...node, raw });
-        toast.success(`Node ${node.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'} (demo)`);
-        return 'success';
-      } else {
-        await k8s.applyManifest(currentContext!, stringify(raw), node);
-        await refresh();
-        toast.success(`Node ${node.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'}`);
-        return 'success';
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') {
-        toast.info(`Cordon cancelled`);
-        return 'cancelled';
-      } else {
-        toast.error(`Failed to update cordon state`, String(err?.message || err));
-        return 'failed';
-      }
-    }
-  };
-
-  const doDrain = async (node: ResourceItem) => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return;
-    }
-    if (k8s.demo) {
-      const allPods = [...(useResourceStore.getState().resources.Pod?.values() ?? [])];
-      const nodePods = allPods.filter(
-        (p) => (p.raw?.spec?.nodeName === node.name || p.node === node.name) &&
-          !p.raw?.metadata?.ownerReferences?.some((o: any) => o.kind === 'DaemonSet')
-      );
-      if (nodePods.length === 0) {
-        toast.success(`Node ${node.name} cordoned; no non-daemonset pods to drain`);
-        return;
-      }
-      for (const pod of nodePods) {
-        useResourceStore.getState().deleteItem('Pod', pod.uid);
-      }
-      toast.success(`Drained ${nodePods.length} pod(s) from node ${node.name} (demo)`);
-      return;
-    }
-    try {
-      const primary = resourceRef(currentContext!, node);
-      const result = await k8s.applyBatch(primary, [{
-        operation: 'drain',
-        resource: primary,
-        resource_version: node.raw?.metadata?.resourceVersion ?? '',
-        critical: true,
-      }]);
-      if (result.stopped) {
-        toast.error(`Drain failed for ${node.name}`, 'The node could not be cordoned. Nothing was evicted.');
-        return;
-      }
-      const evicted = result.steps.filter((step) => step.action === 'EVICT' && step.ok).length;
-      const failed = result.steps.filter((step) => step.action === 'EVICT' && !step.ok).length;
-      const summary = `Drained node ${node.name}: ${evicted} pod(s) evicted${failed > 0 ? `, ${failed} failed` : ''}`;
-      if (failed > 0) toast.warn('Drain completed with eviction failures', summary);
-      else toast.success('Drain complete', summary);
-      await refresh();
-    } catch (err: any) {
-      if (err?.code === 'cancelled') {
-        toast.info('Drain cancelled');
-        return;
-      }
-      toast.error(`Drain failed for ${node.name}`, String(err?.message || err));
-    }
-  };
-
-  const doEvictPod = async (pod: ResourceItem) => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return;
-    }
-    try {
-      if (k8s.demo) {
-        useResourceStore.getState().deleteItem('Pod', pod.uid);
-        toast.success(`Pod ${pod.name} evicted (demo)`);
-      } else {
-        await k8s.evictPod(currentContext!, pod.name, pod.namespace ?? 'default', pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
-        await refresh();
-        toast.success(`Pod ${pod.name} evicted`);
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') toast.info('Evict cancelled');
-      else toast.error('Evict failed', String(err?.message || err));
-    }
-  };
-
-  const doToggleCronJobSuspend = async (cronJob: ResourceItem) => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return;
-    }
-    const currentSuspended = cronJob.raw?.spec?.suspend === true;
-    const nextSuspended = !currentSuspended;
-    const raw = JSON.parse(JSON.stringify(cronJob.raw ?? {}));
-    raw.spec = raw.spec ?? {};
-    raw.spec.suspend = nextSuspended;
-
-    try {
-      if (k8s.demo) {
-        updateItem('CronJob', cronJob.uid, { ...cronJob, raw });
-        toast.success(`CronJob ${cronJob.name} ${nextSuspended ? 'suspended' : 'resumed'} (demo)`);
-      } else {
-        await k8s.applyManifest(currentContext!, stringify(raw), cronJob);
-        await refresh();
-        toast.success(`CronJob ${cronJob.name} ${nextSuspended ? 'suspended' : 'resumed'}`);
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') toast.info('Suspend/resume cancelled');
-      else toast.error('Failed to update CronJob suspend state', String(err?.message || err));
-    }
-  };
-
-  const doTriggerCronJob = async (cronJob: ResourceItem) => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return;
-    }
-    const spec = cronJob.raw?.spec ?? cronJob.spec ?? {};
-    const manualJobName = `${cronJob.name}-manual-${Math.floor(Date.now() / 1000).toString().slice(-4)}`;
-    const jobManifest = {
-      apiVersion: 'batch/v1',
-      kind: 'Job',
-      metadata: {
-        name: manualJobName,
-        namespace: cronJob.namespace,
-        annotations: {
-          'cronjob.kubernetes.io/instantiate': 'manual',
-        },
-      },
-      spec: spec.jobTemplate?.spec ?? {},
-    };
-    try {
-      if (k8s.demo) {
-        toast.success(`Job ${manualJobName} triggered from CronJob (demo)`);
-      } else {
-        await k8s.applyManifest(currentContext!, stringify(jobManifest));
-        await refresh();
-        toast.success(`Spawned Job ${manualJobName}`);
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') toast.info('Run Now cancelled');
-      else toast.error('Failed to trigger job', String(err?.message || err));
-    }
-  };
-
-  const doArgoSync = async (app: ResourceItem) => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return;
-    }
-    const raw = JSON.parse(JSON.stringify(app.raw ?? {}));
-    raw.operation = {
-      sync: {
-        prune: true,
-      },
-    };
-    try {
-      if (k8s.demo) {
-        updateItem(app.kind, app.uid, { ...app, raw });
-        toast.success(`Sync requested for Argo CD app ${app.name} (demo)`);
-      } else {
-        await k8s.applyManifest(currentContext!, stringify(raw), app);
-        await refresh();
-        toast.success(`Sync requested for Argo CD app ${app.name}`);
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') toast.info('Sync cancelled');
-      else toast.error('Sync failed', String(err?.message || err));
-    }
-  };
-
-  const doArgoRefresh = async (app: ResourceItem, hard = false) => {
-    if (!currentContext && !k8s.demo) {
-      toast.error('No active cluster context');
-      return;
-    }
-    const raw = JSON.parse(JSON.stringify(app.raw ?? {}));
-    raw.metadata = raw.metadata ?? {};
-    raw.metadata.annotations = raw.metadata.annotations ?? {};
-    raw.metadata.annotations['argocd.argoproj.io/refresh'] = hard ? 'hard' : 'normal';
-    try {
-      if (k8s.demo) {
-        updateItem(app.kind, app.uid, { ...app, raw });
-        toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${app.name} (demo)`);
-      } else {
-        await k8s.applyManifest(currentContext!, stringify(raw), app);
-        await refresh();
-        toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${app.name}`);
-      }
-    } catch (err: any) {
-      if (err?.code === 'cancelled') toast.info('Refresh cancelled');
-      else toast.error('Refresh failed', String(err?.message || err));
-    }
-  };
-
-  const doShare = (item: ResourceItem) => {
-    const cmd = `kubectl get ${item.kind.toLowerCase()} ${item.name}${item.namespace ? ` -n ${item.namespace}` : ''}`;
-    navigator.clipboard.writeText(cmd)
-      .then(() => toast.success(`Copied resource kubectl command`))
-      .catch(() => toast.error('Clipboard unavailable'));
-  };
+  const { doDelete, doScale, doRestart, doToggleCordon, doDrain, doEvictPod, doToggleCronJobSuspend, doTriggerCronJob, doArgoSync, doArgoRefresh, doShare } = useResourceActions(currentContext, refresh);
 
   const buildRowMenu = (item: ResourceItem): MenuItem[] => {
     const crdType = item.kind === 'CustomResourceDefinition' ? customResourceType(item) : undefined;
@@ -1520,7 +740,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                   </div>
                   <span role="separator" aria-label="Resize row numbers column" tabIndex={0} aria-valuenow={widthFor('__index')} onKeyDown={(e) => resizeColumnWithKeyboard(e, '__index')} aria-orientation="vertical" title="Drag or use arrow keys to resize · Home to reset"
                     onPointerDown={(e) => startColResize(e, '__index')}
-                    onDoubleClick={(e) => { e.stopPropagation(); setColumnWidth(effectiveKind, '__index', DEFAULT_COL_SIZE.__index); fitColumns(true); }}
+                    onDoubleClick={(e) => { e.stopPropagation(); resetColumn('__index'); }}
                     onClick={(e) => e.stopPropagation()}
                     className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)]" />
                 </th>
@@ -1635,8 +855,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                         onPointerDown={(e) => startColResize(e, c.id)}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
-                          setColumnWidth(effectiveKind, c.id, DEFAULT_COL_SIZE[c.id] ?? 120);
-                          fitColumns(true);
+                          resetColumn(c.id);
                         }}
                         onClick={(e) => e.stopPropagation()}
                         className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors"
@@ -1756,7 +975,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
             name,
             namespace: ns || undefined,
             kind: effectiveKind,
-            apiVersion: apiVersionFor(effectiveKind),
+            apiVersion: typeApiVersion(resourceType(effectiveKind)),
             status: 'Active',
             age: '0s',
             rawYaml: yaml,
@@ -1770,100 +989,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     </div>
   );
 };
-
-/** Kind icon colored by the shared group palette — the same color as in the sidebar. */
-function KindIcon({ item }: { item: ResourceItem }) {
-  const Icon = resourceIcon(item.kind, item.apiVersion);
-  const tone = kindTone(item.kind, item.apiVersion ? parseApiVersion(item.apiVersion).group : undefined);
-  return <Icon size="calc(12px * var(--ui-factor))" className="shrink-0" style={{ color: tone.color }} aria-hidden="true" />;
-}
-
-function CellValue({
-  col,
-  item,
-}: {
-  col: ColumnDef;
-  item: ResourceItem;
-}) {
-  const v = col.get(item);
-  if (v === undefined || v === '') return <span className="text-[var(--text-disabled)]">—</span>;
-  if (col.hint && col.id !== 'name') return <span title={col.hint} className="block truncate">{v}</span>;
-  if (col.id === 'name') {
-    if (item.kind === 'CustomResourceDefinition') {
-      const crdType = customResourceType(item);
-      if (crdType) {
-        return (
-          <span className="inline-flex min-w-0 items-center gap-2 max-w-full align-middle">
-            <ResourceWarnings item={item} />
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                useWorkspaceStore.getState().openResourceList(crdType.key);
-              }}
-              className="min-w-0 truncate text-[var(--accent)] hover:underline text-left font-mono text-[length:calc(11.5px*var(--ui-factor))] font-medium cursor-pointer"
-              title={`View ${crdType.plural} (${v})`}
-            >
-              {v}
-            </button>
-          </span>
-        );
-      }
-    }
-    return <span className="inline-flex min-w-0 items-center gap-2 max-w-full align-middle"><KindIcon item={item} /><ResourceWarnings item={item} /><span className="min-w-0 truncate text-[var(--text-primary)] font-mono text-[length:calc(11.5px*var(--ui-factor))] font-medium" title={v}>{v}</span></span>;
-  }
-  if (col.id === 'namespace') return <span className="text-[var(--text-secondary)]">{v}</span>;
-  if (col.id === 'status' || col.id === 'conditions') return <StatusBadge status={v} />;
-
-  if (col.id === 'pods') {
-    const m = /^(\d+)\/(\d+)$/.exec(v);
-    if (m) {
-      const readyNum = Number(m[1]);
-      const desiredNum = Number(m[2]) || 1;
-      const pct = Math.min(100, Math.round((readyNum / desiredNum) * 100));
-      const isOk = readyNum === desiredNum && readyNum > 0;
-      const isZero = readyNum === 0;
-
-      return (
-        <div className="flex items-center gap-2">
-          <div className="w-14 h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden border border-[var(--border-subtle)] flex">
-            <div
-              style={{ width: `${pct}%` }}
-              className={cx(
-                'h-full transition-all duration-300',
-                isOk ? 'bg-[var(--status-ok)]' : isZero ? 'bg-[var(--status-danger)]' : 'bg-[var(--status-warn)]'
-              )}
-            />
-          </div>
-          <span
-            className={cx(
-              'font-mono text-[length:calc(11px*var(--ui-factor))] font-semibold tabular-nums',
-              isOk ? 'text-[var(--status-ok)]' : isZero ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'
-            )}
-          >
-            {v}
-          </span>
-        </div>
-      );
-    }
-    return <span className="font-mono text-[length:calc(11px*var(--ui-factor))]">{v}</span>;
-  }
-
-  if (col.id === 'replicas') return <span className="font-mono text-[length:calc(11px*var(--ui-factor))] tabular-nums text-[var(--text-primary)]">{v}</span>;
-
-  if (col.id === 'containers') return <ContainerIndicators containers={item.containers ?? podContainers(item)} />;
-  if (col.id === 'ready') {
-    const m = /^(\d+)\/(\d+)$/.exec(v);
-    const danger = m && m[1] !== m[2] && m[1] === '0';
-    return <span className={cx('font-mono text-[length:calc(11px*var(--ui-factor))]', danger ? 'text-[var(--status-danger)]' : m && m[1] === m[2] ? 'text-[var(--status-ok)]' : 'text-[var(--text-primary)]')}>{v}</span>;
-  }
-  if (col.id === 'restarts') {
-    const n = Number(v);
-    return <span className={cx('font-mono text-[length:calc(11px*var(--ui-factor))]', n > 10 ? 'text-[var(--status-danger)]' : n > 0 ? 'text-[var(--status-warn)]' : 'text-[var(--text-secondary)]')}>{v}</span>;
-  }
-  if (col.id === 'age') return <span className="text-[var(--text-secondary)]">{v}</span>;
-  return <span className="text-[var(--text-secondary)]">{v}</span>;
-}
 
 function EmptyState({ kind, iconKind, filtered, onClear, isNew, onNew }: { kind: string; iconKind: string; filtered: boolean; onClear: () => void; isNew: boolean; onNew: () => void }) {
   const Icon = resourceIcon(iconKind);
@@ -1891,70 +1016,5 @@ function EmptyState({ kind, iconKind, filtered, onClear, isNew, onNew }: { kind:
         </div>
       </div>
     </div>
-  );
-}
-
-function NewResourceDialog({
-  open, kind, defaultNs, onClose, onCreate,
-}: {
-  open: boolean;
-  kind: ResourceKind;
-  defaultNs: string;
-  onClose: () => void;
-  onCreate: (name: string, ns: string, yaml: string) => void;
-}) {
-  const [name, setName] = useState('');
-  const [ns, setNs] = useState(defaultNs);
-  const [yaml, setYaml] = useState('');
-
-  useEffect(() => {
-    if (open) {
-      setName(`my-${kind.toLowerCase()}`);
-      setNs(defaultNs);
-      setYaml(templateFor(kind, `my-${kind.toLowerCase()}`, defaultNs));
-    }
-  }, [open, kind, defaultNs]);
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      width={560}
-      title={`New ${kind}`}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!/^[a-z0-9][a-z0-9-]*$/.test(name)} onClick={() => onCreate(name, ns, yaml)}>
-            Create (demo)
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label>Name (DNS-1123)</Label>
-            <Input value={name} onChange={(e) => { setName(e.target.value); setYaml(templateFor(kind, e.target.value || '…', ns)); }} />
-            {!/^[a-z0-9][a-z0-9-]*$/.test(name) && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--status-danger)]">lowercase letters, digits and “-” only</span>}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Namespace</Label>
-            <Input value={ns} onChange={(e) => { setNs(e.target.value); setYaml(templateFor(kind, name, e.target.value)); }} />
-          </div>
-        </div>
-        <div className="flex flex-col gap-1.5 flex-1 min-h-0">
-          <Label>Manifest</Label>
-          <textarea
-            value={yaml}
-            onChange={(e) => setYaml(e.target.value)}
-            spellCheck={false}
-            className="flex-1 min-h-[calc(220px*var(--ui-factor))] resize-none bg-[var(--bg-canvas)] border border-[var(--border-default)] rounded-[calc(6px*var(--ui-factor))] p-3 font-mono text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors kubiki-scrollbar"
-          />
-        </div>
-        <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
-          Demo mode — manifest will be stored in local memory store.
-        </p>
-      </div>
-    </Modal>
   );
 }

@@ -310,7 +310,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   out.Service = SERVICE_SEEDS.map(
     (s): ResourceItem => ({
       uid: uid(), name: s.name, namespace: s.namespace, kind: 'Service', apiVersion: 'v1',
-      status: 'Active', ready: s.ports, age: s.age,
+      status: 'Active', ports: s.ports, age: s.age,
       serviceType: s.type, clusterIP: s.clusterIP,
       rawYaml: j([
         'apiVersion: v1',
@@ -331,7 +331,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   out.ConfigMap = CONFIG_SEEDS.ConfigMap.map(
     (c): ResourceItem => ({
       uid: uid(), name: c.name, namespace: c.namespace, kind: 'ConfigMap', apiVersion: 'v1',
-      status: 'Active', ready: `${c.keys} keys`, age: c.age, dataKeys: c.keys,
+      status: 'Active', age: c.age, dataKeys: c.keys,
       rawYaml: j([
         'apiVersion: v1',
         'kind: ConfigMap',
@@ -349,7 +349,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   out.Secret = CONFIG_SEEDS.Secret.map(
     (c): ResourceItem => ({
       uid: uid(), name: c.name, namespace: c.namespace, kind: 'Secret', apiVersion: 'v1',
-      status: 'Active', ready: `${c.keys} keys`, age: c.age,
+      status: 'Active', age: c.age,
       secretType: 'Opaque', dataKeys: c.keys,
       rawYaml: j([
         'apiVersion: v1',
@@ -367,7 +367,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   out.PersistentVolumeClaim = PVC_SEEDS.map(
     (r): ResourceItem => ({
       uid: uid(), name: r.name, namespace: r.namespace, kind: 'PersistentVolumeClaim', apiVersion: 'v1',
-      status: r.status, ready: r.capacity, age: r.age,
+      status: r.status, capacity: r.capacity, age: r.age,
       volume: r.volume, storageClass: r.storageClass, accessModes: 'RWO',
       rawYaml: j([
         'apiVersion: v1',
@@ -389,7 +389,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   out.PersistentVolume = PV_SEEDS.map(
     (r): ResourceItem => ({
       uid: uid(), name: r.name, namespace: undefined, kind: 'PersistentVolume', apiVersion: 'v1',
-      status: r.status, ready: r.claim, age: r.age, volume: r.claim, storageClass: r.storageClass, reclaimPolicy: r.reclaim,
+      status: r.status, capacity: r.capacity, age: r.age, volume: r.claim, storageClass: r.storageClass, reclaimPolicy: r.reclaim,
       rawYaml: j([
         'apiVersion: v1',
         'kind: PersistentVolume',
@@ -407,7 +407,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   out.StorageClass = SC_SEEDS.map(
     (r): ResourceItem => ({
       uid: uid(), name: r.name, namespace: undefined, kind: 'StorageClass', apiVersion: 'storage.k8s.io/v1',
-      status: 'Active', ready: r.provisioner, age: r.age, reclaimPolicy: r.reclaim,
+      status: 'Active', provisioner: r.provisioner, age: r.age, reclaimPolicy: r.reclaim,
       rawYaml: j([
         'apiVersion: storage.k8s.io/v1',
         'kind: StorageClass',
@@ -423,7 +423,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   out.Node = NODE_SEEDS.map(
     (n): ResourceItem => ({
       uid: uid(), name: n.name, namespace: undefined, kind: 'Node', apiVersion: 'v1',
-      status: n.status, ready: n.status, age: '16d',
+      status: n.status, age: '16d',
       nodeRoles: n.roles, nodeVersion: n.version, nodeCpu: n.cpu, nodeMem: n.mem, nodePods: n.pods, nodeIp: n.ip, nodeOs: n.os,
       taintsCount: n.taints,
       rawYaml: j([

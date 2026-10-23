@@ -11,9 +11,9 @@ function captureReactErrors(page: import('@playwright/test').Page) {
 
 test('YAML mounts a real editor repeatedly in inspector, tab and split without hook errors', async ({ page }) => {
   const errors = captureReactErrors(page);
-  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
-  await page.getByTestId('resource-table').locator('tbody tr').first().click();
+  await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
   for (let index = 0; index < 3; index++) {
     await inspector.getByRole('tab', { name: 'YAML', exact: true }).click();
@@ -21,7 +21,7 @@ test('YAML mounts a real editor repeatedly in inspector, tab and split without h
     await expect(inspector.locator('.view-lines')).toContainText('api-gateway');
     await inspector.getByRole('tab', { name: 'Overview', exact: true }).click();
   }
-  await page.getByTestId('resource-table').locator('tbody tr').first().dblclick();
+  await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).dblclick();
   await expect(page.locator('main .monaco-editor')).toBeVisible();
   await inspector.getByRole('tab', { name: 'YAML', exact: true }).click();
   await expect(page.locator('.monaco-editor')).toHaveCount(2);
@@ -33,9 +33,9 @@ test('YAML mounts a real editor repeatedly in inspector, tab and split without h
 });
 
 test('Related displays distinct kind badges and preserves resource navigation', async ({ page }) => {
-  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
-  await page.getByTestId('resource-table').locator('tbody tr').first().click();
+  await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
   await inspector.getByRole('tab', { name: /^Related/ }).click();
   await expect(inspector.locator('[data-resource-kind="ReplicaSet"]')).toBeVisible();
@@ -67,9 +67,10 @@ test('annotations render readable fields, a last-applied summary and expandable 
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: ['backend'] });
     return route.fulfill({ json: { items: url.searchParams.get('kind') === 'Pod' ? [{ apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'annotated', name: 'annotated-web', namespace: 'backend', annotations }, spec: { containers: [] } }] : [] } });
   });
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('annotated-web', { exact: true }).click();
+  await page.getByTestId('resource-details').getByText('Metadata & Object Spec', { exact: true }).click();
   const card = page.getByRole('region', { name: 'Annotations (5)', exact: true });
   await card.scrollIntoViewIfNeeded();
   await expect(card.getByText('Revision', { exact: true })).toBeVisible();
@@ -106,7 +107,7 @@ test('warning reasons are shared by plain table rows, Related and topology nodes
     Node: [{ metadata: { uid: 'worker', name: 'worker' }, status: { conditions: [{ type: 'Ready', status: 'False', reason: 'KubeletNotReady', message: 'Container runtime network is not ready' }] } }],
     Namespace: [{ metadata: { uid: 'ns', name: 'backend' }, status: { phase: 'Active' } }],
   });
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'broken-pod' });
   await expect(row.locator('button')).toHaveCount(0);
@@ -134,7 +135,7 @@ test('Namespace Related shows members with kind badges, filtering and a bounded 
     Pod: Array.from({ length: 120 }, (_, index) => ({ metadata: { uid: `pod-${index}`, name: `backend-pod-${index}`, namespace: 'backend' }, spec: { containers: [] } })),
     Service: [{ metadata: { uid: 'svc', name: 'backend-service', namespace: 'backend' }, spec: {} }],
   });
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: /^Namespaces(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('backend', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
@@ -156,7 +157,7 @@ test('a large cluster waits for explicit scope selection, then lays out more tha
     Pod: Array.from({ length: 300 }, (_, index) => ({ metadata: { uid: `pod-${index}`, name: `busy-pod-${index}`, namespace: 'busy' }, spec: { containers: [] } })),
     Namespace: [{ metadata: { uid: 'ns', name: 'busy' } }],
   }, ['busy']);
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', '');
   await expect(page.getByText('Choose a diagram scope', { exact: true })).toBeVisible();
@@ -171,7 +172,7 @@ test('a large cluster waits for explicit scope selection, then lays out more tha
 test('namespace selectors filter by name, support keyboard selection and keep scrolling inside the menu', async ({ page }) => {
   const namespaces = Array.from({ length: 130 }, (_, index) => `team-${String(index).padStart(3, '0')}`);
   await mockResourceLists(page, {}, namespaces);
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const globalScope = page.getByRole('button', { name: 'Namespace Scope', exact: true });
   await globalScope.click();
   const menu = page.getByRole('dialog', { name: 'Choose Namespace Scope', exact: true });
@@ -212,9 +213,9 @@ test('namespace selectors filter by name, support keyboard selection and keep sc
 
 test('the focused editor saves the latest draft without changing another open model before apply', async ({ page }) => {
   const errors = captureReactErrors(page);
-  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
-  await page.getByTestId('resource-table').locator('tbody tr').first().dblclick();
+  await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).dblclick();
   const mainEditor = page.locator('main').getByTestId('yaml-editor');
   await expect(mainEditor.locator('.monaco-editor')).toBeVisible();
   const inspector = page.getByTestId('resource-details');
@@ -237,9 +238,9 @@ test('the focused editor saves the latest draft without changing another open mo
 
 test('an editor module load failure leaves the manifest and inspector usable', async ({ page }) => {
   await page.route('**/*monaco_setup*', (route) => route.abort());
-  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
-  await page.getByTestId('resource-table').locator('tbody tr').first().click();
+  await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
   await inspector.getByRole('tab', { name: 'YAML', exact: true }).click();
   await expect(inspector.getByRole('alert')).toContainText('The advanced editor could not load');
@@ -262,7 +263,7 @@ test('Related excludes notifications; each object has its own searchable and pag
       event('namespace-event', { kind: 'Namespace', apiVersion: 'v1', name: 'backend', uid: 'ns' }, { reason: 'NamespaceNotice' }),
     ],
   });
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: /^Namespaces(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText('backend', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
@@ -297,7 +298,7 @@ test('container colors agree across table, details and picker: Completed grey, P
   const states = [{ name: 'done', ready: false, state: { terminated: { reason: 'Completed', exitCode: 0 } } }, { name: 'pending', ready: false, state: { waiting: { reason: 'ContainerCreating' } } }, { name: 'warning', ready: false, state: { running: {} } }];
   await mockResourceLists(page, { Pod: [{ metadata: { uid: 'colors', name: 'status-colors', namespace: 'backend' }, spec: { containers: states.map(({ name }) => ({ name, image: 'app' })) }, status: { phase: 'Running', containerStatuses: states } }] });
   await page.route('**/api/k8s/logs?*', (route) => route.fulfill({ json: '2026-10-20T00:00:00Z log\n' }));
-  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'status-colors' });
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'status-colors' });
   const color = async (locator: import('@playwright/test').Locator) => locator.evaluate((el) => getComputedStyle(el).color);
   const tokenColor = async (variable: string) => page.evaluate((variable) => { const probe = document.createElement('span');probe.style.color = `var(${variable})`;document.body.append(probe);const color = getComputedStyle(probe).color;probe.remove();return color; }, variable);
   const completed = row.locator('[data-container-status="terminated"]');const pending = row.locator('[data-container-status="waiting"]');const warning = row.locator('[data-container-status="running"]');

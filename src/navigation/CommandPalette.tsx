@@ -1,3 +1,4 @@
+import { useTableViewStore } from '../state/table_view_store';
 import { inNamespaceScope, namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { shortcutLabel } from '../core/shortcuts';
 import { customResourceType } from '../core/resources/custom_resource_types';
@@ -165,7 +166,7 @@ export const CommandPalette: React.FC = () => {
     { id: 'refresh', label: 'Refresh current list', section: 'Data', icon: RefreshCw, run: () => { if (!cluster.currentContext) return; const context = cluster.currentContext; void k8s.getResources(context, st.activeKind, 'all').then((items) => { if (useClusterStore.getState().currentContext === context) st.setResourcesForKind(st.activeKind, items); }).catch((error) => toast.error('Refresh failed', String(error))); } },
     { id: 'ns', label: `Namespaces: ${namespaceScopeLabel(cluster.selectedNamespace)}`, section: 'Data', icon: Boxes, keywords: 'namespace filter scope select multiple', run: () => { document.querySelector<HTMLButtonElement>('[aria-label="Namespace Scope"]')?.click(); } },
     { id: 'settings', label: 'Open settings', section: 'System', icon: Settings, run: () => ui.setSettingsOpen(true) },
-    { id: 'clear', label: 'Clear all filters', section: 'Data', icon: Trash2, run: () => { st.setSearchQuery(''); cluster.selectNamespace('all'); toast.success('Filters cleared'); } },
+    { id: 'clear', label: 'Clear all filters', section: 'Data', icon: Trash2, run: () => { useTableViewStore.getState().clear(useWorkspaceStore.getState().activeTabId); cluster.selectNamespace('all'); toast.success('Filters cleared'); } },
   );
 
   // Resources (global search across every kind in the current perspective first, then all)

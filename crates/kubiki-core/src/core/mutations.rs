@@ -17,10 +17,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod review;
+pub use review::{MutationReview, ReviewKind, ReviewStep, ReviewWarning};
+mod actions;
+pub use actions::ResourceAction;
+
 pub const REVIEW_TTL: Duration = Duration::from_secs(120);
 pub const MAX_REVIEW_CHARS: usize = 24_000;
 
 pub enum MutationIntent {
+    Action {
+        resource: ResourceRef,
+        resource_version: String,
+        action: ResourceAction,
+    },
     Manifest {
         context: String,
         manifest: String,
@@ -116,15 +126,20 @@ fn valid_name_segment(name: &str, kind: &str) -> bool {
         return false;
     }
     // Disallow path traversal, URL escapes, whitespace, control characters
-    if name.bytes().any(|c| c <= 32 || c == 127 || b"/\\%?#[]@".contains(&c)) {
+    if name
+        .bytes()
+        .any(|c| c <= 32 || c == 127 || b"/\\%?#[]@".contains(&c))
+    {
         return false;
     }
     if is_rbac_kind(kind) {
         // RBAC names allow alphanumeric, '.', '-', '_', ':'
-        name.bytes().all(|c| c.is_ascii_alphanumeric() || b".-_:".contains(&c))
+        name.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b".-_:".contains(&c))
     } else {
         // Standard names allow alphanumeric, '.', '-', and also allow ':' or '_' if present
-        name.bytes().all(|c| c.is_ascii_alphanumeric() || b".-_:".contains(&c))
+        name.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b".-_:".contains(&c))
     }
 }
 
@@ -221,6 +236,82 @@ async fn resource_api(
 
 /// No public constructor, Clone or Deserialize: the payload cannot be swapped
 /// between review and commit, and one prepared operation cannot be replayed.
+pub struct ResourcePrecondition {
+    api: Api<DynamicObject>,
+    resource: ResourceRef,
+    version: String,
+}
+impl ResourcePrecondition {
+    pub async fn prepare(
+        client: Client,
+        resource: ResourceRef,
+        version: String,
+    ) -> Result<Self, ApiError> {
+        validate_identity(&resource, &version)?;
+        let condition = Self {
+            api: resource_api(client, &resource).await?,
+            resource,
+            version,
+        };
+        condition.check(true).await?;
+        Ok(condition)
+    }
+    async fn check(&self, exact_version: bool) -> Result<(), ApiError> {
+        let current = bounded(&self.resource, self.api.get(&self.resource.name)).await?;
+        if current.metadata.uid != self.resource.uid
+            || exact_version && current.metadata.resource_version.as_deref() != Some(&self.version)
+        {
+            return Err(error(
+                &self.resource,
+                409,
+                "Source resource changed or was recreated. Refresh and review again",
+            ));
+        }
+        Ok(())
+    }
+}
+fn verify_version(
+    resource: &ResourceRef,
+    version: &str,
+    current: &DynamicObject,
+) -> Result<(), ApiError> {
+    if current.metadata.uid != resource.uid
+        || current.metadata.resource_version.as_deref() != Some(version)
+    {
+        return Err(error(
+            resource,
+            409,
+            "Resource changed or was recreated. Refresh and review again",
+        ));
+    }
+    Ok(())
+}
+fn deletion_warnings(resource: &ResourceRef, delete: bool, evict: bool) -> Vec<ReviewWarning> {
+    let mut warnings = Vec::new();
+    if evict {
+        warnings.push(ReviewWarning::PodDisruptionBudget);
+    }
+    if delete {
+        warnings.push(ReviewWarning::Dependents);
+        if resource.query.kind == "CustomResourceDefinition" {
+            warnings.push(ReviewWarning::CrdDeletion);
+        }
+        if resource.query.kind == "Namespace" {
+            warnings.push(ReviewWarning::NamespaceDeletion);
+        }
+    }
+    warnings
+}
+
+enum PreparedAction {
+    Replace,
+    Create,
+    Scale(i32),
+    Delete,
+    Evict,
+    RemoveFinalizer(String),
+}
+
 pub struct PreparedMutation {
     api: Api<DynamicObject>,
     resource: ResourceRef,
@@ -228,19 +319,19 @@ pub struct PreparedMutation {
     before: DynamicObject,
     after: DynamicObject,
     review: String,
-    /// The change description without the identity header — reused by batch reviews.
-    diff: String,
-    scale: Option<i32>,
-    delete: bool,
-    evict: bool,
-    create: bool,
-    /// Some(finalizer) = a metadata.finalizers merge-patch commit.
-    finalizer: Option<String>,
+    action: PreparedAction,
+    details: MutationReview,
+    preconditions: Vec<ResourcePrecondition>,
     prepared_at: Instant,
 }
 impl PreparedMutation {
     pub async fn prepare(client: Client, intent: MutationIntent) -> Result<Self, ApiError> {
         let intent = match intent {
+            MutationIntent::Action {
+                resource,
+                resource_version,
+                action,
+            } => return Self::prepare_action(client, resource, resource_version, action).await,
             MutationIntent::Manifest {
                 context,
                 manifest,
@@ -249,8 +340,11 @@ impl PreparedMutation {
             intent => intent,
         };
         let (resource, version, scale, secret, delete, evict) = match intent {
-            MutationIntent::Manifest { .. } => unreachable!(),
-            MutationIntent::RemoveFinalizer { resource, finalizer } => {
+            MutationIntent::Manifest { .. } | MutationIntent::Action { .. } => unreachable!(),
+            MutationIntent::RemoveFinalizer {
+                resource,
+                finalizer,
+            } => {
                 return Self::prepare_remove_finalizer(client, resource, finalizer).await;
             }
             MutationIntent::Scale {
@@ -259,7 +353,8 @@ impl PreparedMutation {
                 replicas,
             } => {
                 validate_query(&resource.query)?;
-                if !["Deployment", "StatefulSet", "ReplicaSet"].contains(&resource.query.kind.as_str())
+                if !["Deployment", "StatefulSet", "ReplicaSet"]
+                    .contains(&resource.query.kind.as_str())
                     || !(0..=100000).contains(&replicas)
                 {
                     return Err(error(
@@ -268,7 +363,14 @@ impl PreparedMutation {
                         "Only Deployment/StatefulSet/ReplicaSet replicas in 0..100000 can be changed",
                     ));
                 }
-                (resource, resource_version, Some(replicas), None, false, false)
+                (
+                    resource,
+                    resource_version,
+                    Some(replicas),
+                    None,
+                    false,
+                    false,
+                )
             }
             MutationIntent::Delete {
                 resource,
@@ -278,7 +380,9 @@ impl PreparedMutation {
                 resource,
                 resource_version,
             } => {
-                if resource.query.kind != "Pod" || resource.query.namespace.as_deref().unwrap_or("").is_empty() {
+                if resource.query.kind != "Pod"
+                    || resource.query.namespace.as_deref().unwrap_or("").is_empty()
+                {
                     return Err(error(
                         &resource,
                         400,
@@ -339,14 +443,16 @@ impl PreparedMutation {
             let keys: BTreeSet<_> = old.keys().chain(new.as_object().unwrap().keys()).collect();
             for key in keys {
                 if old.get(key) != new.get(key) {
+                    let change = if !old.contains_key(key) {
+                        "added"
+                    } else if new.get(key).is_none() {
+                        "removed"
+                    } else {
+                        "updated"
+                    };
                     diff.push_str(&format!(
-                        "data/{key} (base64):\n  BEFORE: {}\n  AFTER:  {}\n",
-                        old.get(key)
-                            .map(Value::to_string)
-                            .unwrap_or("(absent)".into()),
-                        new.get(key)
-                            .map(Value::to_string)
-                            .unwrap_or("(removed)".into())
+                        "data/{}: {change}\n",
+                        serde_json::to_string(key).expect("key serializes")
                     ));
                 }
             }
@@ -380,7 +486,13 @@ impl PreparedMutation {
                 serde_json::to_string_pretty(&summary).expect("metadata serializes")
             );
         }
-        let operation = if delete { "DELETE" } else if evict { "EVICT" } else { "Apply" };
+        let operation = if delete {
+            "DELETE"
+        } else if evict {
+            "EVICT"
+        } else {
+            "Apply"
+        };
         let review = format!(
             "{}\n\n{}\n\n{operation} this exact change? Cancel leaves the resource unchanged.",
             identity_summary(&resource, &version),
@@ -393,6 +505,23 @@ impl PreparedMutation {
                 "Change is too large for a complete confirmation dialog (24000 characters). Split the edit into smaller changes",
             ));
         }
+        let warnings = deletion_warnings(&resource, delete, evict);
+        let details = MutationReview::single(
+            ReviewKind::Action,
+            if delete {
+                "DELETE"
+            } else if evict {
+                "EVICT"
+            } else if scale.is_some() {
+                "SCALE"
+            } else {
+                "UPDATE_SECRET"
+            },
+            &resource,
+            diff.clone(),
+            None,
+            warnings,
+        );
         Ok(Self {
             api,
             resource,
@@ -400,12 +529,17 @@ impl PreparedMutation {
             before,
             after,
             review,
-            diff,
-            scale,
-            delete,
-            evict,
-            create: false,
-            finalizer: None,
+            details,
+            preconditions: Vec::new(),
+            action: if delete {
+                PreparedAction::Delete
+            } else if evict {
+                PreparedAction::Evict
+            } else if let Some(n) = scale {
+                PreparedAction::Scale(n)
+            } else {
+                PreparedAction::Replace
+            },
             prepared_at: Instant::now(),
         })
     }
@@ -459,8 +593,8 @@ impl PreparedMutation {
         let mut after = before.clone();
         after.metadata.finalizers = Some(remaining);
         // serde_json keeps untrusted names quoted and escaped in review text.
-        let old_json = serde_json::to_string(&before.metadata.finalizers)
-            .unwrap_or_else(|_| "[]".into());
+        let old_json =
+            serde_json::to_string(&before.metadata.finalizers).unwrap_or_else(|_| "[]".into());
         let new_json =
             serde_json::to_string(&after.metadata.finalizers).unwrap_or_else(|_| "[]".into());
         let diff = format!(
@@ -479,6 +613,16 @@ impl PreparedMutation {
                 "Change is too large for a complete confirmation dialog. Split the edit into smaller changes",
             ));
         }
+        let details = MutationReview::single(
+            ReviewKind::Action,
+            "REMOVE_FINALIZER",
+            &resource,
+            format!(
+                "Remove finalizer {finalizer:?}. Removing the last finalizer can complete deletion immediately; controllers may re-add it."
+            ),
+            None,
+            vec![ReviewWarning::Dependents],
+        );
         Ok(Self {
             api,
             resource,
@@ -486,12 +630,9 @@ impl PreparedMutation {
             before,
             after,
             review,
-            diff,
-            scale: None,
-            delete: false,
-            evict: false,
-            create: false,
-            finalizer: Some(finalizer),
+            details,
+            preconditions: Vec::new(),
+            action: PreparedAction::RemoveFinalizer(finalizer),
             prepared_at: Instant::now(),
         })
     }
@@ -501,6 +642,15 @@ impl PreparedMutation {
         context: String,
         manifest: String,
         target: Option<ManifestTarget>,
+    ) -> Result<Self, ApiError> {
+        Self::prepare_manifest_with_review(client, context, manifest, target, true).await
+    }
+    async fn prepare_manifest_with_review(
+        client: Client,
+        context: String,
+        manifest: String,
+        target: Option<ManifestTarget>,
+        detailed: bool,
     ) -> Result<Self, ApiError> {
         use super::api::ResourceQuery;
         let mut resource = ResourceRef {
@@ -601,7 +751,12 @@ impl PreparedMutation {
         let old = serde_json::to_value(&before).expect("object serializes");
         let new = serde_json::to_value(&after).expect("object serializes");
         let mut diff = String::new();
-        if create {
+        if !detailed {
+            if !create && old == new {
+                return Err(error(&resource, 400, "No changes to apply"));
+            }
+            diff = "Prepared resource action".into();
+        } else if create {
             diff = format!(
                 "CREATE object:\n{}",
                 serde_json::to_string_pretty(&new).unwrap()
@@ -625,6 +780,22 @@ impl PreparedMutation {
                 "Complete change review exceeds 24000 characters. Split the change",
             ));
         }
+        let details = MutationReview::single(
+            if detailed {
+                ReviewKind::Yaml
+            } else {
+                ReviewKind::Action
+            },
+            if create { "CREATE" } else { "UPDATE" },
+            &resource,
+            if create {
+                "Create this Kubernetes object.".into()
+            } else {
+                "Apply the edited Kubernetes configuration.".into()
+            },
+            detailed.then(|| diff.clone()),
+            vec![ReviewWarning::Dependents],
+        );
         Ok(Self {
             api,
             resource,
@@ -632,14 +803,19 @@ impl PreparedMutation {
             before,
             after,
             review,
-            diff,
-            scale: None,
-            delete: false,
-            evict: false,
-            create,
-            finalizer: None,
+            details,
+            preconditions: Vec::new(),
+            action: if create {
+                PreparedAction::Create
+            } else {
+                PreparedAction::Replace
+            },
             prepared_at: Instant::now(),
         })
+    }
+
+    pub fn details(&self) -> MutationReview {
+        self.details.clone()
     }
 
     pub fn review(&self) -> &str {
@@ -673,6 +849,9 @@ impl PreparedMutation {
     }
 
     async fn commit_inner(self, check_ttl: bool) -> Result<Value, ApiError> {
+        for condition in &self.preconditions {
+            condition.check(true).await?;
+        }
         if check_ttl && self.prepared_at.elapsed() > REVIEW_TTL {
             return Err(error(
                 &self.resource,
@@ -680,7 +859,7 @@ impl PreparedMutation {
                 "Confirmation expired. Refresh and review again",
             ));
         }
-        if self.create {
+        if matches!(self.action, PreparedAction::Create) {
             if bounded(&self.resource, self.api.get_opt(&self.resource.name))
                 .await?
                 .is_some()
@@ -729,7 +908,7 @@ impl PreparedMutation {
                 "Confirmation expired during the final check; review again",
             ));
         }
-        if self.delete {
+        if matches!(self.action, PreparedAction::Delete) {
             let params = DeleteParams {
                 preconditions: Some(Preconditions {
                     uid: self.resource.uid.clone(),
@@ -755,7 +934,7 @@ impl PreparedMutation {
                 )
             });
         }
-        if let Some(finalizer) = &self.finalizer {
+        if let PreparedAction::RemoveFinalizer(finalizer) = &self.action {
             // A merge patch replaces the whole finalizers array while UID and
             // resourceVersion act as the optimistic-concurrency precondition.
             let remaining = self.after.metadata.finalizers.clone().unwrap_or_default();
@@ -805,7 +984,7 @@ impl PreparedMutation {
                 Err(err) => return Err(err),
             }
         }
-        if self.evict {
+        if matches!(self.action, PreparedAction::Evict) {
             let body = serde_json::json!({
                 "apiVersion": "policy/v1",
                 "kind": "Eviction",
@@ -820,11 +999,18 @@ impl PreparedMutation {
                     }
                 }
             });
-            let payload = serde_json::to_vec(&body).map_err(|e| error(&self.resource, 500, &e.to_string()))?;
+            let payload = serde_json::to_vec(&body)
+                .map_err(|e| error(&self.resource, 500, &e.to_string()))?;
             let result = bounded(
                 &self.resource,
-                self.api.create_subresource::<DynamicObject>("eviction", &self.resource.name, &PostParams::default(), payload)
-            ).await?;
+                self.api.create_subresource::<DynamicObject>(
+                    "eviction",
+                    &self.resource.name,
+                    &PostParams::default(),
+                    payload,
+                ),
+            )
+            .await?;
             return serde_json::to_value(result).map_err(|_| {
                 error(
                     &self.resource,
@@ -833,7 +1019,7 @@ impl PreparedMutation {
                 )
             });
         }
-        let result = if let Some(replicas) = self.scale {
+        let result = if let PreparedAction::Scale(replicas) = self.action {
             // RV is a conditional patch precondition enforced by the API server;
             // UID additionally pins the object across delete/recreate races.
             let patch = json!({"metadata":{"uid":self.resource.uid,"resourceVersion":self.version},"spec":{"replicas":replicas}});
@@ -864,260 +1050,8 @@ impl PreparedMutation {
     }
 }
 
-/// One step of a batch mutation. `critical` stops the remaining steps when it fails.
-pub struct BatchIntent {
-    pub intent: MutationIntent,
-    pub critical: bool,
-}
-
-impl BatchIntent {
-    pub fn new(intent: MutationIntent) -> Self {
-        Self {
-            intent,
-            critical: false,
-        }
-    }
-
-    pub fn critical(intent: MutationIntent) -> Self {
-        Self {
-            intent,
-            critical: true,
-        }
-    }
-}
-
-/// Hard cap so one confirmation cannot hide an unbounded operation.
-pub const MAX_BATCH_STEPS: usize = 1000;
-/// Diff budget per manifest-like step inside a batch review.
-const BATCH_DIFF_BUDGET: usize = 4_000;
-/// Keep room for the footer and the last identity line.
-const BATCH_REVIEW_MARGIN: usize = 2_000;
-
-struct PreparedBatchStep {
-    action: &'static str,
-    critical: bool,
-    mutation: PreparedMutation,
-}
-
-/// A prepared multi-step operation that is confirmed once and committed sequentially.
-/// The single consent covers every step; callers must not re-enter the guard per step.
-pub struct PreparedBatch {
-    primary: ResourceRef,
-    steps: Vec<PreparedBatchStep>,
-    review: String,
-    prepared_at: Instant,
-}
-
-impl PreparedBatch {
-    pub async fn prepare(
-        client: Client,
-        primary: ResourceRef,
-        intents: Vec<BatchIntent>,
-    ) -> Result<Self, ApiError> {
-        if intents.is_empty() {
-            return Err(error(
-                &primary,
-                400,
-                "A batch operation needs at least one step",
-            ));
-        }
-        if intents.len() > MAX_BATCH_STEPS {
-            return Err(error(
-                &primary,
-                422,
-                "Too many steps in one batch; split the operation",
-            ));
-        }
-        let mut steps = Vec::with_capacity(intents.len());
-        for BatchIntent { intent, critical } in intents {
-            let action = match &intent {
-                MutationIntent::Manifest { .. } => "APPLY",
-                MutationIntent::Scale { .. } => "SCALE",
-                MutationIntent::Secret(_) => "UPDATE",
-                MutationIntent::Delete { .. } => "DELETE",
-                MutationIntent::Evict { .. } => "EVICT",
-                MutationIntent::RemoveFinalizer { .. } => "FINALIZER",
-            };
-            let mutation = PreparedMutation::prepare(client.clone(), intent).await?;
-            steps.push(PreparedBatchStep {
-                action,
-                critical,
-                mutation,
-            });
-        }
-        let review = Self::build_review(&primary, &steps)?;
-        Ok(Self {
-            primary,
-            steps,
-            review,
-            prepared_at: Instant::now(),
-        })
-    }
-
-    fn build_review(
-        primary: &ResourceRef,
-        steps: &[PreparedBatchStep],
-    ) -> Result<String, ApiError> {
-        let step_count = steps.len();
-        let mut review = format!(
-            "Batch operation in context {:?}: {step_count} {}. All steps are confirmed together.\n",
-            primary.query.context,
-            if step_count == 1 { "step" } else { "steps" }
-        );
-        if steps.iter().any(|step| step.action == "EVICT") {
-            review.push_str("Evictions use policy/v1 and respect PodDisruptionBudgets. ");
-        }
-        if steps.iter().any(|step| step.action == "DELETE") {
-            review.push_str("Controllers or garbage collection may also remove dependents. ");
-        }
-        review.push_str("Failures are reported per step.\n\n");
-        let mut diff_used = 0usize;
-        let mut omitted = 0usize;
-        let soft_limit = MAX_REVIEW_CHARS.saturating_sub(BATCH_REVIEW_MARGIN);
-        for (index, step) in steps.iter().enumerate() {
-            let resource = &step.mutation.resource;
-            let namespace = resource.query.namespace.as_deref().unwrap_or("(cluster)");
-            let line = format!(
-                "{}. {} {} {} (namespace: {})\n",
-                index + 1,
-                step.action,
-                resource.query.kind,
-                resource.name,
-                namespace
-            );
-            // Even compact lines need a ceiling: a drain can touch hundreds of pods.
-            // Stop at a clean prefix instead of skipping arbitrary rows in the middle.
-            if review.chars().count() + line.chars().count() > soft_limit {
-                omitted = steps.len() - index;
-                break;
-            }
-            review.push_str(&line);
-            // Eviction/delete payloads are fixed by the API, so a compact line is enough.
-            // Manifest-like steps carry a real diff the user must be able to review.
-            if matches!(step.action, "EVICT" | "DELETE") {
-                if step.action == "DELETE" {
-                    match resource.query.kind.as_str() {
-                        "CustomResourceDefinition" => review.push_str(
-                            "    Deleting a CRD deletes all custom resources defined by it across namespaces.\n",
-                        ),
-                        "Namespace" => review.push_str(
-                            "    Deleting a Namespace removes its namespaced contents.\n",
-                        ),
-                        _ => {}
-                    }
-                }
-                continue;
-            }
-            if review.chars().count() >= soft_limit || diff_used >= BATCH_DIFF_BUDGET * 3 {
-                continue;
-            }
-            let mut added = 0usize;
-            let mut truncated = false;
-            for line in step.mutation.diff.lines() {
-                let chunk = format!("    {line}\n");
-                if added + chunk.chars().count() > BATCH_DIFF_BUDGET
-                    || review.chars().count() + chunk.chars().count() > soft_limit
-                {
-                    truncated = true;
-                    break;
-                }
-                review.push_str(&chunk);
-                added += chunk.chars().count();
-            }
-            if truncated {
-                review.push_str("    … (diff truncated)\n");
-            }
-            diff_used += added;
-        }
-        if omitted > 0 {
-            review.push_str(&format!(
-                "\n… {omitted} more step(s) are included in this batch but not listed here.\n"
-            ));
-        }
-        review.push_str(&format!(
-            "\nConfirm all {step_count} {}? Cancel leaves the cluster unchanged.",
-            if step_count == 1 { "step" } else { "steps" }
-        ));
-        if review.chars().count() > MAX_REVIEW_CHARS {
-            return Err(error(
-                primary,
-                422,
-                "Batch review is too large for a complete confirmation dialog; split the operation",
-            ));
-        }
-        Ok(review)
-    }
-
-    pub fn review(&self) -> &str {
-        &self.review
-    }
-
-    /// One consent for the whole batch, then each step commits without re-prompting.
-    pub async fn confirm_and_commit<F, Fut>(self, confirm: F) -> Result<Value, ApiError>
-    where
-        F: FnOnce(String) -> Fut,
-        Fut: Future<Output = Result<bool, ApiError>>,
-    {
-        if !confirm(self.review.clone()).await? {
-            return Err(cancelled(
-                &self.primary,
-                "Batch cancelled. Nothing was changed",
-            ));
-        }
-        if self.prepared_at.elapsed() > REVIEW_TTL {
-            return Err(error(
-                &self.primary,
-                409,
-                "Confirmation expired. Refresh and review again",
-            ));
-        }
-        let mut results = Vec::with_capacity(self.steps.len());
-        let mut succeeded: u64 = 0;
-        let mut failed: u64 = 0;
-        let mut stopped = false;
-        for step in self.steps {
-            let action = step.action;
-            let critical = step.critical;
-            let kind = step.mutation.resource.query.kind.clone();
-            let name = step.mutation.resource.name.clone();
-            let namespace = step.mutation.resource.query.namespace.clone();
-            match step.mutation.commit_after_shared_consent().await {
-                Ok(_) => {
-                    succeeded += 1;
-                    results.push(json!({
-                        "action": action,
-                        "kind": kind,
-                        "name": name,
-                        "namespace": namespace,
-                        "ok": true,
-                    }));
-                }
-                Err(error) => {
-                    failed += 1;
-                    results.push(json!({
-                        "action": action,
-                        "kind": kind,
-                        "name": name,
-                        "namespace": namespace,
-                        "ok": false,
-                        "code": error.code,
-                        "message": error.message,
-                    }));
-                    if critical {
-                        stopped = true;
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(json!({
-            "steps": results,
-            "succeeded": succeeded,
-            "failed": failed,
-            "stopped": stopped,
-        }))
-    }
-}
+mod batch;
+pub use batch::{BatchIntent, MAX_BATCH_STEPS, PreparedBatch};
 
 fn json_diff(path: &str, before: &Value, after: &Value, out: &mut String) {
     if before == after {
@@ -1160,17 +1094,21 @@ mod tests {
             api: resource_api(Client::new(service, "default"), &resource)
                 .await
                 .unwrap(),
-            resource,
+            resource: resource.clone(),
             version: "10".into(),
             before: before.clone(),
             after: before,
             review: "review".into(),
-            diff: "review".into(),
-            scale: Some(0),
-            delete: false,
-            evict: false,
-            create: false,
-            finalizer: None,
+            action: PreparedAction::Scale(0),
+            details: MutationReview::single(
+                ReviewKind::Action,
+                "SCALE",
+                &resource,
+                String::new(),
+                None,
+                vec![],
+            ),
+            preconditions: Vec::new(),
             prepared_at: Instant::now() - REVIEW_TTL - Duration::from_secs(1),
         };
         assert_eq!(
@@ -1247,7 +1185,8 @@ mod tests {
             "namespace": null,
             "name": "system:discovery",
             "uid": "rbac-uid"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate_reference(&rbac_res).is_ok());
         assert!(validate_identity(&rbac_res, "123").is_ok());
 
@@ -1259,7 +1198,8 @@ mod tests {
             "namespace": null,
             "name": "../escape",
             "uid": "rbac-uid"
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(validate_reference(&invalid_path).is_err());
     }
 }

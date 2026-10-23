@@ -103,7 +103,8 @@ describe('Resource columns mapping and Lens parity', () => {
 
     const item = mapK8sResource(raw, 'CronJob');
     expect(item.status).toBe('Active');
-    expect(item.ready).toBe('0 2 * * *');
+    expect(item.schedule).toBe('0 2 * * *');
+    expect(item.ready).toBeUndefined();
     expect(item.activeJobs).toBe(1);
     expect(item.lastScheduleTime).toBe('1h');
   });

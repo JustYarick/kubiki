@@ -1,11 +1,13 @@
 //! The only renderer entry points that may create, change or delete Kubernetes objects.
 //! Requests contain intent only. Consent is obtained in the native backend, never from IPC.
-use kube::api::{Api, ApiResource, DynamicObject, ListParams};
 use kubiki_core::{
     cluster::client::ClusterClientPool,
     core::{
         api::{ApiError, ResourceQuery, ResourceRef},
-        mutations::{BatchIntent, ManifestTarget, MutationIntent, PreparedBatch, PreparedMutation},
+        mutations::{
+            BatchIntent, ManifestTarget, MutationIntent, PreparedBatch, PreparedMutation,
+            ResourceAction, ResourcePrecondition,
+        },
     },
     helm::{
         mutations::{HelmMutation, PreparedHelmMutation},
@@ -19,6 +21,11 @@ use serde_json::{Value, json};
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ChangeRequest {
+    Action {
+        resource: ResourceRef,
+        resource_version: String,
+        action: ResourceAction,
+    },
     Manifest {
         context: String,
         manifest: String,
@@ -58,6 +65,13 @@ pub enum ChangeRequest {
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BatchStep {
+    Action {
+        resource: ResourceRef,
+        resource_version: String,
+        action: ResourceAction,
+        #[serde(default)]
+        critical: bool,
+    },
     Manifest {
         context: String,
         manifest: String,
@@ -103,7 +117,8 @@ impl BatchStep {
     fn context(&self) -> &str {
         match self {
             Self::Manifest { context, .. } => context,
-            Self::Scale { resource, .. }
+            Self::Action { resource, .. }
+            | Self::Scale { resource, .. }
             | Self::Evict { resource, .. }
             | Self::Delete { resource, .. }
             | Self::Drain { resource, .. } => &resource.query.context,
@@ -113,6 +128,19 @@ impl BatchStep {
 
     fn split(self) -> (MutationIntent, bool) {
         match self {
+            Self::Action {
+                resource,
+                resource_version,
+                action,
+                critical,
+            } => (
+                MutationIntent::Action {
+                    resource,
+                    resource_version,
+                    action,
+                },
+                critical,
+            ),
             Self::Manifest {
                 context,
                 manifest,
@@ -181,8 +209,10 @@ pub enum DeleteRequest {
 impl ChangeRequest {
     fn resource(&self) -> ResourceRef {
         match self {
-            Self::Scale { resource, .. } => resource.clone(),
-            Self::Evict { resource, .. } | Self::RemoveFinalizer { resource, .. } => resource.clone(),
+            Self::Action { resource, .. } | Self::Scale { resource, .. } => resource.clone(),
+            Self::Evict { resource, .. } | Self::RemoveFinalizer { resource, .. } => {
+                resource.clone()
+            }
             Self::Batch { primary, .. } => primary.clone(),
             Self::Secret { request } => request.resource.clone(),
             Self::Helm { request } => request.resource(),
@@ -227,134 +257,6 @@ async fn client(
     })
 }
 
-fn core_api(kind: &str) -> ApiResource {
-    let plural = match kind {
-        "Pod" => "pods".to_string(),
-        "Node" => "nodes".to_string(),
-        other => format!("{}s", other.to_ascii_lowercase()),
-    };
-    ApiResource {
-        group: String::new(),
-        version: "v1".into(),
-        api_version: "v1".into(),
-        kind: kind.into(),
-        plural,
-    }
-}
-
-/// Turn a drain step into the exact operations `kubectl drain` performs: cordon
-/// when needed, then one eviction per non-daemonset, non-mirror, live pod.
-async fn expand_drain(
-    client: &kube::Client,
-    node: ResourceRef,
-    resource_version: String,
-    cordon_critical: bool,
-) -> Result<Vec<BatchIntent>, ApiError> {
-    let context = node.query.context.clone();
-    let nodes: Api<DynamicObject> = Api::all_with(client.clone(), &core_api("Node"));
-    let current = nodes.get(&node.name).await.map_err(|e| {
-        let code = match &e {
-            kube::Error::Api(response) => response.code as u16,
-            _ => 503,
-        };
-        kubiki_core::core::mutations::error(&node, code, &format!("cannot read node: {e}"))
-    })?;
-    let mut intents = Vec::new();
-    let unschedulable = current
-        .data
-        .get("spec")
-        .and_then(|spec| spec.get("unschedulable"))
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    if !unschedulable {
-        let mut manifest = serde_json::to_value(&current).map_err(|e| {
-            kubiki_core::core::mutations::error(&node, 500, &format!("cannot encode node: {e}"))
-        })?;
-        if !manifest.get("spec").is_some_and(Value::is_object) {
-            manifest["spec"] = json!({});
-        }
-        manifest["spec"]["unschedulable"] = json!(true);
-        let manifest = serde_yaml::to_string(&manifest).map_err(|e| {
-            kubiki_core::core::mutations::error(&node, 500, &format!("cannot encode node: {e}"))
-        })?;
-        let cordon = MutationIntent::Manifest {
-            context: context.clone(),
-            manifest,
-            target: Some(ManifestTarget {
-                resource: node.clone(),
-                resource_version: current
-                    .metadata
-                    .resource_version
-                    .clone()
-                    .unwrap_or(resource_version),
-            }),
-        };
-        intents.push(if cordon_critical {
-            BatchIntent::critical(cordon)
-        } else {
-            BatchIntent::new(cordon)
-        });
-    }
-
-    let pods: Api<DynamicObject> = Api::all_with(client.clone(), &core_api("Pod"));
-    let listed = pods.list(&ListParams::default()).await.map_err(|e| {
-        let code = match &e {
-            kube::Error::Api(response) => response.code as u16,
-            _ => 503,
-        };
-        kubiki_core::core::mutations::error(&node, code, &format!("cannot list pods: {e}"))
-    })?;
-    for pod in listed.items {
-        let Some(name) = pod.metadata.name.clone() else {
-            continue;
-        };
-        let Some(namespace) = pod.metadata.namespace.clone() else {
-            continue;
-        };
-        if pod.metadata.deletion_timestamp.is_some() {
-            continue;
-        }
-        let on_node = pod
-            .data
-            .get("spec")
-            .and_then(|spec| spec.get("nodeName"))
-            .and_then(|value| value.as_str())
-            == Some(node.name.as_str());
-        if !on_node {
-            continue;
-        }
-        let is_mirror = pod
-            .metadata
-            .annotations
-            .as_ref()
-            .and_then(|annotations| annotations.get("kubernetes.io/config.mirror"))
-            .is_some();
-        let is_daemonset = pod.metadata.owner_references.as_ref().is_some_and(|refs| {
-            refs.iter()
-                .any(|owner| owner.kind == "DaemonSet" && owner.controller.unwrap_or(false))
-        });
-        if is_mirror || is_daemonset {
-            continue;
-        }
-        let pod_ref = ResourceRef {
-            query: ResourceQuery {
-                context: context.clone(),
-                group: String::new(),
-                version: "v1".into(),
-                kind: "Pod".into(),
-                namespace: Some(namespace),
-            },
-            name,
-            uid: pod.metadata.uid.clone(),
-        };
-        intents.push(BatchIntent::new(MutationIntent::Evict {
-            resource: pod_ref,
-            resource_version: pod.metadata.resource_version.clone().unwrap_or_default(),
-        }));
-    }
-    Ok(intents)
-}
-
 /// Prepare every step against one context, confirm once, then commit sequentially.
 async fn run_batch(
     window: tauri::WebviewWindow,
@@ -364,6 +266,7 @@ async fn run_batch(
 ) -> Result<Value, ApiError> {
     let batch_client = client(pool, &primary).await?;
     let mut intents = Vec::with_capacity(steps.len());
+    let mut preconditions = Vec::new();
     for step in steps {
         if step.context() != primary.query.context {
             return Err(kubiki_core::core::mutations::error(
@@ -378,8 +281,22 @@ async fn run_batch(
                 resource_version,
                 critical,
             } => {
+                preconditions.push(
+                    ResourcePrecondition::prepare(
+                        batch_client.clone(),
+                        resource.clone(),
+                        resource_version.clone(),
+                    )
+                    .await?,
+                );
                 intents.extend(
-                    expand_drain(&batch_client, resource, resource_version, critical).await?,
+                    kubiki_core::core::drain::expand_drain(
+                        &batch_client,
+                        resource,
+                        resource_version,
+                        critical,
+                    )
+                    .await?,
                 );
             }
             other => {
@@ -400,9 +317,14 @@ async fn run_batch(
             "stopped": false,
         }));
     }
-    PreparedBatch::prepare(batch_client, primary.clone(), intents)
+    let batch = PreparedBatch::prepare(batch_client, primary.clone(), intents)
         .await?
-        .confirm_and_commit(|review| crate::mutation_guard::confirm(window, &primary, review))
+        .with_preconditions(preconditions);
+    let details = batch.details();
+    batch
+        .confirm_and_commit(|review| {
+            crate::mutation_guard::confirm_details(window, &primary, review, Some(details))
+        })
         .await
 }
 
@@ -439,6 +361,15 @@ pub async fn mutate_resource(
             .await;
     }
     let intent = match request {
+        ChangeRequest::Action {
+            resource,
+            resource_version,
+            action,
+        } => MutationIntent::Action {
+            resource,
+            resource_version,
+            action,
+        },
         ChangeRequest::Manifest {
             context,
             manifest,
@@ -464,15 +395,22 @@ pub async fn mutate_resource(
             resource,
             resource_version,
         },
-        ChangeRequest::RemoveFinalizer { resource, finalizer } => {
-            MutationIntent::RemoveFinalizer { resource, finalizer }
-        }
+        ChangeRequest::RemoveFinalizer {
+            resource,
+            finalizer,
+        } => MutationIntent::RemoveFinalizer {
+            resource,
+            finalizer,
+        },
         ChangeRequest::Secret { request } => MutationIntent::Secret(request),
         _ => unreachable!(),
     };
-    PreparedMutation::prepare(client(&pool, &resource).await?, intent)
-        .await?
-        .confirm_and_commit(|review| crate::mutation_guard::confirm(window, &resource, review))
+    let prepared = PreparedMutation::prepare(client(&pool, &resource).await?, intent).await?;
+    let details = prepared.details();
+    prepared
+        .confirm_and_commit(|review| {
+            crate::mutation_guard::confirm_details(window, &resource, review, Some(details))
+        })
         .await
 }
 
@@ -495,16 +433,20 @@ pub async fn delete_resource(
             resource,
             resource_version,
         } => {
-            PreparedMutation::prepare(
+            let prepared = PreparedMutation::prepare(
                 client(&pool, &resource).await?,
                 MutationIntent::Delete {
                     resource: resource.clone(),
                     resource_version,
                 },
             )
-            .await?
-            .confirm_and_commit(|review| crate::mutation_guard::confirm(window, &resource, review))
-            .await
+            .await?;
+            let details = prepared.details();
+            prepared
+                .confirm_and_commit(|review| {
+                    crate::mutation_guard::confirm_details(window, &resource, review, Some(details))
+                })
+                .await
         }
         DeleteRequest::DebugPod { resource } => {
             nodes

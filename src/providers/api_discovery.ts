@@ -2,6 +2,16 @@ import { RESOURCE_TYPES, type ResourceType } from '../core/resources/resource_ty
 
 /** Parse kubectl's discovery table by the stable namespaced column, not optional shortnames. */
 export function parseApiResources(table: unknown): ResourceType[] {
+  if (Array.isArray(table)) {
+    const found: ResourceType[] = [];
+    for (const entry of table) {
+      const known = RESOURCE_TYPES.find(type => type.kind === entry?.kind && type.group === entry.group && type.plural === entry.plural && type.namespaced === entry.namespaced);
+      if (!known || typeof entry.version !== 'string' || !/^v[1-9]\d*(?:(?:alpha|beta)\d+)?$/.test(entry.version) || typeof entry.watch !== 'boolean') throw new Error('Invalid Kubernetes API discovery response');
+      found.push({ ...known, version: entry.version, watch: entry.watch });
+    }
+    if (!found.length) throw new Error('Kubernetes API discovery did not return any supported collections');
+    return found;
+  }
   if (typeof table !== 'string') throw new Error('Invalid Kubernetes API discovery response');
   const found = new Map<string, ResourceType>();
   for (const line of table.split('\n')) {

@@ -1,7 +1,7 @@
 //! Trusted desktop consent via in-app confirmation dialog.
 use kubiki_core::core::{
     api::{ApiError, ResourceRef},
-    mutations::{MAX_REVIEW_CHARS, REVIEW_TTL, error},
+    mutations::{MAX_REVIEW_CHARS, MutationReview, REVIEW_TTL, ReviewKind, error},
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -23,6 +23,8 @@ pub struct MutationConfirmRequest {
     pub id: String,
     pub resource: ResourceRef,
     pub review: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<MutationReview>,
 }
 
 static PENDING_CONFIRMS: LazyLock<StdMutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>> =
@@ -62,7 +64,24 @@ pub async fn confirm(
     resource: &ResourceRef,
     review: String,
 ) -> Result<bool, ApiError> {
-    if review.chars().count() > MAX_REVIEW_CHARS {
+    confirm_details(window, resource, review, None).await
+}
+
+pub async fn confirm_details(
+    window: tauri::WebviewWindow,
+    resource: &ResourceRef,
+    review: String,
+    details: Option<MutationReview>,
+) -> Result<bool, ApiError> {
+    let limit = if details
+        .as_ref()
+        .is_some_and(|d| d.kind == ReviewKind::Batch)
+    {
+        2 * 1024 * 1024
+    } else {
+        MAX_REVIEW_CHARS
+    };
+    if review.chars().count() > limit {
         return Err(error(
             resource,
             422,
@@ -73,11 +92,7 @@ pub async fn confirm(
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
-        return Err(error(
-            resource,
-            409,
-            "A confirmation is already open",
-        ));
+        return Err(error(resource, 409, "A confirmation is already open"));
     }
     let _reservation = DialogReservation;
     let started = Instant::now();
@@ -94,9 +109,9 @@ pub async fn confirm(
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     {
-        let mut map = PENDING_CONFIRMS.lock().map_err(|_| {
-            error(resource, 500, "Internal error in confirmation registry")
-        })?;
+        let mut map = PENDING_CONFIRMS
+            .lock()
+            .map_err(|_| error(resource, 500, "Internal error in confirmation registry"))?;
         map.insert(id.clone(), tx);
     }
 
@@ -104,6 +119,7 @@ pub async fn confirm(
         id: id.clone(),
         resource: resource.clone(),
         review,
+        details,
     };
 
     if window.emit("mutation-confirm-request", &payload).is_err() {

@@ -1,3 +1,4 @@
+import { performResourceAction, restartManifest } from '../../providers/resource_actions';
 import { resourceBucket } from '../../core/resources/custom_resource_types';
 import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, Boxes, Loader2, X } from 'lucide-react';
@@ -19,7 +20,7 @@ import { IconButton, Button } from '../ui/Button';
 import { SearchInput } from '../ui/Input';
 import { PFDialog } from '../dialogs/PFDialog';
 import { toast } from '../../state/notifications_store';
-import { parse, stringify } from 'yaml';
+import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
 import { k8s } from '../../providers/k8s_provider';
 import type { ResourceItem } from '../../types/k8s';
@@ -195,19 +196,14 @@ function KubernetesResourceDetails({
       toast.error('No active cluster context');
       return;
     }
-    const rawCopy = JSON.parse(JSON.stringify(item.raw ?? {}));
-    rawCopy.spec = rawCopy.spec ?? {};
-    rawCopy.spec.template = rawCopy.spec.template ?? {};
-    rawCopy.spec.template.metadata = rawCopy.spec.template.metadata ?? {};
-    rawCopy.spec.template.metadata.annotations = rawCopy.spec.template.metadata.annotations ?? {};
-    rawCopy.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
+    const rawCopy = restartManifest(item);
 
     try {
       if (k8s.demo) {
         useResourceStore.getState().updateItem(item.kind, item.uid, { ...item, raw: rawCopy });
         toast.success(`Rollout restart triggered for ${item.kind}/${item.name} (demo)`);
       } else {
-        await k8s.applyManifest(currentContext!, stringify(rawCopy), item);
+        await performResourceAction(currentContext!, item, { type: 'restart' });
         toast.success(`Rollout restart triggered for ${item.kind}/${item.name}`);
       }
     } catch (err: any) {
@@ -232,7 +228,7 @@ function KubernetesResourceDetails({
         toast.success(`Node ${item.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'} (demo)`);
         return 'success';
       } else {
-        await k8s.applyManifest(currentContext!, stringify(rawCopy), item);
+        await performResourceAction(currentContext!, item, { type: 'cordon', unschedulable: nextUnschedulable });
         toast.success(`Node ${item.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'}`);
         return 'success';
       }

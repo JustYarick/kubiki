@@ -25,6 +25,7 @@ struct ClientSlot {
 pub struct ClusterClientPool {
     clients: Arc<RwLock<HashMap<String, ClientSlot>>>,
     config_mgr: KubeConfigManager,
+    config_cache: Arc<std::sync::Mutex<Option<(u64, Kubeconfig)>>>,
 }
 
 fn context_fingerprint(config: &Kubeconfig, context_name: &str) -> u64 {
@@ -61,6 +62,7 @@ impl ClusterClientPool {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
             config_mgr,
+            config_cache: Arc::default(),
         }
     }
 
@@ -77,7 +79,25 @@ impl ClusterClientPool {
     /// Load or reuse an existing kube::Client for a specific context.
     /// If configuration has changed for this context, a fresh client is constructed.
     pub async fn get_client(&self, context: &str) -> Result<Client, KubikiError> {
-        let kubeconfig = self.config_mgr.read_config()?;
+        let manager = self.config_mgr.clone();
+        let cache = self.config_cache.clone();
+        let kubeconfig = tokio::task::spawn_blocking(move || {
+            let signature = manager.configuration_signature()?;
+            let mut cached = cache
+                .lock()
+                .map_err(|_| KubikiError::Internal("Kubeconfig cache lock failed".into()))?;
+            if let Some((_, config)) = cached
+                .as_ref()
+                .filter(|(previous, _)| *previous == signature)
+            {
+                return Ok(config.clone());
+            }
+            let config = manager.read_config()?;
+            *cached = Some((signature, config.clone()));
+            Ok::<_, KubikiError>(config)
+        })
+        .await
+        .map_err(|e| KubikiError::Internal(format!("Kubeconfig read task failed: {e}")))??;
         let fp = context_fingerprint(&kubeconfig, context);
 
         let slot = {
@@ -130,7 +150,11 @@ impl ClusterClientPool {
             .cloned()
     }
 
-    async fn build_client(&self, kubeconfig: Kubeconfig, context: &str) -> Result<Client, KubikiError> {
+    async fn build_client(
+        &self,
+        kubeconfig: Kubeconfig,
+        context: &str,
+    ) -> Result<Client, KubikiError> {
         let options = KubeConfigOptions {
             context: Some(context.to_string()),
             ..Default::default()

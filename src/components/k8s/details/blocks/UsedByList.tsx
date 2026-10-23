@@ -1,10 +1,10 @@
+import { restartManifest, resourceActionStep } from '../../../../providers/resource_actions';
 import { useMemo, useState } from 'react';
 import { ArrowRight, Link2, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
 import { useClusterStore } from '../../../../state/cluster_store';
 import { k8s } from '../../../../providers/k8s_provider';
-import { stringify } from 'yaml';
 import { resourceConsumers } from '../../../../core/resources/consumers';
 import { resourceRef } from '../../../../core/resources/identity';
 import { ResourceKindBadge } from '../../ResourceKindBadge';
@@ -53,12 +53,7 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
     const timestamp = new Date().toISOString();
     const restarted = restartable.map((consumer) => {
       const res = consumer.resource!;
-      const raw = JSON.parse(JSON.stringify(res.raw ?? {}));
-      raw.spec = raw.spec ?? {};
-      raw.spec.template = raw.spec.template ?? {};
-      raw.spec.template.metadata = raw.spec.template.metadata ?? {};
-      raw.spec.template.metadata.annotations = raw.spec.template.metadata.annotations ?? {};
-      raw.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = timestamp;
+      const raw = restartManifest(res, timestamp);
       return { res, raw };
     });
 
@@ -69,12 +64,7 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
     }
 
     try {
-      const result = await k8s.applyBatch(resourceRef(currentContext!, item), restarted.map(({ res, raw }) => ({
-        operation: 'manifest' as const,
-        context: currentContext!,
-        manifest: stringify(raw),
-        target: { resource: resourceRef(currentContext!, res), resource_version: res.raw?.metadata?.resourceVersion ?? '' },
-      })));
+      const result = await k8s.applyBatch(resourceRef(currentContext!, item), restarted.map(({ res }) => resourceActionStep(currentContext!, res, { type: 'restart' })));
       if (result.failed > 0) toast.warn('Restart completed with failures', `${result.succeeded} workload(s) restarted, ${result.failed} failed`);
       else toast.success(`Rollout restart triggered for ${result.succeeded} workload(s)`);
     } catch (err: any) {

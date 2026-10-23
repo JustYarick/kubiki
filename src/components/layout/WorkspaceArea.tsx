@@ -1,3 +1,4 @@
+import { RegisteredPanel } from '../../core/workspace_panels';
 import { useCustomResources } from '../../providers/use_custom_resources';
 import { customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
 import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
@@ -29,7 +30,6 @@ import { ResourceLoading } from '../ui/ResourceLoading';
 import { RESOURCE_TYPES, namespaceIsOutsideScope } from '../../core/resources/resource_types';
 import { matchesResourceRef } from '../../core/resources/identity';
 
-const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => ({ default: m.TopologyView })));
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
 const GitOpsDashboard = lazy(() => import('../../views/GitOpsDashboard').then(m => ({ default: m.GitOpsDashboard })));
@@ -65,7 +65,7 @@ export const WorkspaceArea: React.FC<{
     if (next.size === previous.size && [...next].every((id) => previous.has(id))) return previous;
     return next;
   }); }, [tabs, activeTab?.id, splitTab?.id]);
-  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'analysis' || tab.type === 'logs' || tab.type === 'yaml-editor')));
+  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'analysis' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension')));
   return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
     <div ref={headerRef} className="shrink-0 flex flex-col">
       <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
@@ -152,6 +152,10 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     );
   }
 
+  if (tab.type === 'extension') {
+    if (tab.context && tab.context !== context) return <p role="status" className="p-4 text-sm">Switch back to context {tab.context} to use this panel.</p>;
+    return <RegisteredPanel tab={tab} visible={visible} />;
+  }
   if (tab.type === 'overview') return <OverviewView />;
   if (tab.type === 'terminal-session' || tab.type === 'analysis') {
     if (!tab.session) return <div className="p-4 text-sm text-[var(--text-secondary)]">This terminal session has ended. Open a new terminal or analyze the resource again.</div>;
@@ -167,7 +171,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   }
   if (tab.kind && !tab.kind.startsWith('custom:') && !tab.apiVersion?.includes('/') && !RESOURCE_TYPES.some(type => type.kind === tab.kind) && tab.kind !== 'HelmRelease') return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
   if (tab.type === 'resource-list' && tab.kind && !tab.kind.startsWith('custom:') && !RESOURCE_TYPES.some(type => type.kind === tab.kind)) return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
-  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><TopologyView namespace={tab.namespace} /></Suspense>;
+  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><RegisteredPanel tab={tab} visible={visible} /></Suspense>;
 
   if (tab.type !== 'resource-list') {
     // A pinned UID must never silently bind to a recreated object with the same name.
@@ -211,7 +215,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
         <ResourceDetails key={item.uid} item={item} onClose={() => useWorkspaceStore.getState().closeTab(tab.id)} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />
       </div>
     );
-    if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><TopologyView item={item} namespace={tab.namespace} /></Suspense>;
+    if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><RegisteredPanel tab={tab} item={item} visible={visible} /></Suspense>;
     if (tab.type === 'logs' || tab.type === 'terminal') {
       const session = { context: tab.context, uid: item.uid, id: tab.id, type: tab.type, title: tab.title, resourceName: item.name, namespace: item.namespace,
         container: tab.container, allContainers: item.containers?.map((c) => c.name), targetType: item.kind === 'Node' ? 'node' as const : 'pod' as const };
@@ -262,5 +266,5 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
 
   // Default: Resource List Table
   if (tab.kind?.startsWith('custom:') && !customDefinition) return <p className="p-3 text-xs text-[var(--text-secondary)]">This custom resource definition is not loaded in the current cluster.</p>;
-  return <ResourceView key={tab.id} explicitKind={tab.kind} customType={customDefinition} />;
+  return <ResourceView viewId={tab.id} key={tab.id} explicitKind={tab.kind} customType={customDefinition} />;
 }

@@ -1,3 +1,4 @@
+import { ResourceReferences } from '../blocks/ResourceReferences';
 import { Route, Waypoints } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
@@ -62,6 +63,7 @@ export function GatewayDetails({ item, onNavigate }: GatewayDetailsProps) {
             empty="This grant does not allow any target."
           />
         </DetailsSection>
+        <ResourceReferences item={item} onNavigate={onNavigate} />
         <UsedByList item={item} onNavigate={onNavigate} />
         <MetadataBlock item={item} onNavigate={onNavigate} />
       </div>
@@ -97,6 +99,7 @@ export function GatewayDetails({ item, onNavigate }: GatewayDetailsProps) {
             empty="No explicit certificate authority reference. The well-known CA of the cluster is used."
           />
         </DetailsSection>
+        <ResourceReferences item={item} onNavigate={onNavigate} />
         <UsedByList item={item} onNavigate={onNavigate} />
         <ConditionsTable conditions={status.conditions} />
         <MetadataBlock item={item} onNavigate={onNavigate} />
@@ -136,7 +139,7 @@ export function GatewayDetails({ item, onNavigate }: GatewayDetailsProps) {
           <DetailTable
             columns={['Gateway', 'Section', 'Port', 'Accepted']}
             rows={parentRefs.map((ref) => {
-              const parent = resourceByRef(resources, { kind: ref.kind ?? 'Gateway', name: ref.name, namespace: ref.namespace ?? item.namespace });
+              const parent = resourceByRef(resources, { kind: ref.kind ?? 'Gateway', group: ref.group ?? 'gateway.networking.k8s.io', name: ref.name, namespace: ref.namespace ?? item.namespace });
               const attached = status.parents?.find((entry: any) => entry.parentRef?.name === ref.name);
               const accepted = attached?.conditions?.some((condition: any) => condition.type === 'Accepted' && condition.status === 'True');
               return [
@@ -158,6 +161,7 @@ export function GatewayDetails({ item, onNavigate }: GatewayDetailsProps) {
             empty="This route does not define any backend."
           />
         </DetailsSection>
+        <ResourceReferences item={item} onNavigate={onNavigate} />
         <UsedByList item={item} onNavigate={onNavigate} />
         <ConditionsTable conditions={status.conditions} />
         <MetadataBlock item={item} onNavigate={onNavigate} />
@@ -170,7 +174,7 @@ export function GatewayDetails({ item, onNavigate }: GatewayDetailsProps) {
   const statusListeners: any[] = status.listeners ?? [];
   const addresses: any[] = status.addresses ?? [];
   const gatewayClass = spec.gatewayClassName
-    ? resourceByRef(resources, { kind: 'GatewayClass', name: spec.gatewayClassName })
+    ? resourceByRef(resources, { kind: 'GatewayClass', group: 'gateway.networking.k8s.io', name: spec.gatewayClassName })
     : undefined;
 
   return (
@@ -220,6 +224,7 @@ export function GatewayDetails({ item, onNavigate }: GatewayDetailsProps) {
         />
       </DetailsSection>
 
+      <ResourceReferences item={item} onNavigate={onNavigate} />
       <UsedByList item={item} onNavigate={onNavigate} />
       <ConditionsTable conditions={status.conditions} />
       <MetadataBlock item={item} onNavigate={onNavigate} />
@@ -244,6 +249,7 @@ function GatewayClassDetails({ item, onNavigate }: GatewayDetailsProps) {
         ]}
         rows={[{ label: 'Parameter reference', value: parameters.name ? `${parameters.kind}/${parameters.name}` : '—' }]}
       />
+      <ResourceReferences item={item} onNavigate={onNavigate} />
       <UsedByList item={item} onNavigate={onNavigate} />
       <ConditionsTable conditions={status.conditions} />
       <MetadataBlock item={item} onNavigate={onNavigate} />

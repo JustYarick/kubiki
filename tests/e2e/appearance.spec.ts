@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test('UI scale changes text and controls, persists after restart, and can be reset by keyboard', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').first();
   await expect(row).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '110');
@@ -41,6 +42,7 @@ test('UI scale changes text and controls, persists after restart, and can be res
 test('changing the editor font keeps a live Monaco model and unsaved draft intact', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway-7f9c8b6d5-q7x9z' });
   await row.click();
   await page.getByTestId('resource-details').getByRole('tab', { name: 'YAML', exact: true }).click();
@@ -49,14 +51,14 @@ test('changing the editor font keeps a live Monaco model and unsaved draft intac
   await editor.locator('.view-lines').click();
   await page.keyboard.press('Control+End');
   await page.keyboard.press('End');
-  await page.keyboard.type('\n# preserved-unsaved-draft');
-  await expect(editor.getByText('unsaved demo changes', { exact: true })).toBeVisible();
+  await page.keyboard.type('\npreservedDraft: preserved-unsaved-draft');
+  await expect(editor.locator('[data-dirty="true"]')).toBeVisible();
   await page.keyboard.press('Control+,');
   await page.getByRole('dialog').getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Editor', exact: true }).click();
   await page.getByRole('dialog').getByLabel('YAML editor font size').fill('18');
   await page.keyboard.press('Escape');
   await expect.poll(() => editor.locator('.view-lines').evaluate((element) => getComputedStyle(element).fontSize)).toBe('18px');
-  await expect(editor.getByText('unsaved demo changes', { exact: true })).toBeVisible();
+  await expect(editor.locator('[data-dirty="true"]')).toBeVisible();
   await editor.getByRole('button', { name: 'Copy YAML', exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('preserved-unsaved-draft');
 });
@@ -65,6 +67,7 @@ test('settings stay reachable at maximum scale in a small window and recover inv
   await page.setViewportSize({ width: 900, height: 600 });
   await page.addInitScript(() => localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { uiScale: 900, editorFontSize: -1, terminalFontSize: null }, version: 0 })));
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '200');
   await page.keyboard.press('Control+,');
   const dialog = page.getByRole('dialog');
@@ -80,7 +83,8 @@ test('settings stay reachable at maximum scale in a small window and recover inv
 
 test('a terminal font change resizes text without restarting the open session', async ({ page }) => {
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
-  await page.getByTestId('resource-table').locator('tbody tr').first().click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click();
   const terminal = page.locator('.xterm');
   await expect(terminal).toBeVisible();

@@ -52,9 +52,37 @@ pub struct NodeDebugResult {
     /// True when an existing healthy helper Pod for this Node was reused.
     pub reused: bool,
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeDebugPhase {
+    Preparing,
+    Ready,
+    Closing,
+    Closed,
+    CleanupFailed,
+}
+impl NodeDebugPhase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Preparing => "preparing",
+            Self::Ready => "ready",
+            Self::Closing => "closing",
+            Self::Closed => "closed",
+            Self::CleanupFailed => "cleanup_failed",
+        }
+    }
+}
+impl PartialEq<&str> for NodeDebugPhase {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeDebugState {
-    pub phase: String,
+    pub phase: NodeDebugPhase,
+    #[serde(skip)]
+    execs: BTreeSet<String>,
     pub name: String,
     pub namespace: String,
     pub detail: String,
@@ -82,11 +110,35 @@ struct Lease {
     state: Mutex<NodeDebugState>,
     client: Mutex<Option<Client>>,
     pod: Mutex<Option<ResourceRef>>,
-    /// Live exec terminals (their session identifiers) for refcounted cleanup.
-    execs: Mutex<BTreeSet<String>>,
     attempted: AtomicBool,
     terminal: PodTerminalManager,
 }
+async fn release_attachment(lease: &Lease, id: &str) {
+    let mut state = lease.state.lock().await;
+    if state.execs.remove(id) && state.execs.is_empty() && state.phase == NodeDebugPhase::Ready {
+        state.phase = NodeDebugPhase::Closing;
+        lease.collapse.send_replace(true);
+    }
+}
+struct ExecReservation {
+    lease: Arc<Lease>,
+    terminal_id: String,
+    committed: bool,
+}
+impl Drop for ExecReservation {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let lease = self.lease.clone();
+        let id = self.terminal_id.clone();
+        tokio::spawn(async move {
+            lease.terminal.stop(&lease.owner, &id).await;
+            release_attachment(&lease, &id).await;
+        });
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     leases: Mutex<HashMap<String, Arc<Lease>>>,
@@ -222,7 +274,9 @@ impl NodeDebugManager {
         // A healthy session on this Node is reused: no dialog, no second Pod.
         'reuse: loop {
             let existing = self.inner.leases.lock().await.get(&key).cloned();
-            let Some(existing) = existing else { break 'reuse };
+            let Some(existing) = existing else {
+                break 'reuse;
+            };
             let phase = existing.state.lock().await.phase.clone();
             if !*existing.cancel.borrow() && phase == "ready" {
                 let pod = existing
@@ -231,24 +285,31 @@ impl NodeDebugManager {
                     .await
                     .clone()
                     .ok_or_else(|| error(&request, 503, "Node shell Pod is missing"))?;
-                return Ok(NodeDebugResult { session_id: id, pod, reused: true });
+                return Ok(NodeDebugResult {
+                    session_id: id,
+                    pod,
+                    reused: true,
+                });
             }
             if !*existing.cancel.borrow() && phase == "preparing" {
                 // Another terminal is already provisioning this Node's Pod; the
                 // consent dialog belongs to the first caller, we just share the
                 // result.
                 let mut rx = existing.ready.subscribe();
-                let outcome = tokio::time::timeout(
-                    Duration::from_secs(150),
-                    rx.wait_for(|o| o.is_some()),
-                )
-                .await
-                .map_err(|_| error(&request, 504, "Node shell is still starting; try again"))?
-                .map_err(|_| error(&request, 503, "Node shell task ended"))?
-                .clone()
-                .ok_or_else(|| error(&request, 503, "Node shell task ended"))?;
-                return outcome
-                    .map(|pod| NodeDebugResult { session_id: id, pod, reused: true });
+                let outcome =
+                    tokio::time::timeout(Duration::from_secs(150), rx.wait_for(|o| o.is_some()))
+                        .await
+                        .map_err(|_| {
+                            error(&request, 504, "Node shell is still starting; try again")
+                        })?
+                        .map_err(|_| error(&request, 503, "Node shell task ended"))?
+                        .clone()
+                        .ok_or_else(|| error(&request, 503, "Node shell task ended"))?;
+                return outcome.map(|pod| NodeDebugResult {
+                    session_id: id,
+                    pod,
+                    reused: true,
+                });
             }
             if *existing.done.borrow() {
                 return Err(error(
@@ -286,7 +347,8 @@ impl NodeDebugManager {
             collapse,
             done,
             state: Mutex::new(NodeDebugState {
-                phase: "preparing".into(),
+                phase: NodeDebugPhase::Preparing,
+                execs: BTreeSet::new(),
                 name,
                 namespace: request.namespace.clone(),
                 detail: "Checking Node and cleanup permissions".into(),
@@ -294,7 +356,6 @@ impl NodeDebugManager {
             }),
             client: Mutex::new(None),
             pod: Mutex::new(None),
-            execs: Mutex::new(BTreeSet::new()),
             attempted: AtomicBool::new(false),
             terminal: PodTerminalManager::default(),
         });
@@ -335,10 +396,8 @@ impl NodeDebugManager {
             let outcome = match result {
                 Ok(resource) => {
                     *lease.pod.lock().await = Some(resource.clone());
-                    lease.state.lock().await.phase = "ready".into();
-                    lease
-                        .ready
-                        .send_replace(Some(Ok(resource.clone())));
+                    lease.state.lock().await.phase = NodeDebugPhase::Ready;
+                    lease.ready.send_replace(Some(Ok(resource.clone())));
                     if first_readiness.send(Ok(resource)).is_err() {
                         lease.cancel.send_replace(true);
                     }
@@ -357,19 +416,19 @@ impl NodeDebugManager {
                     Err(e)
                 }
             };
-            lease.state.lock().await.phase = "closing".into();
+            lease.state.lock().await.phase = NodeDebugPhase::Closing;
             lease.terminal.stop_owner(&lease.owner).await;
             // Explicit teardown kills every remaining shell; forget their refcounts.
-            lease.execs.lock().await.clear();
+            lease.state.lock().await.execs.clear();
             let cleanup = cleanup(&lease).await;
             let mut state = lease.state.lock().await;
             match (&outcome, cleanup) {
                 (_, Ok(())) => {
-                    state.phase = "closed".into();
+                    state.phase = NodeDebugPhase::Closed;
                     state.detail = "Debug Pod removed".into();
                 }
                 (_, Err(e)) => {
-                    state.phase = "cleanup_failed".into();
+                    state.phase = NodeDebugPhase::CleanupFailed;
                     state.detail = "Debug Pod cleanup failed; retry deletion".into();
                     state.error = Some(e);
                 }
@@ -387,7 +446,11 @@ impl NodeDebugManager {
         });
         rx.await
             .map_err(|_| error(&response_request, 503, "Node debug task ended unexpectedly"))?
-            .map(|resource| NodeDebugResult { session_id: id, pod: resource, reused: false })
+            .map(|resource| NodeDebugResult {
+                session_id: id,
+                pod: resource,
+                reused: false,
+            })
     }
     async fn lease(&self, owner: &str, id: &str) -> Result<Arc<Lease>, ApiError> {
         self.inner
@@ -414,13 +477,33 @@ impl NodeDebugManager {
         if lease.id != derived_session_id(&lease.request.resource) {
             return Err(error(&lease.request, 409, "Node shell identity mismatch"));
         }
-        if *lease.cancel.borrow() || lease.state.lock().await.phase != "ready" {
-            return Err(error(
-                &lease.request,
-                409,
-                "Debug Pod is not ready; start a new node shell",
-            ));
+        // Phase and reservations share a lock. Closing the last shell cannot
+        // observe zero attachments while another shell is opening.
+        {
+            let mut state = lease.state.lock().await;
+            if *lease.cancel.borrow()
+                || state.phase != NodeDebugPhase::Ready
+                || *lease.collapse.borrow()
+            {
+                return Err(error(
+                    &lease.request,
+                    409,
+                    "Debug Pod is not ready; start a new node shell",
+                ));
+            }
+            if !state.execs.insert(terminal_id.to_owned()) {
+                return Err(error(
+                    &lease.request,
+                    409,
+                    "Terminal session already exists",
+                ));
+            }
         }
+        let mut reservation = ExecReservation {
+            lease: lease.clone(),
+            terminal_id: terminal_id.into(),
+            committed: false,
+        };
         if request.resource.uid != lease.request.resource.uid
             || request.resource.name != lease.request.resource.name
         {
@@ -461,27 +544,49 @@ impl NodeDebugManager {
                 async move { Ok(client) },
             )
             .await?;
-        lease.execs.lock().await.insert(terminal_id.to_owned());
+        let active = {
+            let state = lease.state.lock().await;
+            state.phase == NodeDebugPhase::Ready
+                && state.execs.contains(terminal_id)
+                && !*lease.cancel.borrow()
+        };
+        if !active {
+            lease.terminal.stop(owner, terminal_id).await;
+            return Err(error(
+                &lease.request,
+                409,
+                "Node shell closed while attaching",
+            ));
+        }
+        reservation.committed = true;
         Ok(subscription)
     }
     /// Drop one terminal. The helper Pod survives while the last shell stays,
     /// and the final close collapses the lease automatically.
     pub async fn release_exec(&self, owner: &str, id: &str, terminal_id: &str) {
-        let Ok(lease) = self.lease(owner, id).await else { return };
-        let removed = lease.execs.lock().await.remove(terminal_id);
+        let Ok(lease) = self.lease(owner, id).await else {
+            return;
+        };
+        release_attachment(&lease, terminal_id).await;
         lease.terminal.stop(owner, terminal_id).await;
-        if removed && lease.execs.lock().await.is_empty() {
-            lease.collapse.send_replace(true);
-        }
     }
-    /// An aborted or closed shell pane: tear the lease down only while no
-    /// terminal is attached to it (a Pod serving other panes stays).
+    /// An aborted prepare closes only a lease without live or pending attachments.
     pub async fn cancel_prepare(&self, owner: &str, id: &str) {
-        let Ok(lease) = self.lease(owner, id).await else { return };
-        if lease.execs.lock().await.is_empty() {
+        let Ok(lease) = self.lease(owner, id).await else {
+            return;
+        };
+        let mut state = lease.state.lock().await;
+        if state.execs.is_empty()
+            && matches!(
+                state.phase,
+                NodeDebugPhase::Ready | NodeDebugPhase::Preparing
+            )
+        {
+            state.phase = NodeDebugPhase::Closing;
             lease.collapse.send_replace(true);
         }
     }
+
     pub async fn write(
         &self,
         owner: &str,
@@ -968,7 +1073,7 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
     if !lease.attempted.load(Ordering::Acquire) {
         return Ok(());
     }
-    if !lease.execs.lock().await.is_empty() {
+    if !lease.state.lock().await.execs.is_empty() {
         // A shell attached between the collapse trigger and this cleanup; keep
         // the Pod and surface the anomaly for an explicit retry.
         return Err(error(

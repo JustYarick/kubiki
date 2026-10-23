@@ -15,12 +15,12 @@ export function Toasts() {
   const { toasts, dismiss } = useNotifications();
   if (toasts.length === 0) return null;
   return createPortal(
-    <div className="fixed bottom-9 right-4 z-[95] flex flex-col gap-2 w-[calc(340px*var(--ui-factor))]">
+    <div className="pointer-events-none fixed bottom-9 right-4 z-[95] flex flex-col gap-2 w-[calc(340px*var(--ui-factor))]">
       {toasts.map((t) => (
         <div
           key={t.id}
           className={cx(
-            'flex items-start gap-2.5 rounded-[calc(6px*var(--ui-factor))] border bg-[var(--bg-overlay)] px-3 py-2.5 shadow-[var(--shadow-popup)] kub-toast',
+            'pointer-events-auto flex items-start gap-2.5 rounded-[calc(6px*var(--ui-factor))] border bg-[var(--bg-overlay)] px-3 py-2.5 shadow-[var(--shadow-popup)] kub-toast',
             t.type === 'error' ? 'border-[var(--status-danger)]/50' : 'border-[var(--border-default)]'
           )}
         >
@@ -29,7 +29,7 @@ export function Toasts() {
             <div className="text-xs font-medium text-[var(--text-primary)]">{t.title}</div>
             {t.description && <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] mt-0.5 break-words">{t.description}</div>}
           </div>
-          <button onClick={() => dismiss(t.id)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] mt-0.5">
+          <button aria-label={`Dismiss ${t.title}`} onClick={() => dismiss(t.id)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] mt-0.5">
             <X size="calc(13px * var(--ui-factor))" />
           </button>
         </div>
