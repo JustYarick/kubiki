@@ -8,10 +8,11 @@ import { Checkbox } from '../ui/Checkbox';
 import { TerminalFontSettings } from '../TerminalFontSettings';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
-import { DEFAULT_SCROLLBACK, TERMINAL_SCROLLBACK_PRESETS, useUiStore } from '../../state/ui_store';
+import { DEFAULT_SCROLLBACK, TERMINAL_ACK_TIMEOUT_PRESETS, TERMINAL_SCROLLBACK_PRESETS, useUiStore } from '../../state/ui_store';
 import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { cx } from '../../core/utils/cx';
+import { AI_AGENTS, type AiAgent } from '../../core/ai_analysis';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
   entryMatches, filterPages, findEntry, findPage, firstMatchingPage,
@@ -242,6 +243,8 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
   const setTerminalFontSize = useUiStore((s) => s.setTerminalFontSize);
   const terminalScrollback = useUiStore((s) => s.terminalScrollback);
   const setTerminalScrollback = useUiStore((s) => s.setTerminalScrollback);
+  const terminalAckTimeoutSecs = useUiStore((s) => s.terminalAckTimeoutSecs);
+  const setTerminalAckTimeoutSecs = useUiStore((s) => s.setTerminalAckTimeoutSecs);
   const scrollbackOptions = TERMINAL_SCROLLBACK_PRESETS.includes(terminalScrollback)
     ? TERMINAL_SCROLLBACK_PRESETS
     : [...TERMINAL_SCROLLBACK_PRESETS, terminalScrollback].sort((a, b) => a - b);
@@ -269,6 +272,21 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
           ))}
         </select>
       </Row>
+      <Row entry={findEntry('terminal.output-timeout')}>
+        <select
+          aria-label="Session output timeout"
+          className="ide-select w-40"
+          value={terminalAckTimeoutSecs}
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            if (Number.isFinite(next)) setTerminalAckTimeoutSecs(next);
+          }}
+        >
+          {TERMINAL_ACK_TIMEOUT_PRESETS.map((seconds) => (
+            <option key={seconds} value={seconds}>{seconds === 0 ? 'Never (kill switch off)' : seconds === 60 ? '1 minute' : seconds === 300 ? '5 minutes' : `${seconds} seconds`}</option>
+          ))}
+        </select>
+      </Row>
     </div>
   );
 }
@@ -278,6 +296,8 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
   const setLogsWrap = useUiStore((s) => s.setLogsWrap);
   const logsTimestamps = useUiStore((s) => s.logsTimestamps);
   const setLogsTimestamps = useUiStore((s) => s.setLogsTimestamps);
+  const logsStructured = useUiStore((s) => s.logsStructured);
+  const setLogsStructured = useUiStore((s) => s.setLogsStructured);
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -286,6 +306,9 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
       </Row>
       <Row entry={findEntry('logs.timestamps')}>
         <Checkbox aria-label="Show log timestamps by default" checked={logsTimestamps} onChange={(event) => setLogsTimestamps(event.target.checked)} />
+      </Row>
+      <Row entry={findEntry('logs.structured')}>
+        <Checkbox aria-label="Parse log lines as JSON by default" checked={logsStructured} onChange={(event) => setLogsStructured(event.target.checked)} />
       </Row>
     </div>
   );
@@ -347,8 +370,18 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
   );
 }
 
+function AiPage({ sectionTitle }: { sectionTitle: string }) {
+  const agent = useUiStore(state => state.aiAgent);
+  const setAgent = useUiStore(state => state.setAiAgent);
+  return <div><SectionTitle>{sectionTitle}</SectionTitle>
+    <Row entry={findEntry('ai.agent')}><select aria-label="Analysis agent" className="ide-select w-40" value={agent} onChange={event => setAgent(event.target.value as AiAgent)}>{AI_AGENTS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select></Row>
+    <Row entry={findEntry('ai.analysis-policy')} wide><p className="text-xs text-[var(--text-secondary)] leading-relaxed">A new terminal tab opens for every analysis. The selected agent uses its existing account and model settings. Diagnostic information is sent to that agent’s configured model provider.</p></Row>
+  </div>;
+}
+
 function pageContent(page: SettingsPageDef): React.ReactElement {
   switch (page.id) {
+    case 'ai': return <AiPage sectionTitle={page.sectionTitle} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
     case 'editor': return <EditorPage sectionTitle={page.sectionTitle} />;
     case 'terminal': return <TerminalPage sectionTitle={page.sectionTitle} />;
@@ -380,12 +413,14 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     ui.setTerminalFontFamily(DEFAULT_TERMINAL_FONT);
     ui.setTerminalLineHeight(1.2);
     ui.setTerminalScrollback(DEFAULT_SCROLLBACK);
+    ui.setTerminalAckTimeoutSecs(0);
     toast.success('Terminal defaults restored');
   },
   logs: () => {
     const ui = useUiStore.getState();
     ui.setLogsWrap(true);
     ui.setLogsTimestamps(true);
+    ui.setLogsStructured(false);
     toast.success('Log defaults restored');
   },
   kubernetes: () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { connectPodExec, connectHostTerminal, getHostTerminalInfo, resetExecSessions, closeExecConnections, type ExecBatch } from '../../src/providers/tauri_exec';
+import { connectPodExec, connectHostTerminal, connectAiAnalysis, getHostTerminalInfo, resetExecSessions, closeExecConnections, type ExecBatch } from '../../src/providers/tauri_exec';
 import { resourceQuery } from '../../src/core/resources/resource_types';
 const mock = vi.hoisted(() => ({ invoke: vi.fn(), channels: [] as Array<{ id: number; onmessage: (batch: ExecBatch) => void }> }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mock.invoke, Channel: class { id = mock.channels.length + 1; onmessage = (_batch: ExecBatch) => {}; constructor() { mock.channels.push(this); } } }));
@@ -11,6 +11,7 @@ it('acknowledges output only after the renderer consumes bytes and serializes in
   let consumed!: () => void; const receiver = vi.fn(() => new Promise<void>((resolve) => { consumed = resolve; }));
   const conn = await connectPodExec(request, receiver, new AbortController().signal);
   const id = mock.invoke.mock.calls[0][1].sessionId;
+  expect(mock.invoke.mock.calls[0][1].ackTimeoutSecs).toBe(0);
   mock.channels[0].onmessage({ session_id: id, messages: [{ sequence: 1, event: { type: 'Output', payload: { data: [240,159] } } }] });
   await vi.waitFor(() => expect(receiver).toHaveBeenCalled()); expect(mock.invoke.mock.calls.some(([c]) => c === 'ack_pod_exec')).toBe(false);
   consumed(); await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('ack_pod_exec', { sessionId: id, sequence: 1 }));
@@ -55,6 +56,26 @@ it('routes host shell IO/resize/ACK/exit to independent host commands with no Ku
   await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('close_host_terminal', { sessionId: id }));
   expect(mock.invoke).toHaveBeenCalledWith('ack_host_terminal', { sessionId: id, sequence: 1 });expect(unregister).toHaveBeenCalledOnce();
 });
+
+it('starts analysis through mandatory agent IPC and keeps the host PTY lifecycle', async () => {
+  const analysis = { agent: 'opencode' as const, prompt: 'Analyze only: Pending Pod', cols: 100, rows: 32 };
+  const conn = await connectAiAnalysis(analysis, vi.fn(), new AbortController().signal);
+  const start = mock.invoke.mock.calls.find(([command]) => command === 'start_ai_analysis')!;
+  expect(start[1].request).toEqual(analysis);
+  expect(mock.invoke.mock.calls.some(([command]) => command === 'start_host_terminal')).toBe(false);
+  conn.write('follow-up\r'); conn.resize(120, 40);
+  await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('write_host_terminal', { sessionId: start[1].sessionId, data: 'follow-up\r' }));
+  expect(mock.invoke).toHaveBeenCalledWith('resize_host_terminal', { sessionId: start[1].sessionId, cols: 120, rows: 40 });
+  conn.close();
+  expect(mock.invoke).toHaveBeenCalledWith('close_host_terminal', { sessionId: start[1].sessionId });
+});
+
+it('rejects old native backends explicitly and never falls back to a plain shell', async () => {
+  mock.invoke.mockImplementation(command => command === 'start_ai_analysis' ? Promise.reject('Command start_ai_analysis not found') : Promise.resolve());
+  await expect(connectAiAnalysis({ agent: 'codex', prompt: 'Analyze only', cols: 80, rows: 24 }, vi.fn(), new AbortController().signal)).rejects.toMatchObject({ code: 'unsupported', message: expect.stringContaining('Rebuild and restart Kubiki') });
+  expect(mock.invoke.mock.calls.some(([command]) => command === 'start_host_terminal')).toBe(false);
+  expect(unregister).toHaveBeenCalledOnce();
+});
 it('loads real shell metadata and reset stops both Pod and host transports', async () => {
   mock.invoke.mockResolvedValue({ shells: ['/bin/zsh'], default_shell: '/bin/zsh', cwd: '/home/user' });
   expect(await getHostTerminalInfo()).toEqual({ shells: ['/bin/zsh'], default_shell: '/bin/zsh', cwd: '/home/user' });
@@ -68,4 +89,11 @@ it('routes Node exec input and ACK using its managed debug session ID', async ()
   const { connectNodeExec } = await import('../../src/providers/tauri_exec');const nodeRequest = { resource: { ...resourceQuery('test', 'Node'), name: 'worker', uid: 'node-uid' }, debug_session_id: 'debug-id', shell: '/bin/sh', cols: 80, rows: 24 };const conn = await connectNodeExec(nodeRequest, vi.fn(), new AbortController().signal);
   const id = mock.invoke.mock.calls[0][1].sessionId;conn.write('ls\r');await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('write_node_exec', { sessionId: id, debugSessionId: 'debug-id', data: 'ls\r' }));
   mock.channels[0].onmessage({ session_id: id, messages: [{ sequence: 1, event: { type: 'Exited', payload: { code: 0 } } }] });await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('ack_node_exec', { sessionId: id, debugSessionId: 'debug-id', sequence: 1 }));
+});
+it('forwards the configured output timeout to the backend start command', async () => {
+  const { useUiStore } = await import('../../src/state/ui_store');
+  useUiStore.setState({ terminalAckTimeoutSecs: 60 });
+  await connectHostTerminal({ shell: '/bin/zsh', cols: 100, rows: 32 }, vi.fn(), new AbortController().signal);
+  expect(mock.invoke.mock.calls[0][1].ackTimeoutSecs).toBe(60);
+  useUiStore.setState({ terminalAckTimeoutSecs: 0 });
 });

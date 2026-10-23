@@ -1,5 +1,5 @@
 use kubiki_core::pod_ops::host_terminal::{
-    HostTerminalInfo, HostTerminalManager, HostTerminalRequest, host_terminal_info,
+    AnalysisRequest, HostTerminalInfo, HostTerminalManager, HostTerminalRequest, host_terminal_info,
 };
 use kubiki_core::{
     core::api::ApiError,
@@ -8,37 +8,76 @@ use kubiki_core::{
 use std::time::Duration;
 use tauri::ipc::Channel;
 
+#[derive(serde::Deserialize)]
+pub struct AnalysisTerminalRequest {
+    #[serde(flatten)]
+    pub analysis: AnalysisRequest,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 #[tauri::command]
 pub async fn start_host_terminal(
     session_id: String,
     request: HostTerminalRequest,
+    ack_timeout_secs: Option<u64>,
     on_event: Channel<ExecBatch>,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, HostTerminalManager>,
-    _guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<(), ApiError> {
-    let dummy = kubiki_core::core::api::ResourceRef {
-        query: kubiki_core::core::api::ResourceQuery {
-            context: "local".into(),
-            group: "".into(),
-            version: "v1".into(),
-            kind: "HostTerminal".into(),
-            namespace: None,
-        },
-        name: "host-shell".into(),
-        uid: None,
-    };
-    let review = format!(
-        "Open local host terminal session:\nShell: {}\nThis will launch a local PTY process on your machine.",
-        request.shell.as_deref().unwrap_or("(default shell)")
-    );
-    if !crate::mutation_guard::confirm(window.clone(), &dummy, review).await? {
-        return Err(kubiki_core::core::mutations::cancelled(
-            &dummy,
-            "Host terminal session was cancelled",
+    if request.analysis.is_some() {
+        return Err(ApiError::from_status(
+            400,
+            "Use start_ai_analysis to launch an analysis agent",
+            "host_terminal",
+            None,
         ));
     }
-    let manager = manager.inner().clone();
+    start_local_session(
+        session_id,
+        request,
+        ack_timeout_secs,
+        on_event,
+        window,
+        manager.inner().clone(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn start_ai_analysis(
+    session_id: String,
+    request: AnalysisTerminalRequest,
+    ack_timeout_secs: Option<u64>,
+    on_event: Channel<ExecBatch>,
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, HostTerminalManager>,
+) -> Result<(), ApiError> {
+    let request = HostTerminalRequest {
+        shell: None,
+        cols: request.cols,
+        rows: request.rows,
+        analysis: Some(request.analysis),
+    };
+    start_local_session(
+        session_id,
+        request,
+        ack_timeout_secs,
+        on_event,
+        window,
+        manager.inner().clone(),
+    )
+    .await
+}
+
+async fn start_local_session(
+    session_id: String,
+    request: HostTerminalRequest,
+    ack_timeout_secs: Option<u64>,
+    on_event: Channel<ExecBatch>,
+    window: tauri::WebviewWindow,
+    manager: HostTerminalManager,
+) -> Result<(), ApiError> {
     let owner = window.label().to_owned();
     let mut subscription = manager.start(&owner, &session_id, request).await?;
     tauri::async_runtime::spawn(async move {
@@ -64,20 +103,13 @@ pub async fn start_host_terminal(
                 }
                 bytes = 0;
                 // The renderer acknowledges after xterm has parsed the bytes. One IPC batch in flight.
-                let ack = async {
-                    while *subscription.acknowledgements.borrow_and_update() != sequence {
-                        subscription
-                            .acknowledgements
-                            .changed()
-                            .await
-                            .map_err(|_| ())?;
-                    }
-                    Ok::<_, ()>(())
-                };
-                if !matches!(
-                    tokio::time::timeout(Duration::from_secs(30), ack).await,
-                    Ok(Ok(()))
-                ) {
+                if !crate::exec_ack::wait_for_ack(
+                    &subscription.acknowledgements,
+                    sequence,
+                    ack_timeout_secs.unwrap_or(0),
+                )
+                .await
+                {
                     let _=on_event.send(ExecBatch{session_id:session_id.clone(),messages:vec![ExecMessage{sequence:sequence+1,event:ExecEvent::Failed{error:ApiError::from_status(504,"Terminal renderer stopped consuming output. Reconnect the session.","host_terminal",None)}}]});
                     break;
                 }
@@ -143,4 +175,28 @@ pub async fn stop_host_terminals(
 #[tauri::command]
 pub fn get_host_terminal_info() -> Result<HostTerminalInfo, ApiError> {
     host_terminal_info()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AnalysisTerminalRequest;
+
+    #[test]
+    fn analysis_ipc_requires_an_agent_and_prompt_instead_of_defaulting_to_a_shell() {
+        assert!(
+            serde_json::from_value::<AnalysisTerminalRequest>(
+                serde_json::json!({ "cols": 80, "rows": 24 })
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<AnalysisTerminalRequest>(
+                serde_json::json!({ "agent": "codex", "cols": 80, "rows": 24 })
+            )
+            .is_err()
+        );
+        assert!(serde_json::from_value::<AnalysisTerminalRequest>(serde_json::json!({ "agent": "unknown", "prompt": "Analyze only", "cols": 80, "rows": 24 })).is_err());
+        let request = serde_json::from_value::<AnalysisTerminalRequest>(serde_json::json!({ "agent": "opencode", "prompt": "Analyze only: Pod Pending", "cols": 80, "rows": 24 })).unwrap();
+        assert_eq!(request.analysis.prompt, "Analyze only: Pod Pending");
+    }
 }

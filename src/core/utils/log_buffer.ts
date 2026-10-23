@@ -43,3 +43,15 @@ export class LogBuffer {
   }
   clear(): void { this.lines = []; this.chars = 0; this.pending = ''; this.dropping = false; this.truncated = false; }
 }
+
+/** One nanosecond past `t`, so polls resume after an already-shown line. */
+export function bumpLogTimestamp(t: string): string {
+  const text = t.trim();
+  const match = /^(.+?)(\.\d+)?(Z|z|[+-]\d{2}:?\d{2})$/.exec(text);
+  if (!match) return text;
+  if (!match[2]) return `${match[1]}.000000001${match[3]}`;
+  const digits = match[2].length - 1;
+  const value = Number(match[2].slice(1)) + 1;
+  if (!Number.isSafeInteger(value) || value.toString().length > digits) return text;
+  return `${match[1]}.${value.toString().padStart(digits, '0')}${match[3]}`;
+}

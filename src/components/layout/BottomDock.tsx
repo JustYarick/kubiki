@@ -22,11 +22,17 @@ import {
   Laptop,
   Server,
   FileText,
+  ExternalLink,
 } from 'lucide-react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { LogBuffer, type LogLine } from '../../core/utils/log_buffer';
+import {
+  LogBuffer,
+  bumpLogTimestamp,
+  type LogLine,
+} from '../../core/utils/log_buffer';
+import { parseStructuredLog, structuredFieldsText } from '../../core/utils/log_structured';
 import { fetchLogSlice, type LogSliceParams } from '../../providers/tauri_logs';
 import { resourceRef } from '../../core/resources/identity';
 import { inNamespaceScope } from '../../core/resources/namespace_scope';
@@ -40,6 +46,7 @@ import { usePfStore } from '../../state/pf_store';
 import { useResourceStore } from '../../state/resource_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
+import { useWorkspaceStore } from '../../state/workspace_store';
 import { LOG_POLL_PRESETS, useUiStore } from '../../state/ui_store';
 import { uiPixels, uiFactor } from '../../core/appearance';
 import { IconButton } from '../ui/Button';
@@ -354,6 +361,10 @@ const ExpandedDock: React.FC = () => {
             )}
           </Popover>
 
+          {activeSession?.type === 'terminal' && <IconButton icon={ExternalLink} size="sm" aria-label="Open terminal in tab" tooltip="Open a new terminal tab for this target" onClick={() => {
+            useWorkspaceStore.getState().openTerminalSession({ ...activeSession, id: `terminal-${crypto.randomUUID()}` });
+            useDockStore.getState().setDockCollapsed(true);
+          }} />}
           <IconButton
             icon={isMaximized ? Minimize2 : Maximize2}
             size="sm"
@@ -674,6 +685,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const [wrap, setWrap] = useState(() => useUiStore.getState().logsWrap);
   const [filter, setFilter] = useState('');
   const [showTimestamps, setShowTimestamps] = useState(() => useUiStore.getState().logsTimestamps);
+  const [structured, setStructured] = useState(() => useUiStore.getState().logsStructured);
   const [pollMs, setPollMs] = useState(() => useUiStore.getState().logsPollMs);
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
@@ -691,6 +703,8 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   /* Keeps the loop on the live cadence without tearing down scrollback. */
   const pollRef = useRef(pollMs);
   pollRef.current = pollMs;
+  /* Resume point after Clear: the next poll fetches only lines past it. */
+  const clearedWatermark = useRef('');
 
   /* Lens-style reads: a bounded initial slice, then cadence polls that resume
      after the newest timestamp and drop the refetched overlap by signature. */
@@ -700,6 +714,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     let timer: ReturnType<typeof setTimeout> | undefined;
     const buffer = new LogBuffer(); bufferRef.current = buffer;
     setLines([]); setError(''); setTruncated(false); setPhase('Connecting'); pinned.current = true;
+    clearedWatermark.current = '';
     let retries = 0;
 
     const run = async () => {
@@ -720,7 +735,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           if (native) {
             if (!uid) throw new Error('A Pod with UID is required. Reopen logs from the current Pod.');
             const resource = resourceRef(context, { kind: 'Pod', apiVersion: 'v1', uid, name: session.resourceName, namespace: session.namespace });
-            const last = buffer.lines[buffer.lines.length - 1]?.t ?? '';
+            const last = buffer.lines[buffer.lines.length - 1]?.t || clearedWatermark.current;
             const params: LogSliceParams = last
               ? { resource, container: activeContainer, previous, since_time: last }
               : { resource, container: activeContainer, previous, tail_lines: tail, since_seconds: since || undefined };
@@ -787,6 +802,13 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     const q = filter.toLowerCase();
     return lines.filter((l) => (l.level + ' ' + l.msg).toLowerCase().includes(q));
   }, [lines, filter, filterRegex]);
+  /* JSON lines turn into message + k=v fields only while the toggle is on. */
+  const parsedLines = useMemo(() => {
+    const parsed = new Map<number, ReturnType<typeof parseStructuredLog>>();
+    if (!structured) return parsed;
+    for (const line of shown) parsed.set(line.seq, parseStructuredLog(line.msg));
+    return parsed;
+  }, [shown, structured]);
 
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
@@ -801,8 +823,12 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
         <p className="text-[var(--text-muted)]">Reads reload the recent tail, then poll only lines after the newest timestamp. Previous logs are a snapshot.</p>
       </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
         onContainer={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} filter={filter} onFilter={setFilter} isRegex={filterRegex} onToggleRegex={setFilterRegex}
-        paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)}
-        onClear={() => { bufferRef.current.clear(); setLines([]); setTruncated(false); }} onDownload={() => {
+        paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)} structured={structured} onStructured={() => setStructured(!structured)}
+        onClear={() => {
+          const buffer = bufferRef.current; const last = buffer.lines[buffer.lines.length - 1]?.t;
+          clearedWatermark.current = last ? bumpLogTimestamp(last) : '';
+          buffer.clear(); setLines([]); setTruncated(false);
+        }} onDownload={() => {
           const blob = new Blob([lines.map((l) => `${l.t} ${l.msg}`).join('\n')], { type: 'text/plain' });
           const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${session.resourceName}-${activeContainer}.log`; anchor.click(); URL.revokeObjectURL(url);
         }} />
@@ -815,28 +841,33 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           </div>
         ) : (
           <div className="font-mono text-[length:calc(11px*var(--ui-factor))] leading-[1.5]">
-            {shown.map((l) => (
-              <div
-                key={l.seq}
-                className={cx(
-                  wrap ? 'whitespace-pre-wrap' : 'whitespace-nowrap',
-                  l.level === 'error' ? 'text-[#e05555]' : l.level === 'warn' ? 'text-[#e5b742]' : 'text-[var(--text-primary)]'
-                )}
-              >
-                {showTimestamps && (
-                  <span className="text-[var(--text-muted)] select-none pr-2 font-mono">{l.t}</span>
-                )}
-                <span
+            {shown.map((l) => {
+              const parsed = structured ? parsedLines.get(l.seq) ?? null : null;
+              const level = parsed?.level ?? l.level;
+              const message = parsed?.message ?? l.msg;
+              return (
+                <div
+                  key={l.seq}
                   className={cx(
-                    'select-none pr-2 font-semibold',
-                    l.level === 'error' ? 'text-[var(--status-danger)]' : l.level === 'warn' ? 'text-[var(--status-warn)]' : 'text-[var(--status-ok)]'
+                    wrap ? 'whitespace-pre-wrap' : 'whitespace-nowrap',
+                    level === 'error' ? 'text-[#e05555]' : level === 'warn' ? 'text-[#e5b742]' : level === 'debug' ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'
                   )}
                 >
-                  {l.level.toUpperCase().padEnd(5)}
-                </span>
-                <span>{l.msg}</span>
-              </div>
-            ))}
+                  {showTimestamps && (
+                    <span className="text-[var(--text-muted)] select-none pr-2 font-mono">{l.t}</span>
+                  )}
+                  <span
+                    className={cx(
+                      'select-none pr-2 font-semibold',
+                      level === 'error' ? 'text-[var(--status-danger)]' : level === 'warn' ? 'text-[var(--status-warn)]' : level === 'debug' ? 'text-[var(--text-muted)]' : 'text-[var(--status-ok)]'
+                    )}
+                  >
+                    {level.toUpperCase().padEnd(5)}
+                  </span>
+                  <span>{message}{parsed?.fields.length ? <span className="text-[var(--text-muted)]"> {structuredFieldsText(parsed.fields)}</span> : null}</span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

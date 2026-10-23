@@ -12,6 +12,7 @@ import { resourceRef, resourceTabId } from '../core/resources/identity';
 import { useYamlDraftStore, yamlDraftKey } from './yaml_draft_store';
 import type { ResourceRef } from '../core/resources/resource_types';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
+import type { DockSession } from './dock_store';
 
 export type WorkspaceTabType =
   | 'overview'        // Follows the global cluster and namespace selection
@@ -24,9 +25,12 @@ export type WorkspaceTabType =
   | 'resource-detail' // Dedicated resource inspector overview
   | 'logs'            // Pod log stream
   | 'terminal'
+  | 'terminal-session'
+  | 'analysis'
   | 'topology';       // Pod interactive terminal session
 
 export interface WorkspaceTab {
+  session?: DockSession;
   id: string;
   type: WorkspaceTabType;
   title: string;
@@ -53,6 +57,7 @@ interface WorkspaceState {
   /* Actions */
   openTab: (tab: Omit<WorkspaceTab, 'id'> & { id?: string }) => void;
   openOverview: () => void;
+  openTerminalSession: (session: DockSession) => void;
   openGitOpsDashboard: (family: 'flux' | 'argocd') => void;
   openHelm: (section: import('../providers/helm_types').HelmSection) => void;
   openResourceList: (kind: ResourceKind, namespace?: string) => void;
@@ -129,6 +134,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       openOverview: () => get().openTab({ id: 'tab-overview', type: 'overview', title: 'Overview' }),
+      openTerminalSession: (session) => {
+        const id = `tab-${session.id}`;
+        // Each terminal owns its process; two local shells must never collapse into one tab.
+        if (get().tabs.some(tab => tab.id === id)) { get().setActiveTab(id); return; }
+        set(state => ({ tabs: [...state.tabs, { id, type: session.analysis ? 'analysis' : 'terminal-session', title: session.title, session: { ...session, id } }], activeTabId: id }));
+      },
       openGitOpsDashboard: (family) => get().openTab({ id: `tab-${family}-dashboard`, type: `${family}-dashboard`, title: `${family === 'flux' ? 'Flux' : 'Argo CD'} Overview` }),
       openHelm: (section) => get().openTab({ id: `tab-helm-${section}`, type: `helm-${section}`, title: section === 'releases' ? 'Helm Releases' : 'Helm Repositories' }),
 
@@ -336,7 +347,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       name: 'kubiki.workspace.v3',
       merge: restoreWorkspace,
       partialize: (s) => ({
-        tabs: s.tabs.map((t) => ({ ...t, item: undefined })), // Don't persist full mock memory objects
+        tabs: s.tabs.map((t) => ({ ...t, item: undefined, session: undefined })), // Diagnostic snapshots and PTY sessions stay in memory.
         activeTabId: s.activeTabId,
       }),
     }

@@ -1,8 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
-import { Boxes, FileCode2, FileText, Info, Palette, Terminal } from 'lucide-react';
+import { Bot, Boxes, FileCode2, FileText, Info, Palette, Terminal } from 'lucide-react';
 import { fuzzyScore } from '../../core/utils/fuzzy';
 
-export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'about';
+export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'ai' | 'about';
 
 export interface SettingsEntry {
   /** Stable id used as a DOM anchor when jump-to-match is triggered. */
@@ -25,6 +25,13 @@ export interface SettingsPageDef {
 }
 
 export const SETTINGS_PAGES: SettingsPageDef[] = [
+  {
+    id: 'ai', title: 'AI assistant', icon: Bot, sectionTitle: 'AI assistant',
+    entries: [
+      { id: 'ai.agent', label: 'Analysis agent', description: 'Analyze opens this locally installed CLI with a diagnostic snapshot. Install and sign in to the agent before using it.', keywords: 'codex opencode claude AI analyze agent assistant diagnostics' },
+      { id: 'ai.analysis-policy', label: 'Analysis only', description: 'The starting prompt prohibits commands, cluster changes and experiments. Only the supplied snapshot is analyzed. Secret contents and environment values are excluded.', keywords: 'read only prompt safety permissions snapshot' },
+    ],
+  },
   {
     id: 'appearance',
     title: 'Appearance',
@@ -58,6 +65,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
       { id: 'terminal.font-size', label: 'Terminal font size', description: 'Independent of the interface scale; applies to open sessions.', keywords: 'size text' },
       { id: 'terminal.typeface', label: 'Terminal typeface', description: 'Font preset, custom family, line height and live preview. Applies to open sessions without restarting them.', keywords: 'family nerd powerline monospace line height preview custom' },
       { id: 'terminal.scrollback', label: 'Terminal scrollback limit', description: 'Lines kept above the viewport. Applies to new terminal sessions.', keywords: 'history buffer lines memory' },
+      { id: 'terminal.output-timeout', label: 'Session output timeout', description: 'Stops terminal sessions whose output is not consumed for this long. Never keeps sessions open when the window is hidden or occluded; a shorter value applies to new sessions.', keywords: 'timeout stop disconnect keep alive stall backpressure reconnect 504' },
     ],
   },
   {
@@ -69,6 +77,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'logs.wrap', label: 'Wrap log lines by default', description: 'New log sessions start with line wrapping enabled; the toolbar toggle still works per session.', keywords: 'soft lines overflow new sessions' },
       { id: 'logs.timestamps', label: 'Show timestamps by default', description: 'New log sessions start with a timestamp column; the toolbar toggle still works per session.', keywords: 'time column new sessions' },
+      { id: 'logs.structured', label: 'Structured log parsing by default', description: 'JSON log lines render as a message with key=value fields and the level from the record. Lines that are not JSON stay as-is; the toolbar toggle still works per session.', keywords: 'json fields grafana parse structured format prettify level' },
     ],
   },
   {

@@ -9,6 +9,7 @@ mod mutation_commands;
 use mutation_commands::*;
 mod k8s_commands;
 mod terminal_commands;
+mod exec_ack;
 mod node_commands;
 mod host_terminal_commands;
 mod log_commands;
@@ -83,6 +84,7 @@ pub fn run() {
             stop_resource_watches,
             get_host_terminal_info,
             start_host_terminal,
+            start_ai_analysis,
             write_host_terminal,
             resize_host_terminal,
             ack_host_terminal,

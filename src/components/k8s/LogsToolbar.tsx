@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowDownToLine, Clock, Download, Eraser, MoreHorizontal, Pause, Play, WrapText } from 'lucide-react';
+import { ArrowDownToLine, Braces, Clock, Download, Eraser, MoreHorizontal, Pause, Play, WrapText } from 'lucide-react';
 import { useUiStore } from '../../state/ui_store';
 import { uiFactor } from '../../core/appearance';
 import { ContainerSelect } from './ContainerSelect';
@@ -8,14 +8,14 @@ import { SearchInput } from '../ui/Input';
 import { Popover } from '../ui/Dropdown';
 import type { ResourceContainer } from '../../types/k8s';
 
-export function LogsToolbar({ name, namespace, context, containers, container, onContainer, filter, onFilter, isRegex, onToggleRegex, paused, onPause, timestamps, onTimestamps, wrap, onWrap, onDownload, onClear, sourceControls }: {
+export function LogsToolbar({ name, namespace, context, containers, container, onContainer, filter, onFilter, isRegex, onToggleRegex, paused, onPause, timestamps, onTimestamps, wrap, onWrap, structured, onStructured, onDownload, onClear, sourceControls }: {
   sourceControls?: ReactNode;
   name?: string; namespace?: string; context?: string | null; containers: ResourceContainer[]; container: string; onContainer: (name: string) => void;
-  filter: string; onFilter: (value: string) => void; isRegex?: boolean; onToggleRegex?: (v: boolean) => void; paused: boolean; onPause: () => void; timestamps: boolean; onTimestamps: () => void; wrap: boolean; onWrap: () => void; onDownload: () => void; onClear: () => void;
+  filter: string; onFilter: (value: string) => void; isRegex?: boolean; onToggleRegex?: (v: boolean) => void; paused: boolean; onPause: () => void; timestamps: boolean; onTimestamps: () => void; wrap: boolean; onWrap: () => void; structured: boolean; onStructured: () => void; onDownload: () => void; onClear: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null); const [compact, setCompact] = useState(true); const scale = useUiStore((s) => s.uiScale);
   useEffect(() => { const el = ref.current; if (!el) return; const resize = () => setCompact(el.clientWidth / uiFactor(scale) < 680); resize(); const observer = new ResizeObserver(resize); observer.observe(el); return () => observer.disconnect(); }, [scale]);
-  const actions = [{ icon: Clock, label: 'Timestamps', active: timestamps, run: onTimestamps }, { icon: WrapText, label: 'Wrap', active: wrap, run: onWrap }, { icon: Download, label: 'Download logs', run: onDownload }, { icon: Eraser, label: 'Clear', run: onClear }];
+  const actions = [{ icon: Clock, label: 'Timestamps', active: timestamps, run: onTimestamps }, { icon: WrapText, label: 'Wrap', active: wrap, run: onWrap }, { icon: Braces, label: 'Structured JSON', active: structured, run: onStructured }, { icon: Download, label: 'Download logs', run: onDownload }, { icon: Eraser, label: 'Clear', run: onClear }];
   const buttons = <div className="flex shrink-0 items-center gap-1">
     <IconButton icon={paused ? Play : Pause} size="sm" active={paused} onClick={onPause} tooltip={paused ? 'Resume log updates' : 'Pause log updates'} aria-label="Pause" />
     {(compact || sourceControls) && <Popover align="end" width={210} trigger={({ open }) => <IconButton icon={MoreHorizontal} size="sm" active={open} aria-label="Log options" tooltip="Log options" />}>

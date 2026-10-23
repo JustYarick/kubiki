@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { LogBuffer, MAX_LOG_CHARS, MAX_LOG_LINES } from '../../src/core/utils/log_buffer';
+import { LogBuffer, MAX_LOG_CHARS, MAX_LOG_LINES, bumpLogTimestamp } from '../../src/core/utils/log_buffer';
 const encode = (text: string) => [...new TextEncoder().encode(text)];
 it('reconstructs split UTF-8 and lines, preserves unstructured text and flushes final output', () => {
   const buffer = new LogBuffer(); const bytes = encode('2026-10-20T08:00:00Z привет 🌍\nplain text\nerror last');
@@ -23,4 +23,11 @@ it('bounds a stream with no newline, discards its excess and resumes at the next
 it('clear removes partial output and keeps sequence keys unique when new output arrives', () => {
   const buffer = new LogBuffer();buffer.push(encode('old\npartial'));const seq = buffer.lines[0].seq;buffer.clear();buffer.push(encode('new\n'));
   expect(buffer.lines).toHaveLength(1);expect(buffer.lines[0]).toMatchObject({ msg: 'new', seq: seq + 1 });expect(buffer.truncated).toBe(false);
+});
+it('bumps nanosecond timestamps so polls resume strictly past a cleared watermark', () => {
+  expect(bumpLogTimestamp('2026-10-20T08:00:00.123456789Z')).toBe('2026-10-20T08:00:00.123456790Z');
+  expect(bumpLogTimestamp('2026-10-20T08:00:00+03:00')).toBe('2026-10-20T08:00:00.000000001+03:00');
+  expect(bumpLogTimestamp('2026-10-20T08:00:00Z')).toBe('2026-10-20T08:00:00.000000001Z');
+  expect(bumpLogTimestamp('2026-10-20T08:00:00.999999999Z')).toBe('2026-10-20T08:00:00.999999999Z');
+  expect(bumpLogTimestamp('plain text')).toBe('plain text');
 });

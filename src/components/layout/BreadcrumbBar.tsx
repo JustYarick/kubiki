@@ -74,7 +74,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
       )}
 
       {/* Resource Name if selected or viewing detail/yaml */}
-      {activeTab?.type !== 'overview' && !activeTab?.type.endsWith('-dashboard') && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && (activeTab?.name || selectedItem?.name) && (
+      {activeTab?.type !== 'overview' && activeTab?.type !== 'analysis' && activeTab?.type !== 'terminal-session' && !activeTab?.type.endsWith('-dashboard') && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && (activeTab?.name || selectedItem?.name) && (
         <>
           <ChevronRight size="calc(11px * var(--ui-factor))" className="text-[var(--text-muted)] opacity-60 shrink-0" />
           <span className="font-mono text-[var(--text-primary)] min-w-0 truncate px-1 py-0.5 rounded bg-[var(--bg-surface)]/40 font-medium">

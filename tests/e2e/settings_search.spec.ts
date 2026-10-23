@@ -7,7 +7,7 @@ test('settings search filters pages and rows, highlights matches, jumps on Enter
   const search = dialog.getByLabel('Search settings');
   const categories = dialog.getByRole('navigation', { name: 'Settings categories' });
   await expect(search).toBeFocused();
-  await expect(categories.getByRole('button')).toHaveCount(6);
+  await expect(categories.getByRole('button')).toHaveCount(7);
 
   await search.fill('scrollback');
   const terminalPage = categories.getByRole('button', { name: 'Terminal' });
@@ -28,6 +28,6 @@ test('settings search filters pages and rows, highlights matches, jumps on Enter
   await expect(categories.getByRole('button')).toHaveCount(0);
 
   await dialog.getByLabel('Clear search').click();
-  await expect(categories.getByRole('button')).toHaveCount(6);
+  await expect(categories.getByRole('button')).toHaveCount(7);
   await expect(categories.getByRole('button', { name: 'Terminal', exact: true })).toHaveAttribute('aria-current', 'true');
 });

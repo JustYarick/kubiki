@@ -15,11 +15,13 @@ import { uiFactor } from '../../core/appearance';
 import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
 import { k8s } from '../../providers/k8s_provider';
+import { AnalysisView } from '../../views/AnalysisView';
+import { IconButton } from '../ui/Button';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
 import { cx } from '../../core/utils/cx';
 import { toast } from '../../state/notifications_store';
-import { FileCode, Loader2, LayoutDashboard, Boxes, Layers, Network } from 'lucide-react';
+import { FileCode, Loader2, LayoutDashboard, Boxes, Layers, Network, X } from 'lucide-react';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
 import { RequestErrorNotice } from '../k8s/RequestErrorNotice';
 import { refreshResourceWatches } from '../../state/resource_watch';
@@ -63,7 +65,7 @@ export const WorkspaceArea: React.FC<{
     if (next.size === previous.size && [...next].every((id) => previous.has(id))) return previous;
     return next;
   }); }, [tabs, activeTab?.id, splitTab?.id]);
-  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'logs' || tab.type === 'yaml-editor')));
+  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'analysis' || tab.type === 'logs' || tab.type === 'yaml-editor')));
   return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
     <div ref={headerRef} className="shrink-0 flex flex-col">
       <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
@@ -78,7 +80,7 @@ export const WorkspaceArea: React.FC<{
         // no control ends up hidden behind it.
         const underOverlay = tab.type === 'resource-list';
         return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className={cx('min-h-0 min-w-0 flex-col overflow-hidden', !underOverlay && 'workspace-overlay-inset')} style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
-          {split && <div className="h-6 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-muted)]"><span className="truncate">{tab.title}</span><span>Split View</span></div>}
+          {split && <div className="h-7 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center gap-2 text-xs text-[var(--text-muted)]"><span className="truncate flex-1">{tab.title}</span><span className="shrink-0">Split View</span><IconButton icon={X} size="sm" aria-label="Close split view" tooltip="Close split view" onClick={() => { useWorkspaceStore.getState().setSplit(null); document.getElementById(`workspace-tab-${encodeURIComponent(activeTab.id)}`)?.focus(); }} /></div>}
           <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
         </div>;
       })}
@@ -151,6 +153,12 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   }
 
   if (tab.type === 'overview') return <OverviewView />;
+  if (tab.type === 'terminal-session' || tab.type === 'analysis') {
+    if (!tab.session) return <div className="p-4 text-sm text-[var(--text-secondary)]">This terminal session has ended. Open a new terminal or analyze the resource again.</div>;
+    if (tab.session.analysis) return <AnalysisView session={tab.session} visible={visible} />;
+    if (tab.session.targetType !== 'local' && tab.session.context && tab.session.context !== context) return <p className="p-4 text-sm text-[var(--text-secondary)]">This terminal belongs to context {tab.session.context}. Switch back to that context to reconnect.</p>;
+    return <TerminalSessionPane session={tab.session} visible={visible} onContainerChange={name => useWorkspaceStore.setState(state => ({ tabs: state.tabs.map(entry => entry.id === tab.id ? { ...entry, session: { ...entry.session!, container: name } } : entry) }))} />;
+  }
   if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') return <Suspense fallback={<ResourceLoading label="Loading dashboard…" />}><GitOpsDashboard family={tab.type === 'flux-dashboard' ? 'flux' : 'argocd'} /></Suspense>;
   if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Loading Helm…" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
 

@@ -1,4 +1,10 @@
-import { AlertCircle, AlertTriangle, HelpCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Bot, HelpCircle } from 'lucide-react';
+import { Button } from '../../../ui/Button';
+import { AI_AGENTS, buildAnalysisPrompt } from '../../../../core/ai_analysis';
+import { useClusterStore } from '../../../../state/cluster_store';
+import { useResourceStore } from '../../../../state/resource_store';
+import { useWorkspaceStore } from '../../../../state/workspace_store';
+import { useUiStore } from '../../../../state/ui_store';
 import type { ResourceItem } from '../../../../types/k8s';
 import { resourceIssues } from '../../../../core/resources/diagnostics';
 import { cx } from '../../../../core/utils/cx';
@@ -16,6 +22,7 @@ interface Diagnosis {
 }
 
 export function ProblemsBanner({ item, className }: ProblemsBannerProps) {
+  const agent = useUiStore(state => state.aiAgent);
   const issues = resourceIssues(item);
   const raw = item.raw ?? {};
   const status = raw.status ?? item.statusRaw ?? {};
@@ -191,6 +198,15 @@ export function ProblemsBanner({ item, className }: ProblemsBannerProps) {
             </div>
           </div>
         ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
+        <Button variant="danger" size="sm" onClick={() => {
+          const context = useClusterStore.getState().currentContext;
+          const prompt = buildAnalysisPrompt(item, context, useResourceStore.getState().resources.Event.values(), diagnoses);
+          useWorkspaceStore.getState().openTerminalSession({ id: `analysis-${crypto.randomUUID()}`, type: 'terminal', title: `Analyze: ${item.name}`, targetType: 'local', analysis: { agent, prompt } });
+          useUiStore.setState({ inspectorCollapsed: true });
+        }}><Bot size={14} aria-hidden="true" />Analyze</Button>
+        <span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)]">{AI_AGENTS.find(entry => entry.id === agent)?.label} · analysis only</span>
       </div>
     </div>
   );

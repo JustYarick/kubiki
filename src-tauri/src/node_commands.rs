@@ -11,6 +11,7 @@ use tauri::ipc::Channel;
 pub async fn start_node_exec(
     session_id: String,
     request: NodeExecRequest,
+    ack_timeout_secs: Option<u64>,
     on_event: Channel<ExecBatch>,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, NodeDebugManager>,
@@ -45,20 +46,7 @@ pub async fn start_node_exec(
                 }
                 bytes = 0;
                 // The renderer acknowledges after xterm has parsed the bytes. One IPC batch in flight.
-                let ack = async {
-                    while *subscription.acknowledgements.borrow_and_update() != sequence {
-                        subscription
-                            .acknowledgements
-                            .changed()
-                            .await
-                            .map_err(|_| ())?;
-                    }
-                    Ok::<_, ()>(())
-                };
-                if !matches!(
-                    tokio::time::timeout(Duration::from_secs(30), ack).await,
-                    Ok(Ok(()))
-                ) {
+                if !crate::exec_ack::wait_for_ack(&subscription.acknowledgements, sequence, ack_timeout_secs.unwrap_or(0)).await {
                     let _=on_event.send(ExecBatch{session_id:session_id.clone(),messages:vec![ExecMessage{sequence:sequence+1,event:ExecEvent::Failed{error:ApiError::from_status(504,"Terminal renderer stopped consuming output. Reconnect the session.","node_debug",None)}}]});
                     break;
                 }

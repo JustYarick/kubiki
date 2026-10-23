@@ -4,7 +4,8 @@ async function setup(page: import('@playwright/test').Page, failInfo = false) {
     const w = window as any;let callback = 0;let infoFailure = failInfo;const callbacks = new Map();const active = new Map<string, any>();const closed: any[] = [];const starts: any[] = [];const input: any[] = [];const sizes: any[] = [];const acks: any[] = [];const encoder = new TextEncoder();
     const output = (text: string) => ({ type: 'Output', payload: { data: [...encoder.encode(text)] } });
     const send = (s: any, events: any[]) => s.channel.onmessage({ session_id: s.id, messages: events.map((event) => ({ sequence: ++s.sequence, event })) });
-    w.__hostHarness = { starts, input, sizes, acks, active: () => active.size, callbacks: () => callbacks.size, allowInfo: () => { infoFailure = false; },
+    const terminalCallbacks = new Set<number>();
+    w.__hostHarness = { starts, input, sizes, acks, active: () => active.size, callbacks: () => [...terminalCallbacks].filter(id => callbacks.has(id)).length, allowInfo: () => { infoFailure = false; },
       finish: () => { for (const s of active.values()) send(s, [{ type: 'Exited', payload: { code: 7 } }]); },
       late: () => { for (const s of closed) send(s, [output('STALE HOST OUTPUT\r\n')]); },
     };
@@ -13,7 +14,7 @@ async function setup(page: import('@playwright/test').Page, failInfo = false) {
         if (command === 'stop_port_forwards') return;
         if (command === 'get_kube_contexts') return [];
         if (command === 'get_host_terminal_info') { if (infoFailure) throw { code: 'internal', operation: 'host_terminal', message: 'Cannot discover local shells' };return { shells: ['/bin/zsh','/bin/sh'], default_shell: '/bin/zsh', cwd: '/home/test' }; }
-        if (command === 'start_host_terminal') { const s = { id: args.sessionId, channel: args.onEvent, sequence: 0 };active.set(s.id, s);starts.push(args.request);queueMicrotask(() => send(s, [{ type: 'Started' }, output('local-shell-ready\r\n')]));return; }
+        if (command === 'start_host_terminal') { terminalCallbacks.add(args.onEvent.id);const s = { id: args.sessionId, channel: args.onEvent, sequence: 0 };active.set(s.id, s);starts.push(args.request);queueMicrotask(() => send(s, [{ type: 'Started' }, output('local-shell-ready\r\n')]));return; }
         if (command === 'write_host_terminal') { input.push(args);const s = active.get(args.sessionId);if (s) send(s, [output(args.data.includes('\r') ? '\r\nlocal-command-result\r\n' : args.data)]);return; }
         if (command === 'resize_host_terminal') { sizes.push(args);return; }
         if (command === 'ack_host_terminal') { acks.push(args);return; }
@@ -65,6 +66,7 @@ test('custom typography updates a connected host PTY without losing output or st
   await expect(pane.getByRole('status')).toHaveText('Connected');
   await page.keyboard.press('Control+,');
   const dialog = page.getByRole('dialog');
+  await dialog.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Terminal', exact: true }).click();
   await dialog.getByLabel('Terminal font family', { exact: true }).fill("'DejaVu Sans Mono', monospace");
   await dialog.getByRole('button', { name: 'Apply terminal font' }).click();
   await dialog.getByLabel('Terminal line height', { exact: true }).fill('1.4');
@@ -80,8 +82,9 @@ test('custom typography updates a connected host PTY without losing output or st
   await page.keyboard.type('echo fontstillworks'); await page.keyboard.press('Enter');
   await expect(pane.locator('.xterm-rows')).toContainText('local-command-result');
   await page.reload(); await page.keyboard.press('Control+,');
+  await dialog.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Terminal', exact: true }).click();
   await expect(dialog.getByLabel('Terminal font family', { exact: true })).toHaveValue("'DejaVu Sans Mono', monospace");
   await expect(dialog.getByLabel('Terminal line height', { exact: true })).toHaveValue('1.4');
-  await dialog.getByRole('button', { name: 'Reset appearance', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Reset terminal defaults', exact: true }).click();
   await expect(dialog.getByLabel('Terminal font family', { exact: true })).toHaveValue("'JetBrains Mono Variable'");
 });

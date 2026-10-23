@@ -8,7 +8,9 @@ import '@xyflow/react/dist/style.css';
 import { TriangleAlert } from 'lucide-react';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
+import { useUiStore } from '../state/ui_store';
 import { buildTopology, EMPTY_GRAPH, MAX_TOPOLOGY_EDGES } from '../core/resources/topology';
+import { DEFAULT_TOPOLOGY_HIDDEN_KINDS } from '../core/resources/topology_visibility';
 import { resourceKey } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
 import { Button } from '../components/ui/Button';
@@ -39,7 +41,10 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const [direction, setDirection] = useState<'RIGHT' | 'DOWN'>('RIGHT');
   const [revision, setRevision] = useState(0);
   const [routeRevision, setRouteRevision] = useState(0);
-  const [hiddenKinds, setHiddenKinds] = useState<Set<ResourceKind>>(() => new Set());
+  /* Secondary kinds start hidden from the persisted store; a focused resource
+     diagram keeps everything visible so its relationships are not lost. */
+  const [hiddenKinds, setHiddenKinds] = useState<Set<ResourceKind>>(() => item ? new Set() : new Set(useUiStore.getState().topologyHiddenKinds));
+  const updateHiddenKinds = (next: Set<ResourceKind>) => { setHiddenKinds(next); useUiStore.getState().setTopologyHiddenKinds(next); };
   const [scopeQuery, setScopeQuery] = useState('');
   const graphScope = scope === 'selection' ? selectedNamespace === 'all' ? 'all' : `namespaces:${selectedNamespace}` : scope;
   const diagramNamespaces = topologyNamespaces(graphScope);
@@ -111,7 +116,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
           <TopologySettings namespace={diagramNamespace ?? selectedNamespace} namespaces={summaries.map(summary => summary.name)} onNamespaceChange={chooseNamespaces} onUseSelection={() => setScope('selection')} onChooseScope={() => setScope('')}
             focusLabel={item && item.kind !== 'Event' ? `${item.kind}/${item.name}` : undefined} onFocus={() => setScope('resource')}
             direction={direction} onDirectionChange={setDirection} depth={scope === 'resource' ? depth : undefined} onDepthChange={setDepth}
-            onArrange={() => setRevision(value => value + 1)} onResetRoutes={() => setRouteRevision(value => value + 1)} counts={typeCounts} hiddenKinds={hiddenKinds} onHiddenKindsChange={setHiddenKinds} />
+            onArrange={() => setRevision(value => value + 1)} onResetRoutes={() => setRouteRevision(value => value + 1)} counts={typeCounts} hiddenKinds={hiddenKinds} onHiddenKindsChange={updateHiddenKinds} onDefaultKinds={() => updateHiddenKinds(new Set(DEFAULT_TOPOLOGY_HIDDEN_KINDS))} />
           <TopologyEvents scope={graphScope} graph={graph} />
         </div></>}
     </div>

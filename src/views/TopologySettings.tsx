@@ -6,11 +6,11 @@ import { Button } from '../components/ui/Button';
 import type { ResourceKind } from '../types/k8s';
 
 export function TopologySettings({ namespace, namespaces, onNamespaceChange, onUseSelection, onChooseScope, focusLabel, onFocus,
-  direction, onDirectionChange, depth, onDepthChange, onArrange, onResetRoutes, counts, hiddenKinds, onHiddenKindsChange }: {
+  direction, onDirectionChange, depth, onDepthChange, onArrange, onResetRoutes, counts, hiddenKinds, onHiddenKindsChange, onDefaultKinds }: {
   namespace: string; namespaces: string[]; onNamespaceChange: (value: string) => void; onUseSelection: () => void; onChooseScope: () => void;
   focusLabel?: string; onFocus?: () => void; direction: 'RIGHT' | 'DOWN'; onDirectionChange: (value: 'RIGHT' | 'DOWN') => void;
   depth?: number; onDepthChange: (value: number) => void; onArrange: () => void; onResetRoutes: () => void;
-  counts: [ResourceKind, number][]; hiddenKinds: ReadonlySet<ResourceKind>; onHiddenKindsChange: (value: Set<ResourceKind>) => void;
+  counts: [ResourceKind, number][]; hiddenKinds: ReadonlySet<ResourceKind>; onHiddenKindsChange: (value: Set<ResourceKind>) => void; onDefaultKinds: () => void;
 }) {
   return <FloatingIsland label="Diagram settings" title="Diagram settings" icon={Settings2}>
     <div className="topology-settings-fields">
@@ -23,7 +23,7 @@ export function TopologySettings({ namespace, namespaces, onNamespaceChange, onU
     </div>
     <section aria-label="Topology resource types" className="topology-types">
       <div className="topology-types-heading"><span>Resource types</span><span className="text-[var(--text-muted)]">{counts.filter(([kind]) => !hiddenKinds.has(kind)).length}/{counts.length}</span></div>
-      <div className="topology-settings-actions px-2"><button onClick={() => onHiddenKindsChange(new Set())}>Show all</button><button onClick={() => onHiddenKindsChange(new Set(counts.map(([kind]) => kind)))}>Hide all</button></div>
+      <div className="topology-settings-actions px-2"><button onClick={() => onHiddenKindsChange(new Set())}>Show all</button><button onClick={() => onHiddenKindsChange(new Set(counts.map(([kind]) => kind)))}>Hide all</button><button title="Restore the default hidden resource types" onClick={onDefaultKinds}>Default</button></div>
       <div className="topology-types-list kubiki-scrollbar">{counts.map(([kind, count]) => <CheckboxRow key={kind} label={kind} trailing={count} aria-label={`Show ${kind}`} checked={!hiddenKinds.has(kind)} onChange={() => {
         const next = new Set(hiddenKinds); if (next.has(kind)) next.delete(kind); else next.add(kind); onHiddenKindsChange(next);
       }} />)}</div>
