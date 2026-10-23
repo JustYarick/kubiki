@@ -27,7 +27,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { LogBuffer, type LogLine } from '../../core/utils/log_buffer';
-import { connectPodLogs } from '../../providers/tauri_logs';
+import { fetchLogSlice, type LogSliceParams } from '../../providers/tauri_logs';
 import { resourceRef } from '../../core/resources/identity';
 import { inNamespaceScope } from '../../core/resources/namespace_scope';
 import { LogsToolbar } from '../k8s/LogsToolbar';
@@ -40,7 +40,7 @@ import { usePfStore } from '../../state/pf_store';
 import { useResourceStore } from '../../state/resource_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
-import { useUiStore } from '../../state/ui_store';
+import { LOG_POLL_PRESETS, useUiStore } from '../../state/ui_store';
 import { uiPixels, uiFactor } from '../../core/appearance';
 import { IconButton } from '../ui/Button';
 import { Button } from '../ui/Button';
@@ -670,9 +670,11 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const { containers, container: activeContainer, context, recreated, uid } = useSessionContainers(session);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
-  const [wrap, setWrap] = useState(true);
+  /* Session toggles initialized from the Logs page defaults in settings. */
+  const [wrap, setWrap] = useState(() => useUiStore.getState().logsWrap);
   const [filter, setFilter] = useState('');
-  const [showTimestamps, setShowTimestamps] = useState(true);
+  const [showTimestamps, setShowTimestamps] = useState(() => useUiStore.getState().logsTimestamps);
+  const [pollMs, setPollMs] = useState(() => useUiStore.getState().logsPollMs);
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
@@ -686,58 +688,85 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const bufferRef = useRef(new LogBuffer());
   const outputRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  /* Keeps the loop on the live cadence without tearing down scrollback. */
+  const pollRef = useRef(pollMs);
+  pollRef.current = pollMs;
 
+  /* Lens-style reads: a bounded initial slice, then cadence polls that resume
+     after the newest timestamp and drop the refetched overlap by signature. */
   useEffect(() => {
-    if (!native) return;
-    const abort = new AbortController();
-    if (paused) { setPhase('Stopped'); return; }
+    if (paused) { setPhase('Paused'); return; }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const buffer = new LogBuffer(); bufferRef.current = buffer;
     setLines([]); setError(''); setTruncated(false); setPhase('Connecting'); pinned.current = true;
-    if (recreated || !context || !session.resourceName || !session.namespace || !uid || !activeContainer) {
-      setError(recreated ? 'The Pod was recreated. Open the current Pod to read its logs.' : 'A Pod with UID, namespace and container is required. Reopen logs from the current Pod.');
-      setPhase('Failed'); return;
-    }
-    const resource = resourceRef(context, { kind: 'Pod', apiVersion: 'v1', uid, name: session.resourceName, namespace: session.namespace });
-    void connectPodLogs({ resource, container: activeContainer, follow: !previous, previous, tail_lines: tail, since_seconds: since || null }, (event) => {
-      if (abort.signal.aborted) return;
-      if (event.type === 'Started') setPhase(previous ? 'Reading previous container' : 'Following');
-      if (event.type === 'Output') { buffer.push(event.payload.data); setLines([...buffer.lines]); setTruncated(buffer.truncated); }
-      if (event.type === 'Completed' || event.type === 'Failed') {
-        buffer.push([], true); setLines([...buffer.lines]); setTruncated(buffer.truncated);
-        setPhase(event.type === 'Completed' ? 'Completed' : 'Failed');
-        if (event.type === 'Failed') setError(event.payload.error.message);
-      }
-    }, abort.signal).catch((error) => { if (!abort.signal.aborted) { setError(String(error)); setPhase('Failed'); } });
-    return () => abort.abort();
-  }, [native, session.resourceName, session.namespace, uid, activeContainer, context, paused, previous, tail, since, generation, recreated]);
+    let retries = 0;
 
-  useEffect(() => {
-    if (native || !visible || paused) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    setLines([]); setError('');
-    const poll = async () => {
+    const run = async () => {
+      if (cancelled) return;
+      if (!visible) { timer = setTimeout(run, pollRef.current); return; }
       try {
         if (k8s.demo) {
           const [level, template] = LOG_TEMPLATES[seqRef.current % LOG_TEMPLATES.length];
           const msg = `[demo ${session.resourceName}/${activeContainer}] ` + template.replace('{ms}', '42').replace(/\{n\}/g, '3');
           const line = { t: new Date().toISOString().slice(11, 23), level, msg, seq: seqRef.current++ };
-          setLines((previous) => [...previous, line].slice(-500));
+          setLines((current) => [...current, line].slice(-500));
         } else {
           if (recreated) throw new Error('The Pod was recreated. Open the current Pod to read its logs.');
           if (!context || !session.resourceName || !session.namespace) throw new Error('Select a Pod and namespace to view logs.');
-          const text = await k8s.getLogs(context, session.resourceName, session.namespace, activeContainer);
+          if (!activeContainer) throw new Error('Select a container to view logs.');
+          let text: string;
+          let replace = false;
+          if (native) {
+            if (!uid) throw new Error('A Pod with UID is required. Reopen logs from the current Pod.');
+            const resource = resourceRef(context, { kind: 'Pod', apiVersion: 'v1', uid, name: session.resourceName, namespace: session.namespace });
+            const last = buffer.lines[buffer.lines.length - 1]?.t ?? '';
+            const params: LogSliceParams = last
+              ? { resource, container: activeContainer, previous, since_time: last }
+              : { resource, container: activeContainer, previous, tail_lines: tail, since_seconds: since || undefined };
+            text = await fetchLogSlice(params);
+          } else {
+            text = await k8s.getLogs(context, session.resourceName, session.namespace, activeContainer);
+            replace = true;
+          }
           if (cancelled) return;
-          const buffer = new LogBuffer(); buffer.push([...new TextEncoder().encode(text)], true);
-          setLines(buffer.lines); setTruncated(buffer.truncated);
+          if (replace) {
+            /* Browser mode returns a whole snapshot; it always replaces history. */
+            buffer.clear();
+            buffer.push([...new TextEncoder().encode(text)], true);
+          } else {
+            /* The overlap from the last second is refetched; drop exact repeats. */
+            const decoded = new LogBuffer();
+            decoded.push([...new TextEncoder().encode(text)], true);
+            const seen = new Set(buffer.lines.map((l) => `${l.t}\u0000${l.msg}`));
+            for (const line of decoded.lines) {
+              const signature = `${line.t}\u0000${line.msg}`;
+              if (seen.has(signature)) continue;
+              seen.add(signature);
+              buffer.addLine(line.t ? `${line.t} ${line.msg}` : line.msg);
+            }
+          }
+          setLines([...buffer.lines]); setTruncated(buffer.truncated);
+          retries = 0;
+          setError('');
+          if (native && previous) { setPhase('Snapshot'); return; }
+          setPhase(`Polling every ${Math.round(pollRef.current / 1000)}s`);
         }
-        if (!cancelled) setError('');
-      } catch (error) { if (!cancelled) setError(String(error)); }
-      if (!cancelled) timer = setTimeout(poll, k8s.demo ? 750 : 3000);
+      } catch (read) {
+        if (cancelled) return;
+        retries++;
+        const message = read instanceof Error ? read.message : String(read);
+        setPhase(retries >= 3 ? 'Failed' : `Stalled · retry ${retries} of 3`);
+        setError(retries >= 3 ? `${message} · press Reconnect logs to retry` : message);
+        if (retries >= 3) return;
+      }
+      if (cancelled) return;
+      /* Failures back off (1×, 2×, 4×) and stop after three consecutive misses. */
+      timer = setTimeout(run, pollRef.current * [1, 2, 4][Math.min(retries, 2)]);
     };
-    void poll();
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [native, session.resourceName, session.namespace, activeContainer, context, visible, paused, recreated]);
+    void run();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [native, session.resourceName, session.namespace, uid, activeContainer, context, paused, previous, tail, since, generation, recreated, visible]);
 
   useEffect(() => {
     const output = outputRef.current;
@@ -762,13 +791,14 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       {error && <div role="alert" className="px-3 py-1 text-[var(--status-danger)] text-xs">{error}</div>}
-      <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? 'Simulated logs' : native ? `${phase} · ${previous ? 'previous container' : 'current container'} · latest ${tail} on connect · history up to 1000 lines` : 'Browser snapshot · latest 500 lines · refresh every 3s'}{truncated && ' · older or oversized output discarded'}</div>
+      <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? `Simulated logs · poll every ${Math.round(pollMs / 1000)}s` : native ? `${phase} · ${previous ? 'previous container snapshot' : `initial tail ${tail}`} · history up to 1000 lines` : `Browser snapshot · latest 500 lines · refresh every ${Math.round(pollMs / 1000)}s`}{truncated && ' · older or oversized output discarded'}</div>
       <LogsToolbar sourceControls={native ? <div className="border-t border-[var(--border-default)] p-2 space-y-2 text-xs">
         <label className="flex items-center gap-2"><input type="checkbox" checked={previous} onChange={(event) => setPrevious(event.target.checked)} />Previous container instance</label>
         <label className="flex items-center justify-between gap-2">Initial tail<select aria-label="Initial log tail" value={tail} onChange={(event) => setTail(Number(event.target.value))} className="bg-[var(--bg-primary)] p-1 rounded">{[100, 500, 1000].map((n) => <option key={n} value={n}>{n} lines</option>)}</select></label>
         <label className="flex items-center justify-between gap-2">Since<select aria-label="Log time range" value={since} onChange={(event) => setSince(Number(event.target.value))} className="bg-[var(--bg-primary)] p-1 rounded">{[[0, 'Any time'], [300, '5 minutes'], [3600, '1 hour'], [86400, '24 hours']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="flex items-center justify-between gap-2">Poll frequency<select aria-label="Log poll frequency" value={pollMs} onChange={(event) => { const value = Number(event.target.value); setPollMs(value); useUiStore.getState().setLogsPollMs(value); }} className="bg-[var(--bg-primary)] p-1 rounded">{LOG_POLL_PRESETS.map((value) => <option key={value} value={value}>{value / 1000}s</option>)}</select></label>
         <Button size="sm" onClick={() => { setPaused(false); setGeneration((value) => value + 1); }}>Reconnect logs</Button>
-        <p className="text-[var(--text-muted)]">Changing the source or resuming reloads its tail. Previous logs are a snapshot.</p>
+        <p className="text-[var(--text-muted)]">Reads reload the recent tail, then poll only lines after the newest timestamp. Previous logs are a snapshot.</p>
       </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
         onContainer={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} filter={filter} onFilter={setFilter} isRegex={filterRegex} onToggleRegex={setFilterRegex}
         paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)}

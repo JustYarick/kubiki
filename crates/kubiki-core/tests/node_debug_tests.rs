@@ -52,6 +52,15 @@ fn request() -> NodeDebugRequest {
         image: "ubuntu:24.04".into(),
     }
 }
+fn exec(session_id: &str) -> NodeExecRequest {
+    NodeExecRequest {
+        resource: request().resource.clone(),
+        debug_session_id: session_id.into(),
+        shell: "/bin/sh".into(),
+        cols: 80,
+        rows: 24,
+    }
+}
 async fn read_request(socket: &mut TcpStream) -> (String, Value) {
     let mut bytes = Vec::new();
     loop {
@@ -104,6 +113,18 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         self.server.abort();
     }
+}
+async fn deleted_with(state: Arc<Mutex<State>>, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if state.lock().await.deleted >= expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
 }
 async fn fixture() -> Fixture {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -175,71 +196,76 @@ async fn fixture() -> Fixture {
                 });
                 continue;
             }
-            let (line, body) = read_request(&mut socket).await;
-            let (status, response) = {
-                let mut s = data.lock().await;
-                if line.starts_with("GET /api/v1/nodes/worker ") {
-                    (
-                        200,
-                        json!({"apiVersion":"v1","kind":"Node","metadata":{"name":"worker","uid":if s.wrong_node{"replacement"}else{"node-uid"}},"status":{"nodeInfo":{"architecture":"amd64","bootID":"test","containerRuntimeVersion":"test","kernelVersion":"test","kubeProxyVersion":"test","kubeletVersion":"test","machineID":"test","operatingSystem":"linux","osImage":"test","systemUUID":"test"}}}),
-                    )
-                } else if line.starts_with("POST /apis/authorization.k8s.io/") {
-                    let mut review = body;
-                    review["status"] = json!({"allowed":!s.deny_permission});
-                    (201, review)
-                } else if line.starts_with("POST /api/v1/namespaces/debug/pods ") {
-                    let mut pod = body;
-                    pod["metadata"]["uid"] = json!("debug-uid");
-                    pod["metadata"]["resourceVersion"] = json!("10");
-                    pod["status"] = json!({"phase":"Running","containerStatuses":[{"name":"debugger","ready":true,"restartCount":0,"image":"ubuntu","imageID":"test","state":if s.pending{json!({"waiting":{"reason":"ContainerCreating"}})}else{json!({"running":{}})}}]});
-                    assert_eq!(pod["metadata"]["labels"]["kubiki.io/node-debug"], "true");
-                    assert_eq!(pod["spec"]["nodeName"], "worker");
-                    assert_eq!(pod["spec"]["automountServiceAccountToken"], false);
-                    assert_eq!(
-                        pod["spec"]["containers"][0]["securityContext"]["privileged"],
-                        true
-                    );
-                    s.created += 1;
-                    s.pod = Some(pod.clone());
-                    create_notify.notify_one();
-                    (201, pod)
-                } else if line.starts_with("GET /api/v1/namespaces/debug/pods?") {
-                    (
-                        200,
-                        json!({"apiVersion":"v1","kind":"PodList","items":s.pod.iter().cloned().collect::<Vec<_>>()}),
-                    )
-                } else if line.starts_with("GET /api/v1/namespaces/debug/pods/") {
-                    if let Some(mut pod) = s.pod.clone() {
-                        if s.replace {
-                            pod["metadata"]["uid"] = json!("replacement");
-                        }
-                        (200, pod)
-                    } else {
-                        (404, api_error(404))
-                    }
-                } else if line.starts_with("DELETE /api/v1/namespaces/debug/pods/") {
-                    if s.deny_delete {
-                        (403, api_error(403))
-                    } else {
-                        s.delete_uids
-                            .push(body["preconditions"]["uid"].as_str().unwrap().into());
-                        assert_eq!(body["preconditions"]["uid"], "debug-uid");
-                        s.deleted += 1;
-                        s.pod = None;
+            // One task per connection, so a gated POST never starves the
+            // concurrent GET/DELETE traffic of an automatic cleanup.
+            let data = data.clone();
+            let gate = gate.clone();
+            let notify = create_notify.clone();
+            tokio::spawn(async move {
+                let (line, body) = read_request(&mut socket).await;
+                let (status, response) = {
+                    let mut s = data.lock().await;
+                    if line.starts_with("GET /api/v1/nodes/worker ") {
                         (
                             200,
-                            json!({"apiVersion":"v1","kind":"Status","status":"Success","code":200}),
+                            json!({"apiVersion":"v1","kind":"Node","metadata":{"name":"worker","uid":if s.wrong_node{"replacement"}else{"node-uid"}},"status":{"nodeInfo":{"architecture":"amd64","bootID":"test","containerRuntimeVersion":"test","kernelVersion":"test","kubeProxyVersion":"test","kubeletVersion":"test","machineID":"test","operatingSystem":"linux","osImage":"test","systemUUID":"test"}}}),
                         )
+                    } else if line.starts_with("POST /apis/authorization.k8s.io/") {
+                        let mut review = body;
+                        review["status"] = json!({"allowed":!s.deny_permission});
+                        (201, review)
+                    } else if line.starts_with("POST /api/v1/namespaces/debug/pods ") {
+                        let mut pod = body;
+                        pod["metadata"]["uid"] = json!("debug-uid");
+                        pod["metadata"]["resourceVersion"] = json!("10");
+                        pod["status"] = json!({"phase":"Running","containerStatuses":[{"name":"debugger","ready":true,"restartCount":0,"image":"ubuntu","imageID":"test","state":if s.pending{json!({"waiting":{"reason":"ContainerCreating"}})}else{json!({"running":{}})}}]});
+                        assert_eq!(pod["metadata"]["labels"]["kubiki.io/node-debug"], "true");
+                        assert_eq!(pod["spec"]["nodeName"], "worker");
+                        assert_eq!(pod["spec"]["automountServiceAccountToken"], false);
+                        assert_eq!(
+                            pod["spec"]["containers"][0]["securityContext"]["privileged"],
+                            true
+                        );
+                        s.created += 1;
+                        s.pod = Some(pod.clone());
+                        notify.notify_one();
+                        let permit = gate.acquire().await.unwrap();
+                        permit.forget();
+                        (201, pod)
+                    } else if line.starts_with("GET /api/v1/namespaces/debug/pods?") {
+                        (
+                            200,
+                            json!({"apiVersion":"v1","kind":"PodList","items":s.pod.iter().cloned().collect::<Vec<_>>()}),
+                        )
+                    } else if line.starts_with("GET /api/v1/namespaces/debug/pods/") {
+                        if let Some(mut pod) = s.pod.clone() {
+                            if s.replace {
+                                pod["metadata"]["uid"] = json!("replacement");
+                            }
+                            (200, pod)
+                        } else {
+                            (404, api_error(404))
+                        }
+                    } else if line.starts_with("DELETE /api/v1/namespaces/debug/pods/") {
+                        if s.deny_delete {
+                            (403, api_error(403))
+                        } else {
+                            s.delete_uids
+                                .push(body["preconditions"]["uid"].as_str().unwrap().into());
+                            assert_eq!(body["preconditions"]["uid"], "debug-uid");
+                            s.deleted += 1;
+                            s.pod = None;
+                            (
+                                200,
+                                json!({"apiVersion":"v1","kind":"Status","status":"Success","code":200}),
+                            )
+                        }
+                    } else {
+                        panic!("Unexpected request {line}")
                     }
-                } else {
-                    panic!("Unexpected request {line}")
-                }
-            };
-            if line.starts_with("POST /api/v1/namespaces/debug/pods ") {
-                let permit = gate.acquire().await.unwrap();
-                permit.forget();
-            }
+                };
             reply(&mut socket, status, response).await;
+            });
         }
     });
     Fixture {
@@ -250,23 +276,27 @@ async fn fixture() -> Fixture {
         server,
     }
 }
+
 #[tokio::test]
 async fn provisions_uid_bound_privileged_helper_and_real_exec_uses_host_chroot_then_deletes() {
     let f = fixture().await;
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
-    let resource = manager
+    let result = manager
         .prepare(
             "main",
-            "session",
             request(),
             async move { Ok(client) },
             |_| async { Ok(true) },
         )
         .await
         .unwrap();
-    assert_eq!(resource.uid.as_deref(), Some("debug-uid"));
-    assert_eq!(resource.query.namespace.as_deref(), Some("debug"));
+    assert!(!result.reused);
+    assert_eq!(result.pod.uid.as_deref(), Some("debug-uid"));
+    assert_eq!(result.pod.query.namespace.as_deref(), Some("debug"));
+    // The deterministic session identifiers derive from the Node UID.
+    assert_eq!(result.session_id, "node-uid");
+    assert_eq!(result.pod.name, "kubiki-node-debug-node-uid");
     assert!(
         manager
             .list_other(f.client.clone(), "test", "debug")
@@ -275,16 +305,7 @@ async fn provisions_uid_bound_privileged_helper_and_real_exec_uses_host_chroot_t
             .is_empty()
     );
     let mut stream = manager
-        .attach(
-            "main",
-            "exec",
-            NodeExecRequest {
-                debug_session_id: "session".into(),
-                shell: "/bin/sh".into(),
-                cols: 80,
-                rows: 24,
-            },
-        )
+        .attach("main", "exec", exec(&result.session_id))
         .await
         .unwrap()
         .output;
@@ -293,7 +314,7 @@ async fn provisions_uid_bound_privileged_helper_and_real_exec_uses_host_chroot_t
         while let Some(m) = stream.recv().await {
             match m.event {
                 ExecEvent::Started => manager
-                    .write("main", "session", "exec", "exit\r".into())
+                    .write("main", &result.session_id, "exec", "exit\r".into())
                     .await
                     .unwrap(),
                 ExecEvent::Output { data } => text.extend(data),
@@ -318,10 +339,62 @@ async fn provisions_uid_bound_privileged_helper_and_real_exec_uses_host_chroot_t
     ] {
         assert!(uri.contains(field), "{uri}");
     }
-    manager.stop("main", "session").await.unwrap();
+    manager.stop("main", &result.session_id).await.unwrap();
     assert_eq!(f.state.lock().await.deleted, 1);
     assert_eq!(f.state.lock().await.delete_uids, ["debug-uid"]);
 }
+
+#[tokio::test]
+async fn second_terminal_reuses_the_pod_and_refcounted_close_keeps_it_until_the_last_shell() {
+    let f = fixture().await;
+    let manager = NodeDebugManager::default();
+    let client = f.client.clone();
+    let prepared = manager
+        .prepare(
+            "main",
+            request(),
+            async move { Ok(client) },
+            |_| async { Ok(true) },
+        )
+        .await
+        .unwrap();
+    let session_id = prepared.session_id.clone();
+    // A second shell on the same Node reattaches to the same Pod silently.
+    // The client future and consent are never reached on the reuse path.
+    let reused = manager
+        .prepare(
+            "main",
+            request(),
+            std::future::pending::<Result<Client, kubiki_core::core::api::ApiError>>(),
+            |_| async { unreachable!("reuse must not open a dialog") },
+        )
+        .await
+        .unwrap();
+    assert!(reused.reused);
+    assert_eq!(reused.pod.uid, prepared.pod.uid);
+    assert_eq!(f.state.lock().await.created, 1);
+    manager
+        .attach("main", "one", exec(&session_id))
+        .await
+        .unwrap();
+    manager
+        .attach("main", "two", exec(&session_id))
+        .await
+        .unwrap();
+    // The first shell leaves; the Pod must survive for the second one.
+    manager.release_exec("main", &session_id, "one").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(f.state.lock().await.deleted, 0);
+    assert!(
+        manager.status("main", &session_id).await.unwrap().phase == "ready"
+    );
+    // The last shell leaves: the helper Pod is deleted without any dialog.
+    manager.release_exec("main", &session_id, "two").await;
+    deleted_with(f.state.clone(), 1).await;
+    assert_eq!(f.state.lock().await.delete_uids, ["debug-uid"]);
+    assert!(manager.status("main", &session_id).await.is_none());
+}
+
 #[tokio::test]
 async fn denies_rbac_and_replaced_nodes_before_any_pod_create() {
     for bad_node in [false, true] {
@@ -336,7 +409,6 @@ async fn denies_rbac_and_replaced_nodes_before_any_pod_create() {
         let err = manager
             .prepare(
                 "main",
-                "session",
                 request(),
                 async move { Ok(client) },
                 |_| async { Ok(true) },
@@ -344,10 +416,12 @@ async fn denies_rbac_and_replaced_nodes_before_any_pod_create() {
             .await
             .unwrap_err();
         assert_eq!(err.status, Some(if bad_node { 409 } else { 403 }));
-        manager.stop("main", "session").await.unwrap();
+        // Nothing was created; stopping still succeeds (it only records a latch).
+        manager.stop("main", "node-uid").await.unwrap();
         assert_eq!(f.state.lock().await.created, 0);
     }
 }
+
 #[tokio::test]
 async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_ready_was_never_delivered()
  {
@@ -356,53 +430,61 @@ async fn cancellation_during_create_waits_for_outcome_and_cleans_up_even_if_read
     let manager = NodeDebugManager::default();
     let task_manager = manager.clone();
     let client = f.client.clone();
+    let req = request();
     let preparing = tokio::spawn(async move {
         task_manager
-            .prepare(
-                "main",
-                "session",
-                request(),
-                async move { Ok(client) },
-                |_| async { Ok(true) },
-            )
+            .prepare("main", req, async move { Ok(client) }, |_| async { Ok(true) })
             .await
     });
     f.created.notified().await;
     let stopping = manager.clone();
-    let stop = tokio::spawn(async move { stopping.stop("main", "session").await });
+    let stop = tokio::spawn(async move { stopping.stop("main", "node-uid").await });
     tokio::task::yield_now().await;
     f.create_gate.add_permits(1);
     assert!(preparing.await.unwrap().is_err());
     stop.await.unwrap().unwrap();
     assert_eq!(f.state.lock().await.deleted, 1);
-    manager.stop("main", "late").await.unwrap();
+    // The cancelled lease was removed, so a later prepare starts fresh.
+    f.create_gate.add_permits(1);
     let client = f.client.clone();
-    assert_eq!(
-        manager
-            .prepare(
-                "main",
-                "late",
-                request(),
-                async move { Ok(client) },
-                |_| async { Ok(true) }
-            )
-            .await
-            .unwrap_err()
-            .status,
-        Some(409)
-    );
-    assert_eq!(f.state.lock().await.created, 1);
+    let again = manager
+        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
+        .await
+        .unwrap();
+    assert_eq!(again.pod.uid.as_deref(), Some("debug-uid"));
+    assert_eq!(f.state.lock().await.created, 2);
+    manager.stop("main", &again.session_id).await.unwrap();
+    // stop() on an already-removed session records a latch: exactly one
+    // re-open within it is rejected, so a racing teardown never resurrects.
+    manager.stop("main", &again.session_id).await.unwrap();
+    let client = f.client.clone();
+    let latched = manager
+        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
+        .await
+        .unwrap_err();
+    assert_eq!(latched.status, Some(409));
+    assert_eq!(f.state.lock().await.created, 2);
+    // The next attempt gets through (the latch is single-use).
+    f.create_gate.add_permits(1);
+    let client = f.client.clone();
+    let third = manager
+        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
+        .await
+        .unwrap();
+    assert_eq!(third.pod.uid.as_deref(), Some("debug-uid"));
+    assert_eq!(f.state.lock().await.created, 3);
+    manager.stop("main", &third.session_id).await.unwrap();
 }
+
 #[tokio::test]
 async fn cleanup_failure_is_retained_retryable_and_never_deletes_a_replacement() {
     for replace in [false, true] {
         let f = fixture().await;
         let manager = NodeDebugManager::default();
         let client = f.client.clone();
-        manager
+        let prepared = manager
             .prepare(
                 "main",
-                "session",
                 request(),
                 async move { Ok(client) },
                 |_| async { Ok(true) },
@@ -414,39 +496,48 @@ async fn cleanup_failure_is_retained_retryable_and_never_deletes_a_replacement()
             s.deny_delete = !replace;
             s.replace = replace;
         }
-        manager.stop("foreign", "session").await.unwrap();
+        manager.stop("foreign", &prepared.session_id).await.unwrap();
         assert_eq!(f.state.lock().await.deleted, 0);
         assert_eq!(
-            manager.stop("main", "session").await.unwrap_err().status,
+            manager
+                .stop("main", &prepared.session_id)
+                .await
+                .unwrap_err()
+                .status,
             Some(if replace { 409 } else { 403 })
         );
         assert_eq!(
-            manager.status("main", "session").await.unwrap().phase,
+            manager
+                .status("main", &prepared.session_id)
+                .await
+                .unwrap()
+                .phase,
             "cleanup_failed"
         );
         assert_eq!(f.state.lock().await.deleted, 0);
         if !replace {
             f.state.lock().await.deny_delete = false;
-            manager.stop("main", "session").await.unwrap();
+            manager.stop("main", &prepared.session_id).await.unwrap();
             assert_eq!(f.state.lock().await.deleted, 1);
         }
     }
 }
+
 #[tokio::test]
 async fn lists_and_deletes_only_inactive_marked_debug_pods_with_atomic_uid_precondition() {
     let f = fixture().await;
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
-    let resource = manager
+    let prepared = manager
         .prepare(
             "main",
-            "session",
             request(),
             async move { Ok(client) },
             |_| async { Ok(true) },
         )
         .await
         .unwrap();
+    let resource = prepared.pod.clone();
     assert_eq!(
         manager
             .remove_other(f.client.clone(), resource.clone(), |_| async { Ok(true) })
@@ -456,7 +547,7 @@ async fn lists_and_deletes_only_inactive_marked_debug_pods_with_atomic_uid_preco
         Some(409)
     );
     f.state.lock().await.deny_delete = true;
-    assert!(manager.stop("main", "session").await.is_err());
+    assert!(manager.stop("main", &prepared.session_id).await.is_err());
     let pods = manager
         .list_other(f.client.clone(), "test", "debug")
         .await
@@ -482,7 +573,6 @@ async fn node_create_requires_consent_to_exact_privileged_manifest_and_rechecks_
         let result = manager
             .prepare(
                 "main",
-                "review",
                 request(),
                 async move { Ok(client) },
                 move |review| {
@@ -495,8 +585,8 @@ async fn node_create_requires_consent_to_exact_privileged_manifest_and_rechecks_
                         );
                         assert!(
                             review.contains("\"privileged\": true")
-                                && review.contains("separate system confirmation")
-                                && review.contains("kubiki-node-debug-review")
+                                && review.contains("deleted automatically")
+                                && review.contains("kubiki-node-debug-node-uid")
                         );
                         assert_eq!(state.lock().await.created, 0);
                         if approve {
@@ -524,18 +614,13 @@ async fn orphan_delete_cancellation_and_concurrent_changes_never_delete() {
     let f = fixture().await;
     let manager = NodeDebugManager::default();
     let client = f.client.clone();
-    let resource = manager
-        .prepare(
-            "main",
-            "review",
-            request(),
-            async move { Ok(client) },
-            |_| async { Ok(true) },
-        )
+    let prepared = manager
+        .prepare("main", request(), async move { Ok(client) }, |_| async { Ok(true) })
         .await
         .unwrap();
+    let resource = prepared.pod.clone();
     f.state.lock().await.deny_delete = true;
-    assert!(manager.stop("main", "review").await.is_err());
+    assert!(manager.stop("main", &prepared.session_id).await.is_err());
     f.state.lock().await.deny_delete = false;
     let result = manager
         .remove_other(f.client.clone(), resource.clone(), |review| async move {
@@ -568,60 +653,35 @@ async fn orphan_delete_cancellation_and_concurrent_changes_never_delete() {
 }
 
 #[tokio::test]
-async fn creation_consent_never_authorizes_cleanup_and_cancel_is_not_reprompted_in_the_same_stop() {
+async fn create_consent_covers_lifecycle_and_cleanup_never_prompts() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    for unavailable in [false, true] {
-        let f = fixture().await;
-        let manager = NodeDebugManager::default();
-        let client = f.client.clone();
-        let prompts = Arc::new(AtomicUsize::new(0));
-        let observed = prompts.clone();
-        manager
-            .prepare(
-                "main",
-                "separate-review",
-                request(),
-                async move { Ok(client) },
-                move |review| {
-                    let prompts = observed.clone();
-                    async move {
-                        prompts.fetch_add(1, Ordering::SeqCst);
-                        if review.starts_with("CREATE") {
-                            return Ok(true);
-                        }
-                        assert!(review.starts_with("DELETE debug Pod"));
-                        assert!(
-                            review.contains("debug-uid")
-                                && review.contains("Resource version: \"10\"")
-                        );
-                        if unavailable {
-                            Err(kubiki_core::core::api::ApiError::from_status(
-                                503,
-                                "Window closed",
-                                "mutation",
-                                None,
-                            ))
-                        } else {
-                            Ok(false)
-                        }
-                    }
-                },
-            )
-            .await
-            .unwrap();
-        assert!(manager.stop("main", "separate-review").await.is_err());
-        assert_eq!(f.state.lock().await.deleted, 0);
-        assert_eq!(prompts.load(Ordering::SeqCst), 2);
-        assert_eq!(
-            manager
-                .status("main", "separate-review")
-                .await
-                .unwrap()
-                .phase,
-            "cleanup_failed"
-        );
-        assert!(manager.stop("main", "separate-review").await.is_err());
-        assert_eq!(f.state.lock().await.deleted, 0);
-        assert_eq!(prompts.load(Ordering::SeqCst), 3);
-    }
+    let f = fixture().await;
+    let manager = NodeDebugManager::default();
+    let client = f.client.clone();
+    let prompts = Arc::new(AtomicUsize::new(0));
+    let observed = prompts.clone();
+    let prepared = manager
+        .prepare(
+            "main",
+            request(),
+            async move { Ok(client) },
+            move |review| {
+                let prompts = observed.clone();
+                async move {
+                    prompts.fetch_add(1, Ordering::SeqCst);
+                    assert!(review.starts_with("CREATE privileged"));
+                    assert!(review.contains("deleted automatically"));
+                    Ok(true)
+                }
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(prompts.load(Ordering::SeqCst), 1);
+    // Consent is never requested again: cleanup runs silently, even while a
+    // window that could host the dialog is gone.
+    manager.stop("main", &prepared.session_id).await.unwrap();
+    assert_eq!(prompts.load(Ordering::SeqCst), 1);
+    assert_eq!(f.state.lock().await.deleted, 1);
+    assert!(manager.status("main", &prepared.session_id).await.is_none());
 }

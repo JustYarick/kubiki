@@ -36,5 +36,10 @@ export class LogBuffer {
       const removed = this.lines.shift()!; this.chars -= removed.msg.length + removed.t.length; this.truncated = true;
     }
   }
+  /** Add one already-decoded line; used by the poller to skip refetched lines. */
+  addLine(text: string): void {
+    if (this.dropping || this.pending) throw new Error('addLine is only valid between complete reads');
+    this.append(text);
+  }
   clear(): void { this.lines = []; this.chars = 0; this.pending = ''; this.dropping = false; this.truncated = false; }
 }

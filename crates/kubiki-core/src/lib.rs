@@ -35,7 +35,7 @@ pub use informer::store::ResourceStore;
 pub use informer::watcher::InformerManager;
 pub use metrics::client::{ContainerMetric, MetricsService, NodeMetricsInfo, PodMetricsInfo};
 pub use pod_ops::exec::{PodExecOptions, PodExecService};
-pub use pod_ops::logs::{PodLogOptions, PodLogService};
+pub use pod_ops::logs::{LogSliceRequest, MAX_SLICE_BYTES};
 pub use pod_ops::port_forward::{
     ForwardStatus, ForwardTargetKind, PortForwardManager, PortForwardSession,
 };

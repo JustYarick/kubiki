@@ -29,7 +29,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
   const original = item.rawYaml ?? '';
   const existingMemento = useYamlDraftStore.getState().getDraft(draftKey);
 
-  const [cleanView, setCleanView] = useState(() => (existingMemento && existingMemento.uid === item.uid ? existingMemento.cleanView : true));
+  const [cleanView, setCleanView] = useState(() => (existingMemento && existingMemento.uid === item.uid ? existingMemento.cleanView : useUiStore.getState().yamlCleanView));
   const cleanViewRef = useRef(cleanView);
   cleanViewRef.current = cleanView;
 

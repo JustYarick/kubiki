@@ -1,298 +1,135 @@
-use kube::{Client, Config};
-use kubiki_core::{
-    core::api::{ApiError, ResourceQuery, ResourceRef},
-    pod_ops::log_sessions::{LogEvent, LogRequest, PodLogManager},
-};
+//! One-shot log slices: validation, UID/container preconditions, bounded reads.
+//! Read/write HTTP fixtures only: these tests never use kubeconfig or a live cluster.
+use kube::{Client, client::Body};
+use kubiki_core::pod_ops::logs::LogSliceRequest;
 use serde_json::json;
-use std::time::Duration;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::oneshot,
-};
-fn request() -> LogRequest {
-    LogRequest {
-        resource: ResourceRef {
-            query: ResourceQuery {
-                context: "test".into(),
-                group: "".into(),
-                version: "v1".into(),
-                kind: "Pod".into(),
-                namespace: Some("backend".into()),
-            },
-            name: "web".into(),
-            uid: Some("uid".into()),
-        },
-        container: "app".into(),
-        follow: true,
-        previous: false,
-        tail_lines: 100,
-        since_seconds: Some(300),
-    }
-}
-async fn header(socket: &mut TcpStream) -> String {
-    let mut data = Vec::new();
-    loop {
-        let mut b = [0; 1024];
-        let n = socket.read(&mut b).await.unwrap();
-        data.extend_from_slice(&b[..n]);
-        if n == 0 || data.windows(4).any(|w| w == b"\r\n\r\n") {
-            break;
-        }
-    }
-    String::from_utf8_lossy(&data).into_owned()
-}
-async fn reply(socket: &mut TcpStream, status: u16, body: String) {
-    socket.write_all(format!("HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
-}
-async fn fixture() -> (TcpListener, Client) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let client = Client::try_from(Config::new(
-        format!("http://{}", listener.local_addr().unwrap())
-            .parse()
-            .unwrap(),
-    ))
-    .unwrap();
-    (listener, client)
+use std::sync::{Arc, Mutex};
+
+fn slice() -> LogSliceRequest {
+    serde_json::from_value(json!({
+        "resource": {"context":"test","group":"","version":"v1","kind":"Pod","namespace":"backend","name":"web","uid":"uid"},
+        "container": "app",
+        "previous": false,
+        "tail_lines": 100,
+        "since_seconds": 300
+    }))
+    .unwrap()
 }
 fn pod(uid: &str) -> String {
     json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"backend","uid":uid},"spec":{"containers":[{"name":"app","image":"test"}]}}).to_string()
 }
-
-#[tokio::test]
-async fn streams_before_eof_and_passes_follow_previous_tail_since_and_timestamps() {
-    for previous in [false, true] {
-        let (listener, client) = fixture().await;
-        let (finish, finished) = oneshot::channel();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            assert!(
-                header(&mut socket)
-                    .await
-                    .starts_with("GET /api/v1/namespaces/backend/pods/web ")
-            );
-            reply(&mut socket, 200, pod("uid")).await;
-            drop(socket);
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let url = header(&mut socket).await;
-            for value in [
-                "/pods/web/log?",
-                "container=app",
-                "tailLines=100",
-                "sinceSeconds=300",
-                "timestamps=true",
-            ] {
-                assert!(url.contains(value), "{url}");
-            }
-            assert_eq!(url.contains("previous=true"), previous);
-            assert_eq!(url.contains("follow=true"), !previous);
-            socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n").await.unwrap();
-            let bytes = "2026-10-20T08:00:00Z привет 🌍\n".as_bytes();
-            for part in [&bytes[..25], &bytes[25..]] {
-                socket
-                    .write_all(format!("{:X}\r\n", part.len()).as_bytes())
-                    .await
-                    .unwrap();
-                socket.write_all(part).await.unwrap();
-                socket.write_all(b"\r\n").await.unwrap();
-            }
-            finished.await.unwrap();
-            socket.write_all(b"0\r\n\r\n").await.unwrap();
-        });
-        let manager = PodLogManager::default();
-        let mut req = request();
-        req.previous = previous;
-        req.follow = !previous;
-        let mut output = manager
-            .start("main", "logs", req, async move { Ok(client) })
-            .await
-            .unwrap()
-            .output;
-        let mut bytes = Vec::new();
-        let mut sequence = 0;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while !bytes.ends_with(b"\n") {
-                let m = output.recv().await.unwrap();
-                assert_eq!(m.sequence, sequence + 1);
-                sequence = m.sequence;
-                match m.event {
-                    LogEvent::Output { data } => bytes.extend(data),
-                    LogEvent::Started => {}
-                    other => panic!("{other:?}"),
-                }
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(
-            String::from_utf8(bytes).unwrap(),
-            "2026-10-20T08:00:00Z привет 🌍\n"
-        );
-        finish.send(()).unwrap();
-        assert!(matches!(
-            tokio::time::timeout(Duration::from_secs(5), output.recv())
-                .await
-                .unwrap()
-                .unwrap()
-                .event,
-            LogEvent::Completed
-        ));
-        manager.stop("main", "logs").await;
-        assert_eq!(manager.session_count().await, 0);
-        server.await.unwrap();
-    }
+struct Fixture {
+    client: Client,
+    requests: Arc<Mutex<Vec<(String, String)>>>,
 }
-#[tokio::test]
-async fn preserves_get_and_log_403_and_rejects_recreated_pod_before_logs() {
-    for mode in [0, 1, 2] {
-        let (listener, client) = fixture().await;
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            header(&mut socket).await;
-            if mode == 0 {
-                reply(&mut socket,403,json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","message":"get pods denied","code":403}).to_string()).await;
-            } else {
-                reply(
-                    &mut socket,
-                    200,
-                    pod(if mode == 1 { "new-uid" } else { "uid" }),
-                )
-                .await;
-                drop(socket);
-                if mode == 2 {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    header(&mut socket).await;
-                    reply(&mut socket,403,json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","message":"pods/log denied","code":403}).to_string()).await;
+async fn fixture(pod_uid: &str, log_status: u16) -> Fixture {
+    let requests: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let r = requests.clone();
+    let pod_uid = pod_uid.to_string();
+    let service = tower::service_fn(move |request: http::Request<Body>| {
+        let requests = r.clone();
+        let (pod_uid, log_status) = (pod_uid.clone(), log_status);
+        async move {
+            let method = request.method().to_string();
+            let uri = request.uri().to_string();
+            requests.lock().unwrap().push((method, uri.clone()));
+            let (status, body) = if uri.contains("/log?") {
+                if log_status >= 400 {
+                    (
+                        log_status,
+                        json!({"kind":"Status","apiVersion":"v1","status":"Failure","code":log_status,"reason":"Forbidden","message":"pods/log denied"}).to_string(),
+                    )
                 } else {
-                    assert!(
-                        tokio::time::timeout(Duration::from_millis(100), listener.accept())
-                            .await
-                            .is_err()
-                    );
+                    (200, "2026-10-20T08:00:00Z привет 🌍\n".into())
                 }
-            }
-        });
-        let manager = PodLogManager::default();
-        let mut output = manager
-            .start("main", "logs", request(), async move { Ok(client) })
-            .await
-            .unwrap()
-            .output;
-        let message = tokio::time::timeout(Duration::from_secs(5), output.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        match message.event {
-            LogEvent::Failed { error } => {
-                assert_eq!(error.status, Some(if mode == 1 { 409 } else { 403 }));
-                assert_eq!(error.operation, "logs");
-            }
-            other => panic!("{other:?}"),
+            } else {
+                (200, pod(&pod_uid))
+            };
+            Ok::<_, std::convert::Infallible>(
+                http::Response::builder()
+                    .status(status)
+                    .body(Body::from(body.into_bytes()))
+                    .unwrap(),
+            )
         }
-        manager.stop_owner("main").await;
-        server.await.unwrap();
-    }
-}
-#[tokio::test]
-async fn cancellation_closes_stream_and_owner_isolation_protects_other_sessions() {
-    let (listener, client) = fixture().await;
-    let (closed, closed_rx) = oneshot::channel();
-    let server = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
-        header(&mut socket).await;
-        reply(&mut socket, 200, pod("uid")).await;
-        drop(socket);
-        let (mut socket, _) = listener.accept().await.unwrap();
-        header(&mut socket).await;
-        socket
-            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
-            .await
-            .unwrap();
-        let mut b = [0; 1];
-        let n = socket.read(&mut b).await.unwrap();
-        closed.send(n).unwrap();
     });
-    let manager = PodLogManager::default();
-    let mut output = manager
-        .start("main", "logs", request(), async move { Ok(client) })
-        .await
-        .unwrap()
-        .output;
-    assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(5), output.recv())
-            .await
-            .unwrap()
-            .unwrap()
-            .event,
-        LogEvent::Started
-    ));
-    manager.stop("other-window", "logs").await;
-    assert_eq!(manager.session_count().await, 1);
-    manager.stop_owner("main").await;
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(5), closed_rx)
-            .await
-            .unwrap()
-            .unwrap(),
-        0
-    );
-    server.await.unwrap();
-    let _pending = manager
-        .start(
-            "main",
-            "pending",
-            request(),
-            std::future::pending::<Result<Client, ApiError>>(),
-        )
-        .await
-        .unwrap();
-    manager.stop_owner("main").await;
-    assert_eq!(manager.session_count().await, 0);
+    Fixture {
+        client: Client::new(service, "backend"),
+        requests,
+    }
 }
 #[tokio::test]
-async fn rejects_invalid_options_before_connection_and_bounds_session_count() {
-    let manager = PodLogManager::default();
-    for change in [0, 1, 2, 3] {
-        let mut req = request();
-        match change {
-            0 => req.tail_lines = 10001,
-            1 => req.since_seconds = Some(-1),
-            2 => req.resource.uid = None,
-            _ => req.previous = true,
-        };
-        assert_eq!(
-            manager
-                .start("main", "invalid", req, std::future::pending())
-                .await
-                .err()
-                .unwrap()
-                .status,
-            Some(400)
-        );
+async fn slice_requests_xxx_urls_and_returns_the_text() {
+    let f = fixture("uid", 200).await;
+    let text = slice().read(f.client.clone()).await.unwrap();
+    assert_eq!(text, "2026-10-20T08:00:00Z привет 🌍\n");
+    let requests = f.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].0, "GET");
+    assert_eq!(requests[0].1, "/api/v1/namespaces/backend/pods/web");
+    let url = &requests[1].1;
+    for value in ["/pods/web/log?", "container=app", "tailLines=100", "sinceSeconds=300", "timestamps=true", "limitBytes=4194304"] {
+        assert!(url.contains(value), "{url} misses {value}");
     }
-    let mut outputs = Vec::new();
-    for i in 0..32 {
-        outputs.push(
-            manager
-                .start(
-                    "main",
-                    &format!("logs-{i}"),
-                    request(),
-                    std::future::pending(),
-                )
-                .await
-                .unwrap(),
-        );
+    assert!(!url.contains("previous=true") && !url.contains("sinceTime"));
+}
+#[tokio::test]
+async fn since_time_is_sent_and_previous_marks_the_snapshot() {
+    let f = fixture("uid", 200).await;
+    let mut request = slice();
+    request.tail_lines = None;
+    request.since_seconds = None;
+    request.since_time = Some("2026-10-20T08:00:00Z".into());
+    request.previous = true;
+    let _ = request.read(f.client.clone()).await.unwrap();
+    let url = &f.requests.lock().unwrap()[1].1;
+    assert!(url.contains("sinceTime=2026-10-20T08%3A00%3A00Z"), "{url}");
+    assert!(url.contains("previous=true"));
+    assert!(!url.contains("tailLines"), "{url}");
+}
+#[tokio::test]
+async fn recreated_pod_and_forbidden_logs_keep_the_api_status() {
+    // Success case for contrast, then the two honest failure surfaces.
+    let f = fixture("uid", 200).await;
+    slice().read(f.client).await.unwrap();
+    let f = fixture("uid", 403).await;
+    let error = slice().read(f.client).await.unwrap_err();
+    assert_eq!(error.status, Some(403));
+    assert_eq!(error.message, "pods/log denied");
+    let f = fixture("new-uid", 200).await;
+    let error = slice().read(f.client).await.unwrap_err();
+    assert_eq!(error.status, Some(409));
+    assert_eq!(error.message, "Pod was recreated; open the current Pod to read its logs");
+    let f = fixture("uid", 200).await;
+    let mut foreign = slice();
+    foreign.container = "sidecar".into();
+    let error = foreign.read(f.client).await.unwrap_err();
+    assert_eq!(error.status, Some(400));
+    assert_eq!(error.message, "Container does not belong to the selected Pod");
+}
+#[tokio::test]
+async fn validation_rejects_bad_identities_windows_and_conflicts() {
+    fn base() -> kubiki_core::core::api::ResourceRef {
+        serde_json::from_value(json!({"context":"test","group":"","version":"v1","kind":"Pod","namespace":"backend","name":"web","uid":"uid"})).unwrap()
     }
-    assert_eq!(
-        manager
-            .start("main", "extra", request(), std::future::pending())
-            .await
-            .err()
-            .unwrap()
-            .status,
-        Some(429)
-    );
-    manager.stop_owner("main").await;
-    assert_eq!(manager.session_count().await, 0);
+    let broken: Vec<(LogSliceRequest, &str)> = vec![
+        (LogSliceRequest { resource: base(), container: "app".into(), previous: false, tail_lines: None, since_time: None, since_seconds: None }, "baseline"),
+        (LogSliceRequest { resource: serde_json::from_value(json!({"context":"test","group":"","version":"v1","kind":"Deployment","namespace":"backend","name":"web","uid":"uid"})).unwrap(), container: "app".into(), previous: false, tail_lines: None, since_time: None, since_seconds: None }, "kind"),
+        (LogSliceRequest { resource: serde_json::from_value(json!({"context":"test","group":"","version":"v1","kind":"Pod","namespace":null,"name":"web","uid":"uid"})).unwrap(), container: "app".into(), previous: false, tail_lines: None, since_time: None, since_seconds: None }, "namespace"),
+        (LogSliceRequest { resource: serde_json::from_value(json!({"context":"test","group":"","version":"v1","kind":"Pod","namespace":"backend","name":"web","uid":null})).unwrap(), container: "app".into(), previous: false, tail_lines: None, since_time: None, since_seconds: None }, "uid"),
+        (LogSliceRequest { resource: base(), container: "App A".into(), previous: false, tail_lines: None, since_time: None, since_seconds: None }, "container"),
+        (LogSliceRequest { resource: base(), container: "app".into(), previous: false, tail_lines: Some(10001), since_time: None, since_seconds: None }, "tail"),
+        (LogSliceRequest { resource: base(), container: "app".into(), previous: false, tail_lines: None, since_time: None, since_seconds: Some(604801) }, "since"),
+        (LogSliceRequest { resource: base(), container: "app".into(), previous: false, tail_lines: None, since_time: Some("2026-01-01T00:00:00Z".into()), since_seconds: Some(5) }, "exclusive"),
+        (LogSliceRequest { resource: base(), container: "app".into(), previous: false, tail_lines: None, since_time: Some("not-a-time".into()), since_seconds: None }, "since_time"),
+    ];
+    // The first row documents the valid baseline; every other row must fail.
+    let [baseline, rest @ ..] = &broken[..] else { unreachable!() };
+    assert!(baseline.0.validate().is_ok(), "{}", baseline.1);
+    for (request, label) in rest {
+        assert!(request.validate().is_err(), "{label} must be rejected");
+    }
+    // A resumed poll carries only sinceTime; that shape stays valid.
+    let resumed = LogSliceRequest { resource: base(), container: "app".into(), previous: false, tail_lines: None, since_time: Some("2026-01-01T00:00:00Z".into()), since_seconds: None };
+    resumed.validate().unwrap();
 }

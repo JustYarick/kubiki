@@ -16,6 +16,19 @@ interface UIState {
   terminalFontSize: number;
   terminalFontFamily: string;
   terminalLineHeight: number;
+  /* editor behavior */
+  yamlCleanView: boolean;
+  /* details panel default tab for freshly opened resources */
+  defaultRightTab: 'overview' | 'yaml';
+  /* terminal behavior */
+  terminalScrollback: number;
+  /* defaults for new log sessions */
+  logsWrap: boolean;
+  logsTimestamps: boolean;
+  /** Poll frequency for the log viewer, milliseconds. Lens-style reads. */
+  logsPollMs: number;
+  /* cluster behavior */
+  rememberNamespaceScope: boolean;
   /* panels geometry */
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -43,6 +56,13 @@ interface UIState {
   setTerminalFontSize: (value: number) => void;
   setTerminalFontFamily: (value: string) => void;
   setTerminalLineHeight: (value: number) => void;
+  setYamlCleanView: (value: boolean) => void;
+  setDefaultRightTab: (value: 'overview' | 'yaml') => void;
+  setTerminalScrollback: (value: number) => void;
+  setLogsWrap: (value: boolean) => void;
+  setLogsTimestamps: (value: boolean) => void;
+  setLogsPollMs: (value: number) => void;
+  setRememberNamespaceScope: (value: boolean) => void;
   resetAppearance: () => void;
   setSidebarWidth: (w: number) => void;
   toggleSidebar: () => void;
@@ -70,6 +90,17 @@ export const DEFAULT_LAYOUT = {
   dockHeight: 260,
 };
 
+export const DEFAULT_SCROLLBACK = 5000;
+export const SCROLLBACK_LIMITS = { min: 500, max: 50000 } as const;
+export const TERMINAL_SCROLLBACK_PRESETS = [500, 2000, 5000, 10000, 25000, 50000];
+/** Log poll cadence options; 2s matches the Lens desktop defaults. */
+export const LOG_POLL_PRESETS = [1000, 2000, 5000, 10000] as const;
+
+const normalizeNumber = (value: unknown, min: number, max: number, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? clamp(Math.round(value), min, max) : fallback;
+const normalizeBool = (value: unknown, fallback: boolean): boolean =>
+  typeof value === 'boolean' ? value : fallback;
+
 export const useUiStore = create<UIState>()(
   persist(
     (set) => ({
@@ -77,6 +108,13 @@ export const useUiStore = create<UIState>()(
       ...DEFAULT_APPEARANCE,
       terminalFontFamily: DEFAULT_TERMINAL_FONT,
       terminalLineHeight: 1.2,
+      yamlCleanView: true,
+      defaultRightTab: 'overview' as const,
+      terminalScrollback: DEFAULT_SCROLLBACK,
+      logsWrap: true,
+      logsTimestamps: true,
+      logsPollMs: 2000,
+      rememberNamespaceScope: true,
       sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
       sidebarCollapsed: false,
       inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
@@ -100,6 +138,13 @@ export const useUiStore = create<UIState>()(
       setTerminalFontSize: (value) => set({ terminalFontSize: appearanceValue('terminalFontSize', value) }),
       setTerminalFontFamily: (value) => set({ terminalFontFamily: normalizeTerminalFont(value) }),
       setTerminalLineHeight: (value) => set({ terminalLineHeight: normalizeTerminalLineHeight(value) }),
+      setYamlCleanView: (yamlCleanView) => set({ yamlCleanView }),
+      setDefaultRightTab: (defaultRightTab) => set({ defaultRightTab }),
+      setTerminalScrollback: (value) => set({ terminalScrollback: normalizeNumber(value, SCROLLBACK_LIMITS.min, SCROLLBACK_LIMITS.max, DEFAULT_SCROLLBACK) }),
+      setLogsWrap: (logsWrap) => set({ logsWrap }),
+      setLogsTimestamps: (logsTimestamps) => set({ logsTimestamps }),
+      setLogsPollMs: (value) => set({ logsPollMs: (LOG_POLL_PRESETS as readonly number[]).includes(value) ? value : 2000 }),
+      setRememberNamespaceScope: (rememberNamespaceScope) => set({ rememberNamespaceScope }),
       resetAppearance: () => set({ ...DEFAULT_APPEARANCE, terminalFontFamily: DEFAULT_TERMINAL_FONT, terminalLineHeight: 1.2 }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 420), sidebarCollapsed: false }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -147,7 +192,26 @@ export const useUiStore = create<UIState>()(
     }),
     {
       name: 'kubiki.settings.v3',
-      merge: (persisted, current) => ({ ...current, ...persisted as Partial<UIState>, inspectorWidth: clamp((persisted as Partial<UIState> | undefined)?.inspectorWidth ?? current.inspectorWidth, 320, 1000), sidebarGroups: (persisted as Partial<UIState> | undefined)?.sidebarTreeVersion === 2 ? (persisted as Partial<UIState>).sidebarGroups ?? {} : {}, sidebarTreeVersion: 2, ...normalizeAppearance(persisted as Partial<UIState> | undefined), terminalFontFamily: normalizeTerminalFont((persisted as Partial<UIState> | undefined)?.terminalFontFamily), terminalLineHeight: normalizeTerminalLineHeight((persisted as Partial<UIState> | undefined)?.terminalLineHeight) }),
+      merge: (persisted, current) => {
+        const stored = persisted as Partial<UIState> | undefined;
+        return {
+          ...current,
+          ...stored as Partial<UIState>,
+          inspectorWidth: clamp(stored?.inspectorWidth ?? current.inspectorWidth, 320, 1000),
+          sidebarGroups: stored?.sidebarTreeVersion === 2 ? stored.sidebarGroups ?? {} : {},
+          sidebarTreeVersion: 2,
+          ...normalizeAppearance(stored),
+          terminalFontFamily: normalizeTerminalFont(stored?.terminalFontFamily),
+          terminalLineHeight: normalizeTerminalLineHeight(stored?.terminalLineHeight),
+          yamlCleanView: normalizeBool(stored?.yamlCleanView, true),
+          defaultRightTab: stored?.defaultRightTab === 'yaml' ? ('yaml' as const) : ('overview' as const),
+          terminalScrollback: normalizeNumber(stored?.terminalScrollback, SCROLLBACK_LIMITS.min, SCROLLBACK_LIMITS.max, DEFAULT_SCROLLBACK),
+          logsWrap: normalizeBool(stored?.logsWrap, true),
+          logsTimestamps: normalizeBool(stored?.logsTimestamps, true),
+          logsPollMs: normalizeNumber(stored?.logsPollMs, 500, 60000, 2000),
+          rememberNamespaceScope: normalizeBool(stored?.rememberNamespaceScope, true),
+        };
+      },
       partialize: (s) => ({
         density: s.density,
         uiScale: s.uiScale,
@@ -155,6 +219,13 @@ export const useUiStore = create<UIState>()(
         terminalFontSize: s.terminalFontSize,
         terminalFontFamily: s.terminalFontFamily,
         terminalLineHeight: s.terminalLineHeight,
+        yamlCleanView: s.yamlCleanView,
+        defaultRightTab: s.defaultRightTab,
+        terminalScrollback: s.terminalScrollback,
+        logsWrap: s.logsWrap,
+        logsTimestamps: s.logsTimestamps,
+        logsPollMs: s.logsPollMs,
+        rememberNamespaceScope: s.rememberNamespaceScope,
         sidebarWidth: s.sidebarWidth,
         sidebarCollapsed: s.sidebarCollapsed,
         inspectorWidth: s.inspectorWidth,

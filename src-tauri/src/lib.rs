@@ -28,7 +28,6 @@ use kubiki_core::pod_ops::node_debug::NodeDebugManager;
 use host_terminal_commands::*;
 use kubiki_core::pod_ops::host_terminal::HostTerminalManager;
 use log_commands::*;
-use kubiki_core::pod_ops::log_sessions::PodLogManager;
 use watch_commands::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -52,7 +51,6 @@ pub fn run() {
         .manage(PodTerminalManager::default())
         .manage(NodeDebugManager::default())
         .manage(HostTerminalManager::default())
-        .manage(PodLogManager::default())
         .manage(PortForwardManager::default())
         .manage(mutation_guard::MutationGuard::default())
         .plugin(tauri_plugin_opener::init())
@@ -79,13 +77,10 @@ pub fn run() {
             delete_resource,
             resolve_mutation_confirm,
             get_pod_logs,
+            get_pod_log_slice,
             watch_resources,
             stop_resource_watch,
             stop_resource_watches,
-            start_pod_logs,
-            ack_pod_logs,
-            close_pod_logs,
-            stop_pod_logs,
             get_host_terminal_info,
             start_host_terminal,
             write_host_terminal,
@@ -95,6 +90,7 @@ pub fn run() {
             stop_host_terminals,
             node_debug_status,
             stop_node_debug,
+            cancel_node_debug,
             stop_node_debugs,
             list_other_debug_pods,
             start_node_exec,
@@ -113,7 +109,6 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 let manager = window.state::<InformerManager>().inner().clone();
                 let terminals = window.state::<PodTerminalManager>().inner().clone();
-                let logs = window.state::<PodLogManager>().inner().clone();
                 let hosts = window.state::<HostTerminalManager>().inner().clone();
                 let nodes = window.state::<NodeDebugManager>().inner().clone();
                 let forwards = window.state::<PortForwardManager>().inner().clone();
@@ -123,7 +118,6 @@ pub fn run() {
                     terminals.stop_owner(&owner).await;
                     nodes.stop_owner(&owner).await;
                     hosts.stop_owner(&owner).await;
-                    logs.stop_owner(&owner).await;
                     forwards.stop_owner(&owner).await;
                 });
             }

@@ -40,6 +40,12 @@ pub enum MutationIntent {
         resource: ResourceRef,
         resource_version: String,
     },
+    /// Drop one entry from `metadata.finalizers`. The object is re-read server-side
+    /// so the review pins the live state, not a stale renderer copy.
+    RemoveFinalizer {
+        resource: ResourceRef,
+        finalizer: String,
+    },
 }
 
 /// Separate from editable YAML so changing metadata cannot retarget an editor save.
@@ -228,6 +234,8 @@ pub struct PreparedMutation {
     delete: bool,
     evict: bool,
     create: bool,
+    /// Some(finalizer) = a metadata.finalizers merge-patch commit.
+    finalizer: Option<String>,
     prepared_at: Instant,
 }
 impl PreparedMutation {
@@ -242,6 +250,9 @@ impl PreparedMutation {
         };
         let (resource, version, scale, secret, delete, evict) = match intent {
             MutationIntent::Manifest { .. } => unreachable!(),
+            MutationIntent::RemoveFinalizer { resource, finalizer } => {
+                return Self::prepare_remove_finalizer(client, resource, finalizer).await;
+            }
             MutationIntent::Scale {
                 resource,
                 resource_version,
@@ -394,6 +405,93 @@ impl PreparedMutation {
             delete,
             evict,
             create: false,
+            finalizer: None,
+            prepared_at: Instant::now(),
+        })
+    }
+
+    /// Re-read the object, verify the finalizer exists, and produce a one-entry
+    /// removal review. Commit is a merge patch with UID/RV preconditions; no retries.
+    async fn prepare_remove_finalizer(
+        client: Client,
+        resource: ResourceRef,
+        finalizer: String,
+    ) -> Result<Self, ApiError> {
+        if finalizer.len() > 200 {
+            return Err(error(
+                &resource,
+                400,
+                "The finalizer name is too long to be real",
+            ));
+        }
+        validate_reference(&resource)?;
+        if resource.uid.as_deref().is_none_or(str::is_empty) {
+            return Err(error(
+                &resource,
+                400,
+                "Exact resource identity and UID are required",
+            ));
+        }
+        let api = resource_api(client, &resource).await?;
+        let before = bounded(&resource, api.get(&resource.name)).await?;
+        if before.metadata.uid != resource.uid {
+            return Err(error(
+                &resource,
+                409,
+                "Resource changed or was recreated. Refresh and remove again",
+            ));
+        }
+        let version = before.metadata.resource_version.clone().unwrap_or_default();
+        validate_identity(&resource, &version)?;
+        let existing = before.metadata.finalizers.clone().unwrap_or_default();
+        if !existing.iter().any(|name| name == &finalizer) {
+            return Err(error(
+                &resource,
+                400,
+                "This finalizer is already absent from the object",
+            ));
+        }
+        let remaining: Vec<String> = existing
+            .iter()
+            .filter(|name| name.as_str() != finalizer.as_str())
+            .cloned()
+            .collect();
+        let mut after = before.clone();
+        after.metadata.finalizers = Some(remaining);
+        // serde_json keeps untrusted names quoted and escaped in review text.
+        let old_json = serde_json::to_string(&before.metadata.finalizers)
+            .unwrap_or_else(|_| "[]".into());
+        let new_json =
+            serde_json::to_string(&after.metadata.finalizers).unwrap_or_else(|_| "[]".into());
+        let diff = format!(
+            "metadata.finalizers:\n  BEFORE: {old_json}\n  AFTER:  {new_json}\n\nRemoving the last finalizer lets a deleting object disappear immediately. Cluster controllers may re-add their own finalizers while the object is still in use."
+        );
+        let review = format!(
+            "{}\n\n{}\n\nRemove finalizer {:?} from this object? Cancel leaves the resource unchanged.",
+            identity_summary(&resource, &version),
+            diff,
+            finalizer
+        );
+        if review.chars().count() > MAX_REVIEW_CHARS {
+            return Err(error(
+                &resource,
+                422,
+                "Change is too large for a complete confirmation dialog. Split the edit into smaller changes",
+            ));
+        }
+        Ok(Self {
+            api,
+            resource,
+            version,
+            before,
+            after,
+            review,
+            diff,
+            scale: None,
+            delete: false,
+            evict: false,
+            create: false,
+            finalizer: Some(finalizer),
             prepared_at: Instant::now(),
         })
     }
@@ -539,6 +637,7 @@ impl PreparedMutation {
             delete: false,
             evict: false,
             create,
+            finalizer: None,
             prepared_at: Instant::now(),
         })
     }
@@ -655,6 +754,56 @@ impl PreparedMutation {
                     "Delete response could not be decoded; refresh to verify the outcome",
                 )
             });
+        }
+        if let Some(finalizer) = &self.finalizer {
+            // A merge patch replaces the whole finalizers array while UID and
+            // resourceVersion act as the optimistic-concurrency precondition.
+            let remaining = self.after.metadata.finalizers.clone().unwrap_or_default();
+            debug_assert!(
+                !remaining.iter().any(|name| name == finalizer),
+                "prepare guarantees the removed finalizer cannot reappear in the patch"
+            );
+            let patch = json!({
+                "metadata": {
+                    "uid": self.resource.uid,
+                    "resourceVersion": self.version,
+                    // Overwrite metadata.finalizers even when it was empty before.
+                    "finalizers": remaining,
+                }
+            });
+            let accepted = bounded(
+                &self.resource,
+                self.api.patch(
+                    &self.resource.name,
+                    &PatchParams::default(),
+                    &Patch::Merge(patch),
+                ),
+            )
+            .await?;
+            // The patch response lags a controller that re-adds the finalizer
+            // right away. One re-read decides the verdict; a 404 there means
+            // the object finished deleting, which is also a success.
+            match bounded(&self.resource, self.api.get(&self.resource.name)).await {
+                Ok(fresh) => {
+                    return serde_json::to_value(fresh).map_err(|_| {
+                        error(
+                            &self.resource,
+                            500,
+                            "Cannot decode the response. Refresh to verify the finalizer state",
+                        )
+                    });
+                }
+                Err(err) if err.status == Some(404) => {
+                    return serde_json::to_value(accepted).map_err(|_| {
+                        error(
+                            &self.resource,
+                            500,
+                            "Cannot decode the response. Refresh to verify the finalizer state",
+                        )
+                    });
+                }
+                Err(err) => return Err(err),
+            }
         }
         if self.evict {
             let body = serde_json::json!({
@@ -787,6 +936,7 @@ impl PreparedBatch {
                 MutationIntent::Secret(_) => "UPDATE",
                 MutationIntent::Delete { .. } => "DELETE",
                 MutationIntent::Evict { .. } => "EVICT",
+                MutationIntent::RemoveFinalizer { .. } => "FINALIZER",
             };
             let mutation = PreparedMutation::prepare(client.clone(), intent).await?;
             steps.push(PreparedBatchStep {
@@ -1020,6 +1170,7 @@ mod tests {
             delete: false,
             evict: false,
             create: false,
+            finalizer: None,
             prepared_at: Instant::now() - REVIEW_TTL - Duration::from_secs(1),
         };
         assert_eq!(

@@ -13,7 +13,7 @@ import { BottomDock } from './components/layout/BottomDock';
 import { StatusBar } from './components/layout/StatusBar';
 import { Resizer } from './components/layout/Resizer';
 import { CommandPalette } from './navigation/CommandPalette';
-import { SettingsDialog } from './components/SettingsModal';
+import { SettingsDialog } from './components/settings/SettingsDialog';
 import { Toasts } from './components/ui/Toasts';
 import { OverflowTooltip } from './components/ui/OverflowTooltip';
 import { useClusterStore } from './state/cluster_store';
@@ -30,7 +30,6 @@ import { errorHint } from './providers/errors';
 import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
 import { closeNodeDebugConnections } from './providers/node_debug';
-import { resetLogSessions, closeLogConnections } from './providers/tauri_logs';
 import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snapshot_sync';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
@@ -59,6 +58,11 @@ export default function App() {
   const setConnected = useClusterStore((s) => s.setConnected);
   const setLoading = useClusterStore((s) => s.setLoading);
 
+  /* The persisted default details tab opens the inspector on the configured tab for the session. */
+  useEffect(() => {
+    useUiStore.setState({ rightTab: useUiStore.getState().defaultRightTab });
+  }, []);
+
   const connectionGeneration = useRef(0);
   useEffect(() => useClusterStore.subscribe((state, previous) => {
     if (k8s.supportsResourceWatch || state.currentContext !== previous.currentContext || state.selectedNamespace === previous.selectedNamespace || !state.currentContext) return;
@@ -77,7 +81,6 @@ export default function App() {
     stopResourceWatches();
     cancelResourceSnapshots();
     closeExecConnections();
-    closeLogConnections();
     closeNodeDebugConnections();
     closePortForwards();
     setDiscoveredResourceTypes();
@@ -91,7 +94,6 @@ export default function App() {
     try {
       await k8s.resetResourceWatches();
       await resetExecSessions();
-      await resetLogSessions();
       await resetPortForwards();
       if (!current()) return;
       const ping = await k8s.pingCluster(contextName);
@@ -156,14 +158,13 @@ export default function App() {
       stopResourceWatches();
       cancelResourceSnapshots();
       closeExecConnections();
-      closeLogConnections();
       closeNodeDebugConnections();
       closePortForwards();
     };
   }, [connectToContext, setContexts, setLoading]);
 
   useEffect(() => {
-    const onPageHide = () => { stopResourceWatches(); cancelResourceSnapshots(); closeExecConnections(); closeLogConnections(); closeNodeDebugConnections(); closePortForwards(); };
+    const onPageHide = () => { stopResourceWatches(); cancelResourceSnapshots(); closeExecConnections(); closeNodeDebugConnections(); closePortForwards(); };
     window.addEventListener('pagehide', onPageHide);
     return () => window.removeEventListener('pagehide', onPageHide);
   }, []);

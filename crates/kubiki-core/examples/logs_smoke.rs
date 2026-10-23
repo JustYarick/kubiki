@@ -5,9 +5,8 @@ use kube::Api;
 use kubiki_core::{
     ClusterClientPool, KubeConfigManager,
     core::api::{ResourceQuery, ResourceRef},
-    pod_ops::log_sessions::{LogEvent, LogRequest, PodLogManager},
+    pod_ops::logs::LogSliceRequest,
 };
-use std::time::Duration;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -19,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pod: Pod = Api::namespaced(client.clone(), &args[1])
         .get(&args[2])
         .await?;
-    let request = LogRequest {
+    let request = LogSliceRequest {
         resource: ResourceRef {
             query: ResourceQuery {
                 context: args[0].clone(),
@@ -32,34 +31,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             uid: pod.metadata.uid,
         },
         container: args[3].clone(),
-        follow: true,
         previous: false,
-        tail_lines: 10,
+        tail_lines: Some(10),
+        since_time: None,
         since_seconds: None,
     };
-    let manager = PodLogManager::default();
-    let mut output = manager
-        .start("smoke", "logs", request, async move { Ok(client) })
+    let text = tokio::time::timeout(std::time::Duration::from_secs(30), request.read(client))
         .await
-        .map_err(|e| e.message)?
-        .output;
-    let result = tokio::time::timeout(Duration::from_secs(30), async {
-        while let Some(message) = output.recv().await {
-            match message.event {
-                LogEvent::Output { data } if !data.is_empty() => return Ok(data.len()),
-                LogEvent::Failed { error } => return Err(error.message),
-                LogEvent::Completed => return Err("Stream completed with no output".to_owned()),
-                _ => {}
-            }
-        }
-        Err("Stream ended without output".to_owned())
-    })
-    .await;
-    manager.stop_owner("smoke").await;
-    let bytes = result??;
-    println!(
-        "PASS: live follow logs received {bytes} bytes, active_sessions={}",
-        manager.session_count().await
-    );
+        .map_err(|_| "Timed out reading the log slice".to_owned())?
+        .map_err(|e| e.message)?;
+    println!("Slice: {} bytes, {} lines", text.len(), text.lines().count());
     Ok(())
 }

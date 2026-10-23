@@ -31,10 +31,11 @@ export type ChangeRequest =
   | { operation: 'manifest'; context: string; manifest: string; target?: ManifestTarget }
   | { operation: 'scale'; resource: ResourceRef; resource_version: string; replicas: number }
   | { operation: 'evict'; resource: ResourceRef; resource_version: string }
+  | { operation: 'remove_finalizer'; resource: ResourceRef; finalizer: string }
   | { operation: 'secret'; request: SecretDataRequest }
   | { operation: 'batch'; primary: ResourceRef; steps: BatchStep[] }
   | { operation: 'helm'; request: HelmMutation }
-  | { operation: 'node_debug'; session_id: string; request: NodeDebugRequest };
+  | { operation: 'node_debug'; request: NodeDebugRequest };
 export type DeleteRequest =
   | { operation: 'resource'; resource: ResourceRef; resource_version: string }
   | { operation: 'debug_pod'; resource: ResourceRef };
@@ -51,5 +52,9 @@ async function gateway<T>(command: 'mutate_resource' | 'delete_resource', reques
 export function changeResource<T = Record<string, any>>(request: ChangeRequest): Promise<T> { return gateway('mutate_resource', request); }
 export function applyBatch(primary: ResourceRef, steps: BatchStep[]): Promise<BatchResult> {
   return changeResource<BatchResult>({ operation: 'batch', primary, steps });
+}
+/** Returns the updated object; callers detect a controller re-adding the finalizer. */
+export function removeFinalizer(resource: ResourceRef, finalizer: string): Promise<{ metadata?: { finalizers?: string[] } } | undefined> {
+  return changeResource({ operation: 'remove_finalizer', resource, finalizer });
 }
 export function deleteObject(request: DeleteRequest): Promise<unknown> { return gateway('delete_resource', request); }

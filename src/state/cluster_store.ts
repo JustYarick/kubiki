@@ -3,6 +3,39 @@ import { create } from 'zustand';
 import { KubeContextInfo } from '../types/k8s';
 import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
 
+const REMEMBER_KEY = 'kubiki.namespace.remember.v1';
+const SCOPE_KEY = 'kubiki.namespace.scopes.v1';
+
+/* All storage access is guarded: unit tests run in a Node environment without localStorage. */
+function loadRememberNamespaceScope(): boolean {
+  try {
+    return JSON.parse(localStorage.getItem(REMEMBER_KEY) ?? 'true') !== false;
+  } catch { return true; }
+}
+
+function loadSavedScopes(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SCOPE_KEY) ?? '{}') as Record<string, unknown>;
+    const scopes: Record<string, string> = {};
+    for (const [context, scope] of Object.entries(parsed)) {
+      if (context && typeof scope === 'string' && scope) scopes[context] = scope;
+    }
+    return scopes;
+  } catch { return {}; }
+}
+
+function persistScopes(scopes: Record<string, string>): void {
+  try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scopes)); } catch { /* storage unavailable */ }
+}
+
+function saveScopeFor(context: string | null, scope: string, remember: boolean): void {
+  if (!context || !remember) return;
+  const scopes = loadSavedScopes();
+  if (scopes[context] === scope) return;
+  scopes[context] = scope;
+  persistScopes(scopes);
+}
+
 interface ClusterState {
   contexts: KubeContextInfo[];
   currentContext: string | null;
@@ -13,17 +46,20 @@ interface ClusterState {
   clusterVersion: string | null;
   isLoading: boolean;
   error: K8sRequestError | null;
+  /* restore the namespace scope of a context when it is selected again */
+  rememberNamespaceScope: boolean;
 
   setContexts: (contexts: KubeContextInfo[]) => void;
   selectContext: (contextName: string) => void;
   selectNamespace: (namespace: string) => void;
+  setRememberNamespaceScope: (remember: boolean) => void;
   setAvailableNamespaces: (namespaces: string[]) => void;
   setConnected: (connected: boolean, version?: string) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: unknown) => void;
 }
 
-export const useClusterStore = create<ClusterState>((set) => ({
+export const useClusterStore = create<ClusterState>((set, get) => ({
   contexts: [],
   currentContext: null,
   selectedNamespace: 'all',
@@ -33,6 +69,7 @@ export const useClusterStore = create<ClusterState>((set) => ({
   clusterVersion: null,
   isLoading: false,
   error: null,
+  rememberNamespaceScope: loadRememberNamespaceScope(),
 
   setContexts: (contexts) => {
     const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name || null;
@@ -40,6 +77,7 @@ export const useClusterStore = create<ClusterState>((set) => ({
   },
 
   selectContext: (contextName) => {
+    const saved = get().rememberNamespaceScope ? loadSavedScopes()[contextName] : undefined;
     set((state) => ({
       currentContext: contextName,
       contexts: state.contexts.map((c) => ({
@@ -48,14 +86,25 @@ export const useClusterStore = create<ClusterState>((set) => ({
       })),
       isConnected: false,
       clusterVersion: null,
-      selectedNamespace: 'all',
+      selectedNamespace: saved ? namespaceScope(namespaceNames(saved)) : 'all',
       availableNamespaces: [],
       availableResourceKinds: null,
       error: null,
     }));
   },
 
-  selectNamespace: (selectedNamespace) => set({ selectedNamespace: namespaceScope(namespaceNames(selectedNamespace)) }),
+  selectNamespace: (namespace) => {
+    const selectedNamespace = namespaceScope(namespaceNames(namespace));
+    set({ selectedNamespace });
+    saveScopeFor(get().currentContext, selectedNamespace, get().rememberNamespaceScope);
+  },
+
+  setRememberNamespaceScope: (remember) => {
+    set({ rememberNamespaceScope: remember });
+    try { localStorage.setItem(REMEMBER_KEY, JSON.stringify(remember)); } catch { /* storage unavailable */ }
+    /* Drop stored scopes when remembering is turned off, so stale scopes do not return later. */
+    if (!remember) persistScopes({});
+  },
 
   setAvailableNamespaces: (availableNamespaces) => set({ availableNamespaces }),
 

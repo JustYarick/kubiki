@@ -1,4 +1,5 @@
-//! Managed node debug Pods: explicit provisioning, UID-bound exec, cancellation and cleanup.
+//! Managed node debug Pods: one shared helper Pod per (window, node), UID-bound
+//! exec for multiple terminals, consentless automatic cleanup on close.
 use crate::{
     core::api::{ApiError, ApiErrorCode, ResourceQuery, ResourceRef, validate_query},
     pod_ops::terminal::{ExecRequest, ExecSubscription, PodTerminalManager},
@@ -14,9 +15,8 @@ use kube::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, VecDeque},
     future::Future,
-    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -36,10 +36,21 @@ pub struct NodeDebugRequest {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeExecRequest {
+    /// The Node this shell attaches to; carries the UID that addresses the lease.
+    pub resource: ResourceRef,
+    /// Leases are addressed by their derived session identifier.
     pub debug_session_id: String,
     pub shell: String,
     pub cols: u16,
     pub rows: u16,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeDebugResult {
+    /// Lease session identifier; reuse it to address exec writes for this Pod.
+    pub session_id: String,
+    pub pod: ResourceRef,
+    /// True when an existing healthy helper Pod for this Node was reused.
+    pub reused: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeDebugState {
@@ -55,20 +66,24 @@ pub struct DebugPod {
     pub node: String,
     pub phase: String,
 }
-type Consent = Arc<
-    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<bool, ApiError>> + Send>> + Send + Sync,
->;
 struct Lease {
-    confirm: Consent,
     owner: String,
     id: String,
     request: NodeDebugRequest,
     name: String,
+    /// The create outcome; a second terminal awaiting the same Pod subscribes here.
+    ready: watch::Sender<Option<Result<ResourceRef, ApiError>>>,
+    /// Explicit termination (End session, app close): kills every shell now.
     cancel: watch::Sender<bool>,
+    /// Refcounted end of life (last shell released or an aborted prepare):
+    /// only tears the lease down while no terminal is attached.
+    collapse: watch::Sender<bool>,
     done: watch::Sender<bool>,
     state: Mutex<NodeDebugState>,
     client: Mutex<Option<Client>>,
     pod: Mutex<Option<ResourceRef>>,
+    /// Live exec terminals (their session identifiers) for refcounted cleanup.
+    execs: Mutex<BTreeSet<String>>,
     attempted: AtomicBool,
     terminal: PodTerminalManager,
 }
@@ -156,60 +171,119 @@ pub fn validate_request(request: &NodeDebugRequest) -> Result<(), ApiError> {
     }
     Ok(())
 }
-fn pod_ref(request: &NodeDebugRequest, pod: &Pod) -> Option<ResourceRef> {
-    Some(ResourceRef {
-        query: ResourceQuery {
-            context: request.resource.query.context.clone(),
-            group: String::new(),
-            version: "v1".into(),
-            kind: "Pod".into(),
-            namespace: pod.metadata.namespace.clone(),
-        },
-        name: pod.metadata.name.clone()?,
-        uid: Some(pod.metadata.uid.clone()?),
-    })
+/// The lease identifier: the Node UID (label-value safe), so terminals on one
+/// node converge onto one helper Pod while a replaced Node gets a fresh one.
+pub fn derived_session_id(resource: &ResourceRef) -> String {
+    session_id_for(resource.uid.as_deref().unwrap_or(""))
 }
-pub fn debug_pod(request: &NodeDebugRequest, id: &str) -> Pod {
-    serde_json::from_value(json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":format!("{PREFIX}{id}"),"namespace":request.namespace,"labels":{LABEL:"true",SESSION:id,NODE_UID:request.resource.uid.as_deref().unwrap_or("")}},"spec":{
-        "nodeName":request.resource.name,"hostPID":true,"hostIPC":true,"hostNetwork":true,"dnsPolicy":"ClusterFirstWithHostNet","restartPolicy":"Never","automountServiceAccountToken":false,"activeDeadlineSeconds":3600,"terminationGracePeriodSeconds":0,
-        "tolerations":[{"operator":"Exists"}],"volumes":[{"name":"host-root","hostPath":{"path":"/","type":"Directory"}}],
-        "containers":[{"name":"debugger","image":request.image,"imagePullPolicy":"IfNotPresent","command":["/bin/sh","-c","sleep 3600"],"securityContext":{"privileged":true,"runAsUser":0,"runAsNonRoot":false},"volumeMounts":[{"name":"host-root","mountPath":"/host"}],"resources":{"requests":{"cpu":"10m","memory":"16Mi"},"limits":{"cpu":"500m","memory":"256Mi"}}}]
-    }})).expect("bundled debug Pod spec is valid")
+fn session_id_for(uid: &str) -> String {
+    let mut sanitized: String = uid
+        .bytes()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' {
+                c as char
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if sanitized.len() > 56 {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in uid.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x1000_0000_01b3);
+        }
+        sanitized.truncate(48);
+        sanitized.push_str(&format!("-{hash:08x}"));
+    }
+    sanitized
+}
+fn lease_key(owner: &str, id: &str) -> String {
+    format!("{owner}:{id}")
 }
 impl NodeDebugManager {
+    /// Provision (or reuse) the helper Pod for one Node. Only the actual create
+    /// asks for consent; a second terminal on the same Node attaches silently.
     pub async fn prepare<F, C, CF>(
         &self,
         owner: &str,
-        id: &str,
         request: NodeDebugRequest,
         client: F,
         confirm: C,
-    ) -> Result<ResourceRef, ApiError>
+    ) -> Result<NodeDebugResult, ApiError>
     where
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
         C: Fn(String) -> CF + Send + Sync + 'static,
         CF: Future<Output = Result<bool, ApiError>> + Send + 'static,
     {
         validate_request(&request)?;
-        if id.is_empty()
-            || id.len() > 36
-            || !id
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-        {
-            return Err(error(&request, 400, "Invalid debug session ID"));
+        let id = derived_session_id(&request.resource);
+        let key = lease_key(owner, &id);
+        // A healthy session on this Node is reused: no dialog, no second Pod.
+        'reuse: loop {
+            let existing = self.inner.leases.lock().await.get(&key).cloned();
+            let Some(existing) = existing else { break 'reuse };
+            let phase = existing.state.lock().await.phase.clone();
+            if !*existing.cancel.borrow() && phase == "ready" {
+                let pod = existing
+                    .pod
+                    .lock()
+                    .await
+                    .clone()
+                    .ok_or_else(|| error(&request, 503, "Node shell Pod is missing"))?;
+                return Ok(NodeDebugResult { session_id: id, pod, reused: true });
+            }
+            if !*existing.cancel.borrow() && phase == "preparing" {
+                // Another terminal is already provisioning this Node's Pod; the
+                // consent dialog belongs to the first caller, we just share the
+                // result.
+                let mut rx = existing.ready.subscribe();
+                let outcome = tokio::time::timeout(
+                    Duration::from_secs(150),
+                    rx.wait_for(|o| o.is_some()),
+                )
+                .await
+                .map_err(|_| error(&request, 504, "Node shell is still starting; try again"))?
+                .map_err(|_| error(&request, 503, "Node shell task ended"))?
+                .clone()
+                .ok_or_else(|| error(&request, 503, "Node shell task ended"))?;
+                return outcome
+                    .map(|pod| NodeDebugResult { session_id: id, pod, reused: true });
+            }
+            if *existing.done.borrow() {
+                return Err(error(
+                    &request,
+                    409,
+                    "The previous helper Pod could not be cleaned up. End the shell session to retry deletion before starting a new one",
+                ));
+            }
+            // The lease is being torn down; wait for its removal, then proceed fresh.
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        {
+            let mut cancelled = self.inner.cancelled.lock().await;
+            if let Some(position) = cancelled.iter().position(|entry| entry == &key) {
+                cancelled.swap_remove_back(position);
+                return Err(error(
+                    &request,
+                    409,
+                    "Node shell was just cancelled. Wait a moment and try again",
+                ));
+            }
+        }
+        let (ready, _) = watch::channel(None);
         let (cancel, _) = watch::channel(false);
+        let (collapse, _) = watch::channel(false);
         let (done, _) = watch::channel(false);
         let name = format!("{PREFIX}{id}");
-        let confirm: Consent = Arc::new(move |review| Box::pin(confirm(review)));
         let lease = Arc::new(Lease {
-            confirm: confirm.clone(),
             owner: owner.into(),
-            id: id.into(),
+            id: id.clone(),
             name: name.clone(),
             request: request.clone(),
+            ready,
             cancel,
+            collapse,
             done,
             state: Mutex::new(NodeDebugState {
                 phase: "preparing".into(),
@@ -220,72 +294,81 @@ impl NodeDebugManager {
             }),
             client: Mutex::new(None),
             pod: Mutex::new(None),
+            execs: Mutex::new(BTreeSet::new()),
             attempted: AtomicBool::new(false),
             terminal: PodTerminalManager::default(),
         });
         {
             let mut leases = self.inner.leases.lock().await;
-            let key = format!("{owner}:{id}");
-            if self.inner.cancelled.lock().await.contains(&key) {
-                return Err(error(
-                    &request,
-                    409,
-                    "Node shell preparation cancelled before registration",
-                ));
-            }
             if leases.contains_key(&key) {
-                return Err(error(&request, 409, "Debug session already exists"));
+                return Err(error(&request, 409, "Node shell already exists"));
             }
             if leases.len() >= 8 {
                 return Err(error(&request, 429, "Too many managed node debug sessions"));
             }
-            leases.insert(key, lease.clone());
+            leases.insert(key.clone(), lease.clone());
         }
-        let (ready, rx) = oneshot::channel();
+        let (first_readiness, rx) = oneshot::channel();
         let response_request = request.clone();
         let inner = Arc::downgrade(&self.inner);
+        let key_for_task = key.clone();
+        let id_for_task = id.clone();
         tokio::spawn(async move {
             let mut cancellation = lease.cancel.subscribe();
-            let result = tokio::select! { _=cancellation.wait_for(|v|*v)=>Err(error(&request,409,"Node shell preparation cancelled")), result=async {
+            let mut collapsing = lease.collapse.subscribe();
+            let result = tokio::select! { _=cancellation.wait_for(|v|*v)=>Err(error(&request,409,"Node shell preparation cancelled")), _=collapsing.wait_for(|v|*v)=>Err(error(&request,409,"Node shell preparation cancelled")), result=async {
                 let client=tokio::time::timeout(Duration::from_secs(20),client).await.map_err(|_|error(&request,504,"Node debug client timed out"))??;
                 *lease.client.lock().await=Some(client.clone());
                 verify_node(&request,client.clone()).await?;
                 check_permissions(&request,&lease.name,client.clone()).await?;
-                let review = format!("CREATE privileged node-debug Pod\n{}\n\nManifest to create:\n{}\n\nThis grants root host access (hostPID/IPC/network, privileged, /host mount). Deletion of this helper Pod requires a separate system confirmation when the session ends. If cancelled or its window is closed, the Pod is retained for explicit cleanup.\n\nCreate this exact Pod?", crate::core::mutations::identity_summary(&request.resource, "(Node UID checked before create)"), serde_json::to_string_pretty(&debug_pod(&request, &lease.id)).expect("Pod serializes"));
-                let reviewed_at = std::time::Instant::now();
-                if !confirm(review).await? { return Err(crate::core::mutations::cancelled(&request.resource,"Operation cancelled. Debug Pod was not created")); }
-                if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL { return Err(error(&request,409,"Confirmation expired. Start and review again")); }
-                verify_node(&request,client.clone()).await?;
-
-                Ok::<_,ApiError>(client)
+                if let Some(resource)=adopt_existing(&request,&lease,client.clone()).await? {
+                    Ok::<_,ApiError>(resource)
+                } else {
+                    let review = format!("CREATE privileged node-debug Pod\n{}\n\nManifest to create:\n{}\n\nThis grants root host access (hostPID/IPC/network, privileged, /host mount). The helper Pod is deleted automatically when all shell sessions on this Node are closed, when Kubiki stops, or from the End session button — no extra confirmation for deletion. Cancel creates nothing.\n\nCreate this exact Pod?", crate::core::mutations::identity_summary(&request.resource, "(Node UID checked before create)"), serde_json::to_string_pretty(&debug_pod(&request, &id_for_task)).expect("Pod serializes"));
+                    let reviewed_at = std::time::Instant::now();
+                    if !confirm(review).await? { return Err(crate::core::mutations::cancelled(&request.resource,"Operation cancelled. Debug Pod was not created")); }
+                    if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL { return Err(error(&request,409,"Confirmation expired. Start and review again")); }
+                    verify_node(&request,client.clone()).await?;
+                    provision(&lease,client.clone()).await
+                }
             }=>result };
-            let provision = match result {
-                Ok(client) => provision(&lease, client).await,
-                Err(e) => Err(e),
-            };
-            match provision {
+            let outcome = match result {
                 Ok(resource) => {
                     *lease.pod.lock().await = Some(resource.clone());
                     lease.state.lock().await.phase = "ready".into();
-                    if ready.send(Ok(resource)).is_err() {
+                    lease
+                        .ready
+                        .send_replace(Some(Ok(resource.clone())));
+                    if first_readiness.send(Ok(resource)).is_err() {
                         lease.cancel.send_replace(true);
                     }
-                    let _ = cancellation.wait_for(|v| *v).await;
+                    let inactivity = async {
+                        tokio::select! {
+                            _=cancellation.wait_for(|v|*v)=>{},
+                            _=collapsing.wait_for(|v|*v)=>{},
+                        }
+                    };
+                    let _ = inactivity.await;
+                    Ok(())
                 }
                 Err(e) => {
-                    let _ = ready.send(Err(e));
+                    lease.ready.send_replace(Some(Err(e.clone())));
+                    let _ = first_readiness.send(Err(e.clone()));
+                    Err(e)
                 }
-            }
+            };
             lease.state.lock().await.phase = "closing".into();
             lease.terminal.stop_owner(&lease.owner).await;
+            // Explicit teardown kills every remaining shell; forget their refcounts.
+            lease.execs.lock().await.clear();
             let cleanup = cleanup(&lease).await;
             let mut state = lease.state.lock().await;
-            match cleanup {
-                Ok(()) => {
+            match (&outcome, cleanup) {
+                (_, Ok(())) => {
                     state.phase = "closed".into();
                     state.detail = "Debug Pod removed".into();
                 }
-                Err(e) => {
+                (_, Err(e)) => {
                     state.phase = "cleanup_failed".into();
                     state.detail = "Debug Pod cleanup failed; retry deletion".into();
                     state.error = Some(e);
@@ -293,54 +376,58 @@ impl NodeDebugManager {
             }
             let closed = state.phase == "closed";
             drop(state);
-            lease.done.send_replace(true);
+            // Remove the entry before announcing completion, so a re-open never
+            // observes a torn-down lease.
             if closed {
                 if let Some(inner) = inner.upgrade() {
-                    inner
-                        .leases
-                        .lock()
-                        .await
-                        .remove(&format!("{}:{}", lease.owner, lease.id));
+                    inner.leases.lock().await.remove(&key_for_task);
                 }
             }
+            lease.done.send_replace(true);
         });
         rx.await
             .map_err(|_| error(&response_request, 503, "Node debug task ended unexpectedly"))?
+            .map(|resource| NodeDebugResult { session_id: id, pod: resource, reused: false })
     }
     async fn lease(&self, owner: &str, id: &str) -> Result<Arc<Lease>, ApiError> {
         self.inner
             .leases
             .lock()
             .await
-            .get(&format!("{owner}:{id}"))
+            .get(&lease_key(owner, id))
             .cloned()
             .ok_or_else(|| {
                 ApiError::from_status(404, "Node debug session is closed", "node_debug", None)
             })
     }
     pub async fn status(&self, owner: &str, id: &str) -> Option<NodeDebugState> {
-        let lease = self
-            .inner
-            .leases
-            .lock()
-            .await
-            .get(&format!("{owner}:{id}"))
-            .cloned()?;
-        let state = lease.state.lock().await.clone();
-        Some(state)
+        let lease = self.lease(owner, id).await.ok()?;
+        Some(lease.state.lock().await.clone())
     }
     pub async fn attach(
         &self,
         owner: &str,
-        id: &str,
+        terminal_id: &str,
         request: NodeExecRequest,
     ) -> Result<ExecSubscription, ApiError> {
         let lease = self.lease(owner, &request.debug_session_id).await?;
+        if lease.id != derived_session_id(&lease.request.resource) {
+            return Err(error(&lease.request, 409, "Node shell identity mismatch"));
+        }
         if *lease.cancel.borrow() || lease.state.lock().await.phase != "ready" {
             return Err(error(
                 &lease.request,
                 409,
                 "Debug Pod is not ready; start a new node shell",
+            ));
+        }
+        if request.resource.uid != lease.request.resource.uid
+            || request.resource.name != lease.request.resource.name
+        {
+            return Err(error(
+                &lease.request,
+                409,
+                "Exec refers to a different Node; reopen the current Node",
             ));
         }
         let resource = lease
@@ -364,16 +451,36 @@ impl NodeDebugManager {
             cols: request.cols,
             rows: request.rows,
         };
-        lease
+        let subscription = lease
             .terminal
             .start_with_command(
                 owner,
-                id,
+                terminal_id,
                 exec.clone(),
                 vec!["chroot".into(), "/host".into(), exec.shell],
                 async move { Ok(client) },
             )
-            .await
+            .await?;
+        lease.execs.lock().await.insert(terminal_id.to_owned());
+        Ok(subscription)
+    }
+    /// Drop one terminal. The helper Pod survives while the last shell stays,
+    /// and the final close collapses the lease automatically.
+    pub async fn release_exec(&self, owner: &str, id: &str, terminal_id: &str) {
+        let Ok(lease) = self.lease(owner, id).await else { return };
+        let removed = lease.execs.lock().await.remove(terminal_id);
+        lease.terminal.stop(owner, terminal_id).await;
+        if removed && lease.execs.lock().await.is_empty() {
+            lease.collapse.send_replace(true);
+        }
+    }
+    /// An aborted or closed shell pane: tear the lease down only while no
+    /// terminal is attached to it (a Pod serving other panes stays).
+    pub async fn cancel_prepare(&self, owner: &str, id: &str) {
+        let Ok(lease) = self.lease(owner, id).await else { return };
+        if lease.execs.lock().await.is_empty() {
+            lease.collapse.send_replace(true);
+        }
     }
     pub async fn write(
         &self,
@@ -409,14 +516,15 @@ impl NodeDebugManager {
             .acknowledge(owner, id, seq)
             .await
     }
+    /// Explicitly end the session: stop all shells and delete the helper Pod.
     pub async fn stop(&self, owner: &str, id: &str) -> Result<(), ApiError> {
         let lease = {
             let leases = self.inner.leases.lock().await;
-            match leases.get(&format!("{owner}:{id}")).cloned() {
+            match leases.get(&lease_key(owner, id)).cloned() {
                 Some(lease) => lease,
                 None => {
                     let mut cancelled = self.inner.cancelled.lock().await;
-                    cancelled.push_back(format!("{owner}:{id}"));
+                    cancelled.push_back(lease_key(owner, id));
                     if cancelled.len() > 256 {
                         cancelled.pop_front();
                     }
@@ -442,15 +550,11 @@ impl NodeDebugManager {
                 cleanup(&lease).await?;
             } else {
                 return Err(lease.state.lock().await.error.clone().unwrap_or_else(|| {
-                    error(&lease.request, 409, "Debug Pod cleanup needs confirmation")
+                    error(&lease.request, 409, "Debug Pod cleanup needs retry")
                 }));
             }
         }
-        self.inner
-            .leases
-            .lock()
-            .await
-            .remove(&format!("{owner}:{id}"));
+        self.inner.leases.lock().await.remove(&lease_key(owner, id));
         Ok(())
     }
     pub async fn stop_owner(&self, owner: &str) {
@@ -652,6 +756,48 @@ impl NodeDebugManager {
         Ok(())
     }
 }
+/// A helper Pod left behind by an earlier session can be reused without a new
+/// dialog when its labels, UID and image match this request exactly.
+async fn adopt_existing(
+    request: &NodeDebugRequest,
+    lease: &Lease,
+    client: Client,
+) -> Result<Option<ResourceRef>, ApiError> {
+    let pods: Api<Pod> = Api::namespaced(client.clone(), &request.namespace);
+    let pod = match bounded(request, pods.get(&lease.name)).await {
+        Ok(pod) => pod,
+        Err(e) if e.status == Some(404) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let labels = pod.metadata.labels.clone().unwrap_or_default();
+    let matches = labels.get(LABEL).map(String::as_str) == Some("true")
+        && labels.get(SESSION) == Some(&lease.id)
+        && labels.get(NODE_UID) == request.resource.uid.as_ref()
+        && pod
+            .spec
+            .as_ref()
+            .and_then(|s| s.containers.iter().find(|c| c.name == "debugger"))
+            .is_some_and(|c| c.image.as_deref() == Some(request.image.as_str()));
+    if !matches {
+        return Err(error(
+            request,
+            409,
+            "A helper Pod with this name exists but was configured differently. Remove it first or match its image",
+        ));
+    }
+    let phase = pod
+        .status
+        .as_ref()
+        .and_then(|s| s.phase.clone())
+        .unwrap_or_default();
+    if phase == "Failed" || phase == "Succeeded" {
+        return Ok(None);
+    }
+    let resource = pod_ref(request, &pod)
+        .ok_or_else(|| error(request, 503, "Existing debug Pod has no UID"))?;
+    lease.state.lock().await.detail = "Reusing the healthy helper Pod".into();
+    Ok(Some(resource))
+}
 async fn verify_node(request: &NodeDebugRequest, client: Client) -> Result<(), ApiError> {
     let nodes: Api<Node> = Api::all(client);
     let node = bounded(request, nodes.get(&request.resource.name)).await?;
@@ -703,26 +849,70 @@ async fn check_permissions(
     }
     Ok(())
 }
+fn pod_ref(request: &NodeDebugRequest, pod: &Pod) -> Option<ResourceRef> {
+    Some(ResourceRef {
+        query: ResourceQuery {
+            context: request.resource.query.context.clone(),
+            group: String::new(),
+            version: "v1".into(),
+            kind: "Pod".into(),
+            namespace: pod.metadata.namespace.clone(),
+        },
+        name: pod.metadata.name.clone()?,
+        uid: Some(pod.metadata.uid.clone()?),
+    })
+}
+pub fn debug_pod(request: &NodeDebugRequest, id: &str) -> Pod {
+    serde_json::from_value(json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":format!("{PREFIX}{id}"),"namespace":request.namespace,"labels":{LABEL:"true",SESSION:id,NODE_UID:request.resource.uid.as_deref().unwrap_or("")}},"spec":{
+        "nodeName":request.resource.name,"hostPID":true,"hostIPC":true,"hostNetwork":true,"dnsPolicy":"ClusterFirstWithHostNet","restartPolicy":"Never","automountServiceAccountToken":false,"activeDeadlineSeconds":3600,"terminationGracePeriodSeconds":0,
+        "tolerations":[{"operator":"Exists"}],"volumes":[{"name":"host-root","hostPath":{"path":"/","type":"Directory"}}],
+        "containers":[{"name":"debugger","image":request.image,"imagePullPolicy":"IfNotPresent","command":["/bin/sh","-c","sleep 3600"],"securityContext":{"privileged":true,"runAsUser":0,"runAsNonRoot":false},"volumeMounts":[{"name":"host-root","mountPath":"/host"}],"resources":{"requests":{"cpu":"10m","memory":"16Mi"},"limits":{"cpu":"500m","memory":"256Mi"}}}]
+    }})).expect("bundled debug Pod spec is valid")
+}
 async fn provision(lease: &Lease, client: Client) -> Result<ResourceRef, ApiError> {
     let request = &lease.request;
     let mut cancel = lease.cancel.subscribe();
-    if *cancel.borrow() {
+    let mut collapsing = lease.collapse.subscribe();
+    if *cancel.borrow() || *collapsing.borrow_and_update() {
         return Err(error(request, 409, "Node shell preparation cancelled"));
     }
     let pods: Api<Pod> = Api::namespaced(client.clone(), &request.namespace);
     lease.attempted.store(true, Ordering::Release);
     // Do not cancel POST on user cancellation: first resolve its outcome, then clean up its UID.
-    let created = bounded(
+    let created = match bounded(
         request,
         pods.create(&PostParams::default(), &debug_pod(request, &lease.id)),
     )
-    .await?;
+    .await
+    {
+        Ok(created) => created,
+        Err(e) if e.status == Some(409) => {
+            // A racing session of ours created the Pod first; adopt it only when
+            // it is verifiably this exact helper.
+            let existing = bounded(request, pods.get(&lease.name)).await?;
+            let labels = existing.metadata.labels.clone().unwrap_or_default();
+            if labels.get(LABEL).map(String::as_str) == Some("true")
+                && labels.get(SESSION) == Some(&lease.id)
+                && labels.get(NODE_UID) == request.resource.uid.as_ref()
+                && existing.metadata.uid.is_some()
+            {
+                existing
+            } else {
+                return Err(error(
+                    request,
+                    409,
+                    "Debug Pod name is taken by another object",
+                ));
+            }
+        }
+        Err(e) => return Err(e),
+    };
     let resource = pod_ref(request, &created)
         .ok_or_else(|| error(request, 503, "Created debug Pod response has no UID"))?;
     *lease.pod.lock().await = Some(resource.clone());
     let wait = async {
         loop {
-            if *cancel.borrow() {
+            if *cancel.borrow() || *collapsing.borrow_and_update() {
                 return Err(error(request, 409, "Node shell preparation cancelled"));
             }
             let pod = bounded(request, pods.get(&lease.name)).await?;
@@ -758,7 +948,7 @@ async fn provision(lease: &Lease, client: Client) -> Result<ResourceRef, ApiErro
                 verify_node(request, client.clone()).await?;
                 return Ok(resource);
             }
-            tokio::select! {_=cancel.wait_for(|v|*v)=>return Err(error(request,409,"Node shell preparation cancelled")),_=tokio::time::sleep(Duration::from_millis(500))=>{}}
+            tokio::select! {_=cancel.wait_for(|v|*v)=>return Err(error(request,409,"Node shell preparation cancelled")),_=collapsing.wait_for(|v|*v)=>return Err(error(request,409,"Node shell preparation cancelled")),_=tokio::time::sleep(Duration::from_millis(500))=>{}}
         }
     };
     tokio::time::timeout(Duration::from_secs(120), wait)
@@ -771,9 +961,21 @@ async fn provision(lease: &Lease, client: Client) -> Result<ResourceRef, ApiErro
             )
         })?
 }
+/// Consentless cleanup: the create consent already covers automatic Pod deletion
+/// on close, so this path must never wait for a dialog. Label, UID checks plus a
+/// UID precondition refuse anything that is not exactly this session's helper.
 async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
     if !lease.attempted.load(Ordering::Acquire) {
         return Ok(());
+    }
+    if !lease.execs.lock().await.is_empty() {
+        // A shell attached between the collapse trigger and this cleanup; keep
+        // the Pod and surface the anomaly for an explicit retry.
+        return Err(error(
+            &lease.request,
+            409,
+            "A shell session re-attached before cleanup; end it first",
+        ));
     }
     let client = lease
         .client
@@ -816,49 +1018,6 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
             "Debug Pod UID changed; refusing to delete its replacement",
         ));
     }
-    let version = pod
-        .metadata
-        .resource_version
-        .clone()
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| {
-            error(
-                &lease.request,
-                409,
-                "Debug Pod has no resourceVersion; refresh before cleanup",
-            )
-        })?;
-    let resource = pod_ref(&lease.request, &pod)
-        .ok_or_else(|| error(&lease.request, 409, "Debug Pod has no identity"))?;
-    let review = format!(
-        "DELETE debug Pod\n{}\n\nPod to delete:\n{}\n\nThe shell has stopped. Delete this exact helper Pod? Cancel leaves it in the cluster for later cleanup.",
-        crate::core::mutations::identity_summary(&resource, &version),
-        serde_json::to_string_pretty(&pod).expect("Pod serializes")
-    );
-    let started = std::time::Instant::now();
-    if !(lease.confirm)(review).await? {
-        return Err(crate::core::mutations::cancelled(
-            &resource,
-            "Debug Pod deletion cancelled. The Pod remains for explicit cleanup",
-        ));
-    }
-    if started.elapsed() > crate::core::mutations::REVIEW_TTL {
-        return Err(error(
-            &lease.request,
-            409,
-            "Cleanup confirmation expired; review again",
-        ));
-    }
-    let current = bounded(&lease.request, pods.get(&lease.name)).await?;
-    if current.metadata.uid.as_ref() != Some(&uid)
-        || current.metadata.resource_version.as_ref() != Some(&version)
-    {
-        return Err(error(
-            &lease.request,
-            409,
-            "Debug Pod changed during confirmation; review cleanup again",
-        ));
-    }
     match bounded(
         &lease.request,
         pods.delete(
@@ -866,7 +1025,7 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
             &DeleteParams {
                 preconditions: Some(Preconditions {
                     uid: Some(uid.clone()),
-                    resource_version: Some(version),
+                    resource_version: None,
                 }),
                 ..DeleteParams::default()
             },
@@ -879,7 +1038,6 @@ async fn cleanup(lease: &Lease) -> Result<(), ApiError> {
         Err(e) => Err(e),
     }
 }
-
 async fn wait_deleted(
     request: &NodeDebugRequest,
     pods: &Api<Pod>,

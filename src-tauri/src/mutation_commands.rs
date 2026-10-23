@@ -36,6 +36,11 @@ pub enum ChangeRequest {
         resource: ResourceRef,
         resource_version: String,
     },
+    /// Drop one entry from metadata.finalizers, reviewed against the live object.
+    RemoveFinalizer {
+        resource: ResourceRef,
+        finalizer: String,
+    },
     /// One user action, one confirmation. Every step commits after the shared approval.
     Batch {
         primary: ResourceRef,
@@ -45,7 +50,6 @@ pub enum ChangeRequest {
         request: HelmMutation,
     },
     NodeDebug {
-        session_id: String,
         request: NodeDebugRequest,
     },
 }
@@ -178,7 +182,7 @@ impl ChangeRequest {
     fn resource(&self) -> ResourceRef {
         match self {
             Self::Scale { resource, .. } => resource.clone(),
-            Self::Evict { resource, .. } => resource.clone(),
+            Self::Evict { resource, .. } | Self::RemoveFinalizer { resource, .. } => resource.clone(),
             Self::Batch { primary, .. } => primary.clone(),
             Self::Secret { request } => request.resource.clone(),
             Self::Helm { request } => request.resource(),
@@ -415,12 +419,8 @@ pub async fn mutate_resource(
     if let ChangeRequest::Batch { primary, steps } = request {
         return run_batch(window, &pool, primary, steps).await;
     }
-    if let ChangeRequest::NodeDebug {
-        session_id,
-        request,
-    } = request
-    {
-        return crate::node_commands::prepare_node_debug(session_id, request, window, pool, nodes)
+    if let ChangeRequest::NodeDebug { request } = request {
+        return crate::node_commands::prepare_node_debug(request, window, pool, nodes)
             .await
             .and_then(|value| {
                 serde_json::to_value(value).map_err(|_| {
@@ -464,6 +464,9 @@ pub async fn mutate_resource(
             resource,
             resource_version,
         },
+        ChangeRequest::RemoveFinalizer { resource, finalizer } => {
+            MutationIntent::RemoveFinalizer { resource, finalizer }
+        }
         ChangeRequest::Secret { request } => MutationIntent::Secret(request),
         _ => unreachable!(),
     };
@@ -551,8 +554,9 @@ mod tests {
             json!({"operation":"scale","resource":resource,"resource_version":"10","replicas":0}),
             json!({"operation":"secret","request":{"resource":resource,"resource_version":"10","data":{}}}),
             json!({"operation":"evict","resource":resource,"resource_version":"10"}),
+            json!({"operation":"remove_finalizer","resource":resource,"finalizer":"example.com/foo"}),
             json!({"operation":"helm","request":{"operation":"repository_update","name":null}}),
-            json!({"operation":"node_debug","session_id":"id","request":{"resource":resource,"namespace":"team","image":"ubuntu:24.04"}}),
+            json!({"operation":"node_debug","request":{"resource":resource,"namespace":"team","image":"ubuntu:24.04"}}),
         ];
         for mut value in valid {
             assert!(serde_json::from_value::<ChangeRequest>(value.clone()).is_ok());

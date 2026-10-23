@@ -1,7 +1,7 @@
 use kubiki_core::cluster::client::ClusterClientPool;
 use kubiki_core::core::api::{ApiError, ResourceRef};
 use kubiki_core::pod_ops::node_debug::{
-    DebugPod, NodeDebugManager, NodeDebugRequest, NodeDebugState, NodeExecRequest,
+    DebugPod, NodeDebugManager, NodeDebugRequest, NodeDebugState, NodeDebugResult, NodeExecRequest,
 };
 use kubiki_core::pod_ops::terminal::{ExecBatch, ExecEvent, ExecMessage};
 use std::time::Duration;
@@ -20,10 +20,7 @@ pub async fn start_node_exec(
     let debug_session_id = request.debug_session_id.clone();
     let mut subscription = match manager.attach(&owner, &session_id, request).await {
         Ok(subscription) => subscription,
-        Err(error) => {
-            let _ = manager.stop(&owner, &debug_session_id).await;
-            return Err(error);
-        }
+        Err(error) => return Err(error),
     };
     tauri::async_runtime::spawn(async move {
         let mut timer = tokio::time::interval(Duration::from_millis(16));
@@ -70,7 +67,8 @@ pub async fn start_node_exec(
                 break;
             }
         }
-        let _ = manager.stop(&owner, &debug_session_id).await;
+        // One shell leaves; the helper Pod dies only with the last one on the Node.
+        manager.release_exec(&owner, &debug_session_id, &session_id).await;
     });
     Ok(())
 }
@@ -118,8 +116,32 @@ pub async fn close_node_exec(
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, NodeDebugManager>,
 ) -> Result<(), ApiError> {
-    let _ = session_id;
-    manager.stop(window.label(), &debug_session_id).await
+    manager
+        .release_exec(window.label(), &debug_session_id, &session_id)
+        .await;
+    Ok(())
+}
+#[tauri::command]
+pub async fn cancel_node_debug(
+    resource: ResourceRef,
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, NodeDebugManager>,
+) -> Result<(), ApiError> {
+    if resource.query.kind != "Node" || resource.uid.as_ref().is_none_or(|uid| uid.is_empty()) {
+        return Err(ApiError::from_status(
+            400,
+            "A Node reference with UID is required",
+            "node_debug",
+            Some(&resource.query.context),
+        ));
+    }
+    manager
+        .cancel_prepare(
+            window.label(),
+            &kubiki_core::pod_ops::node_debug::derived_session_id(&resource),
+        )
+        .await;
+    Ok(())
 }
 #[tauri::command]
 pub async fn stop_node_debugs(
@@ -131,29 +153,27 @@ pub async fn stop_node_debugs(
 }
 
 pub async fn prepare_node_debug(
-    session_id: String,
     request: NodeDebugRequest,
     window: tauri::WebviewWindow,
     pool: tauri::State<'_, ClusterClientPool>,
     manager: tauri::State<'_, NodeDebugManager>,
-) -> Result<ResourceRef, ApiError> {
-    let resource = request.resource.clone();
-    let dialog_window = window.clone();
-    let pool = pool.inner().clone();
+) -> Result<NodeDebugResult, ApiError> {
+    let client = pool.inner().clone();
     let context = request.resource.query.context.clone();
+    let review_resource = request.resource.clone();
+    let dialog_window = window.clone();
     manager
         .prepare(
             window.label(),
-            &session_id,
             request,
             async move {
-                pool.get_client(&context)
-                    .await
-                    .map_err(|e| ApiError::from_core(e, "node_debug", Some(&context)))
+                client.get_client(&context).await.map_err(
+                    |e| ApiError::from_core(e, "node_debug", Some(&context)),
+                )
             },
             move |review| {
                 let window = dialog_window.clone();
-                let resource = resource.clone();
+                let resource = review_resource.clone();
                 async move { crate::mutation_guard::confirm(window, &resource, review).await }
             },
         )
@@ -172,20 +192,7 @@ pub async fn stop_node_debug(
     session_id: String,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, NodeDebugManager>,
-    guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<(), ApiError> {
-    let dummy = kubiki_core::core::api::ResourceRef {
-        query: kubiki_core::core::api::ResourceQuery {
-            context: "node-debug".into(),
-            group: "".into(),
-            version: "v1".into(),
-            kind: "Pod".into(),
-            namespace: None,
-        },
-        name: session_id.clone(),
-        uid: None,
-    };
-    let _gate = guard.acquire(&dummy)?;
     manager.stop(window.label(), &session_id).await
 }
 #[tauri::command]

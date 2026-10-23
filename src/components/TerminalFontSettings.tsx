@@ -18,8 +18,7 @@ export function TerminalFontSettings() {
     return () => { cancelled = true; };
   }, [family, size]);
   const preset = TERMINAL_FONT_PRESETS.some(font => font.value === family) ? family : 'custom';
-  return <section aria-label="Terminal typography" className="space-y-2 py-2.5 min-w-0">
-    <label className="block text-xs" htmlFor="terminal-font-preset">Terminal typeface</label>
+  return <section aria-label="Terminal typography" className="space-y-2 py-1 min-w-0">
     <select id="terminal-font-preset" aria-label="Terminal font preset" className="ide-select w-full max-w-full" value={customMode ? 'custom' : preset} onChange={event => {
       setCustomMode(event.target.value === 'custom');
       if (event.target.value === 'custom') document.getElementById('terminal-font-family')?.focus();

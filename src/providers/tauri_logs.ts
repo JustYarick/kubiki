@@ -1,44 +1,35 @@
 import type { ResourceRef } from '../core/resources/resource_types';
-import { normalizeK8sError, requestError, type K8sErrorPayload } from './errors';
+import { normalizeK8sError, requestError } from './errors';
 
-export interface LogRequest { resource: ResourceRef; container: string; follow: boolean; previous: boolean; tail_lines: number; since_seconds: number | null }
-export type LogEvent = { type: 'Started' | 'Completed' } | { type: 'Output'; payload: { data: number[] } } | { type: 'Failed'; payload: { error: K8sErrorPayload } };
-export interface LogBatch { session_id: string; messages: Array<{ sequence: number; event: LogEvent }> }
-const active = new Set<() => void>();
-export function closeLogConnections(): void { for (const close of [...active]) close(); }
-export async function resetLogSessions(): Promise<void> {
-  closeLogConnections();
-  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) { const { invoke } = await import('@tauri-apps/api/core'); await invoke('stop_pod_logs'); }
+/** One bounded log read. Mirrors the Rust `LogSliceRequest` command contract. */
+export interface LogSliceParams {
+  resource: ResourceRef;
+  container: string;
+  previous: boolean;
+  /** Initial load: keep the last N lines (0..=10000). */
+  tail_lines?: number;
+  /** Poll resume: lines written after this RFC3339 timestamp. */
+  since_time?: string;
+  /** Initial load relative window; mutually exclusive with since_time. */
+  since_seconds?: number;
 }
 
-/** One native batch in flight, acknowledged after the consumer processes its bytes. */
-export async function connectPodLogs(request: LogRequest, receive: (event: LogEvent) => void | Promise<void>, signal: AbortSignal): Promise<() => void> {
-  const info = { operation: 'logs', context: request.resource.context, resource: request.resource };
-  if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Live Pod logs require the desktop app.', info);
-  const { Channel, invoke } = await import('@tauri-apps/api/core');
-  const id = crypto.randomUUID(); let closed = false; let sequence = 0; let processing = Promise.resolve();
-  const channel = new Channel<LogBatch>();
-  const stop = () => { void invoke('close_pod_logs', { sessionId: id }).catch(() => {}); };
-  const close = () => {
-    if (closed) return; closed = true; active.delete(close); signal.removeEventListener('abort', close); channel.onmessage = () => {};
-    (window as any).__TAURI_INTERNALS__?.unregisterCallback?.(channel.id); stop();
-  };
-  if (signal.aborted) { close(); return close; }
-  active.add(close); signal.addEventListener('abort', close, { once: true });
-  channel.onmessage = (batch) => {
-    if (closed || batch.session_id !== id) return;
-    processing = processing.then(async () => {
-      if (closed) return;
-      let ended = false;
-      for (const message of batch.messages) {
-        if (message.sequence !== sequence + 1) throw requestError('internal', 'Log stream sequence gap. Reconnect the viewer.', info);
-        sequence = message.sequence; await receive(message.event);
-        ended ||= message.event.type === 'Completed' || message.event.type === 'Failed';
-      }
-      if (!closed) await invoke('ack_pod_logs', { sessionId: id, sequence });
-      if (ended) close();
-    }).catch((error) => { if (!closed) { void receive({ type: 'Failed', payload: { error: normalizeK8sError(error, info) } }); close(); } });
-  };
-  try { await invoke('start_pod_logs', { sessionId: id, request, onEvent: channel }); if (closed) stop(); return close; }
-  catch (error) { close(); throw normalizeK8sError(error, info); }
+/**
+ * Lens-style log reads: every call is an independent bounded request, never a
+ * follow stream. The native command re-validates identity and pins the Pod UID.
+ */
+export async function fetchLogSlice(params: LogSliceParams, signal?: AbortSignal): Promise<string> {
+  const info = { operation: 'logs', context: params.resource.context, resource: params.resource };
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+    throw requestError('unsupported', 'Live Pod logs require the desktop app.', info);
+  }
+  if (signal?.aborted) throw requestError('timeout', 'Log read was cancelled', info);
+  const { invoke } = await import('@tauri-apps/api/core');
+  try {
+    const text = await invoke<unknown>('get_pod_log_slice', { request: params });
+    if (typeof text !== 'string') throw requestError('internal', 'Log reader returned an invalid slice', info, 500);
+    return text;
+  } catch (error) {
+    throw normalizeK8sError(error, info);
+  }
 }

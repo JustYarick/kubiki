@@ -5,6 +5,10 @@ import { toast } from '../../../../state/notifications_store';
 import { Button } from '../../../ui/Button';
 import { k8s } from '../../../../providers/k8s_provider';
 import { useClusterStore } from '../../../../state/cluster_store';
+import { useResourceStore } from '../../../../state/resource_store';
+import { resourceRef } from '../../../../core/resources/identity';
+import { removeFinalizer as removeFinalizerRequest } from '../../../../providers/mutations';
+import { normalizeK8sError } from '../../../../providers/errors';
 
 interface MetadataBlockProps {
   item: ResourceItem;
@@ -29,32 +33,33 @@ export function MetadataBlock({ item, defaultExpanded = false }: MetadataBlockPr
   };
 
   const removeFinalizer = async (finalizerName: string) => {
+    const remaining = finalizers.filter((f) => f !== finalizerName);
+    const finishDemo = () => {
+      const rawCopy = { ...raw, metadata: { ...metadata, finalizers: remaining } };
+      useResourceStore.getState().updateItem(item.kind, item.uid, { ...item, raw: rawCopy });
+      toast.success(`Finalizer "${finalizerName}" removed`);
+    };
     try {
-      if (k8s.demo) {
-        toast.info('Demo: finalizer removed in memory');
+      if (k8s.demo) return finishDemo();
+      const context = useClusterStore.getState().currentContext;
+      if (!context) {
+        toast.warn('No active cluster context', 'Select a context before changing resources');
         return;
       }
-      const context = useClusterStore.getState().currentContext;
-      if (!context) return;
-      // Filter out the finalizer
-      const remaining = finalizers.filter((f) => f !== finalizerName);
-      toast.info(`Removing finalizer "${finalizerName}"...`);
-      // Apply patch via kubectl or dynamic api
-      const manifest = JSON.stringify({
-        ...raw,
-        apiVersion: item.apiVersion,
-        kind: item.kind,
-        metadata: {
-          ...metadata,
-          name: item.name,
-          namespace: item.namespace,
-          finalizers: remaining,
-        },
-      });
-      await k8s.applyManifest(context, manifest, item);
-      toast.success(`Finalizer "${finalizerName}" removed`);
+      // Confirmation opens in a native dialog; the request pins the live object
+      // server-side, so a stale panel copy cannot clobber a newer state.
+      const updated = await removeFinalizerRequest(resourceRef(context, item), finalizerName);
+      const readded = updated?.metadata?.finalizers?.includes(finalizerName);
+      if (readded) {
+        toast.warn(
+          `Finalizer "${finalizerName}" returned`,
+          'A cluster controller re-added it; the object is likely still in use',
+        );
+      } else {
+        toast.success(`Finalizer "${finalizerName}" removed`);
+      }
     } catch (err) {
-      toast.error('Failed to remove finalizer', String(err));
+      toast.error('Failed to remove finalizer', normalizeK8sError(err, { operation: 'mutation' }).message);
     }
   };
 

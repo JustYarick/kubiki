@@ -1,7 +1,7 @@
 import type { ResourceRef } from '../core/resources/resource_types';
 import { normalizeK8sError, requestError, type K8sErrorPayload } from './errors';
 
-export interface NodeExecRequest { debug_session_id: string; shell: string; cols: number; rows: number }
+export interface NodeExecRequest { resource: ResourceRef; debug_session_id: string; shell: string; cols: number; rows: number }
 export interface HostTerminalInfo { shells: string[]; default_shell: string; cwd: string }
 export interface HostTerminalRequest { shell: string; cols: number; rows: number }
 export interface ExecRequest { resource: ResourceRef; container: string; shell: string; cols: number; rows: number }
@@ -31,7 +31,8 @@ export async function getHostTerminalInfo(): Promise<HostTerminalInfo> {
   return invoke<HostTerminalInfo>('get_host_terminal_info');
 }
 async function connectTerminal(request: ExecRequest | HostTerminalRequest | NodeExecRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal, target: 'pod_exec' | 'host_terminal' | 'node_exec'): Promise<ExecConnection> {
-  const info = 'resource' in request ? { operation: 'exec', context: request.resource.context, resource: request.resource } : { operation: target === 'node_exec' ? 'node_debug' : 'host_terminal' };
+  const node = target === 'node_exec';
+  const info = 'resource' in request ? (node ? { operation: 'node_debug', context: request.resource.context } : { operation: 'exec', context: request.resource.context, resource: request.resource }) : { operation: 'host_terminal' };
   const routing = 'debug_session_id' in request ? { debugSessionId: request.debug_session_id } : {};
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Interactive shell is available in the desktop app. Start Kubiki with pnpm tauri dev.', info);
   const { Channel, invoke } = await import('@tauri-apps/api/core');

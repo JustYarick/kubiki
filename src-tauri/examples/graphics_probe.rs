@@ -51,7 +51,7 @@ fn main() {
                     channel.send(json!({"subscription_id":args["subscriptionId"],"query":query,"messages":[{"sequence":1,"event":{"type":"Delta","payload":{"type":"Restarted","payload":{"items":items}}}},{"sequence":2,"event":{"type":"Status","payload":{"phase":"live","error":null}}}]})).unwrap();
                     Value::Null
                 }
-                "stop_resource_watches" | "stop_resource_watch" | "stop_pod_execs" | "stop_host_terminals" | "stop_node_debugs" | "stop_pod_logs" | "stop_port_forwards" => Value::Null,
+                "stop_resource_watches" | "stop_resource_watch" | "stop_pod_execs" | "stop_host_terminals" | "stop_node_debugs" | "stop_port_forwards" => Value::Null,
                 _ => { invoke.resolver.reject("Graphics probe has no live operations"); return true; }
             };
             invoke.resolver.resolve(value); true

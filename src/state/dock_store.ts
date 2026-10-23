@@ -87,12 +87,9 @@ export const useDockStore = create<DockState>()(
 
       openNodeShell: (nodeName: string) => {
         const { sessions } = get();
-        const id = JSON.stringify(['node', useClusterStore.getState().currentContext, nodeName]);
-        const existing = sessions.find((s) => s.id === id);
-        if (existing) {
-          set({ activeSessionId: existing.id, dockCollapsed: false });
-          return existing.id;
-        }
+        // Multiple shells may target the same Node; each terminal owns a tab
+        // and they share one helper Pod behind the scenes.
+        const id = `dock-term-node-${crypto.randomUUID()}`;
 
         const newSession: DockSession = {
           id,

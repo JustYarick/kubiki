@@ -10,18 +10,23 @@ test('UI scale changes text and controls, persists after restart, and can be res
   expect(initial.font).toBeGreaterThan(13);
   await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog');
+  const categories = dialog.getByRole('navigation', { name: 'Settings categories' });
   await dialog.getByRole('button', { name: 'Set interface scale to 150%', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '150');
   const larger = await row.evaluate((element) => ({ height: element.getBoundingClientRect().height, font: parseFloat(getComputedStyle(element.querySelector('td')!).fontSize) }));
   expect(larger.font / initial.font).toBeCloseTo(150 / 110, 1);
   expect(larger.height).toBeGreaterThan(initial.height);
   await page.screenshot({ path: 'test-results/settings-scale-150.png' });
+  await categories.getByRole('button', { name: 'Editor', exact: true }).click();
   await dialog.getByLabel('YAML editor font size').fill('18');
+  await categories.getByRole('button', { name: 'Terminal', exact: true }).click();
   await dialog.getByLabel('Terminal font size').fill('20');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '150');
   await page.keyboard.press('Control+,');
+  await categories.getByRole('button', { name: 'Editor', exact: true }).click();
   await expect(dialog.getByLabel('YAML editor font size')).toHaveValue('18');
+  await categories.getByRole('button', { name: 'Terminal', exact: true }).click();
   await expect(dialog.getByLabel('Terminal font size')).toHaveValue('20');
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+0');
@@ -47,6 +52,7 @@ test('changing the editor font keeps a live Monaco model and unsaved draft intac
   await page.keyboard.type('\n# preserved-unsaved-draft');
   await expect(editor.getByText('unsaved demo changes', { exact: true })).toBeVisible();
   await page.keyboard.press('Control+,');
+  await page.getByRole('dialog').getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Editor', exact: true }).click();
   await page.getByRole('dialog').getByLabel('YAML editor font size').fill('18');
   await page.keyboard.press('Escape');
   await expect.poll(() => editor.locator('.view-lines').evaluate((element) => getComputedStyle(element).fontSize)).toBe('18px');
@@ -62,10 +68,13 @@ test('settings stay reachable at maximum scale in a small window and recover inv
   await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '200');
   await page.keyboard.press('Control+,');
   const dialog = page.getByRole('dialog');
+  const categories = dialog.getByRole('navigation', { name: 'Settings categories' });
   await expect(dialog.getByRole('button', { name: 'Reset appearance', exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Reset appearance', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '110');
+  await categories.getByRole('button', { name: 'Editor', exact: true }).click();
   await expect(dialog.getByLabel('YAML editor font size')).toHaveValue('14');
+  await categories.getByRole('button', { name: 'Terminal', exact: true }).click();
   await expect(dialog.getByLabel('Terminal font size')).toHaveValue('14');
 });
 
@@ -80,6 +89,7 @@ test('a terminal font change resizes text without restarting the open session', 
   await page.keyboard.press('Enter');
   await expect(terminal.locator('.xterm-rows')).toContainText('fontsurvives');
   await page.keyboard.press('Control+,');
+  await page.getByRole('dialog').getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Terminal', exact: true }).click();
   await page.getByRole('dialog').getByLabel('Terminal font size').fill('20');
   await page.keyboard.press('Escape');
   await expect.poll(() => terminal.locator('.xterm-rows span').first().evaluate((element) => getComputedStyle(element).fontSize)).toBe('20px');
