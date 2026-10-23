@@ -30,6 +30,7 @@ import { matchesResourceRef } from '../../core/resources/identity';
 const TopologyView = lazy(() => import('../../views/TopologyView').then((m) => ({ default: m.TopologyView })));
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
+const GitOpsDashboard = lazy(() => import('../../views/GitOpsDashboard').then(m => ({ default: m.GitOpsDashboard })));
 
 export const WorkspaceArea: React.FC<{
   onSelectContext: (context: string) => void;
@@ -150,6 +151,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   }
 
   if (tab.type === 'overview') return <OverviewView />;
+  if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') return <Suspense fallback={<ResourceLoading label="Loading dashboard…" />}><GitOpsDashboard family={tab.type === 'flux-dashboard' ? 'flux' : 'argocd'} /></Suspense>;
   if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Loading Helm…" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
 
   if (tab.type !== 'resource-list' && tab.context !== context) {

@@ -1,6 +1,6 @@
 import { gitOpsFamily, gitOpsGroup } from '../../core/resources/gitops';
 import { customResourcePlacement, customResourceType } from '../../core/resources/custom_resource_types';
-import { Boxes, Network, Puzzle } from 'lucide-react';
+import { resourceIcon } from '../../core/resource_icons';
 import { inNamespaceScope } from '../../core/resources/namespace_scope';
 import React, { useMemo, useState } from 'react';
 import {
@@ -35,9 +35,10 @@ export const Sidebar: React.FC = () => {
   const availableKinds = useClusterStore(state => state.availableResourceKinds);
   const groups = useUiStore((s) => s.sidebarGroups);
   const toggleGroup = useUiStore((s) => s.toggleGroup);
-  const { openResourceList, toggleSplit, openOverview, openHelm, tabs, activeTabId } = useWorkspaceStore();
+  const { openResourceList, toggleSplit, openOverview, openHelm, openGitOpsDashboard, tabs, activeTabId } = useWorkspaceStore();
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const overviewActive = activeTab?.type === 'overview';
+  const dashboardActive = activeTab?.type.endsWith('-dashboard');
   const helmActive = activeTab?.type === 'helm-releases' || activeTab?.type === 'helm-repositories' || activeTab?.kind === 'HelmRelease' && !activeTab?.resource?.group?.endsWith('.toolkit.fluxcd.io');
 
   const [filter, setFilter] = useState('');
@@ -65,7 +66,7 @@ export const Sidebar: React.FC = () => {
         featured[placement.category].push({
           kind: type.key,
           label: placement.label,
-          icon: placement.category === 'gateway' ? Network : Boxes,
+          icon: resourceIcon(type.kind, type.group),
           group: placement.category,
           tone: groupTone(placement.category),
           apiGroup: type.group,
@@ -80,7 +81,7 @@ export const Sidebar: React.FC = () => {
         gitops[family].get(group)!.push({
           kind: type.key,
           label: type.kind,
-          icon: Puzzle,
+          icon: resourceIcon(type.kind, type.group),
           group: family,
           tone: groupTone(family),
           apiGroup: type.group,
@@ -94,7 +95,7 @@ export const Sidebar: React.FC = () => {
       byGroup.get(type.group)!.push({
         kind: type.key,
         label: type.kind,
-        icon: Puzzle,
+        icon: resourceIcon(type.kind, type.group),
         group: 'crd',
         tone: groupTone('crd'),
         apiGroup: type.group,
@@ -108,7 +109,7 @@ export const Sidebar: React.FC = () => {
       if (category.id === 'config') return { ...category, groups: category.groups.map(group => ({ ...group, kinds: [...group.kinds.slice(0, 5), ...featured.config, ...group.kinds.slice(5)] })) };
       if (category.id === 'crd') return { ...category, groups: [...category.groups, ...[...byGroup].sort(([a], [b]) => a.localeCompare(b)).map(([group, kinds]) => ({ id: `custom-${group}`, label: group, kinds }))] };
       return category;
-    }).map(category => ({ ...category, groups: category.groups.map(group => ({ ...group, kinds: group.kinds.filter(entry => !availableKinds || entry.kind.startsWith('custom:') || availableKinds.includes(entry.kind)) })) })).filter(category => category.groups.some(group => group.kinds.length || (group as TreeGroup).helmViews?.length));
+    }).map(category => ({ ...category, groups: category.groups.map(group => ({ ...group, kinds: group.kinds.filter(entry => !availableKinds || entry.kind.startsWith('custom:') || availableKinds.includes(entry.kind)) })) })).filter(category => category.id === 'flux' || category.id === 'argocd' || category.groups.some(group => group.kinds.length || (group as TreeGroup).helmViews?.length));
     // Shades are resolved after the dynamic kinds are in place, so every view shows the same color.
     assignCategoryTones(tree);
     return tree;
@@ -263,7 +264,7 @@ export const Sidebar: React.FC = () => {
                 )}
               >
                 {catOpen ? <ChevronDown size="calc(11px * var(--ui-factor))" className="opacity-60 shrink-0" /> : <ChevronRight size="calc(11px * var(--ui-factor))" className="opacity-60 shrink-0" />}
-                <CatIcon size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-secondary)] shrink-0" />
+                <CatIcon aria-hidden="true" size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-secondary)] shrink-0" />
                 <span className="truncate text-left flex-1">{cat.label}</span>
                 {catCount > 0 && (
                   <span className="text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)] tabular-nums px-1 rounded bg-[var(--bg-canvas)]/50">
@@ -272,7 +273,9 @@ export const Sidebar: React.FC = () => {
                 )}
               </button>
 
-              <div id={`sidebar-category-${cat.id}`}>{catOpen && cat.groups.map((g) => {
+              <div id={`sidebar-category-${cat.id}`}>
+              {catOpen && (cat.id === 'flux' || cat.id === 'argocd') && <button aria-label={`Open ${cat.label} Overview`} aria-current={activeTab?.type === `${cat.id}-dashboard` ? 'page' : undefined} onClick={() => openGitOpsDashboard(cat.id as 'flux' | 'argocd')} className={cx('w-full flex items-center gap-2 pl-[calc(32px*var(--ui-factor))] pr-2 py-1 text-xs hover:bg-[var(--bg-hover)]', activeTab?.type === `${cat.id}-dashboard` ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}><LayoutDashboard size={13} aria-hidden="true" />Overview</button>}
+              {catOpen && cat.groups.map((g) => {
                 const gOpen = !g.label || searching || (groups[key(cat.id, g.id)] ?? groups['*']) === true;
                 const gCount = g.kinds.reduce((a, e) => a + countFor(e.kind), 0);
 
@@ -304,7 +307,7 @@ export const Sidebar: React.FC = () => {
                     {gOpen && (
                       <div id={`sidebar-group-${encodeURIComponent(key(cat.id, g.id))}`} className="py-0.5">
                         {g.kinds.map((entry) => {
-                          const selected = !overviewActive && !helmActive && activeKind === entry.kind;
+                          const selected = !overviewActive && !dashboardActive && !helmActive && activeKind === entry.kind;
                           const total = countFor(entry.kind);
                           const Icon = entry.icon;
 
@@ -325,7 +328,7 @@ export const Sidebar: React.FC = () => {
                               {selected && (
                                 <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
                               )}
-                              <Icon size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="shrink-0" style={{ color: entry.tone.color }} />
+                              <Icon aria-hidden="true" size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="shrink-0" style={{ color: entry.tone.color }} />
                               <span className="truncate flex-1 text-left">{entry.label}</span>
                               {total > 0 && (
                                 <span className={cx(

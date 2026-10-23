@@ -1,15 +1,14 @@
-import { Boxes } from 'lucide-react';
-import { KIND_ICONS, kindTone } from '../../core/perspectives';
+import { resourceIcon } from '../../core/resource_icons';
+import { kindTone } from '../../core/perspectives';
 import { parseApiVersion } from '../../core/resources/resource_types';
 import { cx } from '../../core/utils/cx';
-import type { ResourceKind } from '../../types/k8s';
 
 /**
  * The badge color comes from the shared group palette — the same kind always
  * shows the same color in the sidebar, in tables, in the topology and here.
  */
 export function ResourceKindBadge({ kind, apiVersion }: { kind: string; apiVersion?: string }) {
-  const Icon = KIND_ICONS[kind as ResourceKind] ?? Boxes;
+  const Icon = resourceIcon(kind, apiVersion);
   const group = apiVersion ? parseApiVersion(apiVersion).group : undefined;
   const tone = kindTone(kind, group || undefined);
   return (
@@ -21,7 +20,7 @@ export function ResourceKindBadge({ kind, apiVersion }: { kind: string; apiVersi
       )}
       title={kind}
     >
-      <Icon size="calc(11px * var(--ui-factor))" strokeWidth={1.8} className="shrink-0" />
+      <Icon aria-hidden="true" size="calc(11px * var(--ui-factor))" strokeWidth={1.8} className="shrink-0" />
       <span className="truncate">{kind}</span>
     </span>
   );

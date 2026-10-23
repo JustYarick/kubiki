@@ -15,6 +15,8 @@ import type { ResourceItem, ResourceKind } from '../types/k8s';
 
 export type WorkspaceTabType =
   | 'overview'        // Follows the global cluster and namespace selection
+  | 'flux-dashboard'
+  | 'argocd-dashboard'
   | 'helm-releases'
   | 'helm-repositories'
   | 'resource-list'   // DataGrip-grade resource table (e.g. Pods, Deployments)
@@ -51,6 +53,7 @@ interface WorkspaceState {
   /* Actions */
   openTab: (tab: Omit<WorkspaceTab, 'id'> & { id?: string }) => void;
   openOverview: () => void;
+  openGitOpsDashboard: (family: 'flux' | 'argocd') => void;
   openHelm: (section: import('../providers/helm_types').HelmSection) => void;
   openResourceList: (kind: ResourceKind, namespace?: string) => void;
   openYamlEditor: (item: ResourceItem) => void;
@@ -126,6 +129,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       openOverview: () => get().openTab({ id: 'tab-overview', type: 'overview', title: 'Overview' }),
+      openGitOpsDashboard: (family) => get().openTab({ id: `tab-${family}-dashboard`, type: `${family}-dashboard`, title: `${family === 'flux' ? 'Flux' : 'Argo CD'} Overview` }),
       openHelm: (section) => get().openTab({ id: `tab-helm-${section}`, type: `helm-${section}`, title: section === 'releases' ? 'Helm Releases' : 'Helm Repositories' }),
 
       openResourceList: (kind, namespace) => {

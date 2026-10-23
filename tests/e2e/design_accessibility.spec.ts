@@ -17,6 +17,7 @@ test('settings contain keyboard focus and restore it after closing', async ({ pa
 
 test('workspace tabs and table column sizes are keyboard operable', async ({ page }) => {
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const tabs = page.getByRole('tablist', { name: 'Workspace tabs' });
   await tabs.getByRole('tab', { name: /Overview/ }).focus();
@@ -35,6 +36,7 @@ test('workspace tabs and table column sizes are keyboard operable', async ({ pag
 test('compact panels keep the table usable and Explorer toggle always works', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 800 });
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const toggle = page.getByRole('button', { name: 'Toggle Explorer', exact: true });
   await toggle.click(); await expect(page.getByTestId('explorer-panel')).toHaveCount(0);
   const table = page.getByTestId('resource-table');
@@ -54,6 +56,7 @@ test('compact panels keep the table usable and Explorer toggle always works', as
 
 test('resource action lists support keyboard navigation and activation', async ({ page }) => {
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway-7f9c8b6d5-q7x9z' });
   await row.click({ button: 'right' });
   const first = page.getByRole('button', { name: /^View in Inspector/ });
@@ -66,6 +69,7 @@ test('resource action lists support keyboard navigation and activation', async (
 
 test('details can stay pinned on Overview and can be explicitly reopened', async ({ page }) => {
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').locator('tbody tr').first().click();
   const details = page.getByTestId('resource-details');
   await details.getByRole('button', { name: 'Keep details on Overview', exact: true }).click();

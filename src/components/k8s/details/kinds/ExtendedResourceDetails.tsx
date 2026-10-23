@@ -3,7 +3,7 @@ import { matchesResourceRef } from '../../../../core/resources/identity';
 import { fieldText, fieldValue, presentationFor } from '../../../../core/resources/resource_presentations';
 import { useResourceStore } from '../../../../state/resource_store';
 import { summaryTitle } from '../../../../core/resources/kind_labels';
-import { KIND_ICONS } from '../../../../core/perspectives';
+import { resourceIcon } from '../../../../core/resource_icons';
 import { DetailsSection } from '../DetailsSection';
 import { KindSummary } from '../blocks/KindSummary';
 import { StructuredFields } from '../blocks/StructuredFields';
@@ -40,7 +40,7 @@ export function ExtendedResourceDetails({ item, onNavigate }: { item: ResourceIt
     <ProblemsBanner item={item} />
     {!!presentation?.fields.length && <KindSummary
       title={summaryTitle(item.kind)}
-      icon={KIND_ICONS[item.kind]}
+      icon={resourceIcon(item.kind, item.apiVersion)}
       rows={presentation?.fields.map(field => ({
         label: field.label,
         value: field.label === 'Target' && target

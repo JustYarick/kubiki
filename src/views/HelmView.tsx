@@ -6,6 +6,7 @@ import { k8s } from '../providers/k8s_provider';
 import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
 import { helmStatusTone, helmUpdatedAt, type HelmDocument, type HelmHistory, type HelmRelease, type HelmSection } from '../providers/helm_types';
 import { Button, IconButton } from '../components/ui/Button';
+import { DeliverySummary, deliveryIcons } from '../components/ui/DeliverySummary';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { toast } from '../state/notifications_store';
 import { HelmActionDialog, type HelmAction } from '../components/dialogs/HelmActionDialog';
@@ -24,6 +25,7 @@ import { cacheHelmReleases, inspectHelmRelease } from '../state/helm_resources';
 import { subscribeHelmChanges } from '../providers/use_helm_graph';
 import { useUiStore } from '../state/ui_store';
 import './helm.css';
+import './delivery.css';
 
 /** Each response belongs to one scope. Old results can never replace another target. */
 function useHelmRead<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>) {
@@ -83,6 +85,15 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
       <h1><Anchor size={15} aria-hidden="true" />Helm Releases</h1>
       <Button size="sm" aria-label="Install release" title="Install release" disabled={!k8s.supportsHelmMutations} onClick={() => setAction({ action: 'install' })}><Plus size={13} aria-hidden="true" /><span className="helm-action-label">Install release</span></Button>
       <IconButton icon={RefreshCw} size="sm" disabled={result.loading} onClick={result.refresh} aria-label="Refresh Helm releases" tooltip="Refresh releases" />
+    </div>
+    <div className="helm-dashboard-summary">
+      <DeliverySummary active={status} onSelect={setStatus} metrics={[
+        { id: 'all', label: 'Releases', value: result.data ? items.length : null, detail: 'On this page' },
+        { id: 'deployed', label: 'Deployed', value: result.data ? items.filter(item => item.status === 'deployed').length : null, detail: 'Successfully deployed', tone: 'ok', icon: deliveryIcons.healthy },
+        { id: 'problems', label: 'Needs attention', value: result.data ? items.filter(item => item.status === 'failed' || item.status.startsWith('pending-') || item.status === 'uninstalling').length : null, detail: 'Failed or in progress', tone: 'warn', icon: deliveryIcons.attention },
+        { id: 'uninstalled', label: 'Uninstalled', value: result.data ? items.filter(item => item.status === 'uninstalled').length : null, detail: 'Retained release history', tone: 'muted', icon: deliveryIcons.suspended },
+      ]} />
+      <p className="helm-dashboard-caption">Current page · {namespaceScopeLabel(namespace ?? 'all')}{result.data?.has_more ? ' · More releases on the next page' : ''}</p>
     </div>
     <div className="helm-filterbar">
       <label className="helm-search"><Search size={13} aria-hidden="true" /><input aria-label="Search Helm releases by name or namespace" placeholder="Filter releases…" value={query} onChange={event => setQuery(event.target.value)} /></label>

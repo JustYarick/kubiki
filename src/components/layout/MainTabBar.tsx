@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import { useWorkspaceStore, type WorkspaceTab } from '../../state/workspace_store';
 import { useResourceStore } from '../../state/resource_store';
-import { KIND_ICONS, kindTone } from '../../core/perspectives';
+import { kindTone } from '../../core/perspectives';
+import { CATEGORY_ICONS, resourceIcon } from '../../core/resource_icons';
 import { FixedMenu, Popover, type MenuItem } from '../ui/Dropdown';
 import { Tooltip, IconButton } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
@@ -66,14 +67,18 @@ export const MainTabBar: React.FC = () => {
   };
 
   const getTabIcon = (tab: WorkspaceTab) => {
-    if (tab.type === 'helm-releases' || tab.type === 'helm-repositories' || tab.kind === 'HelmRelease') return <Anchor size={13} className="text-[var(--accent)] shrink-0" />;
-    if (tab.type === 'overview') return <LayoutDashboard size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
+    if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Anchor aria-hidden="true" size={13} className="text-[var(--accent)] shrink-0" />;
+    if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') {
+      const Icon = CATEGORY_ICONS[tab.type === 'flux-dashboard' ? 'flux' : 'argocd'];
+      return <Icon aria-hidden="true" size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--accent)] shrink-0" />;
+    }
+    if (tab.type === 'overview') return <LayoutDashboard aria-hidden="true" size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'yaml-editor') return <FileCode size="calc(13px * var(--ui-factor))" className="text-amber-400 shrink-0" />;
     if (tab.type === 'terminal') return <TermIcon size="calc(13px * var(--ui-factor))" className="text-emerald-400 shrink-0" />;
     if (tab.type === 'logs') return <FileText size="calc(13px * var(--ui-factor))" className="text-blue-400 shrink-0" />;
-    if (tab.kind && KIND_ICONS[tab.kind]) {
-      const Icon = KIND_ICONS[tab.kind];
-      return <Icon size="calc(13px * var(--ui-factor))" className="shrink-0" style={{ color: kindTone(tab.kind).color }} />;
+    if (tab.kind) {
+      const Icon = resourceIcon(tab.kind, tab.apiVersion);
+      return <Icon aria-hidden="true" size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="shrink-0" style={{ color: kindTone(tab.kind, tab.resource?.group).color }} />;
     }
     return <Boxes size="calc(13px * var(--ui-factor))" className="text-[var(--text-muted)] shrink-0" />;
   };
@@ -243,7 +248,7 @@ export const MainTabBar: React.FC = () => {
                 Open Resource Table
               </div>
               {newTabKinds.map(({ kind, group }) => {
-                const Icon = KIND_ICONS[kind] || Boxes;
+                const Icon = resourceIcon(kind);
                 return (
                   <button
                     key={kind}

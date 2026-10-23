@@ -1,3 +1,4 @@
+import { resourceIcon } from '../core/resource_icons';
 import { syncResourceSnapshot } from '../providers/snapshot_sync';
 import { ResourceLoading } from '../components/ui/ResourceLoading';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -48,7 +49,7 @@ import { useUiStore } from '../state/ui_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { useDockStore } from '../state/dock_store';
 import { k8s } from '../providers/k8s_provider';
-import { SIDEBAR_TREE, KIND_ICONS, defaultKindFor, kindTone, kindsFor } from '../core/perspectives';
+import { SIDEBAR_TREE, defaultKindFor, kindTone, kindsFor } from '../core/perspectives';
 import { ResourceWarnings } from '../components/k8s/ResourceWarnings';
 import { StatusBadge } from '../components/k8s/StatusBadge';
 import { ColumnFilterPopup } from '../components/k8s/ColumnFilterPopup';
@@ -1355,7 +1356,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     );
   }
 
-  const KindIcon = KIND_ICONS[effectiveKind] || Boxes;
+  const KindIcon = resourceIcon(effectiveKind);
   const rowH = density === 'compact' ? 'h-[calc(25px*var(--ui-factor))]' : 'h-[calc(30px*var(--ui-factor))]';
   const hiddenForKind = new Set(hiddenColumns[effectiveKind] ?? []);
   const activeFilters = activeFilterCount + sorts.length;
@@ -1481,6 +1482,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         {rows.list.length === 0 ? !initialLoading && !loadError && (
           <EmptyState
             kind={displayKind}
+            iconKind={effectiveKind}
             filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery || activeFilterCount > 0 || sorts.length > 0}
             onClear={() => { selectNamespace('all'); resetAll(); }}
             isNew={!customType && k8s.demo && allItems.length === 0 && !loadError}
@@ -1771,7 +1773,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
 
 /** Kind icon colored by the shared group palette — the same color as in the sidebar. */
 function KindIcon({ item }: { item: ResourceItem }) {
-  const Icon = KIND_ICONS[item.kind as ResourceKind] ?? Boxes;
+  const Icon = resourceIcon(item.kind, item.apiVersion);
   const tone = kindTone(item.kind, item.apiVersion ? parseApiVersion(item.apiVersion).group : undefined);
   return <Icon size="calc(12px * var(--ui-factor))" className="shrink-0" style={{ color: tone.color }} aria-hidden="true" />;
 }
@@ -1863,8 +1865,8 @@ function CellValue({
   return <span className="text-[var(--text-secondary)]">{v}</span>;
 }
 
-function EmptyState({ kind, filtered, onClear, isNew, onNew }: { kind: string; filtered: boolean; onClear: () => void; isNew: boolean; onNew: () => void }) {
-  const Icon = KIND_ICONS[kind as ResourceKind] ?? Boxes;
+function EmptyState({ kind, iconKind, filtered, onClear, isNew, onNew }: { kind: string; iconKind: string; filtered: boolean; onClear: () => void; isNew: boolean; onNew: () => void }) {
+  const Icon = resourceIcon(iconKind);
   return (
     <div className="h-full min-h-[calc(220px*var(--ui-factor))] flex items-center justify-center">
       <div className="text-center max-w-sm px-6">

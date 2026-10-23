@@ -3,7 +3,7 @@ import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
 import { resourceByRef } from '../../../../core/resources/detail_links';
 import { summaryTitle } from '../../../../core/resources/kind_labels';
-import { KIND_ICONS } from '../../../../core/perspectives';
+import { resourceIcon } from '../../../../core/resource_icons';
 import { KindSummary, type StatTile } from '../blocks/KindSummary';
 import { StructuredFields } from '../blocks/StructuredFields';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
@@ -99,7 +99,7 @@ export function GenericResourceDetails({ item, onNavigate }: GenericResourceDeta
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};
   const summary = genericSummary(item, resources, onNavigate);
-  const icon = KIND_ICONS[item.kind];
+  const icon = resourceIcon(item.kind, item.apiVersion);
 
   return (
     <div className="details-stack">

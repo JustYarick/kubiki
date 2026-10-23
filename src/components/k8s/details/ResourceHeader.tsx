@@ -1,3 +1,4 @@
+import { resourceIcon } from '../../../core/resource_icons';
 import { resourceBucket } from '../../../core/resources/custom_resource_types';
 import { matchesResourceRef, resourceKey } from '../../../core/resources/identity';
 import React from 'react';
@@ -12,7 +13,6 @@ import {
   Terminal,
   ArrowRightLeft,
   GitBranch,
-  FileCode,
   MoreHorizontal,
   Trash2,
   RotateCw,
@@ -20,7 +20,7 @@ import {
   ShieldBan,
 } from 'lucide-react';
 import type { ResourceItem } from '../../../types/k8s';
-import { KIND_ICONS, kindTone } from '../../../core/perspectives';
+import { kindTone } from '../../../core/perspectives';
 import { parseApiVersion } from '../../../core/resources/resource_types';
 import { useResourceStore } from '../../../state/resource_store';
 import { useUiStore } from '../../../state/ui_store';
@@ -78,7 +78,7 @@ export function ResourceHeader({
   const resources = useResourceStore((s) => s.resources);
   const inspectorPinned = useUiStore((s) => s.inspectorPinned);
   const nativeKind = resourceBucket(item).startsWith('custom:') ? '' : item.kind;
-  const Icon = KIND_ICONS[nativeKind] ?? FileCode;
+  const Icon = resourceIcon(item.kind, item.apiVersion);
 
   // Build breadcrumbs through ownerReferences hierarchy:
   // e.g. Deployment -> ReplicaSet -> Pod
@@ -165,7 +165,7 @@ export function ResourceHeader({
           /></div>
         )}
 
-        <Icon size="calc(16px * var(--ui-factor))" className="details-kind-icon shrink-0" style={{ color: kindTone(item.kind, item.apiVersion ? parseApiVersion(item.apiVersion).group : undefined).color }} />
+        <Icon aria-hidden="true" size="calc(16px * var(--ui-factor))" className="details-kind-icon shrink-0" style={{ color: kindTone(item.kind, item.apiVersion ? parseApiVersion(item.apiVersion).group : undefined).color }} />
 
         {/* Breadcrumb + Title Area */}
         <div className="min-w-0 flex-1">

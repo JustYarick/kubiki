@@ -82,6 +82,7 @@ export const CommandPalette: React.FC = () => {
       run: () => {
         ui.setActivePerspective(p.id);
         if (p.id === 'helm') { useWorkspaceStore.getState().openHelm('releases'); return; }
+        if (p.id === 'flux' || p.id === 'argocd') { useWorkspaceStore.getState().openGitOpsDashboard(p.id); return; }
         const dk = defaultKindFor(p.id);
         if (dk) useWorkspaceStore.getState().openResourceList(dk);
       },

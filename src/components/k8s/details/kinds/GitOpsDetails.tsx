@@ -1,5 +1,6 @@
+import { resourceIcon } from '../../../../core/resource_icons';
 import { useMemo, useState } from 'react';
-import { RotateCw, RefreshCw, GitBranch } from 'lucide-react';
+import { RotateCw, RefreshCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
 import { useClusterStore } from '../../../../state/cluster_store';
@@ -98,7 +99,7 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
 
       <KindSummary
         title={summaryTitle(item.kind)}
-        icon={GitBranch}
+        icon={resourceIcon(item.kind, item.apiVersion)}
         tiles={[
           { label: family === 'flux' ? 'Ready' : 'Health', value: health, tone: health === 'Ready' || health === 'Healthy' ? 'ok' : health === 'Not reported' ? 'muted' : 'warn' },
           { label: 'Sync status', value: syncStatus, tone: syncStatus === 'Synced' || syncStatus === 'True' ? 'ok' : 'muted' },

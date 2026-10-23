@@ -1,0 +1,118 @@
+import { test, expect, type Page } from '@playwright/test';
+
+const definition = (group: string, kind: string, plural: string) => ({ apiVersion: 'apiextensions.k8s.io/v1', kind: 'CustomResourceDefinition', metadata: { uid: plural, name: `${plural}.${group}` }, spec: { group, names: { kind, plural }, scope: 'Namespaced', versions: [{ name: 'v1', served: true, storage: true }] } });
+const crds = [definition('source.toolkit.fluxcd.io', 'GitRepository', 'gitrepositories'), definition('kustomize.toolkit.fluxcd.io', 'Kustomization', 'kustomizations'), definition('argoproj.io', 'Application', 'applications'), definition('argoproj.io', 'AppProject', 'appprojects')];
+const object = (kind: string, name: string, group: string, namespace: string, spec: any, status: any) => ({ apiVersion: `${group}/v1`, kind, metadata: { name, namespace, uid: `${kind}-${name}` }, spec, status });
+
+async function fixture(page: Page) {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/k8s/**', route => {
+    const url = new URL(route.request().url()); const op = url.pathname.split('/').pop();
+    if (op === 'contexts') return route.fulfill({ json: [{ name: 'prod', is_current: true }] });
+    if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
+    if (op === 'namespaces') return route.fulfill({ json: ['backend', 'other'] });
+    if (op === 'api-resources') return route.fulfill({ json: 'nodes no v1 false Node list\ncustomresourcedefinitions crd apiextensions.k8s.io/v1 false CustomResourceDefinition list' });
+    if (op === 'resources') return route.fulfill({ json: { items: url.searchParams.get('kind') === 'CustomResourceDefinition' ? crds : [] } });
+    if (op === 'custom-resources') {
+      const name = url.searchParams.get('name');
+      let items = name?.startsWith('gitrepositories') ? [object('GitRepository', 'platform-source', 'source.toolkit.fluxcd.io', 'backend', { url: 'https://example.com/platform/infrastructure.git' }, { conditions: [{ type: 'Ready', status: 'True' }] })]
+        : name?.startsWith('kustomizations') ? [object('Kustomization', 'payments-production', 'kustomize.toolkit.fluxcd.io', 'backend', { sourceRef: { name: 'platform-source' } }, { conditions: [{ type: 'Ready', status: 'False', reason: 'DependencyNotReady' }] }), object('Kustomization', 'paused', 'kustomize.toolkit.fluxcd.io', 'other', { suspend: true }, {})]
+        : name?.startsWith('applications') ? [object('Application', 'healthy-but-drifted', 'argoproj.io', 'backend', { project: 'production', destination: { namespace: 'backend' } }, { health: { status: 'Healthy' }, sync: { status: 'OutOfSync', revision: 'abc' } }), object('Application', 'synced-app', 'argoproj.io', 'other', { project: 'production' }, { health: { status: 'Healthy' }, sync: { status: 'Synced' } })]
+        : [object('AppProject', 'production', 'argoproj.io', 'backend', { description: 'Production apps' }, {})];
+      if (url.searchParams.get('namespace')) items = items.filter(item => item.metadata.namespace === url.searchParams.get('namespace'));
+      return route.fulfill({ json: { items } });
+    }
+    if (op === 'releases') return route.fulfill({ json: { context: 'prod', namespace: null, offset: 0, limit: 100, has_more: false, items: ['deployed', 'failed', 'pending-upgrade'].map((status, i) => ({ name: `release-${i}`, namespace: 'backend', revision: '2', chart: 'web-1.0', updated: '', app_version: '1', status })) } });
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/');
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  return errors;
+}
+
+test('Flux and Argo dashboards expose status filters, inspection and independent health and sync', async ({ page }) => {
+  const errors = await fixture(page);
+  await page.getByRole('button', { name: 'Open Flux Overview', exact: true }).click();
+  const flux = page.getByTestId('flux-dashboard');
+  await expect(flux.getByRole('button', { name: /Resources 3/ })).toBeVisible();
+  await flux.getByRole('button', { name: /Needs attention 1/ }).click();
+  await expect(flux.getByRole('button', { name: /Inspect Kustomization payments-production/ })).toBeVisible();
+  await expect(flux.getByRole('button', { name: /Inspect GitRepository/ })).toHaveCount(0);
+  await flux.getByRole('button', { name: /Inspect Kustomization payments-production/ }).click();
+  await expect(page.getByTestId('resource-details')).toContainText('payments-production');
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
+  await flux.getByRole('button', { name: 'Clear dashboard filters' }).click();
+  await flux.getByRole('textbox', { name: 'Search Flux resources' }).fill('platform-source');
+  await expect(flux.locator('tbody tr')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Open Argo CD Overview', exact: true }).click();
+  const argo = page.getByTestId('argocd-dashboard');
+  await expect(argo.getByRole('button', { name: /Applications 2/ })).toBeVisible();
+  await expect(argo.getByRole('button', { name: /Healthy 1/ })).toBeVisible();
+  await argo.getByRole('button', { name: /Needs attention 1/ }).click();
+  await expect(argo.locator('tbody')).toContainText('Healthy · OutOfSync');
+  await argo.getByRole('button', { name: /Projects 1/ }).click();
+  await expect(argo.getByRole('button', { name: /Inspect AppProject production/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Argo CD Overview', exact: true }).click();
+  await expect(page.getByRole('tab', { name: /^Argo CD Overview/ })).toHaveCount(1);
+  await page.screenshot({ path: 'test-results/argocd-dashboard.png' });
+  expect(errors).toEqual([]);
+});
+
+test('Helm summary filters the current page without losing its revision inspection', async ({ page }) => {
+  await fixture(page);
+  await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
+  const helm = page.getByTestId('helm-releases');
+  await expect(helm.getByRole('button', { name: /Releases 3/ })).toBeVisible();
+  await helm.getByRole('button', { name: /Needs attention 2/ }).click();
+  await expect(helm.locator('tbody tr')).toHaveCount(2);
+  await expect(helm).toContainText('Current page');
+  await page.screenshot({ path: 'test-results/helm-dashboard.png' });
+});
+
+test('dashboard snapshot errors retain known data and namespace changes replace the scope', async ({ page }) => {
+  await fixture(page);
+  await page.getByRole('button', { name: 'Open Flux Overview', exact: true }).click();
+  const flux = page.getByTestId('flux-dashboard');
+  await expect(flux.getByRole('button', { name: /Resources 3/ })).toBeVisible();
+  await page.route('**/api/k8s/custom-resources?**', route => route.fulfill({ status: 403, json: { error: { code: 'forbidden', message: 'Listing forbidden', status: 403, retryable: false } } }));
+  await flux.getByRole('button', { name: 'Refresh Flux overview' }).click();
+  await expect(flux).toContainText('Partial or stale snapshot');
+  await expect(flux.getByRole('button', { name: /Resources 3/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await page.getByRole('option', { name: 'other', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
+  await expect(flux).toContainText('Resource data unavailable');
+  await expect(flux.getByRole('button', { name: /Inspect Kustomization/ })).toHaveCount(0);
+});
+
+test('unavailable application data stays unknown even when project data is available', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/api/k8s/custom-resources?**', route => new URL(route.request().url()).searchParams.get('name')?.startsWith('applications.')
+    ? route.fulfill({ status: 403, json: { error: { code: 'forbidden', message: 'Application listing forbidden', status: 403, retryable: false } } })
+    : route.fallback());
+  await page.getByRole('button', { name: 'Open Argo CD Overview' }).click();
+  const argo = page.getByTestId('argocd-dashboard');
+  await expect(argo.getByRole('button', { name: /Applications —/ })).toBeVisible();
+  await expect(argo.getByRole('button', { name: /Projects 1/ })).toBeVisible();
+  await expect(argo).toContainText('Partial or stale snapshot');
+});
+
+test('dashboards reflow on narrow workspaces with reduced motion and increased UI scale', async ({ page }) => {
+  await fixture(page);
+  await page.getByRole('button', { name: 'Open Flux Overview', exact: true }).click();
+  await expect(page.getByTestId('flux-dashboard').getByRole('button', { name: /Resources 3/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Toggle Explorer', exact: true }).click();
+  for (const width of [375, 768, 1024]) {
+    await page.setViewportSize({ width, height: 900 });
+    const view = page.getByTestId('flux-dashboard');
+    expect(await view.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await expect(view.getByRole('textbox')).toBeVisible();
+  }
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  for (let step = 0; step < 4; step++) await page.keyboard.press('Control+Equal');
+  await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '150');
+  await page.setViewportSize({ width: 375, height: 800 });
+  expect(await page.getByTestId('flux-dashboard').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/flux-dashboard-narrow.png' });
+});

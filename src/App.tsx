@@ -15,6 +15,7 @@ import { Resizer } from './components/layout/Resizer';
 import { CommandPalette } from './navigation/CommandPalette';
 import { SettingsDialog } from './components/SettingsModal';
 import { Toasts } from './components/ui/Toasts';
+import { OverflowTooltip } from './components/ui/OverflowTooltip';
 import { useClusterStore } from './state/cluster_store';
 import { useResourceStore } from './state/resource_store';
 import { useUiStore } from './state/ui_store';
@@ -289,6 +290,7 @@ export default function App() {
       <ContainerLaunchDialog />
       <MutationConfirmModal />
       <Toasts />
+      <OverflowTooltip />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { useClusterStore } from '../../state/cluster_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
 import { useResourceStore } from '../../state/resource_store';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
-import { KIND_ICONS } from '../../core/perspectives';
+import { CATEGORY_ICONS, resourceIcon } from '../../core/resource_icons';
 
 export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => void }> = ({ onSelectContext }) => {
   const { currentContext, contexts, selectedNamespace } = useClusterStore();
@@ -22,7 +22,8 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
     onSelect: () => onSelectContext(c.name),
   }));
 
-  const KindIcon = activeTab?.kind ? KIND_ICONS[activeTab.kind] || Box : Box;
+  const KindIcon = activeTab?.kind ? resourceIcon(activeTab.kind, activeTab.apiVersion) : Box;
+  const DashboardIcon = activeTab?.type === 'flux-dashboard' ? CATEGORY_ICONS.flux : activeTab?.type === 'argocd-dashboard' ? CATEGORY_ICONS.argocd : LayoutDashboard;
 
   return (
     <div className="h-6 bg-[var(--bg-secondary)]/70 border-b border-[var(--border-subtle)] flex items-center px-3 gap-1 text-[length:calc(11px*var(--ui-factor))] select-none text-[var(--text-secondary)] shrink-0 font-sans overflow-hidden whitespace-nowrap">
@@ -61,6 +62,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
           {/* Kind or Category */}
           <div className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[var(--text-primary)] font-medium">
             {activeTab.type === 'overview' && <LayoutDashboard size={11} className="text-[var(--accent)]" />}
+            {activeTab.type.endsWith('-dashboard') && <DashboardIcon aria-hidden="true" size="calc(11px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--accent)]" />}
             {activeTab.type === 'yaml-editor' && <FileCode size="calc(11px * var(--ui-factor))" className="text-amber-400" />}
             {activeTab.type === 'terminal' && <TermIcon size="calc(11px * var(--ui-factor))" className="text-emerald-400" />}
             {activeTab.type === 'logs' && <FileText size="calc(11px * var(--ui-factor))" className="text-blue-400" />}
@@ -72,7 +74,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
       )}
 
       {/* Resource Name if selected or viewing detail/yaml */}
-      {activeTab?.type !== 'overview' && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && (activeTab?.name || selectedItem?.name) && (
+      {activeTab?.type !== 'overview' && !activeTab?.type.endsWith('-dashboard') && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && (activeTab?.name || selectedItem?.name) && (
         <>
           <ChevronRight size="calc(11px * var(--ui-factor))" className="text-[var(--text-muted)] opacity-60 shrink-0" />
           <span className="font-mono text-[var(--text-primary)] min-w-0 truncate px-1 py-0.5 rounded bg-[var(--bg-surface)]/40 font-medium">
