@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { desktopRelease, prepareDesktopRelease, normalizeUpdaterPublicKey, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
+import { desktopRelease, prepareDesktopRelease, normalizeUpdaterPublicKey, targetArtifactsUploaded, reconcileUpdateManifest, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
 
 test('stable feed excludes dev, test, alpha, beta, rc and build metadata tags', () => {
   for (const version of ['0.1.0', '0.1.1', '0.2.0', '1.10.0']) assert.equal(desktopRelease(`v${version}`).prerelease, false);
@@ -85,4 +85,60 @@ test('publication requires matching version, all platforms, signatures and tag-p
   const other = fixture();
   other.manifest.platforms['linux-x86_64'].url = 'https://github.com/JustYarick/kubiki/releases/latest/download/package';
   assert.throws(() => validateUpdateManifest(other.manifest, 'v0.2.0', other.assets), /pinned/);
+});
+
+test('targetArtifactsUploaded identifies completed build artifacts per target', () => {
+  const assets = [
+    { name: 'kubiki-cli-windows-amd64.exe', size: 1024 },
+    { name: 'kubiki_1.0.0_x64-setup.exe', size: 2048 },
+    { name: 'kubiki_1.0.0_x64-setup.exe.sig', size: 128 },
+    { name: 'kubiki-cli-linux-amd64', size: 1024 },
+    { name: 'kubiki_1.0.0_amd64.AppImage', size: 2048 },
+    { name: 'kubiki_1.0.0_amd64.AppImage.sig', size: 128 },
+  ];
+
+  assert.equal(targetArtifactsUploaded('x86_64-pc-windows-msvc', assets, 'kubiki-cli-windows-amd64.exe'), true);
+  assert.equal(targetArtifactsUploaded('x86_64-unknown-linux-gnu', assets, 'kubiki-cli-linux-amd64'), true);
+  assert.equal(targetArtifactsUploaded('aarch64-apple-darwin', assets, 'kubiki-cli-macos-arm64'), false);
+
+  // Missing CLI binary
+  assert.equal(targetArtifactsUploaded('x86_64-pc-windows-msvc', assets.slice(1), 'kubiki-cli-windows-amd64.exe'), false);
+  // Missing signature
+  const noSigAssets = assets.filter(a => !a.name.endsWith('.sig'));
+  assert.equal(targetArtifactsUploaded('x86_64-pc-windows-msvc', noSigAssets, 'kubiki-cli-windows-amd64.exe'), false);
+});
+
+test('reconcileUpdateManifest repairs missing platforms using signatures and assets', () => {
+  const assets = [
+    { name: 'kubiki_0.2.0_amd64.AppImage.tar.gz', size: 1000 },
+    { name: 'kubiki_0.2.0_amd64.AppImage.tar.gz.sig', size: 100 },
+    { name: 'kubiki_0.2.0_x64-setup.nsis.zip', size: 1000 },
+    { name: 'kubiki_0.2.0_x64-setup.nsis.zip.sig', size: 100 },
+    { name: 'Kubiki.app.tar.gz', size: 1000 },
+    { name: 'Kubiki.app.tar.gz.sig', size: 100 },
+  ];
+
+  const signatures = {
+    'kubiki_0.2.0_amd64.AppImage.tar.gz.sig': 'sig-linux',
+    'kubiki_0.2.0_x64-setup.nsis.zip.sig': 'sig-win',
+    'Kubiki.app.tar.gz.sig': 'sig-mac',
+  };
+
+  // Partially populated manifest (e.g. from race condition where windows overwrote others)
+  const initial = {
+    version: '0.2.0',
+    platforms: {
+      'windows-x86_64': {
+        signature: 'sig-win',
+        url: 'https://github.com/JustYarick/kubiki/releases/download/v0.2.0/kubiki_0.2.0_x64-setup.nsis.zip',
+      },
+    },
+  };
+
+  const reconciled = reconcileUpdateManifest(initial, 'v0.2.0', assets, signatures);
+  assert.equal(reconciled.version, '0.2.0');
+  assert.equal(reconciled.platforms['windows-x86_64'].signature, 'sig-win');
+  assert.equal(reconciled.platforms['linux-x86_64'].signature, 'sig-linux');
+  assert.equal(reconciled.platforms['darwin-aarch64'].signature, 'sig-mac');
+  assert.equal(reconciled.platforms['darwin-x86_64'].signature, 'sig-mac');
 });
