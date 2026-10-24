@@ -4,6 +4,7 @@ mod port_forward_commands;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
 use port_forward_commands::*;
 mod mutation_guard;
+mod update_commands;
 use mutation_guard::resolve_mutation_confirm;
 mod mutation_commands;
 use mutation_commands::*;
@@ -58,9 +59,14 @@ pub fn run() {
         .manage(PortForwardManager::default())
         .manage(ExtensionManager::default())
         .manage(mutation_guard::MutationGuard::default())
+        .manage(update_commands::DesktopUpdater::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            update_commands::check_app_update,
+            update_commands::download_app_update,
+            update_commands::install_app_update,
             extension_request,
             extension_cancel,
             list_helm_releases,

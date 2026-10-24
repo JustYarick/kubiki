@@ -39,11 +39,21 @@ fn main() {
         .invoke_handler(move |invoke| {
             let args = match invoke.message.payload() { InvokeBody::Json(args) => args.clone(), _ => Value::Null };
             let command = invoke.message.command();
+            if command == "graphics_benchmark_result" {
+                let result = &args["result"];
+                let window = invoke.message.webview().get_webview_window("graphics-probe");
+                let inner_size = window.as_ref().and_then(|window| window.inner_size().ok());
+                let scale_factor = window.as_ref().and_then(|window| window.scale_factor().ok());
+                println!("{}", json!({"runtime":"full Tauri","nativeInnerSize":inner_size,"nativeScaleFactor":scale_factor,"result":result}));
+                invoke.message.webview().app_handle().exit(if result.get("error").is_some() { 1 } else { 0 });
+                invoke.resolver.resolve(Value::Null);
+                return true;
+            }
             let value = match command {
                 "get_kube_contexts" => json!([{"name":"test","is_current":true}]),
                 "ping_cluster" => json!({"git_version":"v1.34.0"}),
                 "get_namespaces" => json!(["perf"]),
-                "list_helm_releases" => json!({"context":"test","namespace":"perf","offset":0,"limit":100,"has_more":false,"items":[]}),
+                "list_helm_releases" => json!({"context":"test","namespace":args["namespace"],"offset":0,"limit":100,"has_more":false,"items":[]}),
                 "watch_resources" => {
                     let query = &args["query"];
                     let items = fixture[query["kind"].as_str().unwrap_or("")].as_array().cloned().unwrap_or_default();
@@ -61,19 +71,15 @@ fn main() {
             WebviewWindowBuilder::new(app, "graphics-probe", WebviewUrl::External(url.clone()))
                 .title("Kubiki graphics probe · synthetic data")
                 .inner_size(1280., 800.)
+                .min_inner_size(1280., 800.)
+                .max_inner_size(1280., 800.)
+                .resizable(false)
                 .incognito(true)
-                .on_document_title_changed(|window, title| {
-                    if let Some(result) = title.strip_prefix("kubiki-benchmark:") {
-                        let value: Value = serde_json::from_str(result).expect("benchmark result");
-                        println!("{}", json!({"runtime":"full Tauri","result":value}));
-                        window.app_handle().exit(if value.get("error").is_some() { 1 } else { 0 });
-                    }
-                })
                 .on_page_load(move |window, payload| {
                     if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
                         let mode = std::env::var("BENCH_MODE").unwrap_or_else(|_| "pan".into());
-                        let config = json!({"mode":mode});
-                        let script = format!("if (!window.__kubikiBenchRunning) {{ window.__kubikiBenchRunning = true; window.__kubikiBench = {config}; window.__kubikiFinish = data => {{ document.title = 'kubiki-benchmark:' + JSON.stringify(data); }}; {}", include_str!("../../tests/perf/native_pan.js")) + "}";
+                        let config = json!({"mode":mode,"variant":std::env::var("BENCH_VARIANT").unwrap_or_else(|_| "default".into()),"zoom":std::env::var("BENCH_ZOOM").ok().and_then(|v|v.parse::<u32>().ok()).unwrap_or(5),"frames":std::env::var("BENCH_FRAMES").ok().and_then(|v|v.parse::<u32>().ok()).unwrap_or(180)});
+                        let script = format!("if (!window.__kubikiBenchRunning) {{ window.__kubikiBenchRunning = true; window.__kubikiBench = {config}; window.__kubikiFinish = data => window.__TAURI_INTERNALS__.invoke('graphics_benchmark_result', {{ result: data }}); {}", include_str!("../../tests/perf/native_pan.js")) + "}";
                         window.eval(script).expect("benchmark script");
                     }
                 })

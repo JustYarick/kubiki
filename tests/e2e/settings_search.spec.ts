@@ -7,7 +7,7 @@ test('settings search filters pages and rows, highlights matches, jumps on Enter
   const search = dialog.getByLabel('Search settings');
   const categories = dialog.getByRole('navigation', { name: 'Settings categories' });
   await expect(search).toBeFocused();
-  await expect(categories.getByRole('button')).toHaveCount(7);
+  await expect(categories.getByRole('button')).toHaveCount(8);
 
   await search.fill('scrollback');
   const terminalPage = categories.getByRole('button', { name: 'Terminal' });
@@ -28,6 +28,27 @@ test('settings search filters pages and rows, highlights matches, jumps on Enter
   await expect(categories.getByRole('button')).toHaveCount(0);
 
   await dialog.getByLabel('Clear search').click();
-  await expect(categories.getByRole('button')).toHaveCount(7);
+  await expect(categories.getByRole('button')).toHaveCount(8);
   await expect(categories.getByRole('button', { name: 'Terminal', exact: true })).toHaveAttribute('aria-current', 'true');
+});
+
+test('starting prompt is saved, restored after reload and reset to the default', async ({ page }) => {
+  await page.goto('/?demo=1');
+  const openSettings = async () => {
+    await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'AI assistant', exact: true }).click();
+  };
+  await openSettings();
+  const editor = page.getByRole('textbox', { name: 'Starting prompt', exact: true });
+  await expect(editor).toContainText('ANALYSIS ONLY');
+  await editor.fill('Explain the root cause and evidence. Reply in English.');
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.reload();
+  await openSettings();
+  await expect(editor).toHaveValue('Explain the root cause and evidence. Reply in English.');
+  await page.getByRole('button', { name: 'Restore default prompt', exact: true }).click();
+  await expect(editor).toContainText('ANALYSIS ONLY');
+  await editor.fill('');
+  await editor.press('Tab');
+  await expect(editor).toContainText('ANALYSIS ONLY');
 });

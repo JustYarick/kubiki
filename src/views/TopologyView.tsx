@@ -66,7 +66,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
     }
     return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [resources, namespaces, selectedNamespace]);
-  const { graph, notice, building } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope);
+  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope);
   const chooseScope = !graphScope || scope === 'overview';
   const typeCounts = useMemo(() => topologyTypeCounts(graph), [graph]);
   const chooseNamespaces = (selection: string) => setScope(selection === 'all' ? 'all' : `namespaces:${selection}`);
@@ -89,7 +89,6 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
     </div> : <NamespaceScopeNotice /> }
     {helm.loading && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Loading Helm relationships…</p>}
     {helm.error && <p className="px-3 py-1 text-xs text-[var(--status-warn)]">Helm relationships unavailable: {helm.error} Kubernetes resources are still shown.</p>}
-    {building && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Updating topology relationships…</p>}
     {synchronizing && <p role="status" className="px-3 py-1 text-xs text-[var(--text-secondary)]">Resources are synchronizing. Counts and relationships may be incomplete.</p>}
     {!!Object.values(errors).filter(Boolean).length && <div className="px-3 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Some resource types are unavailable. This diagram shows loaded resources only.</div>}
     <div className="topology-body relative overflow-hidden">
@@ -109,7 +108,9 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
         </button>)}</div>
         {!summaries.length && <p className="text-xs text-[var(--text-muted)] mt-4">No namespaces have been loaded. Open a resource topology from its details.</p>}
       </div> : notice ? <div role="alert" className="p-6 text-[var(--status-warn)] text-xs"><TriangleAlert size="calc(18px * var(--ui-factor))" className="mb-2" />{notice}<p className="mt-2 text-[var(--text-secondary)]">No graph was sent to the layout worker. Select fewer namespaces, use fewer hops, or open a specific workload or Pod.</p><Button size="sm" className="mt-3" onClick={() => setScope('')}>Choose another scope</Button></div> : <><TopologyCanvas graph={graph} direction={direction} revision={revision} routeRevision={routeRevision} hiddenKinds={hiddenKinds} focusKey={item ? resourceKey(item) : undefined} />
-        <div className="topology-summary">{graph.items.size} resources · {graph.relations.length} links{warningCount > 0 && <span className="text-[var(--status-warn)]"> · {warningCount} with issues</span>}</div>
+        <div className="topology-summary">{graph.items.size} resources · {graph.relations.length} links{warningCount > 0 && <span className="text-[var(--status-warn)]"> · {warningCount} with issues</span>}
+          {loading && <span role="status" className="block text-[var(--text-secondary)]">Updating topology relationships…</span>}
+        </div>
         <div className="topology-islands">
           <TopologySettings namespace={diagramNamespace ?? selectedNamespace} namespaces={summaries.map(summary => summary.name)} onNamespaceChange={chooseNamespaces} onUseSelection={() => setScope('selection')} onChooseScope={() => setScope('')}
             focusLabel={item && item.kind !== 'Event' ? `${item.kind}/${item.name}` : undefined} onFocus={() => setScope('resource')}

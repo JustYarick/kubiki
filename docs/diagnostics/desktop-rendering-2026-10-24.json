@@ -1,0 +1,322 @@
+{
+  "date": "2026-10-24",
+  "sourceRevision": "b6a5dfaf3882dab91abf7400292674534a2e94af",
+  "workingTreeHasUncommittedChanges": true,
+  "environment": {
+    "distribution": "openSUSE Tumbleweed 20261014",
+    "session": "Hyprland / native Wayland",
+    "gpu": "NVIDIA GeForce RTX 5070",
+    "driver": "595.104.02",
+    "monitors": [
+      {
+        "name": "DP-1",
+        "width": 3440,
+        "height": 1440,
+        "refreshHz": 180,
+        "scale": 1
+      },
+      {
+        "name": "HDMI-A-1",
+        "width": 1920,
+        "height": 1080,
+        "refreshHz": 60,
+        "scale": 1
+      }
+    ],
+    "benchmarkWindowObservedOn": "DP-1",
+    "gtk": "3.24.53",
+    "webkitgtk": "2.54.1"
+  },
+  "method": "180 requestAnimationFrame callback intervals during synthetic DOM mouse events, after layout and font load; 60 idle intervals. Not physical FPS or end-to-end input latency.",
+  "measurements": [
+    {
+      "name": "chrome-production-wayland",
+      "returncode": 0,
+      "elapsedSeconds": 8.7,
+      "measurements": [
+        {
+          "runtime": "Chrome",
+          "browserVersion": "155.0.8059.84",
+          "headed": true,
+          "result": {
+            "mode": "topology pan",
+            "moved": true,
+            "nodes": 229,
+            "edges": 730,
+            "meanFrameMs": 24.74,
+            "p95FrameMs": 27.899999999999636,
+            "fps": 40.42037186742118,
+            "over32ms": 6,
+            "frames": 180,
+            "devicePixelRatio": 1,
+            "viewport": {
+              "width": 1280,
+              "height": 800
+            },
+            "transform": "translate(-178.588px, -2185.59px) scale(0.248832)",
+            "variant": "default",
+            "idleMeanFrameMs": 5.555000000000003,
+            "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "visibility": "visible",
+            "visualViewportScale": 1,
+            "uiScale": "110",
+            "graphUiFactor": "1",
+            "domElements": 10875,
+            "labels": 730,
+            "fontFamily": "\"Inter Variable\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif",
+            "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS"
+          }
+        }
+      ]
+    },
+    {
+      "name": "gtk-production-auto",
+      "returncode": 0,
+      "elapsedSeconds": 11.62,
+      "measurements": [
+        {
+          "dmabufDisabled": "unset",
+          "explicitSyncDisabled": "1",
+          "webkit": "2.54.1",
+          "gtkScale": 1,
+          "hardwarePolicy": "always",
+          "allocatedSize": {
+            "width": 1280,
+            "height": 800
+          },
+          "result": {
+            "mode": "topology pan",
+            "moved": true,
+            "nodes": 229,
+            "edges": 730,
+            "meanFrameMs": 35.07222222222222,
+            "p95FrameMs": 46,
+            "fps": 28.51259306193569,
+            "over32ms": 168,
+            "frames": 180,
+            "devicePixelRatio": 1,
+            "viewport": {
+              "width": 1280,
+              "height": 800
+            },
+            "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+            "variant": "default",
+            "idleMeanFrameMs": 16.066666666666666,
+            "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+            "visibility": "visible",
+            "visualViewportScale": 1,
+            "uiScale": "110",
+            "graphUiFactor": "1",
+            "domElements": 10875,
+            "labels": 730,
+            "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+            "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS"
+          }
+        }
+      ]
+    },
+    {
+      "name": "gtk-development-auto",
+      "returncode": 0,
+      "elapsedSeconds": 12.28,
+      "measurements": [
+        {
+          "dmabufDisabled": "unset",
+          "explicitSyncDisabled": "1",
+          "webkit": "2.54.1",
+          "gtkScale": 1,
+          "hardwarePolicy": "always",
+          "allocatedSize": {
+            "width": 1280,
+            "height": 800
+          },
+          "result": {
+            "mode": "topology pan",
+            "moved": true,
+            "nodes": 229,
+            "edges": 730,
+            "meanFrameMs": 34.90555555555556,
+            "p95FrameMs": 45,
+            "fps": 28.648734680884925,
+            "over32ms": 161,
+            "frames": 180,
+            "devicePixelRatio": 1,
+            "viewport": {
+              "width": 1280,
+              "height": 800
+            },
+            "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+            "variant": "default",
+            "idleMeanFrameMs": 16.05,
+            "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+            "visibility": "visible",
+            "visualViewportScale": 1,
+            "uiScale": "110",
+            "graphUiFactor": "1",
+            "domElements": 10881,
+            "labels": 730,
+            "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+            "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS"
+          }
+        }
+      ]
+    },
+    {
+      "name": "gtk-production-compatibility",
+      "returncode": 0,
+      "elapsedSeconds": 17.68,
+      "measurements": [
+        {
+          "dmabufDisabled": "1",
+          "explicitSyncDisabled": "1",
+          "webkit": "2.54.1",
+          "gtkScale": 1,
+          "hardwarePolicy": "never",
+          "allocatedSize": {
+            "width": 1280,
+            "height": 800
+          },
+          "result": {
+            "mode": "topology pan",
+            "moved": true,
+            "nodes": 229,
+            "edges": 730,
+            "meanFrameMs": 70.3,
+            "p95FrameMs": 76,
+            "fps": 14.22475106685633,
+            "over32ms": 179,
+            "frames": 180,
+            "devicePixelRatio": 1,
+            "viewport": {
+              "width": 1280,
+              "height": 800
+            },
+            "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+            "variant": "default",
+            "idleMeanFrameMs": 16.066666666666666,
+            "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+            "visibility": "visible",
+            "visualViewportScale": 1,
+            "uiScale": "110",
+            "graphUiFactor": "1",
+            "domElements": 10875,
+            "labels": 730,
+            "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+            "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS"
+          }
+        }
+      ]
+    },
+    {
+      "name": "tauri-production-auto",
+      "returncode": 0,
+      "elapsedSeconds": 11.47,
+      "measurements": [
+        {
+          "nativeInnerSize": {
+            "height": 800,
+            "width": 1280
+          },
+          "nativeScaleFactor": 1.0,
+          "result": {
+            "devicePixelRatio": 1,
+            "domElements": 10878,
+            "edges": 730,
+            "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+            "fps": 28.966849050531057,
+            "frames": 180,
+            "graphUiFactor": "1",
+            "idleMeanFrameMs": 16.066666666666666,
+            "labels": 730,
+            "meanFrameMs": 34.522222222222226,
+            "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS",
+            "mode": "topology pan",
+            "moved": true,
+            "nodes": 229,
+            "over32ms": 164,
+            "p95FrameMs": 44,
+            "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+            "uiScale": "110",
+            "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+            "variant": "default",
+            "viewport": {
+              "height": 800,
+              "width": 1280
+            },
+            "visibility": "visible",
+            "visualViewportScale": 1
+          },
+          "runtime": "full Tauri"
+        }
+      ]
+    }
+  ],
+  "experimentalCulling": {
+    "change": "onlyRenderVisibleElements: true in an isolated copy of the generated production TopologyView bundle; no application source change",
+    "sourceGraphObjects": 229,
+    "sourceGraphRelationships": 730,
+    "measurement": {
+      "dmabufDisabled": "unset",
+      "explicitSyncDisabled": "1",
+      "webkit": "2.54.1",
+      "gtkScale": 1,
+      "hardwarePolicy": "always",
+      "allocatedSize": {
+        "width": 1280,
+        "height": 800
+      },
+      "result": {
+        "mode": "topology pan",
+        "moved": true,
+        "nodes": 6,
+        "edges": 173,
+        "meanFrameMs": 17.85,
+        "p95FrameMs": 28,
+        "fps": 56.02240896358543,
+        "over32ms": 5,
+        "frames": 180,
+        "devicePixelRatio": 1,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+        "variant": "default",
+        "idleMeanFrameMs": 16.066666666666666,
+        "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+        "visibility": "visible",
+        "visualViewportScale": 1,
+        "uiScale": "110",
+        "graphUiFactor": "1",
+        "domElements": 2398,
+        "labels": 173,
+        "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+        "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS"
+      }
+    }
+  },
+  "gpuDiagnostics": {
+    "WebKit version": "WebKitGTK 2.54.1 (tarball)",
+    "Desktop": "Hyprland",
+    "Type": "Wayland",
+    "Screen geometry": "3440,0 1920x1080",
+    "Device scale": "1",
+    "VBlank type": "Timer",
+    "VBlank refresh rate": "60Hz",
+    "Size": "1280x800",
+    "Policy": "always",
+    "Renderer": "DMABuf (Supported buffers: Hardware, Shared Memory)",
+    "GL_RENDERER": "NVIDIA GeForce RTX 5070/PCIe/SSE2",
+    "GL_VENDOR": "NVIDIA Corporation",
+    "GL_VERSION": "3.2.0 NVIDIA 595.104.02",
+    "EGL_VENDOR": "NVIDIA"
+  },
+  "limitations": [
+    "Windows and macOS not tested on hardware.",
+    "Full Tauri uses a Rust debug probe with production JavaScript, not a packaged release.",
+    "Single final comparison pass; additional pilots and a repeated WebKit baseline support the broad trends but are not a statistical confidence interval.",
+    "Whole-window blur has not been reproduced and fixed independently.",
+    "WebKit snapshots do not prove Wayland compositor output.",
+    "Native test windows were constrained to 1280x800; tiling-induced mismatched-size pilot runs are excluded."
+  ]
+}

@@ -1,8 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
-import { Bot, Boxes, FileCode2, FileText, Info, Palette, Terminal } from 'lucide-react';
+import { Bot, Boxes, Code2, FileCode2, FileText, Info, Palette, Terminal } from 'lucide-react';
 import { fuzzyScore } from '../../core/utils/fuzzy';
 
-export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'ai' | 'about';
+export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'ai' | 'developer' | 'about';
 
 export interface SettingsEntry {
   /** Stable id used as a DOM anchor when jump-to-match is triggered. */
@@ -29,7 +29,8 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     id: 'ai', title: 'AI assistant', icon: Bot, sectionTitle: 'AI assistant',
     entries: [
       { id: 'ai.agent', label: 'Analysis agent', description: 'Analyze opens this locally installed CLI with a diagnostic snapshot. Install and sign in to the agent before using it.', keywords: 'codex opencode claude AI analyze agent assistant diagnostics' },
-      { id: 'ai.analysis-policy', label: 'Analysis only', description: 'The starting prompt prohibits commands, cluster changes and experiments. Only the supplied snapshot is analyzed. Secret contents and environment values are excluded.', keywords: 'read only prompt safety permissions snapshot' },
+      { id: 'ai.starting-prompt', label: 'Starting prompt', description: 'Instructions sent before the diagnostic snapshot for every new analysis. Changes are saved on this device and apply to all analysis agents.', keywords: 'system initial prompt instructions custom edit language' },
+      { id: 'ai.analysis-policy', label: 'Diagnostic snapshot', description: 'Only currently loaded resource data and matching events are included. Secret contents and environment values are excluded.', keywords: 'read only safety permissions snapshot' },
     ],
   },
   {
@@ -92,12 +93,19 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     ],
   },
   {
+    id: 'developer', title: 'Developer', icon: Code2, sectionTitle: 'Developer tools',
+    entries: [
+      { id: 'developer.mode', label: 'Developer mode', description: 'Show the SDK Diagnostics extension in the catalog and workspace. Hidden by default.', keywords: 'dev sdk test diagnostics plugin extension debug' },
+    ],
+  },
+  {
     id: 'about',
     title: 'About',
     icon: Info,
     sectionTitle: 'About',
     entries: [
       { id: 'about.kubiki', label: 'Kubiki', keywords: 'desktop kubernetes ide version license apache features workspace clusters resources yaml logs terminals helm' },
+      { id: 'about.updates', label: 'Application updates', description: 'Check for stable Kubiki releases and install updates.', keywords: 'update upgrade download github stable release version' },
       { id: 'about.cluster', label: 'Cluster connection', description: 'The context and API server version selected in the title bar. Connection info is read-only here.', keywords: 'context server version connected kubeconfig' },
     ],
   },

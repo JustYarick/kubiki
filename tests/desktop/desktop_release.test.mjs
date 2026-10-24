@@ -1,0 +1,57 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { desktopRelease, prepareDesktopRelease, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
+
+test('stable feed excludes dev, test, alpha, beta, rc and build metadata tags', () => {
+  for (const version of ['0.1.0', '0.1.1', '0.2.0', '1.10.0']) assert.equal(desktopRelease(`v${version}`).prerelease, false);
+  for (const version of ['0.2.0-dev.1', '0.2.0-test', '0.2.0-alpha', '0.2.0-beta.2', '0.2.0-rc.1', '0.2.0+dev']) {
+    assert.equal(desktopRelease(`v${version}`).prerelease, true);
+  }
+  for (const tag of ['main', 'test', 'v1.2', 'v01.2.3', 'v1.2.3-01', 'v1.2.3-dev..1', 'v1.2.3\n']) assert.throws(() => desktopRelease(tag));
+});
+
+test('release preparation synchronizes embedded versions and locked package identity', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kubiki-release-'));
+  try {
+    await mkdir(path.join(root, 'src-tauri'));
+    await writeFile(path.join(root, 'package.json'), '{"name":"kubiki","version":"0.1.0"}');
+    await writeFile(path.join(root, 'src-tauri/tauri.conf.json'), '{"version":"0.1.0","bundle":{"resources":{"keep":"keep"}}}');
+    await writeFile(path.join(root, 'src-tauri/Cargo.toml'), '[package]\nname = "kubiki"\nversion = "0.1.0"\n');
+    await writeFile(path.join(root, 'src-tauri/Cargo.lock'), '[[package]]\nname = "kubiki"\nversion = "0.1.0"\n\n[[package]]\nname = "other"\nversion = "1.0.0"\n');
+    await assert.rejects(prepareDesktopRelease(root, 'v0.2.0', {}), /require/);
+    await prepareDesktopRelease(root, 'v0.2.0', { KUBIKI_UPDATER_PUBLIC_KEY: 'public', TAURI_SIGNING_PRIVATE_KEY: 'private' });
+    assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'))).version, '0.2.0');
+    const config = JSON.parse(await readFile(path.join(root, 'src-tauri/tauri.conf.json')));
+    assert.equal(config.version, '0.2.0');
+    assert.deepEqual(config.bundle.resources, { keep: 'keep' });
+    assert.match(await readFile(path.join(root, 'src-tauri/Cargo.toml'), 'utf8'), /version = "0.2.0"/);
+    assert.match(await readFile(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'), /name = "kubiki"\nversion = "0.2.0"/);
+    assert.match(await readFile(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'), /name = "other"\nversion = "1.0.0"/);
+    assert.equal(JSON.parse(await readFile(path.join(root, '.kubiki-build/updater.conf.json'))).bundle.createUpdaterArtifacts, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+function fixture() {
+  const platforms = Object.fromEntries(UPDATE_TARGETS.map(target => [target, {
+    url: `https://github.com/JustYarick/kubiki/releases/download/v0.2.0/kubiki-${target}`,
+    signature: 'signed',
+  }]));
+  const assets = UPDATE_TARGETS.flatMap(target => [{ name: `kubiki-${target}`, size: 100 }, { name: `kubiki-${target}.sig`, size: 100 }]);
+  return { manifest: { version: '0.2.0', platforms }, assets };
+}
+
+test('publication requires matching version, all platforms, signatures and tag-pinned packages', () => {
+  const { manifest, assets } = fixture();
+  assert.doesNotThrow(() => validateUpdateManifest(manifest, 'v0.2.0', assets));
+  assert.throws(() => validateUpdateManifest({ ...manifest, version: '0.1.0' }, 'v0.2.0', assets), /version/);
+  assert.throws(() => validateUpdateManifest(manifest, 'v0.2.0', assets.slice(1)), /Missing update package/);
+  assert.throws(() => validateUpdateManifest(manifest, 'v0.2.0', assets.filter(asset => !asset.name.endsWith('.sig'))), /Missing signature/);
+  delete manifest.platforms['darwin-aarch64'];
+  assert.throws(() => validateUpdateManifest(manifest, 'v0.2.0', assets), /darwin-aarch64/);
+  const other = fixture();
+  other.manifest.platforms['linux-x86_64'].url = 'https://github.com/JustYarick/kubiki/releases/latest/download/package';
+  assert.throws(() => validateUpdateManifest(other.manifest, 'v0.2.0', other.assets), /pinned/);
+});

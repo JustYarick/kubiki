@@ -6,13 +6,16 @@ import {
   type ExtensionPreview,
   type InstalledExtension,
 } from '../providers/extensions';
-import { refreshExtensions, useExtensions } from '../extensions/registry';
+import { extensionVisible, refreshExtensions, useExtensions } from '../extensions/registry';
+import { useUiStore } from '../state/ui_store';
 import { openWorkspacePanel, usePanelRegistry } from '../core/workspace_panels';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { cx } from '../core/utils/cx';
 export function ExtensionsView() {
-  const { installed, error: loadError, loading } = useExtensions();
+  const { installed: allInstalled, error: loadError, loading } = useExtensions();
+  const developerMode = useUiStore(state => state.developerMode);
+  const installed = allInstalled.filter(entry => extensionVisible(entry, developerMode));
   const [query, setQuery] = useState('');
   const [section, setSection] = useState('catalog');
   const [selected, setSelected] = useState('');
@@ -137,7 +140,7 @@ export function ExtensionsView() {
       <div
         role="tablist"
         aria-label="Extension sections"
-        className="flex gap-2 mb-3"
+        className="kub-tool-tabs mb-3"
       >
         {[
           ['catalog', 'Catalog'],
@@ -149,7 +152,7 @@ export function ExtensionsView() {
             role="tab"
             aria-selected={section === id}
             className={cx(
-              'px-3 py-2 rounded',
+              'kub-tool-tab rounded',
               section === id && 'bg-[var(--bg-hover)]',
             )}
             onClick={() => setSection(id)}

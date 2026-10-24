@@ -3,13 +3,10 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { unzipSync } from 'fflate';
 import path from 'node:path';
+import { extensionRuntimeTarget } from './extension-runtime-target.mjs';
 const version = '24.22.1';
-const platform = { darwin: 'darwin', linux: 'linux', win32: 'win' }[
-  process.platform
-];
-if (!platform || !['x64', 'arm64'].includes(process.arch))
-  throw new Error('Unsupported extension runtime platform');
-const archive = `node-v${version}-${platform}-${process.arch}${platform === 'win' ? '.zip' : '.tar.gz'}`;
+const { platform, arch, target } = extensionRuntimeTarget();
+const archive = `node-v${version}-${platform}-${arch}${platform === 'win' ? '.zip' : '.tar.gz'}`;
 const base = `https://nodejs.org/dist/v${version}/`;
 await mkdir('.kubiki-build/runtime', { recursive: true });
 const binary = path.resolve(
@@ -17,6 +14,8 @@ const binary = path.resolve(
   platform === 'win' ? 'node.exe' : 'node',
 );
 const record = '.kubiki-build/runtime/runtime.json';
+// A cross-build must not package an executable left over from the other OS.
+await rm(path.resolve('.kubiki-build/runtime', platform === 'win' ? 'node' : 'node.exe'), { force: true });
 try {
   const info = JSON.parse(await readFile(record, 'utf8'));
   if (
@@ -46,7 +45,7 @@ if (!expected) throw new Error('Official Node checksum not found');
 const bytes = await fetchBytes(archive);
 if (createHash('sha256').update(bytes).digest('hex') !== expected)
   throw new Error('Node archive checksum mismatch');
-const prefix = `node-v${version}-${platform}-${process.arch}`;
+const prefix = `node-v${version}-${platform}-${arch}`;
 if (platform === 'win') {
   const files = unzipSync(bytes);
   await writeFile(binary, files[`${prefix}/node.exe`]);
@@ -74,6 +73,7 @@ await writeFile(
   JSON.stringify({
     version,
     archive,
+    target,
     sha256: createHash('sha256')
       .update(await readFile(binary))
       .digest('hex'),

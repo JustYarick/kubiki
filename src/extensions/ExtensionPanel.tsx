@@ -18,6 +18,12 @@ const TOKENS = [
   '--status-warn',
   '--ui-factor',
   '--font-mono',
+  '--tool-tab-height',
+  '--tool-tab-font-size',
+  '--tool-tab-line-height',
+  '--tool-tab-icon-size',
+  '--tool-tab-gap',
+  '--tool-tab-padding',
 ];
 export function extensionTheme() {
   const style = getComputedStyle(document.documentElement);

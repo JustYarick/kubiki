@@ -1,0 +1,24 @@
+Redis glyph and trademark notice
+
+Redis is a registered trademark of Redis Ltd. Any rights therein are reserved to Redis Ltd.
+Kubiki is an independent project and is not endorsed, sponsored or certified by Redis Ltd.
+
+The classic monochrome Redis glyph is taken unchanged from Simple Icons 10.0.0:
+https://github.com/simple-icons/simple-icons/blob/10.0.0/icons/redis.svg
+It inherits the surrounding UI text color through currentColor.
+
+Simple Icons project license: CC0 1.0 Universal.
+The full text is included in Redis-ARTWORK-LICENSE.txt.
+https://github.com/simple-icons/simple-icons/blob/10.0.0/LICENSE.md
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The previous colored redis/docs artwork is no longer included in this icon.
+Its documentation license is not the licensing source for this rendition.
+
+CC0 does not grant trademark rights or guarantee clearance of third-party rights.
+Simple Icons' disclaimer is included in Redis-ICONS-DISCLAIMER.md:
+https://github.com/simple-icons/simple-icons/blob/10.0.0/DISCLAIMER.md
+
+Redis trademark policy (checked 2026-10-24):
+https://redis.io/legal/trademark-policy/
+Use the glyph to identify the Redis integration, not as Kubiki's own branding.

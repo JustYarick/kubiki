@@ -89,3 +89,23 @@ test('desktop analysis uses dedicated agent IPC and closes its process on tab cl
   await expect.poll(() => page.evaluate(() => (window as any).__analysisCalls.filter((entry: any) => entry.command === 'close_host_terminal').length)).toBeGreaterThan(0);
   expect(await page.evaluate(() => (window as any).__analysisCalls.some((entry: any) => entry.command === 'mutate_resource'))).toBe(false);
 });
+
+test('Analyze uses the custom starting prompt saved in settings', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await dialog.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'AI assistant' }).click();
+  await dialog.getByRole('textbox', { name: 'Starting prompt', exact: true }).fill('Explain this failure in English. Include supporting events.');
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await pods(page);
+  await page.getByTestId('resource-table').getByText('payment-worker-67f98b984-pv4n8', { exact: true }).click();
+  const problems = page.getByTestId('problems-banner');
+  await expect(problems).toContainText('custom prompt');
+  await problems.getByRole('button', { name: 'Analyze', exact: true }).click();
+  const panel = page.getByTestId('workspace-tab-panel');
+  await expect(panel).toContainText('Custom prompt');
+  await panel.getByText('Initial message', { exact: true }).click();
+  await expect(panel.locator('pre')).toContainText('Explain this failure in English. Include supporting events.');
+  await expect(panel.locator('pre')).toContainText('BEGIN UNTRUSTED DIAGNOSTIC SNAPSHOT');
+  await expect(panel.locator('pre')).toContainText('payment-worker-67f98b984-pv4n8');
+});

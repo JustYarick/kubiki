@@ -44,6 +44,15 @@ pub async fn resolve_mutation_confirm(id: String, approved: bool) -> Result<bool
 #[derive(Default)]
 pub struct MutationGuard(tokio::sync::Mutex<()>);
 impl MutationGuard {
+    /// Installation and cluster changes share one gate. Never wait and restart
+    /// unexpectedly after a long-running change finishes.
+    pub fn acquire_for_update(&self) -> Result<tokio::sync::MutexGuard<'_, ()>, String> {
+        if DIALOG_OPEN.load(Ordering::Acquire) {
+            return Err("Close the pending confirmation before installing the update.".into());
+        }
+        self.0.try_lock().map_err(|_| "A cluster change is still running. Finish it before installing the update.".into())
+    }
+
     pub fn acquire(
         &self,
         resource: &ResourceRef,
@@ -168,6 +177,20 @@ mod tests {
         let permit = guard.acquire(&resource).unwrap();
         assert_eq!(guard.acquire(&resource).unwrap_err().status, Some(409));
         drop(permit);
+        assert!(guard.acquire(&resource).is_ok());
+    }
+
+    #[test]
+    fn update_installation_and_cluster_changes_are_mutually_exclusive() {
+        let resource: ResourceRef = serde_json::from_value(serde_json::json!({"context":"prod","group":"","version":"v1","kind":"Pod","namespace":"team","name":"web","uid":"uid"})).unwrap();
+        let guard = MutationGuard::default();
+        let change = guard.acquire(&resource).unwrap();
+        assert!(guard.acquire_for_update().is_err());
+        drop(change);
+        let install = guard.acquire_for_update().unwrap();
+        assert!(guard.acquire(&resource).is_err());
+        assert!(guard.acquire_for_update().is_err());
+        drop(install);
         assert!(guard.acquire(&resource).is_ok());
     }
 }

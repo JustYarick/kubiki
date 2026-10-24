@@ -47,6 +47,9 @@ jobs:
       - name: Run Vitest Unit Tests
         run: pnpm test
 
+      - name: Desktop runtime target tests
+        run: pnpm test:desktop
+
       - name: Build frontend production bundle
         run: pnpm build
 

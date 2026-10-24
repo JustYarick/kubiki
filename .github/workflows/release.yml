@@ -14,37 +14,54 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: desktop-release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create-release.outputs.result }}
+      tag: ${{ steps.create-release.outputs.tag }}
+      prerelease: ${{ steps.create-release.outputs.prerelease }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Create draft release
         id: create-release
         uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           script: |
-            const tag = context.ref.startsWith("refs/tags/")
-              ? context.ref.replace("refs/tags/", "")
-              : "${{ github.event.inputs.tag }}";
+            const { desktopRelease } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
+            const { tag, prerelease } = desktopRelease(process.env.RELEASE_TAG);
+            if (!process.env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
+              throw new Error('Configure the updater signing key and public key before publishing. See docs/APP_UPDATES.md.');
+            }
+            core.setOutput('tag', tag);
+            core.setOutput('prerelease', String(prerelease));
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `Kubiki ${tag}`,
               draft: true,
-              prerelease: false,
+              prerelease,
+              make_latest: 'false',
               generate_release_notes: true
             });
             return data.id;
 
   build-tauri:
-    name: Build (${{ matrix.platform }})
+    name: Build (${{ matrix.target }})
     needs: create-release
     runs-on: ${{ matrix.platform }}
     strategy:
@@ -52,21 +69,36 @@ jobs:
       matrix:
         include:
           - platform: ubuntu-22.04
-            args: ""
-            cli_bin: "crates/kubiki-core/target/release/kubiki-cli"
+            target: x86_64-unknown-linux-gnu
+            node_arch: x64
+            cli_bin: "crates/kubiki-core/target/x86_64-unknown-linux-gnu/release/kubiki-cli"
             cli_artifact: "kubiki-cli-linux-amd64"
-          - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
+          - platform: macos-15
+            target: aarch64-apple-darwin
+            node_arch: arm64
             cli_bin: "crates/kubiki-core/target/aarch64-apple-darwin/release/kubiki-cli"
             cli_artifact: "kubiki-cli-macos-arm64"
-          - platform: windows-latest
-            args: ""
-            cli_bin: "crates/kubiki-core/target/release/kubiki-cli.exe"
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+            node_arch: x64
+            cli_bin: "crates/kubiki-core/target/x86_64-apple-darwin/release/kubiki-cli"
+            cli_artifact: "kubiki-cli-macos-amd64"
+          - platform: windows-2022
+            target: x86_64-pc-windows-msvc
+            node_arch: x64
+            cli_bin: "crates/kubiki-core/target/x86_64-pc-windows-msvc/release/kubiki-cli.exe"
             cli_artifact: "kubiki-cli-windows-amd64.exe"
+
+    env:
+      KUBIKI_BUILD_TARGET: ${{ matrix.target }}
+      KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
+      MACOSX_DEPLOYMENT_TARGET: '13.5'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -76,7 +108,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+          architecture: ${{ matrix.node_arch }}
           cache: 'pnpm'
 
       - name: Install Linux dependencies
@@ -88,7 +121,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.target }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -100,22 +133,42 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify desktop runtime target selection
+        run: pnpm test:desktop
+
+      - name: Prepare release versions and updater artifacts
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/desktop-release.mjs "$RELEASE_TAG"
+
       - name: Build standalone CLI
         shell: bash
         run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            cargo build --release --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target aarch64-apple-darwin
-          else
-            cargo build --release --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli
-          fi
+          cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "${{ matrix.target }}"
+
+      - name: Isolate AppImage tooling from the host OpenSSL configuration
+        if: runner.os == 'Linux'
+        shell: bash
+        # The static appimagetool can deadlock while downloading its runtime when
+        # it reads a newer host OpenSSL configuration (reproduced on openSUSE).
+        run: echo "OPENSSL_CONF=/dev/null" >> "$GITHUB_ENV"
 
       - name: Build Desktop Application & Upload Bundles
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.args }}
+          tagName: ${{ needs.create-release.outputs.tag }}
+          releaseDraft: true
+          prerelease: ${{ needs.create-release.outputs.prerelease == 'true' }}
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --target ${{ matrix.target }} --config .kubiki-build/updater.conf.json -- --locked
 
       - name: Upload CLI to Release
         uses: actions/github-script@v7
@@ -135,7 +188,7 @@ jobs:
                 data: fs.readFileSync(filePath)
               });
             } else {
-              console.warn(`File not found: ${filePath}`);
+              throw new Error(`CLI artifact not found: ${filePath}`);
             }
 
   publish-release:
@@ -143,13 +196,36 @@ jobs:
     needs: [create-release, build-tauri]
     runs-on: ubuntu-latest
     steps:
-      - name: Publish GitHub Release
+      - name: Checkout release validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+
+      - name: Validate updater manifest and publish GitHub Release
         uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:
           script: |
+            const { desktopRelease, validateUpdateManifest } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
+            const release = desktopRelease(process.env.RELEASE_TAG);
+            const release_id = Number(process.env.RELEASE_ID);
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner: context.repo.owner, repo: context.repo.repo, release_id, per_page: 100,
+            });
+            const manifest = assets.find(asset => asset.name === 'latest.json');
+            if (!manifest) throw new Error('The updater manifest is missing. Keeping the release as a draft.');
+            const { data } = await github.rest.repos.getReleaseAsset({
+              owner: context.repo.owner, repo: context.repo.repo, asset_id: manifest.id,
+              headers: { accept: 'application/octet-stream' },
+            });
+            validateUpdateManifest(JSON.parse(Buffer.from(data).toString('utf8')), release.tag, assets);
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
+              release_id,
+              prerelease: release.prerelease,
+              make_latest: release.prerelease ? 'false' : 'true',
               draft: false
             });

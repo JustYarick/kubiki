@@ -300,7 +300,7 @@ export function ResourceHeader({
       </div>
 
       {/* Tabs */}
-      <div role="tablist" aria-label="Resource details" className="details-tabs" onKeyDown={event => {
+      <div role="tablist" aria-label="Resource details" className="details-tabs kub-tool-tabs" onKeyDown={event => {
         const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
         const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
         const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : event.key === 'ArrowRight' ? (current + 1) % buttons.length : event.key === 'ArrowLeft' ? (current + buttons.length - 1) % buttons.length : -1;
@@ -320,7 +320,7 @@ export function ResourceHeader({
             tabIndex={rightTab === tab ? 0 : -1}
             aria-selected={rightTab === tab}
             onClick={() => setTab(tab)}
-            className="details-tab"
+            className="details-tab kub-tool-tab"
           >
             {label}
           </button>

@@ -13,6 +13,9 @@
     "windows": [
       {
         "title": "Kubiki - Kubernetes IDE",
+        "backgroundColor": "#1e1f22",
+        "transparent": false,
+        "zoomHotkeysEnabled": false,
         "width": 1280,
         "height": 800,
         "minWidth": 900,
@@ -21,6 +24,12 @@
     ],
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "windows": { "installMode": "passive" }
     }
   },
   "bundle": {

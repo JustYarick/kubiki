@@ -1,0 +1,220 @@
+{
+  "date": "2026-10-24",
+  "sourceRevision": "b6a5dfaf3882dab91abf7400292674534a2e94af",
+  "workingTreeHasUncommittedChanges": true,
+  "environment": {
+    "distribution": "openSUSE Tumbleweed 20261014",
+    "session": "Hyprland / native Wayland",
+    "gpu": "NVIDIA GeForce RTX 5070",
+    "driver": "595.104.02",
+    "monitors": [
+      {
+        "name": "DP-1",
+        "width": 3440,
+        "height": 1440,
+        "refreshHz": 180,
+        "scale": 1
+      },
+      {
+        "name": "HDMI-A-1",
+        "width": 1920,
+        "height": 1080,
+        "refreshHz": 60,
+        "scale": 1
+      }
+    ],
+    "benchmarkWindowObservedOn": "DP-1",
+    "gtk": "3.24.53",
+    "webkitgtk": "2.54.1"
+  },
+  "method": "180 requestAnimationFrame callback intervals during synthetic DOM mouse events, after layout and font load; 60 idle intervals. Not physical FPS or end-to-end input latency.",
+  "configuration": {
+    "onlyRenderVisibleElements": true,
+    "graphicsMode": "auto",
+    "dmabufDisabled": false,
+    "sourceGraphObjects": 229,
+    "sourceGraphRelationships": 730,
+    "frontend": "production"
+  },
+  "baselineArtifact": "desktop-rendering-2026-10-24.json",
+  "measurements": [
+    {
+      "name": "gtk-configured-production",
+      "hostProfile": "system GTK/WebKitGTK",
+      "result": {
+        "dmabufDisabled": "unset",
+        "explicitSyncDisabled": "1",
+        "webkit": "2.54.1",
+        "gtkScale": 1,
+        "hardwarePolicy": "always",
+        "allocatedSize": {
+          "width": 1280,
+          "height": 800
+        },
+        "result": {
+          "mode": "topology pan",
+          "moved": true,
+          "nodes": 6,
+          "edges": 173,
+          "meanFrameMs": 17.4,
+          "p95FrameMs": 19,
+          "fps": 57.4712643678161,
+          "over32ms": 6,
+          "frames": 180,
+          "devicePixelRatio": 1,
+          "viewport": {
+            "width": 1280,
+            "height": 800
+          },
+          "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+          "variant": "default",
+          "idleMeanFrameMs": 16.066666666666666,
+          "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+          "visibility": "visible",
+          "visualViewportScale": 1,
+          "uiScale": "110",
+          "graphUiFactor": "1",
+          "domElements": 2398,
+          "labels": 173,
+          "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+          "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS"
+        }
+      }
+    },
+    {
+      "name": "tauri-configured-release",
+      "hostProfile": "Rust release (optimized), synthetic IPC",
+      "result": {
+        "nativeInnerSize": {
+          "height": 800,
+          "width": 1280
+        },
+        "nativeScaleFactor": 1.0,
+        "result": {
+          "devicePixelRatio": 1,
+          "domElements": 2401,
+          "edges": 173,
+          "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+          "fps": 57.896429720167255,
+          "frames": 180,
+          "graphUiFactor": "1",
+          "idleMeanFrameMs": 16.066666666666666,
+          "labels": 173,
+          "meanFrameMs": 17.272222222222222,
+          "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS",
+          "mode": "topology pan",
+          "moved": true,
+          "nodes": 6,
+          "over32ms": 6,
+          "p95FrameMs": 18,
+          "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+          "uiScale": "110",
+          "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+          "variant": "default",
+          "viewport": {
+            "height": 800,
+            "width": 1280
+          },
+          "visibility": "visible",
+          "visualViewportScale": 1
+        },
+        "runtime": "full Tauri"
+      }
+    }
+  ],
+  "limitations": [
+    "Each recorded configuration is one synthetic run; this is not a statistical performance guarantee.",
+    "rAF callback intervals are not physical presented-frame FPS, GPU times or end-to-end input latency.",
+    "No live Kubernetes reads/mutations are available to either probe.",
+    "The full Tauri release probe is a dedicated example loading the production preview, not an installed main-application package.",
+    "Windows/macOS and whole-window blur have not been measured or verified."
+  ],
+  "graphicsModeControls": [
+    {
+      "mode": "auto",
+      "exitCode": 0,
+      "stderr": "",
+      "measurement": {
+        "nativeInnerSize": {
+          "height": 800,
+          "width": 1280
+        },
+        "nativeScaleFactor": 1.0,
+        "result": {
+          "devicePixelRatio": 1,
+          "domElements": 2401,
+          "edges": 173,
+          "fontFamily": "Inter Variable, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+          "fps": 57.76636713735559,
+          "frames": 180,
+          "graphUiFactor": "1",
+          "idleMeanFrameMs": 16.066666666666666,
+          "labels": 173,
+          "meanFrameMs": 17.31111111111111,
+          "measurement": "requestAnimationFrame scheduling under synthetic DOM mouse events; not presented-frame FPS",
+          "mode": "topology pan",
+          "moved": true,
+          "nodes": 6,
+          "over32ms": 6,
+          "p95FrameMs": 18,
+          "transform": "translate(-178.587712px, -2185.615311px) scale(0.248832)",
+          "uiScale": "110",
+          "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+          "variant": "default",
+          "viewport": {
+            "height": 800,
+            "width": 1280
+          },
+          "visibility": "visible",
+          "visualViewportScale": 1
+        },
+        "runtime": "full Tauri"
+      }
+    },
+    {
+      "mode": "system",
+      "exitCode": 1,
+      "stderr": "Gdk-Message: 16:22:16.167: Error 71 (Protocol error) dispatching to Wayland display.\n"
+    }
+  ],
+  "graphicsModeControlsNote": "Inherited explicit-sync and DMA-BUF overrides were unset for each control process. Auto adds the NVIDIA/Wayland sync workaround; system does not. System also failed once before this recorded pair with the same Wayland protocol error.",
+  "verification": {
+    "nativeReleaseBuild": "pnpm tauri build --no-bundle -- --locked",
+    "topologyUnitTests": 32,
+    "desktopRuntimeTests": 3,
+    "graphicsPolicyTests": 4,
+    "browserScenariosPassed": 31,
+    "browserScenariosNote": "30 in the production-frontend batch; remaining scenario passed after adding an await for asynchronous watch subscriptions.",
+    "mergedPlatformSchemas": [
+      "linux",
+      "windows",
+      "macos"
+    ],
+    "appImageSmoke": "APPIMAGE_EXTRACT_AND_RUN=1 <AppImage> --graphics-info exited 0",
+    "windowsMacOSNativeBuilds": "not run locally"
+  },
+  "linuxPackages": [
+    {
+      "path": "src-tauri/target/release/bundle/deb/kubiki_0.1.0_amd64.deb",
+      "sizeBytes": 55854830,
+      "sha256": "c0db48897dca1fb2f21b618a34bb9bb277d19a18cbfb09886d18d5d845aa0f76"
+    },
+    {
+      "path": "src-tauri/target/release/bundle/rpm/kubiki-0.1.0-1.x86_64.rpm",
+      "sizeBytes": 55849903,
+      "sha256": "ca3a16014a7bf0cd9e6920b38fac9f2e0a71705a023289da75e7ab1021278918"
+    },
+    {
+      "path": "src-tauri/target/release/bundle/appimage/kubiki_0.1.0_amd64.AppImage",
+      "sizeBytes": 142649848,
+      "sha256": "61ecce15e0dc125bd8b8f8fc5b5501ad66b3d9f13c82bd1f8790a35525238487"
+    }
+  ],
+  "appImagePackagingWorkaround": {
+    "environment": {
+      "OPENSSL_CONF": "/dev/null"
+    },
+    "observedFailure": "appimagetool stalled in OpenSSL RNG initialization while downloading the runtime with host configuration",
+    "result": "AppImage packaging and startup-policy smoke passed with isolated build-time configuration"
+  }
+}

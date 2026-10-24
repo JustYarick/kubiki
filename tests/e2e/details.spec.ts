@@ -150,7 +150,7 @@ test('Namespace Related shows members with kind badges, filtering and a bounded 
   await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(100);
 });
 
-test('a large cluster waits for explicit scope selection, then lays out more than 250 objects', async ({ page }) => {
+test('a large cluster retains all objects and renders offscreen nodes when panned into view', async ({ page }) => {
   const layoutWorkers: string[] = [];
   page.on('worker', (worker) => { if (worker.url().includes('layout_worker')) layoutWorkers.push(worker.url()); });
   await mockResourceLists(page, {
@@ -164,7 +164,23 @@ test('a large cluster waits for explicit scope selection, then lays out more tha
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
   expect(layoutWorkers).toEqual([]);
   await page.getByRole('button', { name: 'All Namespaces', exact: true }).click();
-  await expect(page.locator('.react-flow__node-resource')).toHaveCount(300, { timeout: 20000 });
+  await expect(page.locator('.topology-summary')).toContainText('301 resources · 0 links', { timeout: 20000 });
+  const nodes = page.locator('.react-flow__node-resource');
+  await expect.poll(() => nodes.count()).toBeGreaterThan(0);
+  expect(await nodes.count()).toBeLessThan(300);
+  const minimapNodes = page.locator('.react-flow__minimap-node');
+  await expect(minimapNodes).toHaveCount(301);
+  const last = nodes.filter({ hasText: 'busy-pod-299' });
+  await expect(last).toHaveCount(0);
+  await expect(page.locator('.react-flow__viewport')).toHaveAttribute('style', /scale\(0\.1\)/);
+  const minimap = (await page.locator('.react-flow__minimap-svg').boundingBox())!;
+  const target = (await minimapNodes.last().boundingBox())!;
+  await page.mouse.move(minimap.x + minimap.width / 2, minimap.y + minimap.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect(last).toBeVisible();
+  await expect(minimapNodes).toHaveCount(301);
   await expect(page.getByRole('alert')).toHaveCount(0);
   expect(layoutWorkers.length).toBeGreaterThan(0);
 });

@@ -16,6 +16,7 @@ import { StatusBar } from './components/layout/StatusBar';
 import { Resizer } from './components/layout/Resizer';
 import { CommandPalette } from './navigation/CommandPalette';
 import { SettingsDialog } from './components/settings/SettingsDialog';
+import { AppUpdatePrompt } from './components/updates/AppUpdates';
 import { Toasts } from './components/ui/Toasts';
 import { OverflowTooltip } from './components/ui/OverflowTooltip';
 import { useClusterStore } from './state/cluster_store';
@@ -253,6 +254,7 @@ export default function App() {
     <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px', '--inspector-width': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} compact={compact} narrow={logicalViewportWidth < 500} />
+      <AppUpdatePrompt />
       <ConnectionBanner onRetry={() => {
         const context = useClusterStore.getState().currentContext;
         if (context) void connectToContext(context);

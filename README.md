@@ -84,6 +84,8 @@ The Helm workspace provides release inspection, revision history, values, and ma
 
 Download the installer for your operating system from [GitHub Releases](https://github.com/JustYarick/kubiki/releases).
 
+Desktop builds with update signing configured check for newer stable releases at startup. You can also check from Settings → About → Application updates. Installation requires an explicit restart action and blocks on unsaved YAML edits or running cluster changes. Linux in-app installation uses AppImage; deb/rpm installations use the package manager. See [application update setup](docs/APP_UPDATES.md) for release signing and rollout instructions.
+
 The desktop release workflow targets the following platforms and package formats:
 
 | Operating system | Architecture | Packages |

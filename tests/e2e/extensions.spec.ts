@@ -86,6 +86,16 @@ test('bundled diagnostics exercise real backend RPC and survive disable/re-enabl
   const fixture = await setup(page);
   try {
     const manager = page.getByTestId('extensions-manager');
+    await expect(manager.getByText('SDK Diagnostics', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'SDK Diagnostics', exact: true })).toHaveCount(0);
+    const developerMode = async (enabled: boolean) => {
+      await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Developer', exact: true }).click();
+      await dialog.getByRole('checkbox', { name: 'Developer mode', exact: true }).setChecked(enabled);
+      await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    };
+    await developerMode(true);
     await expect(
       manager.getByText('SDK Diagnostics', { exact: true }).first(),
     ).toBeVisible();
@@ -109,6 +119,12 @@ test('bundled diagnostics exercise real backend RPC and survive disable/re-enabl
     await expect(frame.getByRole('status')).toContainText(
       'Error propagation: PASS',
     );
+    await developerMode(false);
+    await expect(page.locator('iframe[title="kubiki.sdk-test panel"]')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'SDK Diagnostics', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: /SDK Diagnostics/ })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Extensions', exact: true }).click();
+    await expect(manager.getByText('SDK Diagnostics', { exact: true })).toHaveCount(0);
   } finally {
     await fixture.close();
   }

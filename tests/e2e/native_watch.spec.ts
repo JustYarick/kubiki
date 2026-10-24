@@ -3,6 +3,17 @@ import { RESOURCE_TYPES } from '../../src/core/resources/resource_types';
 const resourceCount = RESOURCE_TYPES.length;
 import { test, expect, type Page } from '@playwright/test';
 
+async function delayTopologyBuilds(page: Page) {
+  await page.addInitScript(() => {
+    const postMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function(message: any, options?: StructuredSerializeOptions | Transferable[]) {
+      const send = () => postMessage.call(this, message, Array.isArray(options) ? { transfer: options } : options);
+      if (message?.resources && message?.scope) setTimeout(send, 200);
+      else send();
+    };
+  });
+}
+
 // Exercises the desktop adapter with the real JS Channel SDK. Rust HTTP runtime is tested separately.
 async function nativeApi(page: Page, holdPod = false, restricted = false) {
   await page.addInitScript(({ holdPod, restricted }: { holdPod: boolean; restricted: boolean }) => {
@@ -98,12 +109,15 @@ test('Sync replaces subscriptions, ignores old messages, and pagehide releases c
 });
 
 test('status updates preserve manual graph positions and viewport without another layout worker', async ({ page }) => {
+  await delayTopologyBuilds(page);
   const workers: string[] = []; page.on('worker', (worker) => { if (worker.url().includes('layout_worker')) workers.push(worker.url()); });
   await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await selectDiagramNamespaces(page, ['backend']);
+  await expect(page.getByText('Updating topology relationships…', { exact: true })).toBeVisible();
   const node = page.locator('.react-flow__node-resource'); await expect(node).toHaveCount(1);
   await expect(page.getByText('Arranging topology…', { exact: true })).toHaveCount(0);
+  const canvas = await page.locator('.topology-canvas').boundingBox();
   const before = await node.getAttribute('style'); const bounds = (await node.boundingBox())!;
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2); await page.mouse.down();
   await page.mouse.move(bounds.x + bounds.width / 2 + 15, bounds.y + bounds.height / 2 + 10, { steps: 5 }); await page.mouse.up();
@@ -112,11 +126,73 @@ test('status updates preserve manual graph positions and viewport without anothe
   const pan = (await page.locator('.react-flow__pane').boundingBox())!;
   await page.mouse.move(pan.x + 40, pan.y + 60); await page.mouse.down({ button: 'middle' });
   await page.mouse.move(pan.x + 100, pan.y + 100, { steps: 5 }); await page.mouse.up({ button: 'middle' });
+  await page.mouse.wheel(0, 200);
+  await page.waitForTimeout(250);
   const transform = await viewport.getAttribute('style'); const count = workers.length;
   await page.evaluate(() => (window as any).__watchHarness.update('Pending'));
+  await expect(page.getByText('Updating topology relationships…', { exact: true })).toHaveCount(0);
+  expect(await page.locator('.topology-canvas').boundingBox()).toEqual(canvas);
   await expect(node.getByText('Pending', { exact: true })).toBeVisible();
+  // A resize-triggered fit used to reset the viewport 100 ms after the response.
+  await page.waitForTimeout(300);
   await expect(node).toHaveAttribute('style', dragged!); await expect(viewport).toHaveAttribute('style', transform!);
   expect(workers.length).toBe(count);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForTimeout(300);
+  await expect(viewport).toHaveAttribute('style', transform!);
+});
+
+test('topology publishes completed builds while same-scope watch updates keep arriving', async ({ page }) => {
+  await delayTopologyBuilds(page);
+  await nativeApi(page);
+  await page.goto('/');
+  await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
+  await selectDiagramNamespaces(page, ['backend']);
+  const node = page.locator('.react-flow__node-resource');
+  await expect(node.getByText('Running', { exact: true })).toBeVisible();
+  const updates = await page.evaluateHandle(() => setInterval(() => (window as any).__watchHarness.update('Pending'), 70));
+  try {
+    await expect(node.getByText('Pending', { exact: true })).toBeVisible({ timeout: 2000 });
+    await expect(page.getByText('Updating topology relationships…', { exact: true })).toHaveCount(0);
+  } finally {
+    await page.evaluate(timer => clearInterval(timer), updates);
+    await updates.dispose();
+  }
+  await expect(page.getByText('Updating topology relationships…', { exact: true })).toHaveCount(0);
+});
+
+test('a completed build from an earlier scope is ignored while the new scope waits', async ({ page }) => {
+  await page.addInitScript(() => {
+    const postMessage = Worker.prototype.postMessage;
+    const queued: Array<() => void> = [];
+    const scopes: string[] = [];
+    (window as any).__topologyBuildHarness = { scopes, release: () => queued.shift()?.() };
+    Worker.prototype.postMessage = function(message: any, options?: StructuredSerializeOptions | Transferable[]) {
+      const send = () => postMessage.call(this, message, Array.isArray(options) ? { transfer: options } : options);
+      if (message?.resources && message?.scope) {
+        scopes.push(message.scope);
+        queued.push(send);
+      } else send();
+    };
+  });
+  await nativeApi(page);
+  await page.goto('/');
+  await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
+  await selectDiagramNamespaces(page, ['backend']);
+  await expect.poll(() => page.evaluate(() => (window as any).__topologyBuildHarness.scopes.length)).toBe(1);
+  await expect(page.getByText('Updating topology relationships…', { exact: true })).toBeVisible();
+  await selectDiagramNamespaces(page, ['other']);
+  await page.evaluate(() => (window as any).__topologyBuildHarness.release());
+  await expect.poll(() => page.evaluate(() => (window as any).__topologyBuildHarness.scopes.length)).toBe(2);
+  await expect(page.locator('.react-flow__node-resource')).toHaveCount(0);
+  await expect(page.getByText('Updating topology relationships…', { exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).__topologyBuildHarness.release());
+  const node = page.locator('.react-flow__node-resource');
+  await expect(node).toHaveCount(1);
+  await expect(node).toContainText('other-web');
+  await expect(page.getByText('Updating topology relationships…', { exact: true })).toHaveCount(0);
 });
 
 test('context A → B → A isolates old subscriptions, including late callbacks', async ({ page }) => {
@@ -228,10 +304,12 @@ test('multiple selected namespaces use independent desktop watches and commit on
   await picker.getByRole('option', { name: 'other', exact: true }).click();
   await picker.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
   const table = page.getByTestId('resource-table');
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.subscriptions()
+    .filter((subscription: any) => subscription.kind === 'Deployment')
+    .map((subscription: any) => subscription.namespace).sort())).toEqual(['backend', 'other']);
   const subscriptions = await page.evaluate(() => (window as any).__watchHarness.subscriptions());
   // Pods stay cluster-wide; other namespaced kinds use one watch per selected namespace.
   expect(subscriptions.filter((subscription: any) => subscription.kind === 'Pod').map((subscription: any) => subscription.namespace)).toEqual([null]);
-  expect(subscriptions.filter((subscription: any) => subscription.kind === 'Deployment').map((subscription: any) => subscription.namespace).sort()).toEqual(['backend', 'other']);
   await expect(table.getByText('live-web', { exact: true })).toBeVisible();
   await expect(table.getByText('other-web', { exact: true })).toBeVisible();
   await expect(table.locator('tbody tr')).toHaveCount(2);

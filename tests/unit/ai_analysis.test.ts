@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAnalysisPrompt, normalizeAiAgent } from '../../src/core/ai_analysis';
+import { ANALYSIS_INSTRUCTIONS, ANALYSIS_PROMPT_LIMIT, buildAnalysisPrompt, normalizeAnalysisPrompt, normalizeAiAgent } from '../../src/core/ai_analysis';
 import type { ResourceItem } from '../../src/types/k8s';
 
 const pod: ResourceItem = { kind: 'Pod', apiVersion: 'v1', name: 'waiting', namespace: 'prod', uid: 'pod-1', status: 'Pending', raw: {
@@ -8,6 +8,17 @@ const pod: ResourceItem = { kind: 'Pod', apiVersion: 'v1', name: 'waiting', name
   status: { phase: 'Pending', conditions: [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable', message: '0/3 nodes: insufficient memory' }] },
 } };
 describe('AI diagnostic snapshot', () => {
+  it('uses custom starting instructions while preserving the bounded, redacted snapshot', () => {
+    const prompt = buildAnalysisPrompt(pod, 'prod', [], undefined, 'Reply in English with a concise root cause.');
+    expect(prompt).toMatch(/^Reply in English with a concise root cause\./);
+    expect(prompt).not.toContain(ANALYSIS_INSTRUCTIONS);
+    expect(prompt).toContain('BEGIN UNTRUSTED DIAGNOSTIC SNAPSHOT');
+    expect(prompt).toContain('insufficient memory');
+    expect(prompt).not.toContain('env-secret');
+    expect(normalizeAnalysisPrompt('  ')).toBe(ANALYSIS_INSTRUCTIONS);
+    expect(normalizeAnalysisPrompt({})).toBe(ANALYSIS_INSTRUCTIONS);
+    expect(normalizeAnalysisPrompt('x'.repeat(10000))).toHaveLength(ANALYSIS_PROMPT_LIMIT);
+  });
   it('includes evidence for this resource and explicit restrictions without reading the cluster', () => {
     const event = (uid: string, message: string): ResourceItem => ({ kind: 'Event', apiVersion: 'v1', name: uid, uid, namespace: 'prod', raw: { involvedObject: { kind: 'Pod', apiVersion: 'v1', namespace: 'prod', name: 'waiting', uid }, reason: 'FailedScheduling', message } });
     const prompt = buildAnalysisPrompt(pod, 'production', [event('pod-1', 'Matching event'), event('old-pod', 'Unrelated event')]);

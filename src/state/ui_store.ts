@@ -6,12 +6,16 @@ import type { Perspective } from '../core/perspectives';
 import { DEFAULT_APPEARANCE, appearanceValue, normalizeAppearance } from '../core/appearance';
 import type { ResourceKind } from '../types/k8s';
 import { DEFAULT_TOPOLOGY_HIDDEN_KINDS } from '../core/resources/topology_visibility';
-import { normalizeAiAgent, type AiAgent } from '../core/ai_analysis';
+import { ANALYSIS_INSTRUCTIONS, normalizeAnalysisPrompt, normalizeAiAgent, type AiAgent } from '../core/ai_analysis';
 
 export type Density = 'compact' | 'comfortable';
 export type RightTab = 'overview' | 'yaml' | 'related' | 'events';
 
 interface UIState {
+  developerMode: boolean;
+  setDeveloperMode: (enabled: boolean) => void;
+  aiAnalysisPrompt: string;
+  setAiAnalysisPrompt: (prompt: string) => void;
   aiAgent: AiAgent;
   setAiAgent: (agent: AiAgent) => void;
   /* appearance */
@@ -123,6 +127,10 @@ const normalizeTimeoutSecs = (value: unknown): number => {
 export const useUiStore = create<UIState>()(
   persist(
     (set) => ({
+      developerMode: false,
+      setDeveloperMode: (enabled) => set({ developerMode: enabled }),
+      aiAnalysisPrompt: ANALYSIS_INSTRUCTIONS,
+      setAiAnalysisPrompt: (prompt) => set({ aiAnalysisPrompt: normalizeAnalysisPrompt(prompt) }),
       aiAgent: 'codex',
       setAiAgent: (agent) => set({ aiAgent: normalizeAiAgent(agent) }),
       density: 'compact',
@@ -225,6 +233,8 @@ export const useUiStore = create<UIState>()(
           ...current,
           ...stored as Partial<UIState>,
           aiAgent: normalizeAiAgent(stored?.aiAgent),
+          developerMode: normalizeBool(stored?.developerMode, false),
+          aiAnalysisPrompt: normalizeAnalysisPrompt(stored?.aiAnalysisPrompt),
           inspectorWidth: clamp(stored?.inspectorWidth ?? current.inspectorWidth, 320, 1000),
           sidebarGroups: stored?.sidebarTreeVersion === 2 ? stored.sidebarGroups ?? {} : {},
           sidebarTreeVersion: 2,
@@ -247,6 +257,8 @@ export const useUiStore = create<UIState>()(
       },
       partialize: (s) => ({
         aiAgent: s.aiAgent,
+        developerMode: s.developerMode,
+        aiAnalysisPrompt: s.aiAnalysisPrompt,
         density: s.density,
         uiScale: s.uiScale,
         editorFontSize: s.editorFontSize,

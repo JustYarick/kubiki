@@ -19,9 +19,9 @@ await page.route('**/api/k8s/**', (route) => {
   return route.fulfill({ json });
 });
 await page.goto(process.env.BENCH_URL || 'http://127.0.0.1:1422');
+await page.waitForFunction(() => document.querySelector('.app-statusbar')?.textContent.includes('Pods: 180/180'));
 await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
-await page.getByRole('button', { name: 'Diagram scope', exact: true }).click();
-await page.getByRole('option', { name: /^Namespace: perf / }).click();
+await page.locator('.topology-scope-actions').getByRole('button', { name: 'All Namespaces', exact: true }).click();
 await page.locator('.react-flow__node').first().waitFor({ timeout: 15000 });
 await page.getByRole('status').filter({ hasText: 'Arranging topology' }).waitFor({ state: 'hidden' });
 await page.waitForTimeout(1000);

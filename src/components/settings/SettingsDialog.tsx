@@ -5,6 +5,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Checkbox } from '../ui/Checkbox';
+import { UpdateSettings } from '../updates/AppUpdates';
 import { TerminalFontSettings } from '../TerminalFontSettings';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
@@ -12,7 +13,7 @@ import { DEFAULT_SCROLLBACK, TERMINAL_ACK_TIMEOUT_PRESETS, TERMINAL_SCROLLBACK_P
 import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { cx } from '../../core/utils/cx';
-import { AI_AGENTS, type AiAgent } from '../../core/ai_analysis';
+import { AI_AGENTS, ANALYSIS_INSTRUCTIONS, ANALYSIS_PROMPT_LIMIT, type AiAgent } from '../../core/ai_analysis';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
   entryMatches, filterPages, findEntry, findPage, firstMatchingPage,
@@ -360,6 +361,7 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
           </div>
         </div>
       </Row>
+      <Row entry={findEntry('about.updates')} wide><UpdateSettings /></Row>
       <Row entry={findEntry('about.cluster')}>
         <div className="flex items-center gap-2">
           <Input aria-label="Current context" value={currentContext ?? '—'} readOnly className="w-[calc(200px*var(--ui-factor))]" />
@@ -373,14 +375,34 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
 function AiPage({ sectionTitle }: { sectionTitle: string }) {
   const agent = useUiStore(state => state.aiAgent);
   const setAgent = useUiStore(state => state.setAiAgent);
+  const prompt = useUiStore(state => state.aiAnalysisPrompt);
+  const setPrompt = useUiStore(state => state.setAiAnalysisPrompt);
+  const [draft, setDraft] = useState(prompt);
   return <div><SectionTitle>{sectionTitle}</SectionTitle>
     <Row entry={findEntry('ai.agent')}><select aria-label="Analysis agent" className="ide-select w-40" value={agent} onChange={event => setAgent(event.target.value as AiAgent)}>{AI_AGENTS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select></Row>
+    <Row entry={findEntry('ai.starting-prompt')} wide>
+      <label htmlFor="ai-starting-prompt" className="sr-only">Starting prompt</label>
+      <textarea id="ai-starting-prompt" className="ide-textarea w-full font-mono" rows={12} maxLength={ANALYSIS_PROMPT_LIMIT} spellCheck={false} value={draft} aria-describedby="ai-prompt-hint" onChange={event => { setDraft(event.target.value); setPrompt(event.target.value); }} onBlur={() => setDraft(useUiStore.getState().aiAnalysisPrompt)} />
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+        <p id="ai-prompt-hint" className="text-xs text-[var(--text-muted)]">Empty uses the default instructions. {draft.length}/{ANALYSIS_PROMPT_LIMIT}</p>
+        <Button size="sm" disabled={draft === ANALYSIS_INSTRUCTIONS} onClick={() => { setPrompt(ANALYSIS_INSTRUCTIONS); setDraft(ANALYSIS_INSTRUCTIONS); }}><RotateCcw size={12} aria-hidden="true" />Restore default prompt</Button>
+      </div>
+    </Row>
     <Row entry={findEntry('ai.analysis-policy')} wide><p className="text-xs text-[var(--text-secondary)] leading-relaxed">A new terminal tab opens for every analysis. The selected agent uses its existing account and model settings. Diagnostic information is sent to that agent’s configured model provider.</p></Row>
+  </div>;
+}
+
+function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
+  const enabled = useUiStore(state => state.developerMode);
+  const setEnabled = useUiStore(state => state.setDeveloperMode);
+  return <div><SectionTitle>{sectionTitle}</SectionTitle>
+    <Row entry={findEntry('developer.mode')}><Checkbox aria-label="Developer mode" checked={enabled} onChange={event => setEnabled(event.target.checked)} /></Row>
   </div>;
 }
 
 function pageContent(page: SettingsPageDef): React.ReactElement {
   switch (page.id) {
+    case 'developer': return <DeveloperPage sectionTitle={page.sectionTitle} />;
     case 'ai': return <AiPage sectionTitle={page.sectionTitle} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
     case 'editor': return <EditorPage sectionTitle={page.sectionTitle} />;

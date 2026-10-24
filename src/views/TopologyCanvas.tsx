@@ -61,7 +61,6 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     const hidden = new Set(visibleNodes.filter(node => node.type === 'namespace' ? hiddenKinds.has('Namespace') : node.hidden).map(node => node.id));
     return edges.map(edge => ({ ...edge, hidden: hidden.has(edge.source) || hidden.has(edge.target) }));
   }, [edges, visibleNodes, hiddenKinds]);
-  const containerRef = useRef<HTMLDivElement>(null);
   const flow = useRef<ReactFlowInstance<GraphNode, DiagramEdge> | null>(null);
   const onInit = useCallback((instance: ReactFlowInstance<GraphNode, DiagramEdge>) => { flow.current = instance; }, []);
   const nodeColor = useCallback((node: Node) => node.type === 'namespace' && hiddenKinds.has('Namespace') ? 'transparent' : node.id === focusKey ? '#3574f0' : '#545d70', [focusKey, hiddenKinds]);
@@ -130,18 +129,9 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
 
   useEffect(() => { setEdges(edges => edges.map(edge => ({ ...edge, data: { ...edge.data!, bend: undefined } }))); }, [routeRevision, setEdges]);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    let timer: ReturnType<typeof setTimeout>;
-    const fit = () => { clearTimeout(timer); timer = setTimeout(() => { void flow.current?.fitView({ padding: 0.15, duration: 0 }); }, 100); };
-    const observer = new ResizeObserver(fit);
-    observer.observe(containerRef.current);
-    return () => { observer.disconnect(); clearTimeout(timer); };
-  }, []);
-
-  return <div ref={containerRef} className="topology-canvas relative h-full w-full min-w-0 min-h-0 overflow-hidden">
+  return <div className="topology-canvas relative h-full w-full min-w-0 min-h-0 overflow-hidden">
     <ReactFlow<GraphNode, DiagramEdge> nodes={visibleNodes} edges={visibleEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} edgeTypes={diagramEdgeTypes} nodeTypes={nodeTypes} onInit={onInit}
-      colorMode="dark" fitView minZoom={0.1} maxZoom={2} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null}
+      colorMode="dark" fitView onlyRenderVisibleElements minZoom={0.1} maxZoom={2} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null}
       onNodeClick={inspectNode} onNodeDoubleClick={focusNode}>
       <Background gap={20} size={1} /><Controls showInteractive={false} /><MiniMap pannable zoomable nodeColor={nodeColor} />
     </ReactFlow>
