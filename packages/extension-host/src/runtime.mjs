@@ -13,7 +13,9 @@ export class Runtime {
     list.push(String(value).slice(0, 2000));
     this.logs.set(id, list.slice(-100));
   }
-  async start(id, folder, manifest) {
+  async start(id, folder, manifest, canStart) {
+    if (canStart && !canStart())
+      throw new Error('Extension is disabled or unavailable');
     if (this.hosts.has(id)) return this.hosts.get(id).ready;
     const child = fork(
       this.script,
@@ -107,10 +109,10 @@ export class Runtime {
     child.stderr.on('data', (data) => this.log(id, data.toString()));
     return host.ready;
   }
-  async call(id, folder, manifest, method, params, signal) {
+  async call(id, folder, manifest, method, params, signal, canStart) {
     if (!/^[a-z][a-zA-Z0-9.]{0,79}$/.test(method))
       throw new Error('Invalid extension method');
-    const host = await this.start(id, folder, manifest);
+    const host = await this.start(id, folder, manifest, canStart);
     signal?.throwIfAborted();
     if (host.pending.size >= 32) throw new Error('Too many extension requests');
     return new Promise((resolve, reject) => {

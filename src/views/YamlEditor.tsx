@@ -56,11 +56,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
   const baseline = useMemo(() => cleanView ? cleanYaml(original) : original, [cleanView, original]);
   const dirty = !sameYaml(draft, baseline);
 
-  const replaceDraft = useCallback((value: string) => {
-    draftRef.current = value;
-    const model = modelRef.current;
-    if (model && !model.isDisposed() && model.getValue() !== value) model.setValue(value);
-    setDraft(value);
+  const persistDraft = useCallback((value: string) => {
     const isDirty = !sameYaml(value, cleanViewRef.current ? cleanYaml(original) : original);
     useYamlDraftStore.getState().saveDraft(draftKey, {
       draft: value,
@@ -71,6 +67,16 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
       dirty: isDirty,
     });
   }, [cleanViewRef, draftKey, item.raw?.metadata?.resourceVersion, item.uid, original]);
+  const persistDraftRef = useRef(persistDraft);
+  persistDraftRef.current = persistDraft;
+
+  const replaceDraft = useCallback((value: string) => {
+    draftRef.current = value;
+    const model = modelRef.current;
+    if (model && !model.isDisposed() && model.getValue() !== value) model.setValue(value);
+    setDraft(value);
+    persistDraftRef.current(value);
+  }, []);
 
   // Refresh clean documents; never overwrite a local draft on a background snapshot.
   useEffect(() => {
@@ -157,6 +163,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
           // Monaco owns live edits. Never echo an older React render back into the model.
           draftRef.current = model.getValue();
           setDraft(draftRef.current);
+          persistDraftRef.current(draftRef.current);
         }
       });
       saveAction = instance.addAction({

@@ -153,6 +153,7 @@ export class ExtensionController {
             id,
             this.store.folder(id),
             await this.store.manifest(id),
+            () => this.store.entries[id]?.enabled === true,
           );
       } catch (e) {
         await this.runtime.stop(id);
@@ -166,6 +167,7 @@ export class ExtensionController {
               id,
               this.store.folder(id),
               await this.store.manifest(id),
+              () => this.store.entries[id]?.enabled === true,
             );
         } else if (!old && this.store.entries[id]) {
           this.store.entries[id].enabled = false;
@@ -179,9 +181,18 @@ export class ExtensionController {
       return this.store.serialize(async () => {
         const entry = this.store.entries[p.id];
         if (!entry) throw new Error('Extension not installed');
-        if (!p.enabled) await this.runtime.stop(p.id);
+        const wasEnabled = !!entry.enabled;
+        // Disable before waiting for the process to exit: any concurrent panel
+        // request must observe the extension as disabled and must not start a
+        // replacement backend while stop() is still running.
         entry.enabled = !!p.enabled;
-        await this.store.save();
+        try {
+          await this.store.save();
+        } catch (e) {
+          entry.enabled = wasEnabled;
+          throw e;
+        }
+        if (!entry.enabled) await this.runtime.stop(p.id);
         return null;
       });
     }
@@ -192,6 +203,7 @@ export class ExtensionController {
         p.id,
         this.store.folder(p.id),
         await this.store.manifest(p.id),
+        () => this.store.entries[p.id]?.enabled === true,
       );
       return null;
     }
@@ -209,6 +221,7 @@ export class ExtensionController {
               p.id,
               this.store.folder(p.id),
               await this.store.manifest(p.id),
+              () => this.store.entries[p.id]?.enabled === true,
             );
           entry.previous = oldVersion;
           await this.store.save();
@@ -243,7 +256,7 @@ export class ExtensionController {
       );
       if (!panel || typeof p.view !== 'string' || p.view.length > 180)
         throw new Error('Unknown extension panel');
-      await this.runtime.start(p.id, this.store.folder(p.id), manifest);
+      await this.runtime.start(p.id, this.store.folder(p.id), manifest, () => this.store.entries[p.id]?.enabled === true);
       this.views.set(p.view, p.id);
       const html = await readFile(
         path.join(this.store.folder(p.id), panel.entry),
@@ -269,6 +282,7 @@ export class ExtensionController {
         p.method,
         p.params,
         signal,
+        () => this.store.entries[p.id]?.enabled === true,
       );
     }
     if (method === 'service')

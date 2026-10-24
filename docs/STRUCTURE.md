@@ -11,6 +11,8 @@ Kubiki is a desktop Kubernetes workspace built with React 19, TypeScript, Tauri 
 - [Resource synchronization](#resource-synchronization)
 - [Resource mutations](#resource-mutations)
 - [Diagnostic sessions](#diagnostic-sessions)
+- [Desktop application updates](#desktop-application-updates)
+- [Workspace extension points](#workspace-extension-points)
 - [Development tooling and tests](#development-tooling-and-tests)
 - [Documentation and assets](#documentation-and-assets)
 
@@ -22,11 +24,14 @@ kubiki/
 ├── src-tauri/                  Tauri desktop shell and Rust IPC handlers
 ├── crates/
 │   └── kubiki-core/            Rust Kubernetes engine
+├── packages/                   Extension SDK, author tools and Node controller/workers
+├── extensions/                 Bundled SDK Diagnostics package
+├── scripts/                    Builds, runtime preparation and release validation
 ├── shared/                     Shared resource type registry
 ├── server/                     Local frontend development and test bridges
 ├── tests/                      Frontend unit, contract, and interface tests
 ├── docs/                       Documentation and screenshots
-├── public/licenses/            Bundled font licenses
+├── public/licenses/            Bundled font and icon license notices
 └── .github/workflows/          Verification and release packaging
 ```
 
@@ -44,6 +49,9 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 | `src/views/TopologyView.tsx` | Topology data preparation and workspace integration. |
 | `src/views/TopologyCanvas.tsx` | Interactive graph presentation. |
 | `src/views/HelmView.tsx` | Release and repository navigation, release inspection, and action entry points. |
+| `src/views/ExtensionsView.tsx` | Package installation, enable/disable, manual updates, rollback and logs. |
+| `src/views/AnalysisView.tsx` | Diagnostic message preview and local analysis agent launch. |
+| `src/components/updates/AppUpdates.tsx` | Startup update offer, download/install actions and About settings. |
 | `src/navigation/CommandPalette.tsx` | Search and navigation across commands and resource types. |
 
 `src/components/layout/` contains the explorer, workspace, tabs, inspector, and bottom panel. `src/components/k8s/details/` contains resource-specific detail views and reusable field blocks. Dialogs and diagnostic panes live under `src/components/dialogs/` and `src/components/k8s/`.
@@ -59,10 +67,11 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/resource_watch.ts` | Starting, stopping, refreshing, and rescoping resource watch sessions. |
 | `src/state/workspace_store.ts` | Workspace tabs, split panes, and resource navigation. |
 | `src/state/dock_store.ts` | Bottom-panel sessions and selection. |
-| `src/state/ui_store.ts` | Appearance, layout preferences, and interface settings. |
+| `src/state/ui_store.ts` | Appearance, layout, developer mode, selected AI agent and starting instructions. |
 | `src/state/yaml_draft_store.ts` | In-memory editor drafts keyed by context and resource identity. |
 | `src/state/mutation_confirm_store.ts` | Pending native mutation confirmation requests. |
 | `src/state/pf_store.ts` | Port-forward session state. |
+| `src/state/update_store.ts` | Update service composition and unsaved-editor installation preflight. |
 
 ### Providers and resource logic
 
@@ -88,6 +97,8 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `host_terminal_commands.rs` | Local shell sessions backed by a pseudo-terminal. |
 | `node_commands.rs` | Node debug preparation and exec sessions. |
 | `port_forward_commands.rs` | Starting, listing, and stopping TCP forwards. |
+| `extension_commands.rs` | Bundled extension runtime startup and brokered requests/cancellation. |
+| `update_commands.rs` | Stable feed/version policy, signed package downloads, session cleanup and installation. |
 | `graphics.rs` | Linux graphics runtime initialization and diagnostics. |
 
 The desktop shell owns transport and application lifecycle concerns. Kubernetes request logic and reusable session managers reside in `kubiki-core`. Native discovery and snapshot/CRD reads use `core/reads.rs`; node drain orchestration lives in `core/drain.rs`. Terminal command adapters share `exec_stream.rs` for IPC batching and acknowledgements.
@@ -142,24 +153,64 @@ Port forwarding opens a loopback TCP listener and connects it to the selected Po
 
 Managers track session ownership by desktop window. The window destruction handler stops its watches, terminals, logs, debug sessions, and forwards.
 
+## Desktop application updates
+
+`src/core/app_updates.ts` owns a single-flight update state machine independently
+of React. `src/providers/app_updates.ts` adapts guarded native commands, and
+`update_store.ts` composes them with skip/reminder preferences and dirty-editor
+checks. The Rust command module uses Tauri Updater with a fixed stable GitHub feed
+and a build-time public key. Installation shares `MutationGuard` with cluster
+changes and awaits native session cleanup before the installer or restart can
+terminate the process.
+
+`scripts/desktop-release.mjs` validates tags, prepares embedded versions and checks
+the complete updater manifest. The release workflow publishes only after all four
+target builds pass. See [Application updates](APP_UPDATES.md) for runtime behavior
+and [Publishing desktop releases](RELEASING.md) for the maintainer workflow.
+
 ## Development tooling and tests
 
 The installed application loads the built frontend and uses Tauri commands. `server/k8s_bridge.ts` and `server/helm_bridge.ts` provide read-only local access for frontend development and browser-driven checks. They are connected to the Vite development server and invoke local `kubectl` and `helm` executables. In-memory fixtures live in `src/providers/mock/`.
 
 Frontend checks and tests are configured through `package.json`, the TypeScript project files, Vitest, and `playwright.config.ts`. Rust tests live within the library modules and under `crates/kubiki-core/tests/`.
 
-The CI workflow checks TypeScript, frontend tests and builds, Rust core tests, and desktop backend compilation. The release workflow packages the desktop application for Linux, macOS, and Windows. See the [README build instructions](../README.md#building-and-verification) for local commands.
+The CI workflow checks TypeScript, frontend tests/builds, extension integration,
+the independently packaged author template, runtime/release helper tests, browser
+interface tests, Rust core tests and desktop backend compilation. Native desktop
+unit tests can be run separately with `cargo test --locked --manifest-path
+src-tauri/Cargo.toml --lib`; the current CI native job runs `cargo check` for that
+crate. See the [README build instructions](../README.md#building-and-verification)
+for preparation and verification commands.
 
 ## Documentation and assets
 
 `docs/media/` contains the screenshots used by the README: overview, resources, YAML, topology, and Helm. Native application icons are stored in `src-tauri/icons/`.
 
-Font license notices are stored in `public/licenses/`. The project's own license is defined in the root `LICENSE` file.
+Font and Redis/Kafka icon license notices are stored in `public/licenses/`.
+`docs/DESKTOP_RENDERING.md` records dated investigation results and limitations;
+`docs/diagnostics/` holds their raw results. The project's own license is defined
+in the root `LICENSE` file.
 
 ## Workspace extension points
 
-`src/core/workspace_panels.tsx` registers bundled feature panels and their activity-bar navigation. Topology uses this same registration path. Extensions receive their workspace tab, current visibility and an optional resolved Kubernetes resource. Unknown or removed registrations show an unavailable-panel state instead of falling back to a resource table.
+`src/core/workspace_panels.tsx` registers trusted application panels and host-owned
+adapters for installed panels, plus their activity-bar navigation. Topology uses
+the same registry. Trusted application components receive a workspace tab,
+visibility and an optional resolved Kubernetes resource. External panels receive
+the public SDK contract in an opaque-origin iframe. Unknown or removed
+registrations show an unavailable-panel state instead of a resource table.
+
+`src/extensions/registry.tsx` maps enabled extension contributions to those adapters;
+`ExtensionPanel.tsx` owns iframe CSP and the validated message bridge. Developer
+mode controls visibility of the bundled SDK Diagnostics package. The Rust broker
+launches the bundled Node controller, which manages package state and per-extension
+workers. `packages/extension-sdk` defines Host API 1.0; `packages/extension-tools`
+contains the independent author template, development server and package builder.
+Node backends are trusted local code, while iframe isolation restricts panel code.
 
 Topology relationship construction runs in `topology_graph_worker.ts`; ELK layout runs in a separate worker. The graph bridge strips lazy YAML getters from worker input, retains at most one current build and one latest pending snapshot, and rejects responses from superseded scopes.
 
-See [Workspace extensions](EXTENSIONS.md) for the registration contract and a staged Redis/Kafka integration plan.
+See [Workspace extensions](EXTENSIONS.md) for installation and the registration
+contract, and [extension architecture](EXTENSION_PLATFORM.md) for the runtime
+tradeoffs and deferred APIs. Shared application/extension tab styling is documented
+in [Internal tab metrics](UI_TABS.md).

@@ -96,3 +96,34 @@ test('cluster panels keep separate pinned tabs for each context', async ({ page 
   expect(tabs.map((tab: { context?: string }) => tab.context)).toEqual(['one', 'two']);
   expect(new Set(tabs.map((tab: { id: string }) => tab.id)).size).toBe(2);
 });
+
+test('unsaved YAML survives a details tab switch and blocks app updates', async ({ page }) => {
+  await demo(page);
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
+  await page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway' }).click();
+
+  const details = page.getByTestId('resource-details');
+  await details.getByRole('tab', { name: 'YAML', exact: true }).click();
+  const editor = details.getByTestId('yaml-editor');
+  await expect(editor.locator('.monaco-editor')).toBeVisible({ timeout: 15000 });
+  await editor.locator('.view-lines').click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.press('End');
+  await page.keyboard.type('\nunsavedMarker: true');
+  await expect(editor.getByText('Unsaved edits', { exact: true })).toBeVisible();
+
+  await details.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await details.getByRole('tab', { name: 'YAML', exact: true }).click();
+  await expect(details.getByTestId('yaml-editor').locator('.view-lines')).toContainText('unsavedMarker: true');
+
+  const blocked = await page.evaluate(async () => {
+    try {
+      (await import('/src/state/update_store.ts')).assertUpdateCanInstall();
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  expect(blocked).toBe(true);
+});

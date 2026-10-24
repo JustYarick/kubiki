@@ -77,6 +77,96 @@ describe('workload_pods resolution', () => {
     expect(pods.map((p) => p.name)).toEqual(['web-rs1-abc', 'web-rs1-def']);
   });
 
+  it('never claims a pod whose owner has the same name but another UID', () => {
+    const jobWeb: ResourceItem = {
+      apiVersion: 'batch/v1',
+      kind: 'Job',
+      name: 'web',
+      namespace: 'prod',
+      uid: 'job-1',
+      raw: { metadata: { name: 'web', namespace: 'prod', uid: 'job-1' } },
+    };
+    const foreignPod: ResourceItem = {
+      apiVersion: 'v1',
+      kind: 'Pod',
+      name: 'web-job-xyz',
+      namespace: 'prod',
+      uid: 'pod-job',
+      labels: { app: 'web' },
+      raw: {
+        metadata: {
+          name: 'web-job-xyz',
+          namespace: 'prod',
+          uid: 'pod-job',
+          labels: { app: 'web' },
+          ownerReferences: [{ kind: 'Job', name: 'web', uid: 'job-1' }],
+        },
+      },
+    };
+    const selectedDeployment: ResourceItem = {
+      ...deployment,
+      raw: {
+        ...deployment.raw,
+        spec: { selector: { matchLabels: { app: 'web' } } },
+      },
+    };
+    const resources = {
+      Pod: new Map([['pod-job', foreignPod]]),
+      Job: new Map([['job-1', jobWeb]]),
+    };
+
+    expect(findWorkloadPods(selectedDeployment, resources)).toEqual([]);
+    expect(findWorkloadPods(jobWeb, resources).map((p) => p.name)).toEqual(['web-job-xyz']);
+  });
+
+  it('rejects a stale ReplicaSet owner but keeps the selector fallback when the ReplicaSet is not loaded', () => {
+    const selectedDeployment: ResourceItem = {
+      ...deployment,
+      raw: {
+        ...deployment.raw,
+        spec: { selector: { matchLabels: { app: 'web' } } },
+      },
+    };
+    const stalePod: ResourceItem = {
+      apiVersion: 'v1',
+      kind: 'Pod',
+      name: 'web-old',
+      namespace: 'prod',
+      uid: 'pod-old',
+      labels: { app: 'web' },
+      raw: {
+        metadata: {
+          name: 'web-old',
+          namespace: 'prod',
+          uid: 'pod-old',
+          labels: { app: 'web' },
+          ownerReferences: [{ kind: 'ReplicaSet', name: 'web-rs1', uid: 'rs-old' }],
+        },
+      },
+    };
+    const unownedPod: ResourceItem = {
+      ...stalePod,
+      name: 'web-manual',
+      uid: 'pod-manual',
+      raw: {
+        metadata: {
+          name: 'web-manual',
+          namespace: 'prod',
+          uid: 'pod-manual',
+          labels: { app: 'web' },
+        },
+      },
+    };
+
+    expect(findWorkloadPods(selectedDeployment, {
+      Pod: new Map([['pod-old', stalePod]]),
+      ReplicaSet: new Map([['rs-1', rs1]]),
+    })).toEqual([]);
+    expect(findWorkloadPods(selectedDeployment, {
+      Pod: new Map([['pod-manual', unownedPod]]),
+    }).map((p) => p.name)).toEqual(['web-manual']);
+  });
+
   it('resolves preferred pod (prefers Running over Pending)', () => {
     const pods = [pod2, pod1];
     const preferred = preferredWorkloadPod(pods);

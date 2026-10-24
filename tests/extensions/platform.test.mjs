@@ -57,6 +57,18 @@ async function install(c, bytes = pack()) {
 
 test('rejects traversal, links, oversized directories, incompatible APIs and missing entrypoints', () => {
   assert.equal(unpackPackage(pack()).manifest.id, manifest.id);
+  assert.equal(
+    unpackPackage(pack({ version: '0.1.0-rc.1' })).manifest.version,
+    '0.1.0-rc.1',
+  );
+  assert.throws(
+    () => unpackPackage(pack({ version: '01.0.0' })),
+    /manifest/,
+  );
+  assert.throws(
+    () => unpackPackage(pack({ version: '0.1.0-01' })),
+    /manifest/,
+  );
   assert.throws(
     () => unpackPackage(pack({ main: '../outside.cjs' })),
     /manifest/,
@@ -253,5 +265,35 @@ test('activation and disposal can access settings during rollback and disable', 
       params: { key: 'disposed' },
     }),
     true,
+  );
+});
+test('disable blocks concurrent requests before the backend has exited', async (t) => {
+  const c = await controller(t);
+  await install(c);
+  const stop = c.runtime.stop.bind(c.runtime);
+  let enteredStop;
+  const stopping = new Promise((resolve) => { enteredStop = resolve; });
+  let releaseStop;
+  const gate = new Promise((resolve) => { releaseStop = resolve; });
+  c.runtime.stop = async (id) => {
+    await stop(id);
+    enteredStop();
+    await gate;
+  };
+
+  const disabling = c.request('enable', { id: manifest.id, enabled: false });
+  await stopping;
+  assert.equal(c.store.entries[manifest.id].enabled, false);
+  await assert.rejects(
+    c.request('call', { id: manifest.id, method: 'echo', params: 'restarted' }),
+    /disabled/,
+  );
+
+  releaseStop();
+  await disabling;
+  assert.equal(c.runtime.hosts.has(manifest.id), false);
+  await assert.rejects(
+    c.request('call', { id: manifest.id, method: 'echo', params: 'late' }),
+    /disabled/,
   );
 });

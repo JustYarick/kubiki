@@ -168,12 +168,34 @@ impl PreparedMutation {
                     .pointer("/spec/jobTemplate/spec")
                     .cloned()
                     .ok_or_else(|| error(&resource, 422, "CronJob has no Job template"))?;
+                let template_metadata = after.pointer("/spec/jobTemplate/metadata");
+                let mut metadata = json!({
+                    "name": name,
+                    "namespace": resource.query.namespace,
+                });
+                if let Some(labels) = template_metadata.and_then(|value| value.get("labels")) {
+                    if labels.is_object() {
+                        metadata["labels"] = labels.clone();
+                    }
+                }
+                let mut annotations = template_metadata
+                    .and_then(|value| value.get("annotations"))
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                annotations.insert("cronjob.kubernetes.io/instantiate".into(), json!("manual"));
+                metadata["annotations"] = Value::Object(annotations);
                 sources.push(ResourcePrecondition {
                     api: api.clone(),
                     resource: resource.clone(),
                     version: version.clone(),
                 });
-                after = json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":name,"namespace":resource.query.namespace,"annotations":{"cronjob.kubernetes.io/instantiate":"manual"}},"spec":spec});
+                after = json!({
+                    "apiVersion": "batch/v1",
+                    "kind": "Job",
+                    "metadata": metadata,
+                    "spec": spec,
+                });
                 target = None;
                 (
                     "RUN_JOB",

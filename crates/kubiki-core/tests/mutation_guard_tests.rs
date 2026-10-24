@@ -440,3 +440,124 @@ async fn generated_restart_reviews_intent_without_expanding_large_resource_bodie
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn run_now_preserves_job_template_labels_and_annotations() {
+    use kubiki_core::core::mutations::ResourceAction;
+
+    let cronjob = json!({
+        "apiVersion": "batch/v1",
+        "kind": "CronJob",
+        "metadata": {
+            "name": "backup",
+            "namespace": "backend",
+            "uid": "cron-uid",
+            "resourceVersion": "10"
+        },
+        "spec": {
+            "schedule": "0 0 * * *",
+            "jobTemplate": {
+                "metadata": {
+                    "labels": {"team": "data", "backup": "daily"},
+                    "annotations": {"example.com/policy": "keep"}
+                },
+                "spec": {
+                    "template": {
+                        "metadata": {"labels": {"app": "backup"}},
+                        "spec": {
+                            "restartPolicy": "Never",
+                            "containers": [{"name": "backup", "image": "busybox"}]
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let captured = writes.clone();
+    let service = tower::service_fn(move |req: http::Request<Body>| {
+        let cronjob = cronjob.clone();
+        let captured = captured.clone();
+        async move {
+            let path = req.uri().path().to_string();
+            let status;
+            let response = if req.method() == http::Method::GET
+                && path.ends_with("/namespaces/backend/cronjobs/backup")
+            {
+                status = 200;
+                cronjob
+            } else if req.method() == http::Method::GET
+                && path.ends_with("/namespaces/backend/jobs/backup-manual")
+            {
+                status = 404;
+                json!({"apiVersion": "v1", "kind": "Status", "status": "Failure", "reason": "NotFound", "code": 404})
+            } else if req.method() == http::Method::POST
+                && path.ends_with("/namespaces/backend/jobs")
+            {
+                let bytes = req.into_body().collect_bytes().await.unwrap();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                captured.lock().unwrap().push(body.clone());
+                status = 201;
+                body
+            } else {
+                status = 404;
+                json!({"apiVersion": "v1", "kind": "Status", "status": "Failure", "reason": "NotFound", "code": 404})
+            };
+            Ok::<_, std::convert::Infallible>(
+                http::Response::builder()
+                    .status(status)
+                    .body(Body::from(response.to_string().into_bytes()))
+                    .unwrap(),
+            )
+        }
+    });
+    let resource: ResourceRef = serde_json::from_value(json!({
+        "context": "production",
+        "group": "batch",
+        "version": "v1",
+        "kind": "CronJob",
+        "namespace": "backend",
+        "name": "backup",
+        "uid": "cron-uid"
+    }))
+    .unwrap();
+    let plan = PreparedMutation::prepare(
+        Client::new(service, "backend"),
+        MutationIntent::Action {
+            resource,
+            resource_version: "10".into(),
+            action: ResourceAction::RunCronJob {
+                name: "backup-manual".into(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    plan.confirm_and_commit(|review| async move {
+        assert!(review.contains("backup-manual"));
+        Ok(true)
+    })
+    .await
+    .unwrap();
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    let job = &writes[0];
+    assert_eq!(job["metadata"]["name"], "backup-manual");
+    assert_eq!(job["metadata"]["namespace"], "backend");
+    assert_eq!(
+        job["metadata"]["labels"],
+        json!({"team": "data", "backup": "daily"})
+    );
+    assert_eq!(
+        job["metadata"]["annotations"],
+        json!({
+            "example.com/policy": "keep",
+            "cronjob.kubernetes.io/instantiate": "manual"
+        })
+    );
+    assert_eq!(
+        job["spec"]["template"]["metadata"]["labels"],
+        json!({"app": "backup"})
+    );
+}

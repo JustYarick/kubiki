@@ -2,10 +2,20 @@
 
 ## Public extension platform
 
-Open **Extensions** in the activity bar or command palette. The desktop app ships
-SDK Diagnostics as its first built-in package. Run its checks, then try disabling
-and re-enabling it to exercise the lifecycle. The Redis extension is maintained in
-a separate repository and installed as an ordinary external package.
+Open **Extensions** in the activity bar or command palette. Install a published
+package from GitHub or a local archive. Redis and Kafka are maintained as separate
+extension projects and use the same external package installation path.
+
+SDK Diagnostics is bundled for extension development and hidden by default.
+Enable **Settings → Developer → Developer mode** to show it in the manager,
+workspace navigation and command palette. Run its checks, then try disabling and
+re-enabling it to exercise the lifecycle. Turning developer mode off hides its
+contributions and closes its workspace tabs.
+
+The current Catalog/Installed sections list packages known to this installation;
+there is no remotely refreshed marketplace. The Updates section lists GitHub-origin
+packages that can be checked manually, rather than an automatically fetched list
+of newer versions.
 
 Install a local `.kubiki-extension` file or check a public GitHub repository/release
 URL. Review the resolved version, source and integrations before Install & Enable.
@@ -42,9 +52,11 @@ the initial public SDK; the existing application services remain internal.
 
 ## Internal bundled panel registry
 
-The current extension point is a registry of trusted, bundled feature panels. It
-provides navigation, independent workspace tabs, split views and lazy rendering.
-It does not install external packages or dynamically extend native Tauri commands.
+The internal registry supports trusted application components and host-owned
+adapters for installed extension panels. It provides navigation, independent
+workspace tabs, split views and lazy rendering. Package installation belongs to
+the extension host; third-party panels do not dynamically extend native Tauri
+commands or load their React code into the main application renderer.
 
 Register a feature with `registerWorkspacePanel` from
 `src/core/workspace_panels.tsx`:
@@ -73,20 +85,18 @@ Features should report loading, partial results and errors explicitly.
 
 ## Redis and Kafka
 
-A useful first version is two bundled modules using this registry:
+Redis and Kafka are independent SDK consumers, not built-in Rust database clients.
+Install their prepared `.kubiki-extension` packages through the manager. Their Node
+backends own protocol libraries, authentication, TLS and connection lifecycles;
+their panels use the public SDK bridge and host theme tokens. The application
+provides dedicated Redis/Kafka navigation icons and shared internal tab metrics.
 
-- Redis: connection setup, database/key browsing, bounded key/value reads, TTL and
-  explicitly confirmed writes. Use incremental scans rather than collecting the
-  entire keyspace before rendering it.
-- Kafka: connection setup, topic/partition metadata, consumer group inspection and
-  bounded message reads. Message sampling should have explicit offsets, limits,
-  pause and cancellation rather than an unbounded stream.
-
-Native client managers should own authentication, TLS, cancellation and connection
-lifecycles. Feature views should depend on typed feature providers, with separate
-native and demo adapters. They can reuse the port-forward service for endpoints
-inside Kubernetes, without making Kubernetes discovery a prerequisite for direct
-connections.
+The public SDK currently exposes settings, secrets, notifications and calls to
+the extension's own backend. Kubernetes discovery, reviewed cluster mutations
+and port-forward leasing are not public SDK capabilities. Connections to cluster
+services need an endpoint reachable by the extension backend, such as a separately
+managed port forward. Use each extension's documentation for its supported
+operations and external database write confirmations.
 
 The external platform wraps this registry with host-owned iframe adapters. The
 registry itself continues to accept trusted application components; third-party

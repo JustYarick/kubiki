@@ -3,13 +3,21 @@
 Status: implemented. Ownership: Kubiki desktop/release maintainers. This module
 lives in the existing repository and desktop process; it adds no hosted service.
 
+For the maintainer's publication steps, tag examples and failed-release recovery,
+see [Publishing desktop releases](RELEASING.md).
+
 ## Release policy
 
-Every newer stable version is eligible, including minor and patch releases.
+Every newer stable version is eligible, including major, minor and patch releases.
 Stable tags use plain `vMAJOR.MINOR.PATCH`. Tags containing a prerelease suffix
 (`-dev`, `-test`, `-alpha`, `-beta`, `-rc`, etc.) or build metadata (`+...`) are
 published as GitHub prereleases and never promoted to Latest. Native version
 comparison independently rejects these versions and downgrades.
+
+The source branch does not select the channel. A plain `v0.2.0` tag on `dev`
+still creates a stable release; pushing a branch commit alone creates no release.
+The publish job automatically promotes a successful stable release to Latest
+after validation. It has no manual promotion gate.
 
 The app checks `https://github.com/JustYarick/kubiki/releases/latest/download/latest.json`
 after the first render, independently of Kubernetes connectivity. The workflow
@@ -27,7 +35,9 @@ the repository, for example:
 pnpm tauri signer generate -w /secure/location/kubiki-updater.key
 ```
 
-Configure these GitHub repository settings:
+Configure these GitHub repository settings under **Settings → Secrets and
+variables → Actions** (the public key goes in Variables; the private key/password
+go in Secrets). Supply key file contents, rather than a path on your machine:
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -44,9 +54,10 @@ The public key is embedded in Rust at build time via
 `KUBIKI_UPDATER_PUBLIC_KEY`; it is never loaded from an end user's environment.
 The empty plugin configuration key is intentional for unsigned local builds:
 they report updates as unavailable, and signature verification is never bypassed.
-CI requires both keys, synchronizes the tag into package.json, tauri.conf.json,
-Cargo.toml and the desktop Cargo.lock entry, and enables updater artifacts with
-an additional generated Tauri configuration. Local builds do not require keys.
+CI requires both keys, synchronizes the tag into `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` and the desktop `src-tauri/Cargo.lock` entry, and enables
+updater artifacts with an additional generated Tauri configuration. This changes
+only the CI checkout, not the tagged commit. Local builds do not require keys.
 
 Debug builds, preview builds, browsers and Linux deb/rpm installations do not
 self-update. Linux in-app updates use AppImage; deb/rpm users keep their package
@@ -89,17 +100,21 @@ shown with a retry action; sessions may already have closed during preparation,
 so reconnect the cluster to restore watches after a failed installation.
 
 Validate policy, concurrency, notification preferences and failures with Vitest;
-validate tag handling and complete release publication with `pnpm test:desktop`;
+validate tag handling and publication preconditions with `pnpm test:desktop`;
 validate native policy and mutual exclusion with Cargo tests. Browser tests mock
 the native boundary to cover the offer, progress and explicit restart action.
 
-Before promoting the first production update, install release N and update it
-to N+1 on Windows, macOS Intel/ARM and Linux AppImage. Verify a tampered package
-is rejected, offline startup stays usable, and an active cluster mutation blocks
-installation. Browser mocks and compilation cannot validate native OS installers.
+For the initial stable rollout, install updater-enabled release N normally, then
+exercise the update to newer signed stable release N+1 on Windows, macOS Intel/ARM
+and Linux AppImage. Preview builds disable update checks, so installing a release
+candidate alone does not test this path. Verify a tampered package is rejected,
+offline startup stays usable, and an active cluster mutation blocks installation.
+Browser mocks and compilation cannot validate native OS installers.
 
-Track check/download/install failures in native logs and compare successful
-update rate and recovery time with the first rollout baseline. Release maintainers
+Check/download errors are retained by the update state and displayed on manual
+checks or in the active update dialog; native installation failures also emit a
+tracing error. Aggregate update metrics and an update telemetry service are not
+implemented. Record rollout outcomes and recovery times manually. Release maintainers
 own signing and failed update recovery. Initial recovery is manual reinstallation
 of a known working signed package, preserving compatible user settings; automatic
 rollback, delta updates, staged rollouts and an update server are deferred.

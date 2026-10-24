@@ -1,5 +1,6 @@
 import { performResourceAction } from '../../../../providers/resource_actions';
 import { resourceRef } from '../../../../core/resources/identity';
+import { ownerMatches } from '../../../../core/resources/owner_references';
 import { useMemo } from 'react';
 import { History, RotateCcw, Check } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
@@ -26,7 +27,7 @@ export function RevisionHistoryBlock({ workload, item }: RevisionHistoryBlockPro
     for (const rs of replicaSets.values()) {
       if (rs.namespace === targetWorkload.namespace) {
         const owners = rs.raw?.metadata?.ownerReferences ?? [];
-        if (owners.some((o: any) => o.kind === targetWorkload.kind && (o.name === targetWorkload.name || o.uid === targetWorkload.uid))) {
+        if (owners.some((o: any) => ownerMatches(o, targetWorkload, targetWorkload.kind))) {
           owned.push(rs);
         }
       }

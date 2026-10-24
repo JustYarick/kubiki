@@ -1,5 +1,6 @@
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { matchesSelector } from './relationships';
+import { ownerMatches, type OwnerReference } from './owner_references';
 import { parseApiVersion, RESOURCE_TYPES } from './resource_types';
 
 export type ResourceMap = Partial<Record<ResourceKind, Map<string, ResourceItem>>>;
@@ -48,19 +49,20 @@ export function podsForSelector(resources: ResourceMap, selector: any, namespace
 
 /** The workload that owns a pod, following the ReplicaSet → Deployment chain. */
 export function ownerWorkload(resources: ResourceMap, pod: ResourceItem): ResourceItem | undefined {
-  const owners = pod.raw?.metadata?.ownerReferences ?? [];
+  const owners = (pod.raw?.metadata?.ownerReferences ?? []) as OwnerReference[];
   for (const owner of owners) {
+    if (!owner.kind) continue;
     if (owner.kind === 'ReplicaSet') {
-      const replicaSet = mapOf(resources, 'ReplicaSet').find(rs => rs.uid === owner.uid || rs.name === owner.name);
+      const replicaSet = mapOf(resources, 'ReplicaSet').find(rs => ownerMatches(owner, rs, 'ReplicaSet'));
       const deployment = replicaSet && (replicaSet.raw?.metadata?.ownerReferences ?? []).find((ref: any) => ref.kind === 'Deployment');
       if (deployment) {
-        const target = mapOf(resources, 'Deployment').find(d => d.uid === deployment.uid || d.name === deployment.name);
+        const target = mapOf(resources, 'Deployment').find(d => ownerMatches(deployment, d, 'Deployment'));
         if (target) return target;
       }
       if (replicaSet) return replicaSet;
       continue;
     }
-    const target = mapOf(resources, owner.kind).find(item => item.uid === owner.uid || item.name === owner.name);
+    const target = mapOf(resources, owner.kind).find(item => ownerMatches(owner, item));
     if (target) return target;
   }
   return undefined;

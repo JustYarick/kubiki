@@ -16,6 +16,9 @@ Kubiki is a desktop application for inspecting and managing Kubernetes clusters.
   - [Logs and terminals](#logs-and-terminals)
   - [Port forwarding](#port-forwarding)
   - [Reviewing changes](#reviewing-changes)
+  - [AI analysis](#ai-analysis)
+  - [Extensions](#extensions)
+  - [Application updates](#application-updates)
 - [Architecture](#architecture)
   - [Components](#components)
   - [Data flow](#data-flow)
@@ -24,6 +27,8 @@ Kubiki is a desktop application for inspecting and managing Kubernetes clusters.
   - [Running from source](#running-from-source)
   - [Building desktop packages](#building-desktop-packages)
   - [Verification commands](#verification-commands)
+- [Publishing releases](#publishing-releases)
+- [Documentation](#documentation)
 - [Repository structure](#repository-structure)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [License](#license)
@@ -45,6 +50,9 @@ The application supports switching between kubeconfig contexts and selecting one
 | Diagnostic sessions | Streaming container logs, interactive container shells, node debug shells, and local host terminals. |
 | Network access | TCP port forwarding to Pods and Services, with active sessions managed in the bottom panel. |
 | Cluster changes | YAML updates, scaling, rollout restarts, deletions, and other supported resource actions with confirmation and concurrency checks. |
+| AI analysis | Diagnostic snapshots opened in a locally installed Codex, OpenCode or Claude Code CLI, with configurable starting instructions. |
+| Extensions | Local or public GitHub package installation, isolated panels, and manual extension updates and rollback. |
+| Application updates | New stable desktop release discovery, signed package downloads and installation after confirmation. |
 
 Kubiki also discovers resources from installed extensions, including Gateway API, Flux, and Argo CD. The available resource types depend on the APIs installed in the selected cluster and the permissions of the active Kubernetes identity.
 
@@ -84,17 +92,19 @@ The Helm workspace provides release inspection, revision history, values, and ma
 
 Download the installer for your operating system from [GitHub Releases](https://github.com/JustYarick/kubiki/releases).
 
-Desktop builds with update signing configured check for newer stable releases at startup. You can also check from Settings → About → Application updates. Installation requires an explicit restart action and blocks on unsaved YAML edits or running cluster changes. Linux in-app installation uses AppImage; deb/rpm installations use the package manager. See [application update setup](docs/APP_UPDATES.md) for release signing and rollout instructions.
+Desktop builds with update signing configured check for newer stable releases at startup. You can also check from Settings → About → Application updates. Installation requires an explicit restart action and blocks on unsaved YAML edits or running cluster changes. Linux in-app installation uses AppImage; deb/rpm installations use the package manager. See [application updates](docs/APP_UPDATES.md) for runtime behavior and [publishing desktop releases](docs/RELEASING.md) for signing and rollout.
 
 The desktop release workflow targets the following platforms and package formats:
 
 | Operating system | Architecture | Packages |
 | --- | --- | --- |
-| Linux | x86_64 | Debian package (`.deb`) and AppImage (`.AppImage`). |
-| macOS | Apple Silicon (aarch64) | Disk image (`.dmg`). |
+| Linux | x86_64 | Debian (`.deb`), RPM (`.rpm`) and AppImage (`.AppImage`). |
+| macOS 13.5+ | Apple Silicon (aarch64), Intel (x86_64), separate builds | Application bundle (`.app`) and disk image (`.dmg`); updater archive (`.app.tar.gz`). |
 | Windows | x86_64 | Windows Installer (`.msi`) and NSIS installer (`.exe`). |
 
-On Linux, install the Debian package using the system package manager, or make the downloaded AppImage executable and launch it. On macOS, open the disk image and copy Kubiki to Applications. On Windows, run the installer.
+On Linux, install the Debian or RPM package using the system package manager, or make the downloaded AppImage executable and launch it. On macOS, choose the build for your processor, open the disk image and copy Kubiki to Applications. On Windows, run the installer; the bundled WebView2 bootstrapper needs internet access if the runtime is missing.
+
+Kubiki bundles the Node.js runtime used by extensions. End users do not need Node.js or pnpm installed. Separate standalone CLI binaries are also attached to desktop releases; the application does not require them.
 
 Before connecting to a cluster, prepare:
 
@@ -176,6 +186,22 @@ For existing Kubernetes objects, mutation checks use the object identity, UID, a
 
 Interactive shell commands execute in their respective shell sessions. They are separate from the confirmation flow used for resource actions in the interface.
 
+### AI analysis
+
+Choose a locally installed and authenticated CLI under **Settings → AI assistant**. **Analyze** in a resource's **What's wrong** panel opens a workspace terminal with the currently loaded diagnostic snapshot. The default instructions request analysis only; starting instructions can be changed in settings. Snapshot data is sent to the chosen agent's configured model provider. See [Resource analysis](docs/AI_ANALYSIS.md) for included data and launch behavior.
+
+### Extensions
+
+Open **Extensions** in the activity bar to install a `.kubiki-extension` file or a package from a public GitHub repository/release URL. Review the source and integrations before enabling it. Installed extensions can be disabled, restarted, updated manually or rolled back when a previous version is available. Node backends execute with your OS user privileges, so choose publishers you trust.
+
+SDK Diagnostics is bundled for extension development and hidden by default. Enable **Settings → Developer → Developer mode** to show it. Redis and Kafka clients are separate extension projects. The SDK, host and author tools are separate workspace packages; see [SDK API](packages/extension-sdk/README.md) and [author tools](packages/extension-tools/README.md).
+
+### Application updates
+
+Signed stable desktop builds check for a newer stable version shortly after startup. Every newer stable version is eligible, including major, minor and patch releases. Preview/test versions are excluded, and development builds do not check for updates. **Settings → About → Application updates** provides a manual check.
+
+Use **Download update**, then **Install and restart** after saving or reverting YAML drafts and finishing active cluster changes. **Later** postpones automatic prompts for a day; **Skip this version** suppresses that exact version. Manual checks override both preferences. Downloaded packages remain in memory for the session; restart closes terminals and port forwards. Linux self-updates use AppImage; deb/rpm installations use the package manager.
+
 ## Architecture
 
 Kubiki separates the desktop interface, native command handling, and Kubernetes operations. Tauri hosts the frontend in a system WebView and exposes Rust commands and streaming channels to the interface.
@@ -219,6 +245,8 @@ flowchart TB
 | Desktop shell | Application lifecycle, IPC dispatch, stream ownership, and mutation confirmation dialogs. | `src-tauri/` |
 | Kubernetes engine | Kubeconfig parsing, context-specific client pooling, API discovery, informers, metrics, resource mutations, logs, exec, and port forwarding. | `crates/kubiki-core/` |
 | Helm integration | Context-specific Helm reads and reviewed lifecycle operations through the local Helm executable. | `crates/kubiki-core/src/helm/` |
+| Extension platform | SDK contracts, package tools, local Node controller/workers and isolated extension panels. | `packages/`, `src/extensions/`, `src-tauri/src/extension_commands.rs` |
+| Desktop updates | Update state machine, stable-release policy, signed downloads and guarded installation. | `src/core/app_updates.ts`, `src-tauri/src/update_commands.rs` |
 
 The frontend uses React 19, TypeScript, Zustand, Tailwind CSS 4, Monaco Editor, React Flow, ELK, and xterm.js. The backend uses Rust, Tauri 2, Tokio, and the `kube` client library.
 
@@ -240,8 +268,8 @@ See [Project structure and architecture](docs/STRUCTURE.md) for a module-level r
 
 | Dependency | Requirement |
 | --- | --- |
-| Node.js | Version 22.12 or later; the project's workflows use Node.js 22. |
-| pnpm | Version 10, matching the project's workflows. |
+| Node.js | Use Node.js 24 for full workspace development, matching release/native CI and the extension tools. Frontend CI also runs on Node.js 22. The bundled extension runtime is pinned separately in `scripts/prepare-extension-runtime.mjs`. |
+| pnpm | Version 12.14.0, pinned in `package.json` and the workflows. |
 | Rust | Stable toolchain with support for Rust edition 2024. |
 | Native build tools | The platform dependencies required by Tauri 2. |
 
@@ -266,13 +294,19 @@ pnpm tauri dev
 
 `pnpm tauri dev` starts the frontend development server, compiles the Rust backend, and opens the desktop application. The frontend server is started automatically by the Tauri configuration.
 
+The Tauri hooks also prepare the pinned Node runtime and build the extension SDK, tools, controller and bundled diagnostics. The first preparation downloads Node and verifies its official archive checksum. For a browser-only demo, run `pnpm dev` and open `http://localhost:1420/?demo=1`; native operations and extension processes require the desktop application.
+
 ### Building desktop packages
 
 ```sh
-pnpm tauri build
+pnpm tauri build -- --locked
 ```
 
 This command runs frontend type checking, builds the production frontend, compiles the native application, and creates the platform packages. For a native build without an explicit target override, packages are written under `src-tauri/target/release/bundle/`.
+
+On Linux, use `pnpm desktop:build:linux`, which includes the AppImage tooling workaround described in [Desktop rendering](docs/DESKTOP_RENDERING.md). Platform configuration files select DEB/RPM/AppImage, macOS app/DMG, and Windows NSIS/MSI targets. Release builds also bundle an extension runtime matching the target architecture. Windows and macOS packages are built on their respective runners.
+
+Local builds do not require updater signing keys and do not automatically enable updater artifact generation. Publish signed application updates through the [release workflow](docs/RELEASING.md).
 
 ### Verification commands
 
@@ -282,12 +316,32 @@ Run these commands from the repository root:
 | --- | --- |
 | `pnpm typecheck` | Frontend, development tooling, and test TypeScript projects. |
 | `pnpm test` | Frontend unit and contract tests run by Vitest. |
-| `pnpm build` | Type checking and the production frontend build. |
+| `pnpm build` | Extension build, type checking and the production frontend build. |
+| `pnpm test:desktop` | Desktop runtime target selection, release tag policy and updater manifest validation. |
+| `pnpm test:extensions` | Extension SDK/host/package integration tests; builds extension resources first. |
+| `node scripts/check-external-extension.mjs` | Builds the packaged SDK/tools template outside the application repository. |
 | `cargo test --manifest-path crates/kubiki-core/Cargo.toml` | Rust core unit and integration tests. |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | Desktop Rust backend compilation. |
+| `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` | Native desktop unit tests, including stable-version policy and the update/mutation gate. |
 | `pnpm test:e2e` | Browser-driven interface tests run by Playwright. |
 
-Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, or reuses an existing local server. The default test URL is `http://127.0.0.1:1420`; the configuration also accepts `PLAYWRIGHT_BASE_URL`. A browser supported by the Playwright configuration must be available. These tests exercise the interface; native backend checks are listed separately above.
+Before direct desktop Cargo checks, run `pnpm desktop:prepare` and `pnpm extensions:build` to create the bundled resources. The Tauri CLI runs these steps automatically. Build the extension resources before standalone frontend type checks on a clean checkout as well.
+
+Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, or reuses an existing local server. Install the browser with `pnpm exec playwright install chromium` if needed (`--with-deps` on Linux installs system dependencies too). The default test URL is `http://127.0.0.1:1420`. When using `PLAYWRIGHT_BASE_URL` for a different port, start a server at that URL first; the override does not change Vite's configured port. Browser update tests mock native commands and do not validate OS installers.
+
+## Publishing releases
+
+Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
+
+## Documentation
+
+- [Publishing desktop releases](docs/RELEASING.md)
+- [Application updates and signing](docs/APP_UPDATES.md)
+- [Project structure and architecture](docs/STRUCTURE.md)
+- [Workspace extensions](docs/EXTENSIONS.md) and [extension architecture](docs/EXTENSION_PLATFORM.md)
+- [Resource analysis](docs/AI_ANALYSIS.md)
+- [Desktop rendering investigation and platform validation](docs/DESKTOP_RENDERING.md)
+- [Shared tab metrics](docs/UI_TABS.md) and [resource icons](docs/ICONS.md)
 
 ## Repository structure
 
@@ -303,11 +357,14 @@ kubiki/
 ├── src-tauri/                  Tauri desktop application and Rust IPC commands
 ├── crates/
 │   └── kubiki-core/            Rust Kubernetes engine
+├── packages/                   Extension SDK, author tools and local runtime controller
+├── extensions/                 Bundled SDK Diagnostics extension
+├── scripts/                    Extension builds, runtime preparation and release helpers
 ├── shared/                     Resource type registry shared by frontend and tooling
 ├── server/                     Local bridges for frontend development and tests
-├── tests/                      Frontend unit, contract, and Playwright tests
+├── tests/                      Frontend, native integration, desktop, browser and performance checks
 ├── docs/                       Architecture reference and screenshots
-├── public/licenses/            Licenses for bundled font assets
+├── public/licenses/            Bundled font and extension icon license notices
 └── .github/workflows/          Verification and desktop release builds
 ```
 
@@ -340,7 +397,3 @@ Bundled fonts retain their respective licenses:
 | Inter | [SIL Open Font License 1.1](public/licenses/Inter-OFL.txt) |
 | JetBrains Mono | [SIL Open Font License 1.1](public/licenses/JetBrainsMono-OFL.txt) |
 | Nerd Fonts Symbols Only Mono | [MIT License](public/licenses/NerdFontsSymbolsOnly-LICENSE.txt) |
-
-### Extensions
-
-Kubiki desktop includes an Extensions manager, a local Node extension host and SDK Diagnostics. Install prepared packages from GitHub Releases or a local file. The SDK and author tools are independent workspace packages; see [extension documentation](docs/EXTENSIONS.md). Before desktop development run `pnpm desktop:prepare` and `pnpm extensions:build`.

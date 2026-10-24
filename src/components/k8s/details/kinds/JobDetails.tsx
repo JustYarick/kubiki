@@ -1,5 +1,6 @@
 import { performResourceAction } from '../../../../providers/resource_actions';
 import { useState } from 'react';
+import { findWorkloadPods } from '../../../../core/resources/workload_pods';
 import { Play, Clock, Layers, Activity } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
@@ -56,13 +57,7 @@ export function JobDetails({ item, onNavigate, onLogs, onShell }: JobDetailsProp
   const templateContainers: any[] = templateSpec.containers ?? [];
 
   // Child pods for Job
-  const jobPods = !isCronJob
-    ? [...resources.Pod.values()].filter((pod) => {
-        if (item.namespace && pod.namespace !== item.namespace) return false;
-        const owners = pod.raw?.metadata?.ownerReferences ?? [];
-        return owners.some((o: any) => o.name === item.name || o.uid === item.uid);
-      })
-    : [];
+  const jobPods = !isCronJob ? findWorkloadPods(item, resources) : [];
 
   const handleToggleSuspend = async () => {
     if (!isCronJob) return;

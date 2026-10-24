@@ -68,6 +68,8 @@ export function packagePath(value: unknown): value is string {
       )
   );
 }
+const SEMVER_VERSION =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?$/;
 export function validateManifest(value: unknown): ExtensionManifest {
   const m = value as ExtensionManifest;
   const text = (s: unknown, max: number) =>
@@ -82,7 +84,9 @@ export function validateManifest(value: unknown): ExtensionManifest {
     !/^[a-z][a-z0-9-]*\.[a-z][a-z0-9.-]*$/.test(m.id) ||
     !text(m.name, 80) ||
     !text(m.description, 500) ||
-    !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(m.version) ||
+    typeof m.version !== 'string' ||
+    m.version.length > 64 ||
+    !SEMVER_VERSION.test(m.version) ||
     !text(m.hostApi, 80) ||
     !packagePath(m.main) ||
     !m.main.endsWith('.cjs') ||

@@ -1,6 +1,8 @@
 # Audit follow-up
 
-This follow-up addresses the audit of commit `71033a6`.
+This historical follow-up addresses the audit of commit `71033a6`. Current
+architecture and usage are documented in [Project structure](STRUCTURE.md) and
+[Workspace extensions](EXTENSIONS.md).
 
 | Finding | Change | Regression coverage |
 | --- | --- | --- |
@@ -24,4 +26,9 @@ This follow-up addresses the audit of commit `71033a6`.
 - Add a registry for bundled workspace panels, including context identity, retained tabs, visibility and unavailable-extension handling. See [Workspace extensions](EXTENSIONS.md).
 - Start the development server automatically for browser tests and run those tests in CI.
 
-The panel registry is the initial extension boundary. Redis and Kafka clients, third-party package installation, a versioned external SDK and isolation of untrusted plugins remain separate implementation work.
+At that audit's checkpoint, the panel registry was the initial extension boundary.
+The subsequent extension platform added package installation, a versioned SDK,
+opaque-origin iframe panels and local Node processes; Redis and Kafka are separate
+extension projects. Backend Node code remains trusted local code rather than a
+sandbox for untrusted plugins. See [Workspace extensions](EXTENSIONS.md) for the
+current implementation and remaining SDK limits.

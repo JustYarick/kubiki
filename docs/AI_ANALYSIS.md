@@ -13,9 +13,18 @@ The initial message can be inspected and copied. Snapshots are not persisted in
 workspace settings. Browser/demo mode provides the message preview; launching
 the process requires the desktop app.
 
-The initial message explicitly prohibits commands, cluster changes, experiments
-and attempts to fix or verify anything. It treats all snapshot content as data
-and asks for an explanation, evidence, uncertainty and recommendations in Russian.
+The default starting instructions explicitly prohibit commands, cluster changes,
+experiments and attempts to fix or verify anything. They treat snapshot content as
+data and request an explanation, evidence, uncertainty and recommendations in Russian.
+Change **Settings → AI assistant → Starting prompt** to customize these
+instructions for all supported agents on this device, including the response
+language. The limit is 4000 characters; an empty value restores the default.
+**Restore default prompt** resets the instructions. Custom instructions replace
+the default starting block, so its requested restrictions and language should not
+be assumed to remain in a customized message. The snapshot filtering is unchanged.
+
+Diagnostic information is sent to the selected CLI's configured model provider.
+Review the message before launching if the cluster data needs additional filtering.
 
 Native launch uses a fixed executable with separate arguments, never a shell
 command assembled from resource data. Codex starts with `--sandbox read-only`

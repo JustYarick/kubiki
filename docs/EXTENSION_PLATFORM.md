@@ -1,14 +1,17 @@
-# Proposal: a local extension platform
+# Local extension platform architecture
 
 Status: **Architecture rationale with first implementation**. The initial public
-SDK, installer, isolated panels and local runtime are implemented. Redis is kept
-in a separate repository; SDK Diagnostics is bundled with Kubiki. The implementation
+SDK, installer, isolated panels and local runtime are implemented. Redis and Kafka
+are separate extension projects; SDK Diagnostics is bundled with Kubiki. The implementation
 exposes settings, credentials, notifications and backend calls; Kubernetes APIs,
 port-forward integration, remotely refreshed signed catalogs and strict backend
 sandboxing remain future work. See [current usage and SDK](EXTENSIONS.md).
-Date: 2026-10-23. Owner: Kubiki maintainer. Scope: desktop extension distribution,
-runtime, SDK and management interface. This proposal elaborates [the existing
-bundled-panel registry](EXTENSIONS.md).
+
+Originally designed on 2026-10-23; synchronized with the implementation on
+2026-10-24. Owner: Kubiki maintainer. Scope: desktop extension distribution,
+runtime, SDK and management interface. This document records the runtime choices;
+[Workspace extensions](EXTENSIONS.md) and the linked SDK/template are the current
+usage and API references.
 
 ## Context and constraints
 
@@ -18,10 +21,12 @@ of Kubiki's internal React components and Rust implementation. Redis and Kafka
 are the initial use cases. No application server, account system or paid marketplace
 is required. GitHub provides hosting; installed packages and execution remain local.
 
-Currently `workspace_panels.tsx` supports trusted components bundled with Kubiki.
-It has no package installer, external SDK or external runtime. Tauri Rust plugins
-are application integration crates; they are not a ready-made repository installer
-for end-user extensions. See [Tauri plugin development](https://tauri.app/develop/plugins/).
+`workspace_panels.tsx` supports trusted bundled components and host-owned adapters
+for installed panels. The package installer and local runtime live outside that
+registry: Rust's `extension_commands.rs` brokers requests to the Node controller,
+and `packages/extension-sdk` and `packages/extension-tools` define the external
+contract and author workflow. Tauri Rust plugins remain application integration
+crates, separate from installable `.kubiki-extension` packages.
 
 ## Options and recommendation
 
@@ -31,8 +36,8 @@ for end-user extensions. See [Tauri plugin development](https://tauri.app/develo
 | Local Node.js extension host plus isolated panel UI | Familiar TypeScript tooling; existing protocol libraries; independent packages | Adds a bundled runtime, per-platform packaging and process management; trusts installed backend code |
 | WASM or restricted JS runtime with brokered I/O | Can support a narrower, enforceable host API | More SDK and networking work; Node libraries cannot generally be reused unchanged |
 
-Recommend the second option for an initial **trusted-extension model**. Start one
-host process per active extension, not per installed package or per UI tab. The
+The implementation uses the second option with a **trusted-extension model**: one
+controller process and one worker per active extension, shared across its tabs. The
 observed reasons for the process boundary are external release cadence, protocol
 library compatibility and containing extension crashes or event-loop stalls.
 Measure actual memory costs before expanding the model. A host crash must leave
@@ -55,12 +60,12 @@ OS isolation; it is a separate requirement, not something a permission dialog su
 
 ```mermaid
 flowchart LR
-  GH[GitHub catalog and releases] --> I[Rust package installer]
+  GH[GitHub releases or local package] --> I[Node package installer]
   I --> S[Local versioned package store]
-  S --> H[Local Node extension host]
+  S --> H[Local Node controller and per-extension workers]
   H <-->|Framed JSON-RPC over stdio| B[Rust extension broker]
   B <-->|Validated message channel| P[Isolated extension panel]
-  B <--> K[Kubiki APIs and session managers]
+  B <--> K[Settings, credentials and notifications]
 ```
 
 The main renderer owns navigation, tabs and the Extensions manager. External panel
@@ -68,34 +73,36 @@ code runs in a sandboxed iframe with an isolated origin and a narrow message bri
 not as an imported component in the main React tree. The existing registry registers
 a host-owned adapter for each declared panel. The adapter owns the iframe lifecycle.
 
-Panel assets are served from validated package paths. Apply an explicit CSP, no
-direct Tauri IPC, no parent DOM access, and no direct network access in the panel.
-Bind its message channel to the installed extension and panel instance in the host;
-do not trust an extension ID supplied in a message. Kubiki currently has `csp: null`,
-so these boundaries require implementation before enabling downloaded panels.
+Panel assets are loaded from validated package paths. Each panel has an explicit
+CSP and no direct Tauri IPC, parent DOM access or direct network access.
+The host binds its message channel to the installed extension and panel instance.
+`ExtensionPanel.tsx` inserts a panel-specific CSP into the iframe document, including
+`connect-src 'none'`, and uses an opaque origin. The main application's `csp: null`
+does not remove that panel-specific boundary. Node backends remain trusted code
+with the user's OS privileges.
 
 The backend bootstrap loads the package entry point and provides `activate(context)`
 and `deactivate()` lifecycle hooks. Activation is lazy on a contributed view or
 command. Multiple tabs can share one extension backend while maintaining separate
-view instances. Visibility changes pause view subscriptions; background work needs
-an explicit lifecycle. Disable, uninstall, context switch and application exit must
-dispose owned subscriptions, connections and port-forward leases.
+view instances. Panels receive visibility events and should pause their background
+work when hidden. Disable, last-view close, uninstall and application shutdown
+dispose the extension's owned connections/subscriptions with a deadline. A
+Kubernetes context-change or port-forward lease lifecycle is not a current SDK API.
 
 Use a versioned, typed JSON-RPC contract, runtime message validation, request IDs,
 cancellation, deadlines and bounded messages. Streaming APIs need explicit limits
 and backpressure. Reserve stdout for protocol traffic and stderr for bounded logs.
 Use a private stdio channel rather than exposing a local HTTP server.
 
-The public SDK should initially cover:
+Host API 1.0 currently covers panel and command contributions, namespaced settings,
+OS credential storage through the `secrets` capability, notifications, host theme
+tokens/interface scale, panel visibility and JSON calls to the extension's own
+backend with cancellation. It does not expose Kubernetes reads/watches, reviewed
+cluster mutations, cluster-context subscriptions or port-forward leases. Those are
+possible future contracts, not capabilities accepted by the current manifest.
 
-- Panel and command contributions, notifications and namespaced settings/storage.
-- Theme tokens, interface scale, visibility and connection/context changes.
-- Explicit Kubernetes read/watch operations and reviewed mutation intents.
-- Owned port-forward leases and namespaced credential storage.
-- Typed extension-local backend methods and bounded subscriptions for panel data.
-
-Credentials stay out of workspace tab state. Kubernetes writes via the SDK use the
-existing backend confirmation pipeline. An unrestricted Node extension could also
+Credentials stay out of workspace tab state. Any future Kubernetes write SDK must
+use the existing backend confirmation pipeline. An unrestricted Node extension can
 contact Kubernetes itself; the confirmation pipeline is not a system-wide policy
 enforcement boundary in this trust model. Redis/Kafka writes need their own
 extension operation descriptions; SQL-like arbitrary command APIs are not a
@@ -107,9 +114,9 @@ components with each isolated panel, and pass host theme tokens through the brid
 
 ## Package and author template
 
-Define one ZIP-based format, for example `.kubiki-extension`, with a root manifest,
-compiled backend, UI assets and license notices. This name and the following schema
-are proposed, not supported by the current application:
+The implemented ZIP-based `.kubiki-extension` format contains `extension.json`,
+a compiled backend, UI assets and license notices. A minimal manifest matching
+the current SDK is:
 
 ```json
 {
@@ -117,15 +124,15 @@ are proposed, not supported by the current application:
   "id": "acme.redis",
   "name": "Redis",
   "version": "0.1.0",
+  "description": "A Redis browser implemented with the Kubiki SDK.",
   "hostApi": "^1.0.0",
-  "runtime": "node",
   "main": "backend/index.cjs",
   "contributes": {
     "panels": [
       { "id": "browser", "title": "Redis", "entry": "ui/index.html" }
     ]
   },
-  "requestedCapabilities": ["settings", "credentials", "portForward"]
+  "requestedCapabilities": ["settings", "secrets", "notifications"]
 }
 ```
 
@@ -134,10 +141,10 @@ protocol independently of application patch releases; reject unsupported manifes
 versions or host API ranges before activation. Capabilities describe mediated host
 access, not a complete inventory of a Node process's possible actions.
 
-An author template should contain `extension.json`, `src/backend.ts`,
-`src/ui/App.tsx`, tests, a lockfile, a packaging script and a GitHub release workflow.
-The proposed SDK package provides types and test doubles. The development workflow
-opens a local development package in a dedicated extension host with logs and reload.
+The author template contains `extension.json`, `src/backend.ts`, `src/panel.ts`,
+panel CSS, package/build scripts and a GitHub release workflow. React is optional.
+The SDK provides the typed backend and panel contracts. The development command
+serves a loopback panel, runs a backend child process and reloads source changes.
 The release workflow builds and uploads the prepared package. Installing it requires
 no Git clone, npm install, build tools or package lifecycle scripts on the user's PC.
 
@@ -147,13 +154,12 @@ compatibility and signing requirements; defer those package types until needed.
 
 ## Distribution without an application server
 
-Ship an official catalog snapshot with Kubiki. An optional signed static catalog in
-the maintainer's GitHub repository can refresh it between app releases. A catalog
-entry identifies the extension, description, repository, compatible release and
-package digest/signing identity. Built-in packages work offline. Official packages
-use the same manifest and SDK as community packages; distribution origin is separate
-from package format. The Official badge comes from trusted catalog identity, never
-from a boolean in an extension's own manifest.
+The current manager lists locally known packages and supports public GitHub
+releases and local archives. SDK Diagnostics is bundled and hidden unless
+developer mode is enabled. Installed packages work offline. Redis and Kafka are
+separate extension projects. A remotely refreshed signed official catalog and
+publisher identity verification are deferred; there is no current marketplace
+or publisher-signature trust registry.
 
 For repository installation:
 
@@ -163,7 +169,7 @@ For repository installation:
    model, plus requested Kubiki integrations. A repository without a compatible
    published package gets an actionable error, not an automatic source build.
 4. Download the selected artifact into staging with size limits, check its digest
-   and any trusted publisher signature, validate the manifest and archive paths,
+   using a SHA-256 sidecar or GitHub asset digest, validate the manifest and archive paths,
    then extract under the extension store. Reject traversal, links escaping the
    package, ID collisions and inconsistent metadata. A digest supplied by the same
    untrusted publisher proves byte integrity, not publisher authenticity.
@@ -172,9 +178,9 @@ For repository installation:
 
 Public release assets can be downloaded without authentication through the
 [GitHub release assets API](https://docs.github.com/en/rest/releases/assets).
-Cache catalog/release metadata and handle offline operation and API throttling.
-Private repositories and alternative Git hosting providers can follow later through
-distribution adapters. A local package installer is useful for offline distribution.
+Handle offline operation and API throttling without losing installed state.
+Private repositories and alternative Git hosting providers remain future
+distribution adapters. The local package installer supports offline distribution.
 
 Pin each installation to the exact release and digest; do not execute a moving
 default branch. Check for updates separately from applying them. A change of
@@ -197,7 +203,7 @@ product better than a marketing storefront. Collapse details into a single view
 on narrow workspaces, preserving search and selection when returning to the list.
 
 The header contains search and an Install from GitHub action. Sections are Catalog,
-Installed and Updates, with a visible Built-in/Official/Community origin label.
+Installed and Updates, with origin labels for built-in, GitHub or local packages.
 Each item shows name, author/source, short description, version and its current
 state. Useful actions are Install, Open, Enable/Disable, Update, Roll Back,
 Uninstall and View Logs. Built-ins expose Disable rather than an uninstall action
@@ -216,22 +222,22 @@ and View Logs without taking over the whole workspace. Its existing tabs retain
 an explicit unavailable state until recovery. Removing an extension removes its
 navigation contributions, not unrelated workspace tabs or saved connections.
 
-Use a compact management control to pin extension panels to the activity bar; do
-not require every installed package to add a permanent icon.
+Enabled visible panel contributions currently register activity-bar navigation.
+A separate user-controlled pinning mechanism is future work.
 
-## Delivery sequence and validation
+## Implementation status and validation
 
-1. Specify and test the manifest, contribution registry, SDK lifecycle and a tiny
-   example extension. The example must build outside the Kubiki repository.
-2. Implement local package staging/validation, installation records and rollback;
-   add the Extensions manager with built-in packages and local installation.
-3. Implement the bundled Node host, isolated panel bridge, failure handling and
-   owned-resource cleanup. Verify packaging on Linux, macOS and Windows before
-   selecting it as a supported public runtime.
-4. Add GitHub Releases resolution and the static official catalog. Test offline,
-   incompatible, interrupted, malformed and changed-source cases.
-5. Implement Redis as the first complete SDK consumer, then Kafka to expose API
-   gaps. Publish the author template and compatibility policy with those examples.
+The manifest/SDK, package validation and installation, previous-version rollback,
+bundled Node controller/workers, isolated panel bridge, GitHub release resolution,
+local package installation and author template are implemented. The external
+template check builds packaged SDK/tools outside this repository. Redis and Kafka
+are separate consumers. SDK/tools package names do not imply npm publication.
+
+Extension integration tests cover lifecycle and malformed/incompatible packages;
+browser tests cover management and panel isolation. Runtime target tests cover
+the Node archive selected for each desktop target. Installed-package checks on
+each target OS remain a separate release task. Remote catalogs and expanded
+Kubernetes/port-forward SDK APIs remain future work.
 
 Release gates: a community example installs from a public release on a clean machine
 without Node/npm; core Kubernetes views remain usable if an extension crashes or

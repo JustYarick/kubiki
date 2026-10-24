@@ -1,8 +1,36 @@
 import type { ResourceItem } from '../../types/k8s';
+import { ownerMatches, type OwnerReference } from './owner_references';
+
+const DIRECT_WORKLOAD_KINDS = new Set(['ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController']);
+
+function ownersOf(item: ResourceItem): OwnerReference[] {
+  return (item.raw?.metadata?.ownerReferences ?? []) as OwnerReference[];
+}
+
+function matchesSelector(workload: ResourceItem, pod: ResourceItem): boolean {
+  const matchLabels = (workload.raw?.spec ?? workload.spec)?.selector?.matchLabels;
+  if (!matchLabels || Object.keys(matchLabels).length === 0) return false;
+  const podLabels = pod.labels ?? pod.raw?.metadata?.labels ?? {};
+  return Object.entries(matchLabels).every(([key, value]) => podLabels[key] === value);
+}
 
 /**
- * Resolves child pods belonging to a workload (Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob).
- * Traverses ownerReferences UID chain and falls back to label selector matching.
+ * Selector fallback is only safe when the pod has no owner, or when its
+ * ReplicaSet owner was not loaded into the current snapshot. A loaded owner
+ * that points somewhere else means the pod belongs to another workload.
+ */
+function hasUnresolvedReplicaSetOwner(pod: ResourceItem, owners: OwnerReference[], replicaSets: ResourceItem[]): boolean {
+  return owners.length > 0
+    && owners.every((owner) => owner.kind === 'ReplicaSet')
+    && owners.every((owner) =>
+      !replicaSets.some((rs) => rs.namespace === pod.namespace && rs.name === owner.name)
+    );
+}
+
+/**
+ * Resolves child pods belonging to a workload (Deployment, StatefulSet, DaemonSet,
+ * ReplicaSet, ReplicationController, Job, CronJob). Traverses ownerReferences by
+ * UID and only falls back to labels when no conflicting owner is loaded.
  */
 export function findWorkloadPods(
   workload: ResourceItem,
@@ -15,18 +43,11 @@ export function findWorkloadPods(
   // Filter pods in the same namespace (unless cluster-scoped workload, which is unusual)
   const scopedPods = targetNs ? pods.filter((p) => p.namespace === targetNs) : pods;
 
-  if (workload.kind === 'ReplicaSet' || workload.kind === 'StatefulSet' || workload.kind === 'DaemonSet') {
+  if (DIRECT_WORKLOAD_KINDS.has(workload.kind)) {
     return scopedPods.filter((pod) => {
-      const owners = pod.raw?.metadata?.ownerReferences ?? [];
-      if (owners.some((o: any) => o.uid === workload.uid || o.name === workload.name)) return true;
-
-      // Fallback: matchLabels
-      const matchLabels = (workload.raw?.spec ?? workload.spec)?.selector?.matchLabels;
-      if (matchLabels && Object.keys(matchLabels).length > 0) {
-        const podLabels = pod.labels ?? pod.raw?.metadata?.labels ?? {};
-        return Object.entries(matchLabels).every(([k, v]) => podLabels[k] === v);
-      }
-      return false;
+      const owners = ownersOf(pod);
+      if (owners.some((owner) => ownerMatches(owner, workload, workload.kind))) return true;
+      return owners.length === 0 && matchesSelector(workload, pod);
     });
   }
 
@@ -34,59 +55,39 @@ export function findWorkloadPods(
     const replicaSets = [...(resources.ReplicaSet?.values() ?? [])].filter(
       (rs) => !targetNs || rs.namespace === targetNs
     );
-    // Find ReplicaSets owned by this Deployment
-    const ownedRsUids = new Set<string>();
-    const ownedRsNames = new Set<string>();
-    for (const rs of replicaSets) {
-      const owners = rs.raw?.metadata?.ownerReferences ?? [];
-      if (owners.some((o: any) => o.uid === workload.uid || o.name === workload.name)) {
-        if (rs.uid) ownedRsUids.add(rs.uid);
-        ownedRsNames.add(rs.name);
-      }
-    }
+    const ownedReplicaSets = replicaSets.filter((rs) =>
+      ownersOf(rs).some((owner) => ownerMatches(owner, workload, 'Deployment'))
+    );
 
-    const matched = scopedPods.filter((pod) => {
-      const owners = pod.raw?.metadata?.ownerReferences ?? [];
-      if (owners.some((o: any) => o.kind === 'ReplicaSet' && (ownedRsUids.has(o.uid) || ownedRsNames.has(o.name)))) {
+    return scopedPods.filter((pod) => {
+      const owners = ownersOf(pod);
+      if (owners.some((owner) => ownedReplicaSets.some((rs) => ownerMatches(owner, rs, 'ReplicaSet')))) {
         return true;
       }
-      // Also check direct owner or selector fallback
-      if (owners.some((o: any) => o.uid === workload.uid || o.name === workload.name)) return true;
-
-      const matchLabels = (workload.raw?.spec ?? workload.spec)?.selector?.matchLabels;
-      if (matchLabels && Object.keys(matchLabels).length > 0) {
-        const podLabels = pod.labels ?? pod.raw?.metadata?.labels ?? {};
-        return Object.entries(matchLabels).every(([k, v]) => podLabels[k] === v);
+      if (owners.some((owner) => ownerMatches(owner, workload, 'Deployment'))) return true;
+      if (owners.length === 0 || hasUnresolvedReplicaSetOwner(pod, owners, replicaSets)) {
+        return matchesSelector(workload, pod);
       }
       return false;
     });
-    return matched;
   }
 
   if (workload.kind === 'Job') {
-    return scopedPods.filter((pod) => {
-      const owners = pod.raw?.metadata?.ownerReferences ?? [];
-      return owners.some((o: any) => o.uid === workload.uid || o.name === workload.name);
-    });
+    return scopedPods.filter((pod) =>
+      ownersOf(pod).some((owner) => ownerMatches(owner, workload, 'Job'))
+    );
   }
 
   if (workload.kind === 'CronJob') {
     const jobs = [...(resources.Job?.values() ?? [])].filter(
-      (j) => !targetNs || j.namespace === targetNs
+      (job) => !targetNs || job.namespace === targetNs
     );
-    const ownedJobUids = new Set<string>();
-    const ownedJobNames = new Set<string>();
-    for (const job of jobs) {
-      const owners = job.raw?.metadata?.ownerReferences ?? [];
-      if (owners.some((o: any) => o.uid === workload.uid || o.name === workload.name)) {
-        if (job.uid) ownedJobUids.add(job.uid);
-        ownedJobNames.add(job.name);
-      }
-    }
-    return scopedPods.filter((pod) => {
-      const owners = pod.raw?.metadata?.ownerReferences ?? [];
-      return owners.some((o: any) => o.kind === 'Job' && (ownedJobUids.has(o.uid) || ownedJobNames.has(o.name)));
-    });
+    const ownedJobs = jobs.filter((job) =>
+      ownersOf(job).some((owner) => ownerMatches(owner, workload, 'CronJob'))
+    );
+    return scopedPods.filter((pod) =>
+      ownersOf(pod).some((owner) => ownedJobs.some((job) => ownerMatches(owner, job, 'Job')))
+    );
   }
 
   return [];

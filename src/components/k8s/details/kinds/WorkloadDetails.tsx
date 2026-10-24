@@ -1,5 +1,6 @@
 import { performResourceAction, restartManifest } from '../../../../providers/resource_actions';
 import { useState } from 'react';
+import { findWorkloadPods } from '../../../../core/resources/workload_pods';
 import { Layers, Activity, Users, Plus, Minus, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
@@ -41,30 +42,7 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
   const templateContainers: any[] = templateSpec.containers ?? [];
 
   // Find child pods matching workload
-  const pods = [...resources.Pod.values()].filter((pod) => {
-    if (item.namespace && pod.namespace !== item.namespace) return false;
-    const owners = pod.raw?.metadata?.ownerReferences ?? [];
-    if (owners.some((o: any) => o.name === item.name || o.uid === item.uid)) return true;
-
-    // For Deployments, pod owner is ReplicaSet, whose owner is Deployment
-    if (item.kind === 'Deployment') {
-      const rsOwners = owners.filter((o: any) => o.kind === 'ReplicaSet');
-      for (const rsRef of rsOwners) {
-        const rs = [...resources.ReplicaSet.values()].find((r) => r.name === rsRef.name && r.namespace === pod.namespace);
-        const rsGrandowners = rs?.raw?.metadata?.ownerReferences ?? [];
-        if (rsGrandowners.some((o: any) => o.name === item.name || o.uid === item.uid)) return true;
-      }
-    }
-
-    // Match by selector labels
-    const matchLabels = spec.selector?.matchLabels;
-    if (matchLabels && Object.keys(matchLabels).length > 0) {
-      const podLabels = pod.labels ?? pod.raw?.metadata?.labels ?? {};
-      return Object.entries(matchLabels).every(([k, v]) => podLabels[k] === v);
-    }
-
-    return false;
-  });
+  const pods = findWorkloadPods(item, resources);
 
   const handleScale = async () => {
     if (targetReplicas === desiredReplicas) return;

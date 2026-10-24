@@ -1,6 +1,7 @@
 import { Layers, HardDrive, ShieldCheck, Box } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { podContainers } from '../../../../core/resources/containers';
+import { ownerMatches } from '../../../../core/resources/owner_references';
 import { useResourceStore } from '../../../../state/resource_store';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { MetricsGaugeBar } from '../blocks/MetricsGaugeBar';
@@ -38,7 +39,7 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
   const ownerRef = raw.metadata?.ownerReferences?.[0];
   const linkedOwner = ownerRef
     ? [...(resources[ownerRef.kind]?.values() ?? [])].find(
-        (r) => r.name === ownerRef.name && (!item.namespace || r.namespace === item.namespace)
+        (r) => ownerMatches(ownerRef, r) && (!item.namespace || r.namespace === item.namespace)
       )
     : undefined;
   const saName = spec.serviceAccountName || spec.serviceAccount;
