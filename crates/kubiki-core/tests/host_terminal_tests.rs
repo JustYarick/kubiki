@@ -3,7 +3,21 @@ use kubiki_core::pod_ops::{
     host_terminal::{HostTerminalManager, HostTerminalRequest, host_terminal_info},
     terminal::ExecEvent,
 };
-use std::time::Duration;
+use std::{path::Path, time::Duration};
+
+struct TempFiles(Vec<std::path::PathBuf>);
+
+impl Drop for TempFiles {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
 
 #[test]
 fn analysis_launch_passes_untrusted_prompt_as_one_argument_and_enforces_limits() {
@@ -151,31 +165,55 @@ async fn ctrl_c_interrupts_foreground_job_without_closing_shell_and_sessions_are
 }
 #[tokio::test]
 async fn cancel_reaps_shell_and_foreground_process_and_respects_window_ownership() {
+    let base = std::env::temp_dir().join(format!(
+        "kubiki-host-terminal-cancel-{}",
+        std::process::id()
+    ));
+    let script = base.with_extension("sh");
+    let pids = base.with_extension("pids");
+    let _cleanup = TempFiles(vec![script.clone(), pids.clone()]);
+    std::fs::write(&script, "printf '%s\\n' \"$$\" >> \"$1\"\nexec sleep 30\n").unwrap();
+    let _ = std::fs::remove_file(&pids);
+
     let manager = HostTerminalManager::default();
     let mut sub = manager.start("main", "tty", request()).await.unwrap();
     assert!(matches!(
         sub.output.recv().await.unwrap().event,
         ExecEvent::Started
     ));
-    manager.write("main","tty","set -m; printf '\\nSHELL_PID:%s\\n' \"$$\"; sleep 30 & job=$!; printf '\\nJOB_PID:%s\\n' \"$job\"; fg\r".into()).await.unwrap();
-    let mut bytes = Vec::new();
-    let (shell, job) = tokio::time::timeout(Duration::from_secs(10), async {
+    let quoted_pids = shell_quote(&pids);
+    let quoted_script = shell_quote(&script);
+    manager
+        .write(
+            "main",
+            "tty",
+            format!(
+                "set -m; printf '%s\\n' \"$$\" > {quoted_pids}; sh {quoted_script} {quoted_pids}\r"
+            ),
+        )
+        .await
+        .unwrap();
+
+    // Read process IDs from a file instead of parsing terminal output: login
+    // shells buffer/build prompts differently across platforms, while the
+    // foreground child still gets its own process group under `set -m`.
+    let (shell, job) = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            if let ExecEvent::Output { data } = sub.output.recv().await.unwrap().event {
-                bytes.extend(data);
+            while sub.output.try_recv().is_ok() {}
+            if let Ok(text) = std::fs::read_to_string(&pids) {
+                let ids: Vec<i32> = text
+                    .lines()
+                    .filter_map(|line| line.trim().parse::<i32>().ok())
+                    .collect();
+                if let [shell, job, ..] = ids.as_slice() {
+                    return (*shell, *job);
+                }
             }
-            let text = String::from_utf8_lossy(&bytes);
-            let pid = |prefix: &str| {
-                text.lines()
-                    .find_map(|line| line.trim().strip_prefix(prefix)?.parse::<i32>().ok())
-            };
-            if let (Some(shell), Some(job)) = (pid("SHELL_PID:"), pid("JOB_PID:")) {
-                return (shell, job);
-            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .unwrap();
+    .expect("The shell and its foreground child must start within 15 seconds");
     tokio::time::sleep(Duration::from_millis(60)).await;
     manager.stop("foreign", "tty").await;
     assert_eq!(manager.session_count().await, 1);
