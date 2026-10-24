@@ -176,7 +176,9 @@ Frontend checks and tests are configured through `package.json`, the TypeScript 
 
 The CI workflow checks TypeScript, frontend tests/builds, extension integration,
 the independently packaged author template, runtime/release helper tests, browser
-interface tests, Rust core tests and desktop backend compilation. Native desktop
+interface tests, Rust core tests and desktop backend compilation. It runs
+automatically for pushes to `dev` and `main`; any other branch is tested only by
+manually dispatching the `CI` workflow from GitHub Actions. Native desktop
 unit tests can be run separately with `cargo test --locked --manifest-path
 src-tauri/Cargo.toml --lib`; the current CI native job runs `cargo check` for that
 crate. See the [README build instructions](../README.md#building-and-verification)
