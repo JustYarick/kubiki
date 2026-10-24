@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { desktopRelease, prepareDesktopRelease, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
+import { desktopRelease, prepareDesktopRelease, normalizeUpdaterPublicKey, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
 
 test('stable feed excludes dev, test, alpha, beta, rc and build metadata tags', () => {
   for (const version of ['0.1.0', '0.1.1', '0.2.0', '1.10.0']) assert.equal(desktopRelease(`v${version}`).prerelease, false);
@@ -30,8 +30,39 @@ test('release preparation synchronizes embedded versions and locked package iden
     assert.match(await readFile(path.join(root, 'src-tauri/Cargo.toml'), 'utf8'), /version = "0.2.0"/);
     assert.match(await readFile(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'), /name = "kubiki"\nversion = "0.2.0"/);
     assert.match(await readFile(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'), /name = "other"\nversion = "1.0.0"/);
-    assert.equal(JSON.parse(await readFile(path.join(root, '.kubiki-build/updater.conf.json'))).bundle.createUpdaterArtifacts, true);
+    assert.equal(config.plugins?.updater?.pubkey, 'public');
+    const updaterConf = JSON.parse(await readFile(path.join(root, '.kubiki-build/updater.conf.json')));
+    assert.equal(updaterConf.bundle.createUpdaterArtifacts, true);
+    assert.equal(updaterConf.plugins.updater.pubkey, 'public');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('normalizeUpdaterPublicKey normalizes base64, plaintext, and raw key formats', () => {
+  const validBase64 = 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzMTMxRkEzNTgwNUQzNzQKUldSMDB3VllveDhUMDZRSmVhaUh0c2x6ci95YlY2YUZkcW9qcnJESGpOVWhTbGdQRG4vaXhqZHUK';
+  const decodedText = 'untrusted comment: minisign public key: D3131FA35805D374\nRWR00wVYox8T06QJeaiHtslzr/ybV6aFdqojrrDHjNUhSlgPDn/ixjdu\n';
+  const rawKey = 'RWR00wVYox8T06QJeaiHtslzr/ybV6aFdqojrrDHjNUhSlgPDn/ixjdu';
+
+  // Base64 from .pub file
+  assert.equal(normalizeUpdaterPublicKey(validBase64), validBase64);
+  assert.equal(normalizeUpdaterPublicKey(`\n  ${validBase64}\r\n`), validBase64);
+
+  // Multiline plain text with untrusted comment
+  const normalizedFromText = normalizeUpdaterPublicKey(decodedText);
+  assert.match(Buffer.from(normalizedFromText, 'base64').toString('utf8'), /^untrusted comment:/);
+  assert.match(Buffer.from(normalizedFromText, 'base64').toString('utf8'), /RWR00wVYox/);
+
+  // Raw key without comment
+  const normalizedFromRaw = normalizeUpdaterPublicKey(rawKey);
+  assert.match(Buffer.from(normalizedFromRaw, 'base64').toString('utf8'), /^untrusted comment: minisign public key\n/);
+  assert.match(Buffer.from(normalizedFromRaw, 'base64').toString('utf8'), /RWR00wVYox/);
+
+  // Test identifier
+  assert.equal(normalizeUpdaterPublicKey('public'), 'public');
+
+  // Invalid inputs throw
+  assert.throws(() => normalizeUpdaterPublicKey(''), /missing or empty/);
+  assert.throws(() => normalizeUpdaterPublicKey('   '), /missing or empty/);
+  assert.throws(() => normalizeUpdaterPublicKey('not-a-minisign-key'), /valid minisign public key/);
 });
 
 function fixture() {

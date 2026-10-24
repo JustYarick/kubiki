@@ -89,6 +89,7 @@ impl HelmReader {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
         let mut attempts = 0;
         let mut child = loop {
             match command.spawn() {

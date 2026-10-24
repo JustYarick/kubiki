@@ -41,11 +41,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           script: |
-            const { desktopRelease } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
+            const { desktopRelease, normalizeUpdaterPublicKey } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
             const { tag, prerelease } = desktopRelease(process.env.RELEASE_TAG);
             if (!process.env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
               throw new Error('Configure the updater signing key and public key before publishing. See docs/APP_UPDATES.md.');
             }
+            normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
             core.setOutput('tag', tag);
             core.setOutput('prerelease', String(prerelease));
             const { data } = await github.rest.repos.createRelease({
@@ -140,6 +141,7 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+          KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: node scripts/desktop-release.mjs "$RELEASE_TAG"
 

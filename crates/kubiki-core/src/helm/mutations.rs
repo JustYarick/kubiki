@@ -148,6 +148,7 @@ impl Workspace {
                 .as_nanos(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
+        #[allow(unused_mut)]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         {
