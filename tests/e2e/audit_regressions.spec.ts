@@ -119,7 +119,8 @@ test('unsaved YAML survives a details tab switch and blocks app updates', async 
 
   const blocked = await page.evaluate(async () => {
     try {
-      (await import('/src/state/update_store.ts')).assertUpdateCanInstall();
+      const path = '/src/state/update_store.ts';
+      (await import(path)).assertUpdateCanInstall();
       return false;
     } catch {
       return true;
