@@ -9,6 +9,8 @@ export interface KubernetesProvider extends ResourceWatchProvider {
   resetResourceWatches(): Promise<void>;
   readonly demo: boolean;
   getContexts(): Promise<KubeContextInfo[]>;
+  getKubeconfigPath(): Promise<string>;
+  setKubeconfigPath(path: string | null): Promise<KubeContextInfo[]>;
   pingCluster(context: string): Promise<{ status: string; version?: string }>;
   getNamespaces(context: string): Promise<string[]>;
   getApiResources(context: string): Promise<import('../core/resources/resource_types').ResourceType[]>;

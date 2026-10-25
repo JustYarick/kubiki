@@ -3,6 +3,9 @@ use kube::config::Kubeconfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use std::sync::Arc;
+use std::sync::RwLock;
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct KubeContextInfo {
     pub name: String,
@@ -14,24 +17,36 @@ pub struct KubeContextInfo {
 
 #[derive(Clone, Debug, Default)]
 pub struct KubeConfigManager {
-    custom_path: Option<PathBuf>,
+    custom_path: Arc<RwLock<Option<PathBuf>>>,
 }
 
 impl KubeConfigManager {
     pub fn new() -> Self {
-        Self { custom_path: None }
+        Self {
+            custom_path: Arc::new(RwLock::new(None)),
+        }
     }
 
     pub fn with_custom_path(path: PathBuf) -> Self {
         Self {
-            custom_path: Some(path),
+            custom_path: Arc::new(RwLock::new(Some(path))),
         }
+    }
+
+    pub fn set_custom_path(&self, path: Option<PathBuf>) {
+        if let Ok(mut guard) = self.custom_path.write() {
+            *guard = path;
+        }
+    }
+
+    pub fn get_custom_path(&self) -> Option<PathBuf> {
+        self.custom_path.read().ok().and_then(|p| p.clone())
     }
 
     /// Returns the resolved path to kubeconfig file, or first existing path if multiple are configured
     pub fn get_config_path(&self) -> Result<PathBuf, KubikiError> {
-        if let Some(ref path) = self.custom_path {
-            return Ok(path.clone());
+        if let Some(path) = self.get_custom_path() {
+            return Ok(path);
         }
 
         if let Ok(env_path) = std::env::var("KUBECONFIG") {
@@ -53,8 +68,9 @@ impl KubeConfigManager {
     /// Metadata of all merged files determines when cached parsing must be refreshed.
     pub(crate) fn configuration_signature(&self) -> Result<u64, KubikiError> {
         use std::hash::{Hash, Hasher};
-        let paths = if let Some(path) = &self.custom_path {
-            vec![path.clone()]
+        let custom = self.get_custom_path();
+        let paths = if let Some(path) = custom {
+            vec![path]
         } else if let Some(paths) = std::env::var_os("KUBECONFIG").filter(|v| !v.is_empty()) {
             std::env::split_paths(&paths).collect()
         } else {
@@ -78,14 +94,14 @@ impl KubeConfigManager {
     /// When custom_path is set, reads that single file.
     /// Otherwise, uses kube::config::Kubeconfig::read() which supports merging multiple files from KUBECONFIG.
     pub fn read_config(&self) -> Result<Kubeconfig, KubikiError> {
-        if let Some(ref path) = self.custom_path {
+        if let Some(path) = self.get_custom_path() {
             if !path.exists() {
                 return Err(KubikiError::KubeconfigError(format!(
                     "Kubeconfig file not found at {}",
                     path.display()
                 )));
             }
-            Kubeconfig::read_from(path).map_err(|e| {
+            Kubeconfig::read_from(&path).map_err(|e| {
                 KubikiError::KubeconfigError(format!("Failed to parse kubeconfig: {e}"))
             })
         } else {

@@ -29,10 +29,17 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
     };
     const invalid = (message: string) => requestError('invalid_request', message, info, 400);
     try {
-      const methods: Record<string, string> = { 'api-resources': 'GET', contexts: 'GET', ping: 'GET', namespaces: 'GET', resources: 'GET', 'custom-resources': 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET', apply: 'POST', delete: 'POST', mutate: 'POST' };
+      const methods: Record<string, string> = { 'api-resources': 'GET', contexts: 'GET', kubeconfig_path: 'GET', set_kubeconfig_path: 'POST', ping: 'GET', namespaces: 'GET', resources: 'GET', 'custom-resources': 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET', apply: 'POST', delete: 'POST', mutate: 'POST' };
       if (!methods[operation]) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== methods[operation]) throw requestError('invalid_request', 'Method not allowed', info, 405);
       if (operation === 'scale' || operation === 'secrets' || operation === 'apply' || operation === 'delete' || operation === 'mutate') throw requestError('forbidden', 'Kubernetes changes require the desktop application and backend system confirmation. HTTP bridge is read-only', info, 403);
+      if (operation === 'kubeconfig_path') {
+        return send('~/.kube/config or $KUBECONFIG');
+      }
+      if (operation === 'set_kubeconfig_path') {
+        const data = JSON.parse(await kubectl(['config', 'view', '-o', 'json']));
+        return send((data.contexts ?? []).map((entry: any) => ({ name: entry.name, cluster: entry.context?.cluster, user: entry.context?.user, namespace: entry.context?.namespace, is_current: entry.name === data['current-context'] })));
+      }
       if (operation === 'contexts') {
         const data = JSON.parse(await kubectl(['config', 'view', '-o', 'json']));
         return send((data.contexts ?? []).map((entry: any) => ({ name: entry.name, cluster: entry.context?.cluster, user: entry.context?.user, namespace: entry.context?.namespace, is_current: entry.name === data['current-context'] })));

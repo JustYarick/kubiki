@@ -89,7 +89,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     resetLabel: 'Reset Kubernetes defaults',
     entries: [
       { id: 'kubernetes.remember-scope', label: 'Remember namespace scope per context', description: 'Restores the namespace selection of each context when it is selected again.', keywords: 'namespace scope context persistence restore' },
-      { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Kubiki reads the default kubeconfig or the files listed in the KUBECONFIG environment variable.', keywords: 'config path credentials files' },
+      { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Configure custom kubeconfig file path or use the default location (~/.kube/config / $KUBECONFIG).', keywords: 'config path credentials files' },
     ],
   },
   {
