@@ -10,7 +10,6 @@ import { TriangleAlert } from 'lucide-react';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
 import { useUiStore } from '../state/ui_store';
-import { MAX_TOPOLOGY_EDGES } from '../core/resources/topology';
 import { DEFAULT_TOPOLOGY_HIDDEN_KINDS } from '../core/resources/topology_visibility';
 import { resourceKey } from '../core/resources/identity';
 import { resourceIssues } from '../core/resources/diagnostics';
@@ -95,7 +94,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
       {outsideScope ? <div className="p-6 text-sm text-[var(--text-secondary)]">Load this namespace using the button above to build its diagram.</div> : chooseScope ? <div className="h-full overflow-auto p-6">
         <h2 className="text-sm font-medium">Choose a diagram scope</h2>
         <p className="text-xs text-[var(--text-secondary)] mt-2 max-w-xl">Select one or more namespaces, use the global selection, or open Topology from a resource. Choose All Namespaces to draw the entire loaded cluster.</p>
-        <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mt-2">No resource count limit. Up to {MAX_TOPOLOGY_EDGES} links and 10 seconds for automatic layout. Cluster summary shows counts only.</p>
+        <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mt-2">No resource count or link limit. Up to 10 seconds for automatic layout. Cluster summary shows counts only.</p>
         <div className="topology-initial-namespace"><NamespaceSelect label="Diagram namespaces" value={selectedNamespace} options={summaries.map(summary => summary.name)} onChange={chooseNamespaces} /></div>
         <div className="topology-scope-actions">
           <Button onClick={() => setScope('all')}>All Namespaces</Button>
