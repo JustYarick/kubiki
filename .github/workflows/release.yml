@@ -6,10 +6,23 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release Tag (e.g. v0.1.0)'
-        required: true
-        default: 'v0.1.0'
+      custom_tag:
+        description: 'Custom Tag (e.g. v1.0.1 or v1.0.1-dev.1). Leave empty to auto-generate.'
+        required: false
+        default: ''
+      bump:
+        description: 'Version bump if auto-generating (patch, minor, major)'
+        required: false
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      target_commit:
+        description: 'Optional commit SHA to release (leave empty for branch HEAD)'
+        required: false
+        default: ''
       force_rebuild:
         description: 'Force rebuild all targets even if artifacts exist'
         required: false
@@ -20,7 +33,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: desktop-release-${{ github.event.inputs.tag || github.ref }}
+  group: desktop-release-${{ github.event.inputs.custom_tag || github.event.inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -35,25 +48,126 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.target_commit || github.ref }}
+          fetch-depth: 0
 
       - name: Create or find draft release
         id: create-release
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          CUSTOM_TAG: ${{ github.event.inputs.custom_tag }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          TARGET_COMMIT: ${{ github.event.inputs.target_commit }}
+          BUMP: ${{ github.event.inputs.bump || 'patch' }}
           KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           script: |
             const { desktopRelease, normalizeUpdaterPublicKey } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
-            const { tag, prerelease } = desktopRelease(process.env.RELEASE_TAG);
+
             if (!process.env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
               throw new Error('Configure the updater signing key and public key before publishing. See docs/APP_UPDATES.md.');
             }
             normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
+
+            const targetSha = process.env.TARGET_COMMIT?.trim() || context.sha;
+            core.info(`Target commit SHA: ${targetSha}`);
+
+            let tag = (process.env.CUSTOM_TAG?.trim() || process.env.INPUT_TAG?.trim());
+            let isPrerelease = false;
+
+            if (tag) {
+              const parsed = desktopRelease(tag);
+              tag = parsed.tag;
+              isPrerelease = parsed.prerelease;
+              core.info(`Using explicit tag: ${tag} (prerelease: ${isPrerelease})`);
+            } else if (context.ref.startsWith('refs/tags/')) {
+              tag = context.ref.replace('refs/tags/', '');
+              const parsed = desktopRelease(tag);
+              tag = parsed.tag;
+              isPrerelease = parsed.prerelease;
+              core.info(`Using push tag: ${tag} (prerelease: ${isPrerelease})`);
+            } else {
+              const branch = (context.ref || '').replace(/^refs\/(heads|tags)\//, '');
+              const isMain = branch === 'main';
+              const bumpType = process.env.BUMP || 'patch';
+
+              // Fetch existing tags to find highest stable tag
+              const tagsData = await github.paginate(github.rest.repos.listTags, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+              });
+              const allTags = new Set(tagsData.map(t => t.name));
+
+              let maxStable = { major: 0, minor: 0, patch: 0 };
+              for (const t of allTags) {
+                const m = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(t);
+                if (m) {
+                  const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
+                  if (maj > maxStable.major || (maj === maxStable.major && min > maxStable.minor) || (maj === maxStable.major && min === maxStable.minor && pat > maxStable.patch)) {
+                    maxStable = { major: maj, minor: min, patch: pat };
+                  }
+                }
+              }
+
+              if (maxStable.major === 0 && maxStable.minor === 0 && maxStable.patch === 0) {
+                try {
+                  const fs = await import('fs');
+                  const pkg = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/package.json`, 'utf8'));
+                  const m = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/.exec(pkg.version);
+                  if (m) {
+                    maxStable = { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
+                  }
+                } catch {}
+              }
+
+              function bump(v, type) {
+                if (type === 'major') return `${v.major + 1}.0.0`;
+                if (type === 'minor') return `${v.major}.${v.minor + 1}.0`;
+                return `${v.major}.${v.minor}.${v.patch + 1}`;
+              }
+
+              const nextVersion = bump(maxStable, bumpType);
+
+              if (isMain) {
+                tag = `v${nextVersion}`;
+                isPrerelease = false;
+              } else {
+                tag = `v${nextVersion}-dev.${context.runNumber}`;
+                isPrerelease = true;
+              }
+
+              core.info(`Auto-generated release tag ${tag} for branch ${branch} (isPrerelease: ${isPrerelease})`);
+            }
+
+            // Ensure git tag exists or create it
+            let tagRefExists = false;
+            try {
+              await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${tag}`,
+              });
+              tagRefExists = true;
+              core.info(`Git tag ${tag} already exists on GitHub.`);
+            } catch (err) {
+              if (err.status !== 404) throw err;
+            }
+
+            if (!tagRefExists) {
+              core.info(`Creating git tag ref refs/tags/${tag} pointing to commit ${targetSha}...`);
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${tag}`,
+                sha: targetSha,
+              });
+              core.info(`Successfully created git tag refs/tags/${tag}`);
+            }
+
             core.setOutput('tag', tag);
-            core.setOutput('prerelease', String(prerelease));
+            core.setOutput('prerelease', String(isPrerelease));
 
             let release;
             try {
@@ -69,18 +183,19 @@ jobs:
             }
 
             if (!release) {
+              const releaseName = isPrerelease ? `Kubiki ${tag} (Dev Release)` : `Kubiki ${tag}`;
               const { data } = await github.rest.repos.createRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 tag_name: tag,
-                name: `Kubiki ${tag}`,
+                name: releaseName,
                 draft: true,
-                prerelease,
+                prerelease: isPrerelease,
                 make_latest: 'false',
                 generate_release_notes: true
               });
               release = data;
-              core.info(`Created new draft release id ${release.id} for tag ${tag}`);
+              core.info(`Created new draft release id ${release.id} for tag ${tag} (${releaseName})`);
             }
             return release.id;
 
