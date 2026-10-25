@@ -1,4 +1,4 @@
-//! Desktop update boundary: trusted stable feed, signed artifacts, shared
+//! Desktop update boundary: separate stable/dev feeds, signed artifacts, shared
 //! mutation gate, and awaited session cleanup before invoking the installer.
 use crate::mutation_guard::MutationGuard;
 use kubiki_core::{
@@ -16,6 +16,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 const STABLE_FEED: &str =
     "https://github.com/JustYarick/kubiki/releases/latest/download/latest.json";
+const DEV_FEED: &str =
+    "https://github.com/JustYarick/kubiki/releases/download/updates-dev/latest.json";
 const PUBLIC_KEY: Option<&str> = option_env!("KUBIKI_UPDATER_PUBLIC_KEY");
 
 #[derive(Default)]
@@ -50,8 +52,42 @@ pub struct DownloadProgress {
     total: Option<u64>,
 }
 
-fn stable_upgrade(current: &Version, candidate: &Version) -> bool {
-    candidate.pre.is_empty() && candidate.build.is_empty() && candidate > current
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateChannel {
+    Stable,
+    Dev,
+}
+
+impl UpdateChannel {
+    fn for_version(version: &Version) -> Option<Self> {
+        if !version.build.is_empty() {
+            return None;
+        }
+        let pre = version.pre.as_str();
+        if pre.is_empty() {
+            Some(Self::Stable)
+        } else if pre == "dev"
+            || pre.strip_prefix("dev.").is_some_and(|number| {
+                !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        {
+            Some(Self::Dev)
+        } else {
+            None
+        }
+    }
+
+    fn feed(self) -> &'static str {
+        match self {
+            Self::Stable => STABLE_FEED,
+            Self::Dev => DEV_FEED,
+        }
+    }
+}
+
+fn channel_upgrade(current: &Version, candidate: &Version) -> bool {
+    let channel = UpdateChannel::for_version(current);
+    channel.is_some() && channel == UpdateChannel::for_version(candidate) && candidate > current
 }
 
 fn disabled_reason(app: &tauri::AppHandle) -> Option<String> {
@@ -61,8 +97,8 @@ fn disabled_reason(app: &tauri::AppHandle) -> Option<String> {
     if PUBLIC_KEY.is_none_or(|key| key.trim().is_empty()) {
         return Some("This build does not include an update verification key.".into());
     }
-    if !app.package_info().version.pre.is_empty() || !app.package_info().version.build.is_empty() {
-        return Some("Automatic updates are disabled in preview builds.".into());
+    if UpdateChannel::for_version(&app.package_info().version).is_none() {
+        return Some("In-app updates support stable and dev versions only. Other preview builds and build metadata are excluded.".into());
     }
     // Package-manager installations must retain their package ownership. Never
     // replace a deb/rpm installation with an AppImage.
@@ -85,6 +121,8 @@ pub async fn check_app_update(
     if let Some(reason) = disabled_reason(&app) {
         return Ok(CheckResult::Disabled { reason });
     }
+    let channel = UpdateChannel::for_version(&app.package_info().version)
+        .ok_or("This version has no update channel.")?;
     let mut pending = state
         .0
         .try_lock()
@@ -94,13 +132,14 @@ pub async fn check_app_update(
         .updater_builder()
         .pubkey(PUBLIC_KEY.unwrap_or_default())
         .endpoints(vec![
-            STABLE_FEED
+            channel
+                .feed()
                 .parse()
                 .map_err(|_| "Invalid update endpoint.")?,
         ])
         .map_err(|e| e.to_string())?
         .timeout(Duration::from_secs(15))
-        .version_comparator(|current, remote| stable_upgrade(&current, &remote.version))
+        .version_comparator(|current, remote| channel_upgrade(&current, &remote.version))
         .build()
         .map_err(|e| e.to_string())?
         .check()
@@ -210,7 +249,7 @@ mod tests {
         let current = Version::parse("0.1.0").unwrap();
         for version in ["0.1.1", "0.2.0", "1.0.0", "10.0.0"] {
             assert!(
-                stable_upgrade(&current, &Version::parse(version).unwrap()),
+                channel_upgrade(&current, &Version::parse(version).unwrap()),
                 "{version}"
             );
         }
@@ -225,13 +264,85 @@ mod tests {
             "1.0.0+dev",
         ] {
             assert!(
-                !stable_upgrade(&current, &Version::parse(version).unwrap()),
+                !channel_upgrade(&current, &Version::parse(version).unwrap()),
                 "{version}"
             );
         }
-        assert!(stable_upgrade(
+        assert!(channel_upgrade(
             &Version::parse("1.9.0").unwrap(),
             &Version::parse("1.10.0").unwrap()
         ));
+    }
+
+    #[test]
+    fn dev_updates_stay_in_the_dev_channel_and_compare_numbers_numerically() {
+        let current = Version::parse("1.0.0-dev.9").unwrap();
+        for version in [
+            "1.0.0-dev.10",
+            "1.0.0-dev.100",
+            "1.0.1-dev.1",
+            "2.0.0-dev.1",
+        ] {
+            assert!(
+                channel_upgrade(&current, &Version::parse(version).unwrap()),
+                "{version}"
+            );
+        }
+        for version in [
+            "0.9.0-dev.100",
+            "1.0.0-dev",
+            "1.0.0-dev.8",
+            "1.0.0-dev.9",
+            "1.0.0",
+            "2.0.0",
+            "2.0.0-alpha.1",
+            "2.0.0-rc.1",
+            "2.0.0-dev.test",
+            "2.0.0-dev.1.2",
+            "2.0.0-dev.10+build.1",
+        ] {
+            assert!(
+                !channel_upgrade(&current, &Version::parse(version).unwrap()),
+                "{version}"
+            );
+        }
+        assert!(channel_upgrade(
+            &Version::parse("1.0.0-dev").unwrap(),
+            &current
+        ));
+    }
+
+    #[test]
+    fn unsupported_versions_have_no_channel_and_feeds_are_separate() {
+        assert_eq!(
+            UpdateChannel::for_version(&Version::parse("1.0.0").unwrap())
+                .unwrap()
+                .feed(),
+            STABLE_FEED
+        );
+        assert_eq!(
+            UpdateChannel::for_version(&Version::parse("1.0.0-dev.1").unwrap())
+                .unwrap()
+                .feed(),
+            DEV_FEED
+        );
+        assert_ne!(STABLE_FEED, DEV_FEED);
+        for version in [
+            "1.0.0-rc.1",
+            "1.0.0-test",
+            "1.0.0+build.1",
+            "1.0.0-dev.test",
+        ] {
+            let current = Version::parse(version).unwrap();
+            assert_eq!(UpdateChannel::for_version(&current), None);
+            assert!(!channel_upgrade(
+                &current,
+                &Version::parse("2.0.0").unwrap()
+            ));
+            assert!(!channel_upgrade(
+                &current,
+                &Version::parse("2.0.0-dev.1").unwrap()
+            ));
+        }
     }
 }

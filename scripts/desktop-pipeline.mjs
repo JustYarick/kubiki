@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { desktopRelease } from './desktop-release.mjs';
+import { desktopRelease, updateChannel } from './desktop-release.mjs';
 
 export const DESKTOP_TARGETS = {
   'x86_64-unknown-linux-gnu': { cli: 'kubiki-cli-linux-amd64', bundles: ['deb', 'rpm', 'appimage'], updater: '.AppImage' },
@@ -29,7 +29,19 @@ export function nextReleaseTag(tags, { bump = 'patch', branch, runNumber, fallba
   parts[index]++;
   for (let i = index + 1; i < 3; i++) parts[i] = 0n;
   const version = parts.join('.');
-  return branch === 'main' ? `v${version}` : `v${version}-dev.${runNumber}`;
+  if (branch === 'main') return `v${version}`;
+  let number = BigInt(runNumber ?? 1);
+  if (number < 1n) throw new Error('Dev build number must be positive.');
+  // CI and Release have separate run counters. Published tags establish a
+  // shared lower bound so switching workflows cannot reuse an older number.
+  for (const tag of tags.filter(tag => tag.startsWith(`v${version}-dev.`))) {
+    try {
+      if (updateChannel(tag) !== 'dev') continue;
+      const previous = BigInt(tag.split('-dev.')[1]);
+      if (previous >= number) number = previous + 1n;
+    } catch { /* Ignore malformed tags. */ }
+  }
+  return `v${version}-dev.${number}`;
 }
 
 /** WiX rejects nonnumeric prereleases/build metadata. Keep that installer

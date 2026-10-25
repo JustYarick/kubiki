@@ -1,8 +1,15 @@
 import { execFileSync } from 'node:child_process';
 import { appendFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { desktopRelease, reconcileUpdateManifest, validateUpdateManifest } from './desktop-release.mjs';
+import { desktopRelease, reconcileUpdateManifest, updateChannel, validateUpdateManifest } from './desktop-release.mjs';
 import { compareStableTags, verifyDesktopArtifacts } from './desktop-pipeline.mjs';
+import { publishDevUpdateFeed } from './dev-update-feed.mjs';
+
+function verifyUploadedArtifacts(assets, uploaded) {
+  for (const asset of assets) {
+    if (!uploaded.some(a => a.name === asset.name && a.size === asset.size)) throw new Error(`Incomplete uploaded asset: ${asset.name}`);
+  }
+}
 
 /** Only the final job writes release assets and latest.json. */
 export async function publishDesktopRelease({ github, context, core }, { tag, sha, dir }) {
@@ -26,7 +33,29 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
   let draft;
   try { draft = (await github.rest.repos.getReleaseByTag({ ...repo, tag })).data; }
   catch (error) { if (error.status !== 404) throw error; }
-  if (draft && !draft.draft) throw new Error(`${tag} is already published. Choose a new version.`);
+  if (draft && !draft.draft) {
+    if (updateChannel(tag) !== 'dev') throw new Error(`${tag} is already published. Choose a new version.`);
+    // Re-running a publish job after feed promotion failed must repair the feed
+    // without changing the already published installers or their signatures.
+    const uploaded = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id: draft.id, per_page: 100 });
+    verifyUploadedArtifacts(assets, uploaded);
+    const asset = uploaded.find(asset => asset.name === 'latest.json' && asset.size > 0);
+    if (!asset) throw new Error('The published dev release has no update manifest.');
+    const { data } = await github.rest.repos.getReleaseAsset({ ...repo, asset_id: asset.id,
+      headers: { accept: 'application/octet-stream' },
+    });
+    // Octokit may return JSON directly or the downloaded bytes, depending on
+    // the response content type. Use the published signatures on repair.
+    let contents = data;
+    if (contents instanceof ArrayBuffer) contents = Buffer.from(contents);
+    if (ArrayBuffer.isView(contents)) {
+      contents = Buffer.from(contents.buffer, contents.byteOffset, contents.byteLength).toString('utf8');
+    }
+    const publishedManifest = typeof contents === 'string' ? JSON.parse(contents) : contents;
+    validateUpdateManifest(publishedManifest, tag, uploaded);
+    await publishDevUpdateFeed({ github, context, core }, { tag, sha, manifest: publishedManifest, assets: uploaded });
+    return;
+  }
   if (!draft) {
     draft = (await github.rest.repos.createRelease({
       ...repo, tag_name: tag, target_commitish: sha, name: `Kubiki ${tag}`,
@@ -45,9 +74,7 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
     await github.rest.repos.uploadReleaseAsset({ ...repo, release_id, name, data: Buffer.from(contents) });
   }
   const uploaded = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id, per_page: 100 });
-  for (const asset of assets) {
-    if (!uploaded.some(a => a.name === asset.name && a.size === asset.size)) throw new Error(`Incomplete uploaded asset: ${asset.name}`);
-  }
+  verifyUploadedArtifacts(assets, uploaded);
   validateUpdateManifest(manifest, tag, uploaded);
 
   let makeLatest = !release.prerelease;
@@ -61,6 +88,9 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
     draft: false, prerelease: release.prerelease, make_latest: makeLatest ? 'true' : 'false',
   })).data;
   core.info(`Published ${tag}: ${published.html_url}`);
+  if (updateChannel(tag) === 'dev') {
+    await publishDevUpdateFeed({ github, context, core }, { tag, sha, manifest, assets: uploaded });
+  }
   if (process.env.GITHUB_STEP_SUMMARY) {
     await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Published Kubiki ${tag}\n\n${published.html_url}\n\nCommit: \`${sha}\`\n\n${assets.length} verified packages/signatures; SHA256SUMS and latest.json uploaded.\n`);
   }

@@ -108,7 +108,7 @@ describe('desktop update coordinator', () => {
     expect(service.store.getState()).toMatchObject({ phase: { status: 'downloaded', update }, dialogOpen: true });
   });
 
-  it('does not announce updates for development, browser, or package-manager builds', async () => {
+  it('does not announce updates for debug, browser, or package-manager builds', async () => {
     const { service, adapter } = setup();
     vi.mocked(adapter.check).mockResolvedValue({ status: 'disabled', reason: 'Development build' });
     await service.startup();

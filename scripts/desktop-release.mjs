@@ -12,6 +12,26 @@ export function desktopRelease(tag) {
   return { tag, version: tag.slice(1), prerelease: Boolean(match[4] || match[5]) };
 }
 
+/** Only numbered dev builds (and the legacy bare -dev) have a preview updater. */
+export function updateChannel(tag) {
+  const release = desktopRelease(tag);
+  if (!release.prerelease) return 'stable';
+  return /^\d+\.\d+\.\d+-dev(?:\.(0|[1-9]\d*))?$/.test(release.version) ? 'dev' : null;
+}
+
+export function compareDevTags(a, b) {
+  const parts = tag => {
+    if (updateChannel(tag) !== 'dev') throw new Error(`Not a dev update version: ${tag}`);
+    const [, major, minor, patch, number] = /^v(\d+)\.(\d+)\.(\d+)-dev(?:\.(\d+))?$/.exec(tag);
+    return [major, minor, patch, number ?? '-1'].map(BigInt);
+  };
+  const av = parts(a), bv = parts(b);
+  for (let i = 0; i < av.length; i++) {
+    if (av[i] !== bv[i]) return av[i] > bv[i] ? 1 : -1;
+  }
+  return 0;
+}
+
 /** Normalizes and validates the Tauri updater public key into the single-line
  * base64 format required by Tauri's updater configuration. */
 export function normalizeUpdaterPublicKey(rawKey) {

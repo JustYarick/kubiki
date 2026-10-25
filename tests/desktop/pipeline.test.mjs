@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm';
 import { DESKTOP_TARGETS, installerBundleConfig, nextReleaseTag, rpmBundleConfig, stageDesktopArtifacts, verifyDesktopArtifacts } from '../../scripts/desktop-pipeline.mjs';
 import { prepareDesktopRelease } from '../../scripts/desktop-release.mjs';
 import { publishDesktopRelease } from '../../scripts/publish-desktop-release.mjs';
+import { DEV_FEED_TAG } from '../../scripts/dev-update-feed.mjs';
 import { parse } from 'yaml';
 
 test('manual CI publishes by default and invokes the same pipeline as tag releases', async () => {
@@ -114,6 +115,9 @@ test('version selection orders tags numerically and keeps branch previews out of
   assert.equal(nextReleaseTag(tags, { branch: 'main', bump: 'major' }), 'v2.0.0');
   assert.equal(nextReleaseTag([], { branch: 'main' }), 'v0.1.1');
   assert.throws(() => nextReleaseTag(tags, { bump: 'oops' }), /Invalid bump/);
+  assert.equal(nextReleaseTag(['v1.0.0', 'v1.0.1-dev.42'], { branch: 'dev', runNumber: 5 }), 'v1.0.1-dev.43');
+  assert.equal(nextReleaseTag(['v1.0.0', 'v1.0.1-dev.42'], { branch: 'dev', runNumber: 50 }), 'v1.0.1-dev.50');
+  assert.equal(nextReleaseTag(['v1.0.0', 'v1.0.1-dev.bad', 'v1.0.2-dev.99'], { branch: 'dev', runNumber: 5 }), 'v1.0.1-dev.5');
 });
 
 test('RPM uses a numeric Version and prerelease Release below stable, without changing SemVer', () => {
@@ -173,36 +177,63 @@ async function artifacts(tag = 'v9876.1.0-rc.1') {
   return { root, dir: path.join(root, '.kubiki-build/artifacts'), tag, sha };
 }
 
-function githubMock({ exists = true, draft = true, latest = 'v1.0.0', failUpload = false } = {}) {
+function githubMock({ exists = true, draft = true, latest = 'v1.0.0', failUpload = false, failDevUpload = false } = {}) {
   let assets = [{ id: 1, name: 'stale-package', size: 100 }];
+  let feedAssets = [], feed;
+  let releaseExists = exists, releaseDraft = draft;
   let fail = failUpload;
+  let failFeed = failDevUpload;
   const events = [];
   const github = {
     rest: { git: { createRef: async () => events.push('tag') }, repos: {
-      getReleaseByTag: async () => {
-        if (!exists) throw Object.assign(new Error('Not found'), { status: 404 });
-        return { data: { id: 123, draft } };
+      getReleaseByTag: async ({ tag }) => {
+        if (tag === DEV_FEED_TAG) {
+          if (!feed) throw Object.assign(new Error('Not found'), { status: 404 });
+          return { data: feed };
+        }
+        if (!releaseExists) throw Object.assign(new Error('Not found'), { status: 404 });
+        return { data: { id: 123, draft: releaseDraft } };
       },
       createRelease: async options => {
-        if (exists) throw new Error('Existing draft should be reused');
+        if (options.tag_name === DEV_FEED_TAG) {
+          events.push('create-dev-feed');
+          feed = { ...options, id: 456 };
+          return { data: feed };
+        }
+        if (releaseExists) throw new Error('Existing draft should be reused');
         events.push('create-draft');
         assert.equal(options.draft, true);
         assert.equal(options.target_commitish, 'a'.repeat(40));
+        releaseExists = true; releaseDraft = true;
         return { data: { id: 123, draft: true } };
       },
       listReleaseAssets: 'list-assets',
-      deleteReleaseAsset: async ({ asset_id }) => { events.push('delete'); assets = assets.filter(a => a.id !== asset_id); },
-      uploadReleaseAsset: async ({ name, data }) => {
-        events.push(name);
+      getReleaseAsset: async ({ asset_id }) => ({ data: assets.find(a => a.id === asset_id).data }),
+      deleteReleaseAsset: async ({ asset_id }) => { events.push('delete'); assets = assets.filter(a => a.id !== asset_id); feedAssets = feedAssets.filter(a => a.id !== asset_id); },
+      uploadReleaseAsset: async ({ release_id, name, data }) => {
+        events.push(release_id === 456 ? `dev:${name}` : name);
+        if (release_id === 456) {
+          if (failFeed) { failFeed = false; throw new Error('Dev feed upload interrupted'); }
+          const asset = { id: 900, name, size: data.length, data: Buffer.from(data) };
+          feedAssets.push(asset);
+          return { data: asset };
+        }
         if (fail) { fail = false; throw new Error('Upload interrupted'); }
-        assets.push({ id: assets.length + 100, name, size: data.length });
+        assets.push({ id: assets.length + 100, name, size: data.length, data: Buffer.from(data) });
+        return { data: assets.at(-1) };
       },
       getLatestRelease: async () => ({ data: { tag_name: latest } }),
-      updateRelease: async options => { events.push(options); return { data: { html_url: 'https://example.test/release' } }; },
+      updateRelease: async options => {
+        events.push(options);
+        if (options.release_id === 456) feed = { ...feed, ...options };
+        else if (options.draft !== undefined) releaseDraft = options.draft;
+        return { data: { html_url: 'https://example.test/release' } };
+      },
     } },
-    paginate: async () => assets,
+    paginate: async (_route, { release_id }) => release_id === 456 ? feedAssets : assets,
   };
-  return { github, context: { repo: { owner: 'JustYarick', repo: 'kubiki' } }, core: { info() {} }, events };
+  return { github, context: { repo: { owner: 'JustYarick', repo: 'kubiki' } }, core: { info() {} }, events,
+    getFeed: () => ({ release: feed, manifest: feedAssets[0] && JSON.parse(feedAssets[0].data.toString()) }) };
 }
 
 test('publication rejects incomplete, corrupted or mixed-commit artifacts before any GitHub write', async () => {
@@ -254,5 +285,26 @@ test('published releases are never overwritten and older stable releases do not 
     await publishDesktopRelease(newer, fixture);
     assert.ok(newer.events.includes('create-draft'));
     assert.equal(newer.events.at(-1).make_latest, 'true');
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test('a dev release advances its own feed after publication and a failed promotion can retry without rewriting installers', async () => {
+  const fixture = await artifacts('v9876.1.0-dev.10');
+  const mock = githubMock({ failDevUpload: true });
+  try {
+    await assert.rejects(publishDesktopRelease(mock, fixture), /Dev feed upload interrupted/);
+    const published = mock.events.findIndex(e => typeof e === 'object' && e.release_id === 123 && e.draft === false);
+    assert.ok(published >= 0);
+    assert.ok(mock.events.indexOf('create-dev-feed') > published);
+    assert.equal(mock.events[published].make_latest, 'false');
+    const retryStart = mock.events.length;
+    await publishDesktopRelease(mock, fixture);
+    assert.equal(mock.events.slice(retryStart).some(e => e === 'delete' || e === 'latest.json' || e === 'kubiki.AppImage'), false);
+    const feed = mock.getFeed();
+    assert.equal(feed.release.draft, false);
+    assert.equal(feed.release.prerelease, true);
+    assert.equal(feed.release.make_latest, 'false');
+    assert.equal(feed.manifest.version, '9876.1.0-dev.10');
+    assert.ok(Object.values(feed.manifest.platforms).every(p => p.url.includes('/releases/download/v9876.1.0-dev.10/')));
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });

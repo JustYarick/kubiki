@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { desktopRelease, prepareDesktopRelease, normalizeUpdaterPublicKey, reconcileUpdateManifest, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
+import { desktopRelease, updateChannel, compareDevTags, prepareDesktopRelease, normalizeUpdaterPublicKey, reconcileUpdateManifest, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
 
 const publicKey = 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzMTMxRkEzNTgwNUQzNzQKUldSMDB3VllveDhUMDZRSmVhaUh0c2x6ci95YlY2YUZkcW9qcnJESGpOVWhTbGdQRG4vaXhqZHUK';
 
@@ -13,6 +13,19 @@ test('stable feed excludes dev, test, alpha, beta, rc and build metadata tags', 
     assert.equal(desktopRelease(`v${version}`).prerelease, true);
   }
   for (const tag of ['main', 'test', 'v1.2', 'v01.2.3', 'v1.2.3-01', 'v1.2.3-dev..1', 'v1.2.3\n']) assert.throws(() => desktopRelease(tag));
+});
+
+test('update channels isolate stable, dev and unsupported previews', () => {
+  for (const tag of ['v1.0.0', 'v2.1.3']) assert.equal(updateChannel(tag), 'stable');
+  for (const tag of ['v1.0.0-dev', 'v1.0.0-dev.0', 'v1.0.0-dev.10']) assert.equal(updateChannel(tag), 'dev');
+  for (const tag of ['v1.0.0-dev.test', 'v1.0.0-dev.1.2', 'v1.0.0-rc.1', 'v1.0.0-beta.1', 'v1.0.0+dev', 'v1.0.0-dev.1+build.2']) {
+    assert.equal(updateChannel(tag), null, tag);
+  }
+  assert.equal(compareDevTags('v1.0.0-dev.10', 'v1.0.0-dev.9'), 1);
+  assert.equal(compareDevTags('v1.10.0-dev.1', 'v1.9.0-dev.99'), 1);
+  assert.equal(compareDevTags('v1.0.0-dev', 'v1.0.0-dev.0'), -1);
+  assert.equal(compareDevTags('v1.0.0-dev.10', 'v1.0.0-dev.10'), 0);
+  assert.throws(() => compareDevTags('v1.0.0', 'v1.0.0-dev.1'), /Not a dev/);
 });
 
 test('release preparation synchronizes embedded versions and locked package identity', async () => {

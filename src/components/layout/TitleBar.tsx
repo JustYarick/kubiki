@@ -176,12 +176,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
 
         {/* Kubiki Brand Logo */}
         <div className="app-titlebar-brand flex items-center gap-1.5 px-1">
-          <span className="w-5 h-5 rounded-[calc(4px*var(--ui-factor))] bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-[length:calc(11px*var(--ui-factor))] font-bold shadow-xs shrink-0">
-            ⎈
-          </span>
-          <span className="font-semibold text-[length:calc(12.5px*var(--ui-factor))] tracking-tight text-[var(--text-primary)]">
-            Kubiki
-          </span>
+          <img
+            src="/brand/kubiki-logo-color-dark.svg"
+            alt="kubiki"
+            width={360}
+            height={128}
+            draggable={false}
+            className="block h-[calc(28px*var(--ui-factor))] w-auto shrink-0"
+          />
         </div>
 
         <div className="app-titlebar-divider h-4 w-px bg-[var(--border-default)] mx-1" />

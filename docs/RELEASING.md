@@ -12,7 +12,9 @@ Open **Actions → CI → Run workflow** and select the source branch.
 - Leave **trigger_release** enabled to publish after all checks and builds pass.
   It is enabled by default for manual runs.
 - Leave **custom_tag** empty for automatic version selection. **main** gets the
-  next stable version; other branches get `vX.Y.Z-dev.RUN_NUMBER`.
+  next stable version; other branches get `vX.Y.Z-dev.NUMBER`. The number starts
+  from the workflow run counter and is raised above existing dev tags for that
+  version, so CI and Release's separate counters do not reuse a published tag.
 - Choose **bump** (`patch`, `minor`, `major`) to select the next version. The base
   is the highest existing stable tag, sorted numerically; with no stable tags,
   the base is `0.1.0`.
@@ -55,6 +57,11 @@ An explicit tag selects the channel regardless of branch. Plain `vX.Y.Z` tags
 are stable. Tags with prerelease suffixes or build metadata are prereleases and
 never become Latest. An older stable release does not replace a newer Latest.
 There is no approval step after successful validation.
+
+Signed `-dev.NUMBER` releases also advance the separate dev update feed. The
+number distinguishes builds of the same upcoming version: `v1.0.1-dev.10` is
+newer than `v1.0.1-dev.9`. Bare `-dev` remains supported, but repeating the same
+tag is not a new version. RC/test/alpha/beta builds have no automatic update channel.
 
 Ordinary CI runs use a preview version to exercise prerelease packaging and
 require no signing secrets. Their final publication job is intentionally skipped;
@@ -125,6 +132,9 @@ Only the final publish job writes GitHub release assets. It:
    verifies the uploaded package sizes and tag-pinned updater URLs.
 5. Publishes the draft. Stable versions become Latest only if newer than the
    current Latest; previews remain prereleases.
+6. For dev versions, updates the manifest in the `updates-dev` prerelease only
+   after the real dev release is published. Packages stay at their exact versioned
+   URLs; this feed never becomes Latest and never moves to an older dev version.
 
 A failed required test or build never publishes. In release-only mode, skipped
 test jobs allow builds and publication to proceed. A failed upload leaves an unpublished draft.
@@ -133,6 +143,16 @@ same **custom_tag** for a complete rebuild. The publish job replaces incomplete
 assets on that draft. There is no heuristic that silently skips a platform based
 on a few similarly named assets. Published releases are refused rather than
 modified; select a new version for changes to an already published release.
+
+Dev feed promotion is the exception for retries: if the versioned release was
+published but the feed upload failed, **Re-run failed jobs** repairs only the feed
+using the already published manifest and signatures. It does not replace the
+published installers. Do not rerun the entire workflow with that published tag;
+the preparation job correctly refuses it. The feed's release body records a
+monotonic version floor before the manifest is replaced. If an upload is
+interrupted, an older job cannot roll it back; retry the same or a newer dev
+publication to repair it. A replacement can briefly return 404 while GitHub
+replaces the manifest; failed checks remain retryable.
 
 For a source fix, commit the fix and use a new tag. Retrying an existing tag builds
 its original source; it cannot include later changes to the release scripts.
@@ -161,6 +181,7 @@ handling. It does not require updater keys for an ordinary local build.
 Linux packages are verified locally; macOS and Windows builds must run on their
 respective runners. Compilation and browser mocks do not prove native installer
 or updater behavior. Install and exercise the packages on each OS. The first
-updater-enabled stable release is installed normally; then test an update to a
-newer signed stable release. See [application updates](APP_UPDATES.md) for runtime
+updater-enabled release in each channel is installed normally; then test an update
+to a newer signed release in that same channel. Old dev builds without channel
+support need one manual installation. See [application updates](APP_UPDATES.md) for runtime
 checks and recovery. Linux DEB/RPM users retain package-manager ownership.

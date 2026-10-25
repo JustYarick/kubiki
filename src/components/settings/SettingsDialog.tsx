@@ -408,9 +408,15 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
       <SectionTitle>{sectionTitle}</SectionTitle>
       <Row entry={findEntry('about.kubiki')} wide>
         <div className="flex items-start gap-3 p-3 rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-surface)]">
-          <div className="w-9 h-9 rounded-[calc(6px*var(--ui-factor))] bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-lg font-bold shadow-xs shrink-0">
-            ⎈
-          </div>
+          <img
+            src="/brand/kubiki-mark-gray-dark.svg"
+            alt=""
+            aria-hidden="true"
+            width={96}
+            height={96}
+            draggable={false}
+            className="w-9 h-9 shrink-0"
+          />
           <div className="min-w-0">
             <div className="text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">
               Kubiki <span className="text-[var(--text-muted)] font-normal">{APP_VERSION}</span>
