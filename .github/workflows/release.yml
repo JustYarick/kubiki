@@ -63,7 +63,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           script: |
-            const { desktopRelease, normalizeUpdaterPublicKey } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
+            const { pathToFileURL } = require('url');
+            const path = require('path');
+            const scriptUrl = pathToFileURL(path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/desktop-release.mjs')).href;
+            const { desktopRelease, normalizeUpdaterPublicKey } = await import(scriptUrl);
 
             if (!process.env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
               throw new Error('Configure the updater signing key and public key before publishing. See docs/APP_UPDATES.md.');
@@ -251,7 +254,10 @@ jobs:
               core.setOutput('skip', 'false');
               return;
             }
-            const { targetArtifactsUploaded } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
+            const { pathToFileURL } = require('url');
+            const path = require('path');
+            const scriptUrl = pathToFileURL(path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/desktop-release.mjs')).href;
+            const { targetArtifactsUploaded } = await import(scriptUrl);
             const release_id = ${{ needs.create-release.outputs.release_id }};
             const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
               owner: context.repo.owner, repo: context.repo.repo, release_id, per_page: 100,
@@ -405,7 +411,10 @@ jobs:
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:
           script: |
-            const { desktopRelease, validateUpdateManifest, reconcileUpdateManifest } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
+            const { pathToFileURL } = require('url');
+            const path = require('path');
+            const scriptUrl = pathToFileURL(path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/desktop-release.mjs')).href;
+            const { desktopRelease, validateUpdateManifest, reconcileUpdateManifest } = await import(scriptUrl);
             const release = desktopRelease(process.env.RELEASE_TAG);
             const release_id = Number(process.env.RELEASE_ID);
             const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
