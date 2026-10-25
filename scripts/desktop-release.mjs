@@ -12,17 +12,32 @@ export function desktopRelease(tag) {
   return { tag, version: tag.slice(1), prerelease: Boolean(match[4] || match[5]) };
 }
 
+/** Only numbered dev builds (and the legacy bare -dev) have a preview updater. */
+export function updateChannel(tag) {
+  const release = desktopRelease(tag);
+  if (!release.prerelease) return 'stable';
+  return /^\d+\.\d+\.\d+-dev(?:\.(0|[1-9]\d*))?$/.test(release.version) ? 'dev' : null;
+}
+
+export function compareDevTags(a, b) {
+  const parts = tag => {
+    if (updateChannel(tag) !== 'dev') throw new Error(`Not a dev update version: ${tag}`);
+    const [, major, minor, patch, number] = /^v(\d+)\.(\d+)\.(\d+)-dev(?:\.(\d+))?$/.exec(tag);
+    return [major, minor, patch, number ?? '-1'].map(BigInt);
+  };
+  const av = parts(a), bv = parts(b);
+  for (let i = 0; i < av.length; i++) {
+    if (av[i] !== bv[i]) return av[i] > bv[i] ? 1 : -1;
+  }
+  return 0;
+}
+
 /** Normalizes and validates the Tauri updater public key into the single-line
  * base64 format required by Tauri's updater configuration. */
 export function normalizeUpdaterPublicKey(rawKey) {
   const trimmed = rawKey?.trim();
   if (!trimmed) {
     throw new Error('KUBIKI_UPDATER_PUBLIC_KEY is missing or empty. See docs/APP_UPDATES.md.');
-  }
-
-  // Allow mock identifier in testing fixtures
-  if (trimmed === 'public') {
-    return trimmed;
   }
 
   // Case 1: Base64 string directly from the generated .pub file.
@@ -51,12 +66,12 @@ export function normalizeUpdaterPublicKey(rawKey) {
   );
 }
 
-export async function prepareDesktopRelease(root, tag, env) {
+export async function prepareDesktopRelease(root, tag, env, { signed = true } = {}) {
   const release = desktopRelease(tag);
-  if (!env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
+  if (signed && (!env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !env.TAURI_SIGNING_PRIVATE_KEY?.trim())) {
     throw new Error('Desktop releases require KUBIKI_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY. See docs/APP_UPDATES.md.');
   }
-  const pubkey = normalizeUpdaterPublicKey(env.KUBIKI_UPDATER_PUBLIC_KEY);
+  const pubkey = signed ? normalizeUpdaterPublicKey(env.KUBIKI_UPDATER_PUBLIC_KEY) : '';
   const manifestPath = path.join(root, 'src-tauri/Cargo.toml');
   const lockPath = path.join(root, 'src-tauri/Cargo.lock');
   const manifest = await readFile(manifestPath, 'utf8');
@@ -82,7 +97,7 @@ export async function prepareDesktopRelease(root, tag, env) {
     path.join(root, '.kubiki-build/updater.conf.json'),
     JSON.stringify(
       {
-        bundle: { createUpdaterArtifacts: true },
+        bundle: { createUpdaterArtifacts: signed },
         plugins: {
           updater: {
             pubkey,
@@ -94,14 +109,42 @@ export async function prepareDesktopRelease(root, tag, env) {
     ) + '\n'
   );
   if (env.GITHUB_ENV) {
-    try {
-      await appendFile(env.GITHUB_ENV, `KUBIKI_UPDATER_PUBLIC_KEY=${pubkey}\n`);
-    } catch {}
+    await appendFile(env.GITHUB_ENV, `KUBIKI_UPDATER_PUBLIC_KEY=${pubkey}\n`);
   }
   return release;
 }
 
 export const UPDATE_TARGETS = ['linux-x86_64', 'darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'];
+
+/** Build once, after all matrix jobs finish. Never infer one Mac architecture
+ * from the other, or use a DMG as an updater archive. */
+export function reconcileUpdateManifest(manifest, tag, assets, signatures = {}) {
+  const release = desktopRelease(tag);
+  const result = {
+    version: release.version,
+    notes: manifest?.notes || `Kubiki ${tag}`,
+    pub_date: manifest?.pub_date || new Date().toISOString(),
+    platforms: {},
+  };
+  const patterns = {
+    'linux-x86_64': /\.AppImage$/,
+    'darwin-aarch64': /_aarch64\.app\.tar\.gz$/,
+    'darwin-x86_64': /_x64\.app\.tar\.gz$/,
+    'windows-x86_64': /[-_]setup\.exe$/,
+  };
+  for (const target of UPDATE_TARGETS) {
+    const packages = assets.filter(a => patterns[target].test(a.name) && a.size > 0);
+    if (packages.length !== 1) throw new Error(`Expected exactly one updater package for ${target}, found ${packages.length}.`);
+    const pkg = packages[0];
+    const signature = signatures[`${pkg.name}.sig`]?.trim();
+    if (!signature) throw new Error(`Missing signature contents for ${pkg.name}.`);
+    result.platforms[target] = {
+      signature,
+      url: `https://github.com/JustYarick/kubiki/releases/download/${tag}/${encodeURIComponent(pkg.name)}`,
+    };
+  }
+  return result;
+}
 
 export function validateUpdateManifest(manifest, tag, assets) {
   const release = desktopRelease(tag);
@@ -120,5 +163,5 @@ export function validateUpdateManifest(manifest, tag, assets) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await prepareDesktopRelease(process.cwd(), process.argv[2], process.env);
+  await prepareDesktopRelease(process.cwd(), process.argv[2], process.env, { signed: !process.argv.includes('--unsigned') });
 }

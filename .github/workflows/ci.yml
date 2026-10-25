@@ -2,122 +2,40 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: ['**']
+  pull_request:
   workflow_dispatch:
+    inputs:
+      trigger_release:
+        description: 'Publish a signed release after tests and all desktop builds pass'
+        type: boolean
+        default: true
+      custom_tag:
+        description: 'Optional vX.Y.Z or vX.Y.Z-rc.1; empty = next stable on main, preview elsewhere'
+        type: string
+        default: ''
+      bump:
+        description: 'Version bump when custom_tag is empty'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+permissions:
+  contents: read
 
 jobs:
-  frontend:
-    name: Frontend Check & Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.14.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build extension SDK and runtime
-        run: pnpm extensions:build
-
-      - name: Extension integration tests
-        run: pnpm test:extensions
-
-      - name: Independent SDK template build
-        run: node scripts/check-external-extension.mjs
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Run Vitest Unit Tests
-        run: pnpm test
-
-      - name: Desktop runtime target tests
-        run: pnpm test:desktop
-
-      - name: Build frontend production bundle
-        run: pnpm build
-
-  interface:
-    name: Browser Interface Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 12.14.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm extensions:build
-      - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: interface-test-results
-          path: test-results/
-          retention-days: 7
-
-  rust-test:
-    name: Rust Core Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-          - os: macos-latest
-          - os: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            crates/kubiki-core
-            src-tauri
-
-      - name: Run kubiki-core tests
-        run: cargo test --manifest-path crates/kubiki-core/Cargo.toml
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 12.14.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm extensions:build
-      - run: pnpm desktop:prepare
-
-      - name: Check src-tauri
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+  pipeline:
+    name: Tests, installers and release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      run_tests: true
+      publish: ${{ github.event_name == 'workflow_dispatch' && inputs.trigger_release }}
+      custom_tag: ${{ inputs.custom_tag || '' }}
+      bump: ${{ inputs.bump || 'patch' }}
+    secrets: inherit

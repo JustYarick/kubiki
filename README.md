@@ -1,5 +1,11 @@
 # Kubiki
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/brand/kubiki-logo-color-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="public/brand/kubiki-logo-color-light.svg" />
+  <img src="public/brand/kubiki-logo-color-light.svg" alt="kubiki logo" width="280" height="100" />
+</picture>
+
 Kubiki is a desktop application for inspecting and managing Kubernetes clusters. It combines resource browsing, workload diagnostics, YAML editing, resource topology, Helm management, logs, terminals, and port forwarding in a single workspace.
 
 ## Contents
@@ -52,11 +58,13 @@ The application supports switching between kubeconfig contexts and selecting one
 | Cluster changes | YAML updates, scaling, rollout restarts, deletions, and other supported resource actions with confirmation and concurrency checks. |
 | AI analysis | Diagnostic snapshots opened in a locally installed Codex, OpenCode or Claude Code CLI, with configurable starting instructions. |
 | Extensions | Local or public GitHub package installation, isolated panels, and manual extension updates and rollback. |
-| Application updates | New stable desktop release discovery, signed package downloads and installation after confirmation. |
+| Application updates | Separate stable and dev update channels, signed package downloads and installation after confirmation. |
 
 Kubiki also discovers resources from installed extensions, including Gateway API, Flux, and Argo CD. The available resource types depend on the APIs installed in the selected cluster and the permissions of the active Kubernetes identity.
 
 ## Screenshots
+
+The screenshots below use the built-in demo cluster.
 
 ### Cluster overview
 
@@ -92,7 +100,7 @@ The Helm workspace provides release inspection, revision history, values, and ma
 
 Download the installer for your operating system from [GitHub Releases](https://github.com/JustYarick/kubiki/releases).
 
-Desktop builds with update signing configured check for newer stable releases at startup. You can also check from Settings → About → Application updates. Installation requires an explicit restart action and blocks on unsaved YAML edits or running cluster changes. Linux in-app installation uses AppImage; deb/rpm installations use the package manager. See [application updates](docs/APP_UPDATES.md) for runtime behavior and [publishing desktop releases](docs/RELEASING.md) for signing and rollout.
+Desktop builds with update signing configured check their own release channel at startup: stable builds receive newer stable releases, and dev builds receive newer dev releases. You can also check from Settings → About → Application updates. Installation requires an explicit restart action and blocks on unsaved YAML edits or running cluster changes. Linux in-app installation uses AppImage; deb/rpm installations use the package manager. See [application updates](docs/APP_UPDATES.md) for runtime behavior and [publishing desktop releases](docs/RELEASING.md) for signing and rollout.
 
 The desktop release workflow targets the following platforms and package formats:
 
@@ -198,7 +206,9 @@ SDK Diagnostics is bundled for extension development and hidden by default. Enab
 
 ### Application updates
 
-Signed stable desktop builds check for a newer stable version shortly after startup. Every newer stable version is eligible, including major, minor and patch releases. Preview/test versions are excluded, and development builds do not check for updates. **Settings → About → Application updates** provides a manual check.
+Signed desktop builds check their own update channel shortly after startup. Stable versions (`1.0.0`) receive only newer stable versions; dev versions (`1.0.1-dev.42`) receive only newer dev versions. Channels never switch automatically. Other preview/test versions, debug builds and unsigned builds do not check for updates. **Settings → About → Application updates** provides a manual check.
+
+The number after `dev` distinguishes successive builds of the same upcoming version: `1.0.1-dev.43` is newer than `1.0.1-dev.42`. The first dev build containing channel-update support must be installed manually, because older dev builds disabled update checks.
 
 Use **Download update**, then **Install and restart** after saving or reverting YAML drafts and finishing active cluster changes. **Later** postpones automatic prompts for a day; **Skip this version** suppresses that exact version. Manual checks override both preferences. Downloaded packages remain in memory for the session; restart closes terminals and port forwards. Linux self-updates use AppImage; deb/rpm installations use the package manager.
 
@@ -246,7 +256,7 @@ flowchart TB
 | Kubernetes engine | Kubeconfig parsing, context-specific client pooling, API discovery, informers, metrics, resource mutations, logs, exec, and port forwarding. | `crates/kubiki-core/` |
 | Helm integration | Context-specific Helm reads and reviewed lifecycle operations through the local Helm executable. | `crates/kubiki-core/src/helm/` |
 | Extension platform | SDK contracts, package tools, local Node controller/workers and isolated extension panels. | `packages/`, `src/extensions/`, `src-tauri/src/extension_commands.rs` |
-| Desktop updates | Update state machine, stable-release policy, signed downloads and guarded installation. | `src/core/app_updates.ts`, `src-tauri/src/update_commands.rs` |
+| Desktop updates | Update state machine, stable/dev channel isolation, signed downloads and guarded installation. | `src/core/app_updates.ts`, `src-tauri/src/update_commands.rs` |
 
 The frontend uses React 19, TypeScript, Zustand, Tailwind CSS 4, Monaco Editor, React Flow, ELK, and xterm.js. The backend uses Rust, Tauri 2, Tokio, and the `kube` client library.
 
@@ -268,7 +278,7 @@ See [Project structure and architecture](docs/STRUCTURE.md) for a module-level r
 
 | Dependency | Requirement |
 | --- | --- |
-| Node.js | Use Node.js 24 for full workspace development, matching release/native CI and the extension tools. Frontend CI also runs on Node.js 22. The bundled extension runtime is pinned separately in `scripts/prepare-extension-runtime.mjs`. |
+| Node.js | Use Node.js 24, matching all CI/release jobs and the extension tools. The bundled extension runtime is pinned separately in `scripts/prepare-extension-runtime.mjs`. |
 | pnpm | Version 12.14.0, pinned in `package.json` and the workflows. |
 | Rust | Stable toolchain with support for Rust edition 2024. |
 | Native build tools | The platform dependencies required by Tauri 2. |
@@ -299,7 +309,7 @@ The Tauri hooks also prepare the pinned Node runtime and build the extension SDK
 ### Building desktop packages
 
 ```sh
-pnpm tauri build -- --locked
+pnpm desktop:build
 ```
 
 This command runs frontend type checking, builds the production frontend, compiles the native application, and creates the platform packages. For a native build without an explicit target override, packages are written under `src-tauri/target/release/bundle/`.
@@ -322,7 +332,7 @@ Run these commands from the repository root:
 | `node scripts/check-external-extension.mjs` | Builds the packaged SDK/tools template outside the application repository. |
 | `cargo test --manifest-path crates/kubiki-core/Cargo.toml` | Rust core unit and integration tests. |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | Desktop Rust backend compilation. |
-| `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` | Native desktop unit tests, including stable-version policy and the update/mutation gate. |
+| `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` | Native desktop unit tests, including update-channel policy and the update/mutation gate. |
 | `pnpm test:e2e` | Browser-driven interface tests run by Playwright. |
 
 Before direct desktop Cargo checks, run `pnpm desktop:prepare` and `pnpm extensions:build` to create the bundled resources. The Tauri CLI runs these steps automatically. Build the extension resources before standalone frontend type checks on a clean checkout as well.
@@ -331,7 +341,7 @@ Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, o
 
 ## Publishing releases
 
-Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
+Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. For tests, builds and publication, open **Actions → CI → Run workflow** and leave **trigger_release** enabled. For builds and publication without tests, open **Actions → Release → Run workflow**, leave **run_tests** disabled and **publish** enabled. Branch pushes and pull requests run tests and installer builds without publishing. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
 
 ## Documentation
 

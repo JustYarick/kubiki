@@ -8,23 +8,42 @@ see [Publishing desktop releases](RELEASING.md).
 
 ## Release policy
 
-Every newer stable version is eligible, including major, minor and patch releases.
-Stable tags use plain `vMAJOR.MINOR.PATCH`. Tags containing a prerelease suffix
-(`-dev`, `-test`, `-alpha`, `-beta`, `-rc`, etc.) or build metadata (`+...`) are
-published as GitHub prereleases and never promoted to Latest. Native version
-comparison independently rejects these versions and downgrades.
+Updates stay in the installed version's channel. Every newer version within that
+channel is eligible, including major, minor and patch releases. Native version
+comparison rejects equal/older versions and every cross-channel candidate.
 
-The source branch does not select the channel. A plain `v0.2.0` tag on `dev`
-still creates a stable release; pushing a branch commit alone creates no release.
-The publish job automatically promotes a successful stable release to Latest
-after validation. It has no manual promotion gate.
+| Installed version | Accepted update | Feed |
+| --- | --- | --- |
+| `1.0.0` | Newer plain stable version | GitHub Latest |
+| `1.0.1-dev.9` | Newer `-dev.NUMBER` version, such as `1.0.1-dev.10` | `updates-dev` prerelease |
+| Other previews (`-rc`, `-test`, `-alpha`, `-beta`) or `+build` metadata | Disabled | None |
 
-The app checks `https://github.com/JustYarick/kubiki/releases/latest/download/latest.json`
-after the first render, independently of Kubernetes connectivity. The workflow
+The legacy bare `-dev` suffix is also a dev version; `-dev.0` is newer than
+bare `-dev`. Numbered dev identifiers compare numerically, so `dev.10` is newer
+than `dev.9`. Changing between stable and dev requires a manual installation.
+All prerelease/build suffixes stay out of GitHub Latest.
+
+An explicit tag selects the channel: a plain `v0.2.0` tag on `dev` still creates
+a stable release. Manual runs with no tag automatically select the next stable
+version on `main` and a dev prerelease on other branches. Pushing a branch commit
+alone runs tests and installer builds without publication.
+The publish job promotes a successful stable release to Latest after validation
+when it is newer than the current Latest. It has no manual promotion gate.
+
+After the first render, independently of Kubernetes connectivity, the app checks:
+
+- Stable: `https://github.com/JustYarick/kubiki/releases/latest/download/latest.json`.
+- Dev: `https://github.com/JustYarick/kubiki/releases/download/updates-dev/latest.json`.
+
+The workflow
 keeps releases as drafts until the combined manifest contains all four supported
 OS/architecture combinations and their packages and signatures. Package URLs
 must point to the exact release tag. Do not mark a CLI-only or preview release
-as Latest manually.
+as Latest manually. After a signed dev release is published, the workflow advances
+the separate `updates-dev` prerelease's manifest. That release contains only the
+feed; its package URLs and signatures refer to the immutable versioned release.
+An older dev release cannot move this feed backwards. RC/test releases never
+change it. The first successful dev publication creates the feed automatically.
 
 ## Signing setup (once, before the first release)
 
@@ -59,10 +78,13 @@ CI requires both keys, synchronizes the tag into `package.json`, `src-tauri/taur
 updater artifacts with an additional generated Tauri configuration. This changes
 only the CI checkout, not the tagged commit. Local builds do not require keys.
 
-Debug builds, preview builds, browsers and Linux deb/rpm installations do not
-self-update. Linux in-app updates use AppImage; deb/rpm users keep their package
+Debug builds (including `pnpm tauri dev`), unsupported previews, browsers and
+Linux deb/rpm installations do not self-update. Signed packaged dev releases
+support dev updates. Linux in-app updates use AppImage; deb/rpm users keep their package
 manager's ownership. Windows uses the native installer and macOS updates the app
 bundle. The first release containing this feature must be installed normally.
+Existing dev builds that disabled update checks need one manual installation of
+a dev release containing the new channel support.
 
 ## Module boundaries and lifecycle
 
@@ -70,7 +92,7 @@ bundle. The first release containing this feature must be installed normally.
 `src/providers/app_updates.ts` adapts the native commands; `src/state/update_store.ts`
 composes it with local preferences and the editor preflight. React displays state
 and invokes actions. `src-tauri/src/update_commands.rs` owns the trusted feed,
-SemVer policy, package download, signature verification, installation and restart.
+SemVer/channel policy, package download, signature verification, installation and restart.
 Direct updater plugin permissions are not granted to the renderer; installation
 must pass through Kubiki's guarded native command.
 
@@ -104,10 +126,12 @@ validate tag handling and publication preconditions with `pnpm test:desktop`;
 validate native policy and mutual exclusion with Cargo tests. Browser tests mock
 the native boundary to cover the offer, progress and explicit restart action.
 
-For the initial stable rollout, install updater-enabled release N normally, then
-exercise the update to newer signed stable release N+1 on Windows, macOS Intel/ARM
-and Linux AppImage. Preview builds disable update checks, so installing a release
-candidate alone does not test this path. Verify a tampered package is rejected,
+For each channel, install updater-enabled release N normally, then exercise the
+update to newer signed release N+1 on Windows, macOS Intel/ARM and Linux AppImage.
+For dev, also test `dev.9` → `dev.10`. Verify that a dev build never offers stable
+and a stable build never offers dev, including when the feed is misconfigured.
+RC/test builds disable update checks and do not test either supported channel.
+Verify a tampered package is rejected,
 offline startup stays usable, and an active cluster mutation blocks installation.
 Browser mocks and compilation cannot validate native OS installers.
 

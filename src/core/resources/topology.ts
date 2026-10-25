@@ -1,6 +1,6 @@
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { resourceKey } from './identity';
-import { buildResourceGraph, GraphLimitError, matchesSelector, type ResourceGraph } from './relationships';
+import { buildResourceGraph, matchesSelector, type ResourceGraph } from './relationships';
 import { namespaceNames } from './namespace_scope';
 import { resourceBucket } from './custom_resource_types';
 
@@ -8,33 +8,32 @@ export function topologyNamespaces(scope: string): string[] {
   return scope.startsWith('namespace:') ? [scope.slice(10)] : scope.startsWith('namespaces:') ? namespaceNames(scope.slice(11)) ?? [] : [];
 }
 
-export const MAX_TOPOLOGY_EDGES = 1000;
+export const MAX_TOPOLOGY_EDGES = Infinity;
 export const EMPTY_GRAPH: ResourceGraph = { items: new Map(), relations: [] };
 const NON_EXPANDING_NEIGHBORS = new Set(['Node', 'Namespace', 'ConfigMap', 'Secret', 'StorageClass', 'HelmRelease']);
 const NO_EVENTS = new Map<string, ResourceItem>();
 
-/** Explicit scopes include every resource; relationship count is bounded separately. */
+/** Explicit scopes include every resource without artificial relationship count limits. */
 export function buildTopology(input: Record<ResourceKind, Map<string, ResourceItem>>, scope: string, focus?: ResourceItem, depth = 2): ResourceGraph {
   if (!scope || scope === 'overview') return EMPTY_GRAPH;
   if (scope === 'resource' && focus?.kind === 'Event') return EMPTY_GRAPH;
   // Events belong to the timeline island, never to the layout or its resource budget.
   const resources: Record<ResourceKind, Map<string, ResourceItem>> = { ...input, Event: NO_EVENTS };
   if (scope === 'all') {
-    return buildResourceGraph(resources, { maxEdges: MAX_TOPOLOGY_EDGES, includeContains: false, includeMissing: false });
+    return buildResourceGraph(resources, { includeContains: false, includeMissing: false });
   }
   if (scope === 'resource' && focus) {
     const items = new Map([[resourceKey(focus), focus]]);
     const relations = new Map<string, ResourceGraph['relations'][number]>();
     let frontier = new Set(items.keys());
     for (let step = 0; step < depth && frontier.size; step++) {
-      const adjacent = buildResourceGraph(resources, { adjacentTo: frontier, includeContains: false, includeMissing: false, maxEdges: MAX_TOPOLOGY_EDGES });
+      const adjacent = buildResourceGraph(resources, { adjacentTo: frontier, includeContains: false, includeMissing: false });
       const next = new Set<string>();
       for (const [key, item] of adjacent.items) if (!items.has(key)) {
         items.set(key, item);
         if (!NON_EXPANDING_NEIGHBORS.has(item.kind) || item.kind === focus.kind) next.add(key);
       }
       for (const edge of adjacent.relations) if (!edge.missing) relations.set(edge.id, edge);
-      checkLimits(relations.size);
       frontier = next;
     }
     return { items, relations: [...relations.values()] };
@@ -100,9 +99,5 @@ export function buildTopology(input: Record<ResourceKind, Map<string, ResourceIt
     if (!scoped[kind].has(item.uid)) { scoped[kind].set(item.uid, item); }
     if (kind === 'PersistentVolume') need('StorageClass', item.spec?.storageClassName ?? item.storageClass);
   }
-  return buildResourceGraph(scoped, { maxEdges: MAX_TOPOLOGY_EDGES, includeContains: false, includeMissing: false });
-}
-
-function checkLimits(edges: number) {
-  if (edges > MAX_TOPOLOGY_EDGES) throw new GraphLimitError(`This scope exceeds ${MAX_TOPOLOGY_EDGES} relationships. Reduce the depth or choose a smaller resource.`);
+  return buildResourceGraph(scoped, { includeContains: false, includeMissing: false });
 }

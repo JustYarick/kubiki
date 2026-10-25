@@ -33,9 +33,9 @@ export function AppUpdatePrompt() {
       {(phase.status === 'upToDate' || (phase.status === 'error' && phase.stage === 'check')) && <Button size="sm" onClick={() => { void appUpdates.check(); }}>Check again</Button>}
     </>}>
       <div className="space-y-3 text-xs text-[var(--text-secondary)] leading-relaxed">
-        {update && <p>Installed: {update.currentVersion} · Available: {update.version} · Stable channel</p>}
-        {phase.status === 'checking' && <p role="status">Checking for stable releases…</p>}
-        {phase.status === 'upToDate' && <p role="status">You are using the latest stable version.</p>}
+        {update && <p>Installed: {update.currentVersion} · Available: {update.version} · {/-dev(?:\.\d+)?$/.test(update.currentVersion) ? 'Dev' : 'Stable'} channel</p>}
+        {phase.status === 'checking' && <p role="status">Checking for updates in this build’s channel…</p>}
+        {phase.status === 'upToDate' && <p role="status">You are using the latest version in this update channel.</p>}
         {phase.status === 'disabled' && <p role="status">{phase.reason}</p>}
         {phase.status === 'error' && <p role="alert" className="text-[var(--status-danger)]">{phase.message}</p>}
         {update?.notes && <div className="whitespace-pre-wrap break-words max-h-56 overflow-y-auto kubiki-scrollbar rounded border border-[var(--border-subtle)] p-3">{update.notes}</div>}
@@ -59,7 +59,7 @@ export function UpdateSettings() {
   const update = 'update' in phase ? phase.update : undefined;
   return <div className="space-y-2">
     <p className="text-xs text-[var(--text-muted)]" role="status">
-      {phase.status === 'disabled' ? phase.reason : phase.status === 'upToDate' ? 'You are using the latest stable version.' : update ? `Kubiki ${update.version} is available.` : phase.status === 'error' ? phase.message : 'Checks for stable releases when Kubiki starts. Preview and test builds are excluded.'}
+      {phase.status === 'disabled' ? phase.reason : phase.status === 'upToDate' ? 'You are using the latest version in this update channel.' : update ? `Kubiki ${update.version} is available.` : phase.status === 'error' ? phase.message : 'Checks for newer releases in this build’s channel when Kubiki starts. Dev builds receive dev updates; stable builds receive stable updates.'}
     </p>
     <Button size="sm" disabled={busy} onClick={() => {
       useUiStore.getState().setSettingsOpen(false);

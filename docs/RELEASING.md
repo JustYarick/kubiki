@@ -1,140 +1,187 @@
-# Publishing desktop releases
+# Desktop builds and releases
 
-The [Release workflow](../.github/workflows/release.yml) builds Linux x86_64,
-macOS Apple Silicon, macOS Intel and Windows x86_64 packages plus standalone CLI
-binaries. All commands below run from the Kubiki repository root. Example version
-numbers must be replaced with the version you intend to publish.
+CI and Release share the [desktop pipeline](../.github/workflows/release.yml)
+and offer two entry points: CI runs tests before building; a manual Release
+builds and publishes without tests by default. Both build all four desktop
+targets and validate the release artifacts before publishing.
 
-## One-time setup
+## Run from GitHub Actions
 
-Use the Node.js and pnpm versions in the [build requirements](../README.md#build-requirements).
-Generate and back up the updater signing key outside the repository, then configure
-the GitHub repository's Actions settings as described in [signing setup](APP_UPDATES.md#signing-setup-once-before-the-first-release).
+Open **Actions → CI → Run workflow** and select the source branch.
 
-| Repository setting | Name |
-| --- | --- |
-| Actions variable, public key contents | `KUBIKI_UPDATER_PUBLIC_KEY` |
-| Actions secret, private key contents | `TAURI_SIGNING_PRIVATE_KEY` |
-| Actions secret, private key password when set | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` |
+- Leave **trigger_release** enabled to publish after all checks and builds pass.
+  It is enabled by default for manual runs.
+- Leave **custom_tag** empty for automatic version selection. **main** gets the
+  next stable version; other branches get `vX.Y.Z-dev.NUMBER`. The number starts
+  from the workflow run counter and is raised above existing dev tags for that
+  version, so CI and Release's separate counters do not reuse a published tag.
+- Choose **bump** (`patch`, `minor`, `major`) to select the next version. The base
+  is the highest existing stable tag, sorted numerically; with no stable tags,
+  the base is `0.1.0`.
+- Set **custom_tag**, for example `v1.0.1` or `v1.0.1-rc.1`, to select an exact
+  version. An existing tag always selects its own commit.
+- Disable **trigger_release** for tests and downloadable installers without
+  publishing. Pushes to branches and pull requests use this mode automatically.
 
-The workflow rejects missing public/private updater keys before creating a draft.
-The same key pair is used for stable and prerelease builds. The workflow currently
-supplies updater signing credentials only; Windows code-signing and macOS app
-signing/notarization are separate distribution tasks and are not configured here.
-The workflow grants its `GITHUB_TOKEN` repository contents write permission to
-create releases and upload assets.
+For **build and publish without tests**, open **Actions → Release → Run workflow**:
 
-## Validate the release commit
+- Select the source branch, leave **run_tests** disabled (the default), and leave
+  **publish** enabled (the default). Frontend, browser, extension and Rust test
+  suites are skipped; installer builds start after version/signing preparation.
+- Set **run_tests** to true if this release should also run the full test suite.
+- Use **custom_tag** and **bump** as in CI. Optional **target_commit** must be a
+  full commit SHA and must match an existing custom tag.
+- Disable **publish** if only downloadable installer artifacts are needed.
 
-Commit the intended source and documentation changes and push the branch. Wait
-for its CI run to pass before pushing a release tag: the Release workflow is
-independent of branch CI and does not wait for it.
+| Entry point | Tests | Build installers | Publish |
+| --- | --- | --- | --- |
+| Branch push / PR → CI | Always | Yes | No |
+| Manual CI (`trigger_release=true`, default) | Always | Yes | Yes |
+| Manual Release (`run_tests=false`, default) | Skipped | Yes | Yes, unless `publish=false` |
+| Manual Release (`run_tests=true`) | All | Yes | Yes, unless `publish=false` |
+| Push a `v*` tag | All | Yes | Yes |
 
-Useful local checks on a clean checkout:
+Skipping tests does not require a previous successful CI run. Frontend/extension
+compilation, type checking needed by the build, signing and artifact validation
+still run. The summary records the selected test mode. **Re-run jobs** preserves
+the original inputs; select **Run workflow** to change modes.
+
+Pushing a `v*` tag also runs the complete pipeline and publishes on success:
+
+```sh
+git tag -a v1.0.1-rc.1 -m "Kubiki 1.0.1 release candidate 1"
+git push origin v1.0.1-rc.1
+```
+
+An explicit tag selects the channel regardless of branch. Plain `vX.Y.Z` tags
+are stable. Tags with prerelease suffixes or build metadata are prereleases and
+never become Latest. An older stable release does not replace a newer Latest.
+There is no approval step after successful validation.
+
+Signed `-dev.NUMBER` releases also advance the separate dev update feed. The
+number distinguishes builds of the same upcoming version: `v1.0.1-dev.10` is
+newer than `v1.0.1-dev.9`. Bare `-dev` remains supported, but repeating the same
+tag is not a new version. RC/test/alpha/beta builds have no automatic update channel.
+
+Ordinary CI runs use a preview version to exercise prerelease packaging and
+require no signing secrets. Their final publication job is intentionally skipped;
+the run summary explicitly says **Build only**. Manual CI runs with
+**trigger_release** enabled publish through the reusable pipeline in the same run;
+there is no second workflow dispatch to find or wait for.
+
+## Signing setup
+
+Generate and back up the updater key outside the repository, then configure
+**Settings → Secrets and variables → Actions**:
+
+| Kind | Name | Contents |
+| --- | --- | --- |
+| Variable | `KUBIKI_UPDATER_PUBLIC_KEY` | Generated `.pub` file |
+| Secret | `TAURI_SIGNING_PRIVATE_KEY` | Generated private key file |
+| Secret | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password, if configured |
+
+See [signing setup](APP_UPDATES.md#signing-setup-once-before-the-first-release).
+Signed runs reject missing keys before the expensive jobs start. Build-only runs
+receive no signing keys. Updater signing is separate from Windows code signing
+and macOS signing/notarization, which are not configured here.
+
+## What is built
+
+| Runner | Target | Installers and updater package |
+| --- | --- | --- |
+| Ubuntu 22.04 | Linux x86_64 | DEB, RPM, AppImage |
+| macOS 15 ARM | macOS Apple Silicon | DMG, signed app archive for releases |
+| macOS 15 Intel | macOS Intel | DMG, signed app archive for releases |
+| Windows 2022 | Windows x86_64 | NSIS EXE, MSI |
+
+Every target also builds a standalone CLI and runs its native tests when
+**run_tests** is enabled. All jobs
+check out the same resolved commit SHA. Node.js 24 and the pnpm version pinned in
+`package.json` are used throughout. Cargo builds/tests use committed lockfiles.
+
+The pipeline synchronizes `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` and the desktop entry in `src-tauri/Cargo.lock` within the
+runner checkout. It does not commit version changes to the branch or change the
+independently versioned SDK/core crate.
+
+RPM cannot use a SemVer prerelease directly as its Version. The shared build
+command first builds the application with the full version, then bundles that
+existing binary as an RPM with numeric Version and a separate Release. For
+`1.0.1-dev`, these are `Version=1.0.1`, `Release=0.dev`; stable `1.0.1` uses
+`Release=1`. The application's embedded version remains `1.0.1-dev`. RPM updater
+artifacts are disabled; Linux self-updates use AppImage. MSI uses a separate
+numeric WiX version (`1.0.1` for `1.0.1-dev`), and macOS uses a numeric bundle
+build version. Full SemVer stays embedded in the application. Versions beyond
+MSI limits (`255.255.65535`) are rejected during planning.
+
+Each matrix job stages only distributable packages, signatures and CLI binaries.
+It verifies all required formats and writes a build record containing target,
+commit, tag and SHA-256 hashes. Download these files from the run's **Artifacts**
+section (`kubiki-TARGET`, retained for 14 days), including build-only runs.
+
+## Publication and retries
+
+Only the final publish job writes GitHub release assets. It:
+
+1. Downloads all four matrix artifacts and checks their source SHA, tag, target,
+   signed mode, package presence and file hashes.
+2. Creates one updater manifest from matching package/signature pairs. macOS ARM
+   and Intel require distinct app archives; Windows uses NSIS; Linux uses AppImage.
+3. Creates the tag if needed and creates or reuses an unpublished draft.
+4. Uploads packages, signatures, `SHA256SUMS` and a single `latest.json`, then
+   verifies the uploaded package sizes and tag-pinned updater URLs.
+5. Publishes the draft. Stable versions become Latest only if newer than the
+   current Latest; previews remain prereleases.
+6. For dev versions, updates the manifest in the `updates-dev` prerelease only
+   after the real dev release is published. Packages stay at their exact versioned
+   URLs; this feed never becomes Latest and never moves to an older dev version.
+
+A failed required test or build never publishes. In release-only mode, skipped
+test jobs allow builds and publication to proceed. A failed upload leaves an unpublished draft.
+Use **Re-run failed jobs** for a transient failure, or rerun the workflow with the
+same **custom_tag** for a complete rebuild. The publish job replaces incomplete
+assets on that draft. There is no heuristic that silently skips a platform based
+on a few similarly named assets. Published releases are refused rather than
+modified; select a new version for changes to an already published release.
+
+Dev feed promotion is the exception for retries: if the versioned release was
+published but the feed upload failed, **Re-run failed jobs** repairs only the feed
+using the already published manifest and signatures. It does not replace the
+published installers. Do not rerun the entire workflow with that published tag;
+the preparation job correctly refuses it. The feed's release body records a
+monotonic version floor before the manifest is replaced. If an upload is
+interrupted, an older job cannot roll it back; retry the same or a newer dev
+publication to repair it. A replacement can briefly return 404 while GitHub
+replaces the manifest; failed checks remain retryable.
+
+For a source fix, commit the fix and use a new tag. Retrying an existing tag builds
+its original source; it cannot include later changes to the release scripts.
+
+## Local verification
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm extensions:build
-pnpm desktop:prepare
-pnpm typecheck
+pnpm build
 pnpm test
 pnpm test:desktop
+pnpm desktop:prepare
 pnpm test:extensions
 node scripts/check-external-extension.mjs
-pnpm build
 cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml
 cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
 pnpm exec playwright install chromium
 pnpm test:e2e
+pnpm desktop:build
 ```
 
-Native platform dependencies must be installed for Cargo/Tauri checks. Build and
-exercise the installer on the target OS; on Linux use `pnpm desktop:build:linux`.
-Record the platforms actually tested. The rendering investigation's Linux
-measurements and browser tests do not certify Windows/macOS installation or the
-end-to-end updater. Confirm release notes describe user-visible behavior and any
-known platform limits.
+Install native platform dependencies first. `pnpm desktop:build` uses the same
+packaging code as CI, including the Linux OpenSSL workaround and RPM version
+handling. It does not require updater keys for an ordinary local build.
 
-## Choose the channel and push a tag
-
-| Tag example | GitHub release | Promoted to Latest | Offered by the stable updater |
-| --- | --- | --- | --- |
-| `v0.2.0`, `v0.2.1` | Stable | Yes | Yes, when newer than the installed version |
-| `v0.3.0-dev.1`, `v0.3.0-test.1` | Prerelease | No | No |
-| `v0.3.0-alpha.1`, `v0.3.0-beta.1`, `v0.3.0-rc.1` | Prerelease | No | No |
-| `v0.3.0+build.1` | Prerelease under Kubiki's policy | No | No |
-
-Tags must be valid SemVer prefixed with `v`. The channel comes from the tag; a
-plain stable tag on `dev` still publishes a stable release. Pushing an ordinary
-commit to `dev` or `main` runs CI but does not create a release.
-
-For a preview of the selected, tested commit:
-
-```sh
-git tag -a v0.2.0-rc.1 -m "Kubiki 0.2.0 release candidate 1"
-git push origin v0.2.0-rc.1
-```
-
-After validating the candidate and selecting the final commit:
-
-```sh
-git tag -a v0.2.0 -m "Kubiki 0.2.0"
-git push origin v0.2.0
-```
-
-Preview builds allow installer testing but have in-app update checks disabled.
-Publish stable tags in increasing version order and finish one stable release
-before starting another: the current workflow promotes every successful plain
-stable tag and does not enforce monotonic Latest selection across workflow runs.
-
-## What happens after the tag
-
-1. The workflow checks out the tag, validates its format and signing configuration,
-   and creates a GitHub draft release with generated notes.
-2. Each build sets the desktop version in `package.json`, `src-tauri/tauri.conf.json`,
-   `src-tauri/Cargo.toml` and the desktop package entry in `src-tauri/Cargo.lock`.
-   This happens in the CI checkout; it does not commit version changes back to
-   the branch or change the independently versioned SDK/core crate.
-3. The build prepares the target's Node runtime and produces installers, updater
-   signatures and CLI binaries. Tauri Action combines updater entries in
-   `latest.json` on the draft release. Windows updater entries prefer NSIS.
-4. After all four builds succeed, the publish job verifies the manifest version,
-   four platform entries, package/signature asset presence and URLs pinned to
-   that exact tag.
-5. The publish job clears `draft` automatically. Stable releases become Latest;
-   prereleases retain `prerelease: true` and are excluded from Latest.
-
-There is no manual approval/promotion job between successful validation and
-publication. Pushing a stable tag starts a workflow that will publish it.
-Review generated notes while the release is a draft if needed; the workflow
-does not wait for that review.
-
-Manual dispatch accepts an existing tag and checks out that tag. It runs the
-same pipeline and also publishes automatically on success. Use it for a tag
-whose release has not already been created, not as a channel selector.
-
-## Verify publication and handle failures
-
-Check the workflow result and release assets. A stable release must expose
-`latest.json` and the signed packages for `linux-x86_64`, `darwin-aarch64`,
-`darwin-x86_64` and `windows-x86_64`. See [installation formats](../README.md#installation)
-for the downloadable installers. Do not manually mark CLI-only or preview
-releases as Latest; the application expects a complete desktop manifest there.
-
-The first updater-enabled stable release is installed normally. A subsequent
-newer signed stable release provides the first N → N+1 update to test on each OS.
-Confirm startup discovery, download, signature rejection, unsaved-edit and
-running-mutation protection, and restart. Linux self-updates currently use
-AppImage; deb/rpm installations continue to use their package manager.
-
-Failed builds or manifest validation leave the release as a draft. Inspect the
-failed job and draft assets before retrying. The create job uses GitHub's create
-release API and does not reuse an existing release: rerunning the entire workflow
-for a tag that already has a draft can fail with an existing-release error. For
-an unpublished failed attempt, clean up that draft before a full rerun or choose
-a new unique tag. Do not move or replace a published stable tag or mix package
-assets from different commits.
-
-Initial failed-update recovery is manual installation of a known working package
-with compatible settings. Moving Latest back does not downgrade installed apps.
-The application does not implement automatic rollback or staged rollout control.
+Linux packages are verified locally; macOS and Windows builds must run on their
+respective runners. Compilation and browser mocks do not prove native installer
+or updater behavior. Install and exercise the packages on each OS. The first
+updater-enabled release in each channel is installed normally; then test an update
+to a newer signed release in that same channel. Old dev builds without channel
+support need one manual installation. See [application updates](APP_UPDATES.md) for runtime
+checks and recovery. Linux DEB/RPM users retain package-manager ownership.

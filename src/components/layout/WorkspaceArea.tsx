@@ -102,9 +102,15 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   if (!tab) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none bg-[var(--bg-canvas)]">
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-blue-600/20 to-indigo-500/20 border border-blue-500/30 flex items-center justify-center text-[var(--accent)] text-2xl font-bold mb-3 shadow-sm">
-          ⎈
-        </div>
+        <img
+          src="/brand/kubiki-mark-gray-dark.svg"
+          alt=""
+          aria-hidden="true"
+          width={96}
+          height={96}
+          draggable={false}
+          className="w-12 h-12 mb-3 shrink-0"
+        />
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">No Open Tabs</h2>
         <p className="text-xs text-[var(--text-muted)] mt-1 max-w-sm">
           Select a resource from the sidebar to inspect your cluster, or use quick actions below.

@@ -2,232 +2,306 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release Tag (e.g. v0.1.0)'
-        required: true
-        default: 'v0.1.0'
+      run_tests:
+        description: 'Run frontend, browser, extension and Rust tests before building'
+        type: boolean
+        default: false
+      publish:
+        description: 'Publish built installers; disable for a build-only run'
+        type: boolean
+        default: true
+      custom_tag:
+        description: 'Optional release tag; existing tags build their exact commit'
+        type: string
+        default: ''
+      bump:
+        description: 'Version bump when custom_tag is empty'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      target_commit:
+        description: 'Optional full commit SHA; must match custom_tag if that tag exists'
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      run_tests:
+        type: boolean
+        default: true
+      publish:
+        type: boolean
+        default: false
+      custom_tag:
+        type: string
+        default: ''
+      bump:
+        type: string
+        default: patch
+      target_commit:
+        type: string
+        default: ''
 
 permissions:
-  contents: write
-
-concurrency:
-  group: desktop-release-${{ github.event.inputs.tag || github.ref }}
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
+  prepare:
+    name: Resolve commit, version and signing
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
     outputs:
-      release_id: ${{ steps.create-release.outputs.result }}
-      tag: ${{ steps.create-release.outputs.tag }}
-      prerelease: ${{ steps.create-release.outputs.prerelease }}
+      sha: ${{ steps.plan.outputs.sha }}
+      tag: ${{ steps.plan.outputs.tag }}
+      publish: ${{ steps.plan.outputs.publish }}
+      run_tests: ${{ steps.plan.outputs.run_tests }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: Create draft release
-        id: create-release
+          fetch-depth: 0
+      - name: Plan exact source and release channel
+        id: plan
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBLISH: ${{ inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+          RUN_TESTS: ${{ inputs.run_tests || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+          CUSTOM_TAG: ${{ inputs.custom_tag }}
+          TARGET_COMMIT: ${{ inputs.target_commit }}
+          BUMP: ${{ inputs.bump || 'patch' }}
+          KUBIKI_UPDATER_PUBLIC_KEY: ${{ (inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && vars.KUBIKI_UPDATER_PUBLIC_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ (inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
         with:
           script: |
-            const { desktopRelease, normalizeUpdaterPublicKey } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
-            const { tag, prerelease } = desktopRelease(process.env.RELEASE_TAG);
-            if (!process.env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
-              throw new Error('Configure the updater signing key and public key before publishing. See docs/APP_UPDATES.md.');
+            const { execFileSync } = require('node:child_process');
+            const { pathToFileURL } = require('node:url');
+            const load = name => import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/${name}`).href);
+            const { desktopRelease, normalizeUpdaterPublicKey } = await load('desktop-release.mjs');
+            const { nextReleaseTag, installerBundleConfig } = await load('desktop-pipeline.mjs');
+            const git = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+            const publish = process.env.PUBLISH === 'true';
+            const runTests = process.env.RUN_TESTS === 'true';
+            if (publish && context.eventName === 'pull_request') throw new Error('Pull requests cannot publish releases.');
+            if (publish) {
+              normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
+              if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) throw new Error('Missing TAURI_SIGNING_PRIVATE_KEY. See docs/APP_UPDATES.md.');
             }
-            normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
+            const requestedSha = process.env.TARGET_COMMIT.trim();
+            if (requestedSha && !/^[0-9a-f]{40}$/.test(requestedSha)) throw new Error('target_commit must be a full commit SHA.');
+            let sha = git(['rev-parse', `${requestedSha || 'HEAD'}^{commit}`]);
+            let tag = process.env.CUSTOM_TAG.trim() || (context.ref.startsWith('refs/tags/') ? context.ref.slice(10) : '');
+            if (tag) {
+              desktopRelease(tag);
+              let taggedSha;
+              try { taggedSha = git(['rev-parse', '--verify', `refs/tags/${tag}^{commit}`]); } catch {}
+              if (taggedSha) {
+                if (requestedSha && sha !== taggedSha) throw new Error(`${tag} does not match target_commit.`);
+                sha = taggedSha;
+              }
+            } else {
+              tag = nextReleaseTag(git(['tag', '--list', 'v*']).split('\n'), {
+                bump: process.env.BUMP, branch: publish ? context.ref.replace('refs/heads/', '') : 'ci',
+                runNumber: context.runNumber,
+              });
+            }
+            installerBundleConfig(desktopRelease(tag).version);
+            if (publish) {
+              let existing;
+              try { existing = (await github.rest.repos.getReleaseByTag({ ...context.repo, tag })).data; }
+              catch (error) { if (error.status !== 404) throw error; }
+              if (existing && !existing.draft) throw new Error(`${tag} is already published. Choose a new version.`);
+            }
+            core.setOutput('sha', sha);
             core.setOutput('tag', tag);
-            core.setOutput('prerelease', String(prerelease));
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: `Kubiki ${tag}`,
-              draft: true,
-              prerelease,
-              make_latest: 'false',
-              generate_release_notes: true
-            });
-            return data.id;
+            core.setOutput('publish', String(publish));
+            core.setOutput('run_tests', String(runTests));
+            await core.summary.addHeading(publish ? `Release ${tag}` : `Build only: ${tag}`)
+              .addTable([
+                ['Source commit', sha],
+                ['Tests', runTests ? 'Run frontend, browser, extension and Rust tests' : 'Skip tests; build and validate installers'],
+                ['Mode', publish ? 'Publish signed packages after build validation' : 'Download installers from workflow artifacts'],
+              ])
+              .write();
 
-  build-tauri:
-    name: Build (${{ matrix.target }})
-    needs: create-release
-    runs-on: ${{ matrix.platform }}
+  frontend:
+    name: Frontend, extensions and pipeline tests
+    needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm test:desktop
+      - run: pnpm desktop:prepare
+      - run: pnpm test:extensions
+      - run: node scripts/check-external-extension.mjs
+
+  interface:
+    name: Browser interface tests
+    needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm extensions:build
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: interface-test-results
+          path: test-results/
+          retention-days: 7
+
+  desktop:
+    name: Build installers (${{ matrix.target }})
+    needs: [prepare, frontend, interface]
+    # An explicit status function lets builds run after intentionally skipped
+    # test jobs. Failed/cancelled required tests still block the build.
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          ((needs.prepare.outputs.run_tests == 'false' &&
+            needs.frontend.result == 'skipped' && needs.interface.result == 'skipped') ||
+           (needs.prepare.outputs.run_tests == 'true' &&
+            needs.frontend.result == 'success' && needs.interface.result == 'success')) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-22.04
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            node_arch: x64
-            cli_bin: "crates/kubiki-core/target/x86_64-unknown-linux-gnu/release/kubiki-cli"
-            cli_artifact: "kubiki-cli-linux-amd64"
-          - platform: macos-15
+          - os: macos-15
             target: aarch64-apple-darwin
-            node_arch: arm64
-            cli_bin: "crates/kubiki-core/target/aarch64-apple-darwin/release/kubiki-cli"
-            cli_artifact: "kubiki-cli-macos-arm64"
-          - platform: macos-15-intel
+          - os: macos-15-intel
             target: x86_64-apple-darwin
-            node_arch: x64
-            cli_bin: "crates/kubiki-core/target/x86_64-apple-darwin/release/kubiki-cli"
-            cli_artifact: "kubiki-cli-macos-amd64"
-          - platform: windows-2022
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
-            node_arch: x64
-            cli_bin: "crates/kubiki-core/target/x86_64-pc-windows-msvc/release/kubiki-cli.exe"
-            cli_artifact: "kubiki-cli-windows-amd64.exe"
-
     env:
       KUBIKI_BUILD_TARGET: ${{ matrix.target }}
-      KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
       MACOSX_DEPLOYMENT_TARGET: '13.5'
-
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.14.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
-          architecture: ${{ matrix.node_arch }}
-          cache: 'pnpm'
-
-      - name: Install Linux dependencies
+          cache: pnpm
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2
         with:
+          key: ${{ matrix.target }}
           workspaces: |
             crates/kubiki-core
             src-tauri
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify desktop runtime target selection
-        run: pnpm test:desktop
-
-      - name: Prepare release versions and updater artifacts
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare target runtime and extension resources
+        run: |
+          pnpm extensions:build
+          pnpm desktop:prepare
+      - name: Test core and desktop on the target OS
+        if: needs.prepare.outputs.run_tests == 'true'
+        run: |
+          cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Set build version and updater configuration
         shell: bash
         env:
-          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
-          KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: node scripts/desktop-release.mjs "$RELEASE_TAG"
-
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+          KUBIKI_UPDATER_PUBLIC_KEY: ${{ needs.prepare.outputs.publish == 'true' && vars.KUBIKI_UPDATER_PUBLIC_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            node scripts/desktop-release.mjs "$RELEASE_TAG"
+          else
+            node scripts/desktop-release.mjs "$RELEASE_TAG" --unsigned
+          fi
       - name: Build standalone CLI
         shell: bash
-        run: |
-          cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "${{ matrix.target }}"
-
-      - name: Isolate AppImage tooling from the host OpenSSL configuration
-        if: runner.os == 'Linux'
+        run: cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "$KUBIKI_BUILD_TARGET"
+      - name: Build and verify all installers
         shell: bash
-        # The static appimagetool can deadlock while downloading its runtime when
-        # it reads a newer host OpenSSL configuration (reproduced on openSUSE).
-        run: echo "OPENSSL_CONF=/dev/null" >> "$GITHUB_ENV"
-
-      - name: Build Desktop Application & Upload Bundles
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          args=(--target "$KUBIKI_BUILD_TARGET" --config .kubiki-build/updater.conf.json --stage)
+          if [ "$PUBLISH" = true ]; then args+=(--signed); fi
+          pnpm desktop:build "${args[@]}"
+      - name: Upload verified installers, CLI and checksums
+        uses: actions/upload-artifact@v4
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          tagName: ${{ needs.create-release.outputs.tag }}
-          releaseDraft: true
-          prerelease: ${{ needs.create-release.outputs.prerelease == 'true' }}
-          includeUpdaterJson: true
-          updaterJsonPreferNsis: true
-          args: --target ${{ matrix.target }} --config .kubiki-build/updater.conf.json -- --locked
+          name: kubiki-${{ matrix.target }}
+          path: .kubiki-build/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Upload CLI to Release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const release_id = ${{ needs.create-release.outputs.release_id }};
-            const filePath = path.resolve('${{ matrix.cli_bin }}');
-            if (fs.existsSync(filePath)) {
-              console.log(`Uploading ${filePath} as ${{ matrix.cli_artifact }}`);
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: release_id,
-                name: '${{ matrix.cli_artifact }}',
-                data: fs.readFileSync(filePath)
-              });
-            } else {
-              throw new Error(`CLI artifact not found: ${filePath}`);
-            }
-
-  publish-release:
-    name: Publish Release
-    needs: [create-release, build-tauri]
-    runs-on: ubuntu-latest
+  publish:
+    name: Publish verified release
+    needs: [prepare, desktop]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.desktop.result == 'success' && needs.prepare.outputs.publish == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-release-publication
+      cancel-in-progress: false
     steps:
-      - name: Checkout release validation
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
-
-      - name: Validate updater manifest and publish GitHub Release
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kubiki-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Verify provenance and signatures, upload, then publish
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
         with:
           script: |
-            const { desktopRelease, validateUpdateManifest } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/desktop-release.mjs`);
-            const release = desktopRelease(process.env.RELEASE_TAG);
-            const release_id = Number(process.env.RELEASE_ID);
-            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
-              owner: context.repo.owner, repo: context.repo.repo, release_id, per_page: 100,
-            });
-            const manifest = assets.find(asset => asset.name === 'latest.json');
-            if (!manifest) throw new Error('The updater manifest is missing. Keeping the release as a draft.');
-            const { data } = await github.rest.repos.getReleaseAsset({
-              owner: context.repo.owner, repo: context.repo.repo, asset_id: manifest.id,
-              headers: { accept: 'application/octet-stream' },
-            });
-            validateUpdateManifest(JSON.parse(Buffer.from(data).toString('utf8')), release.tag, assets);
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id,
-              prerelease: release.prerelease,
-              make_latest: release.prerelease ? 'false' : 'true',
-              draft: false
+            const { pathToFileURL } = require('node:url');
+            const { publishDesktopRelease } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/publish-desktop-release.mjs`).href);
+            await publishDesktopRelease({ github, context, core }, {
+              tag: process.env.RELEASE_TAG, sha: process.env.SOURCE_SHA,
+              dir: `${process.env.GITHUB_WORKSPACE}/release-artifacts`,
             });

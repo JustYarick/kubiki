@@ -102,10 +102,13 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
         throw new Error('The manifest must keep the resource kind and name.');
       }
       setApplying(true);
-      const manifest = stringify(parsed);
+      const manifest = cleanViewRef.current && fullDraftRef.current
+        ? restoreServerFields(draftRef.current, fullDraftRef.current)
+        : stringify(parsed);
       await onApply(manifest);
       useYamlDraftStore.getState().clearDraft(draftKey);
-      replaceDraft(manifest);
+      fullDraftRef.current = manifest;
+      replaceDraft(cleanViewRef.current ? cleanYaml(manifest) : manifest);
     } catch (error) {
       toast.error('Apply failed', String(error));
     } finally {

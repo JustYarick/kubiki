@@ -76,6 +76,19 @@ impl ClusterClientPool {
         self.clients.write().await.clear();
     }
 
+    /// Update custom kubeconfig file path and invalidate cached configurations.
+    pub fn set_custom_kubeconfig_path(&self, path: Option<std::path::PathBuf>) {
+        self.config_mgr.set_custom_path(path);
+        if let Ok(mut cache) = self.config_cache.lock() {
+            *cache = None;
+        }
+    }
+
+    /// Access the underlying KubeConfigManager
+    pub fn get_config_manager(&self) -> &KubeConfigManager {
+        &self.config_mgr
+    }
+
     /// Load or reuse an existing kube::Client for a specific context.
     /// If configuration has changed for this context, a fresh client is constructed.
     pub async fn get_client(&self, context: &str) -> Result<Client, KubikiError> {

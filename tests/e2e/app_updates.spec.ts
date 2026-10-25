@@ -15,6 +15,9 @@ test.beforeEach(async ({ page }) => {
         if (command === 'check_app_update') {
           w.__updateChecks++;
           if (w.__updateOffline) throw 'GitHub is unavailable';
+          if (new URLSearchParams(window.location.search).has('dev-update')) {
+            return { status: 'available', update: { version: '0.2.0-dev.10', currentVersion: '0.2.0-dev.9', notes: 'Dev release with fixes.' } };
+          }
           return { status: 'available', update: { version: '0.2.1', currentVersion: '0.1.0', notes: 'Stable release with fixes.\n<em>Plain text release notes</em>' } };
         }
         if (command === 'download_app_update') {
@@ -35,6 +38,7 @@ test('startup offers a stable release, verifies download and requires an explici
   const dialog = page.getByRole('dialog', { name: 'Update Kubiki to 0.2.1' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('Installed: 0.1.0');
+  await expect(dialog).toContainText('Stable channel');
   await expect(dialog).toContainText('<em>Plain text release notes</em>');
   await expect(dialog.locator('em')).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Install and restart' })).toHaveCount(0);
@@ -46,6 +50,18 @@ test('startup offers a stable release, verifies download and requires an explici
   await expect(dialog.getByRole('status')).toContainText('Installing the update');
   await expect.poll(() => page.evaluate(() => (window as any).__updateInstalls)).toEqual(['0.2.1']);
   expect(await page.evaluate(() => (window as any).__updateChecks)).toBe(1);
+});
+
+test('a dev build labels and installs the selected dev update without calling it stable', async ({ page }) => {
+  await page.goto('/?demo=1&dev-update=1');
+  const dialog = page.getByRole('dialog', { name: 'Update Kubiki to 0.2.0-dev.10' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Dev channel');
+  await expect(dialog).not.toContainText('Stable channel');
+  await dialog.getByRole('button', { name: 'Download update' }).click();
+  await expect(dialog.getByText('The update is downloaded and its signature has been verified.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Install and restart' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__updateInstalls)).toEqual(['0.2.0-dev.10']);
 });
 
 test('skipping a version survives reload and manual settings checks can still offer it', async ({ page }) => {

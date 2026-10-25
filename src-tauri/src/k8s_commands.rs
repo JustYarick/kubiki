@@ -1,5 +1,5 @@
 use kubiki_core::cluster::client::ClusterClientPool;
-use kubiki_core::cluster::kubeconfig::{KubeConfigManager, KubeContextInfo};
+use kubiki_core::cluster::kubeconfig::KubeContextInfo;
 use kubiki_core::cluster::namespaces::NamespaceService;
 use kubiki_core::core::api::{ApiError, ApiErrorCode, ResourceQuery};
 use serde_json::Value;
@@ -17,17 +17,61 @@ fn require_context(context: &str, operation: &str) -> Result<(), ApiError> {
 }
 
 #[tauri::command]
-pub fn get_kube_contexts() -> Result<Vec<KubeContextInfo>, ApiError> {
-    KubeConfigManager::new()
+pub fn get_kube_contexts(
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<Vec<KubeContextInfo>, ApiError> {
+    pool.get_config_manager()
         .list_contexts()
         .map_err(|error| ApiError::from_core(error, "contexts", None))
 }
 
 #[tauri::command]
-pub fn get_current_context() -> Result<Option<String>, ApiError> {
-    KubeConfigManager::new()
+pub fn get_current_context(
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<Option<String>, ApiError> {
+    pool.get_config_manager()
         .get_current_context()
         .map_err(|error| ApiError::from_core(error, "current_context", None))
+}
+
+#[tauri::command]
+pub fn get_kubeconfig_path(
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<String, ApiError> {
+    pool.get_config_manager()
+        .get_config_path()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|error| ApiError::from_core(error, "get_kubeconfig_path", None))
+}
+
+#[tauri::command]
+pub async fn set_kubeconfig_path(
+    path: Option<String>,
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<Vec<KubeContextInfo>, ApiError> {
+    let path_buf = path.and_then(|p| {
+        let trimmed = p.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(trimmed))
+        }
+    });
+    if let Some(ref pb) = path_buf {
+        if !pb.exists() {
+            return Err(ApiError::from_status(
+                400,
+                format!("Kubeconfig file not found at {}", pb.display()),
+                "set_kubeconfig_path",
+                None,
+            ));
+        }
+    }
+    pool.set_custom_kubeconfig_path(path_buf);
+    pool.invalidate_all().await;
+    pool.get_config_manager()
+        .list_contexts()
+        .map_err(|error| ApiError::from_core(error, "contexts", None))
 }
 
 #[tauri::command]

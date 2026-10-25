@@ -49,7 +49,7 @@ export class K8sProvider implements KubernetesProvider {
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
     try {
-      if (path !== 'contexts' && path !== 'helm/repositories' && path !== 'helm/charts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
+      if (path !== 'contexts' && path !== 'kubeconfig_path' && path !== 'set_kubeconfig_path' && path !== 'helm/repositories' && path !== 'helm/charts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
       return await this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, signal);
     } catch (error) { throw normalizeK8sError(error, info); }
   }
@@ -57,6 +57,16 @@ export class K8sProvider implements KubernetesProvider {
   async getContexts(): Promise<KubeContextInfo[]> {
     if (this.demo) return [{ name: DEMO_CONTEXT, cluster: 'Demo cluster', user: 'demo', is_current: true }];
     return this.request('get_kube_contexts', 'contexts');
+  }
+
+  async getKubeconfigPath(): Promise<string> {
+    if (this.demo) return '~/.kube/config (demo)';
+    return this.request('get_kubeconfig_path', 'kubeconfig_path');
+  }
+
+  async setKubeconfigPath(path: string | null): Promise<KubeContextInfo[]> {
+    if (this.demo) return this.getContexts();
+    return this.request('set_kubeconfig_path', 'set_kubeconfig_path', { path });
   }
 
   async pingCluster(context: string): Promise<{ status: string; version?: string }> {

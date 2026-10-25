@@ -89,7 +89,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     resetLabel: 'Reset Kubernetes defaults',
     entries: [
       { id: 'kubernetes.remember-scope', label: 'Remember namespace scope per context', description: 'Restores the namespace selection of each context when it is selected again.', keywords: 'namespace scope context persistence restore' },
-      { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Kubiki reads the default kubeconfig or the files listed in the KUBECONFIG environment variable.', keywords: 'config path credentials files' },
+      { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Configure custom kubeconfig file path or use the default location (~/.kube/config / $KUBECONFIG).', keywords: 'config path credentials files' },
     ],
   },
   {
@@ -105,7 +105,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     sectionTitle: 'About',
     entries: [
       { id: 'about.kubiki', label: 'Kubiki', keywords: 'desktop kubernetes ide version license apache features workspace clusters resources yaml logs terminals helm' },
-      { id: 'about.updates', label: 'Application updates', description: 'Check for stable Kubiki releases and install updates.', keywords: 'update upgrade download github stable release version' },
+      { id: 'about.updates', label: 'Application updates', description: 'Check for Kubiki releases in this build’s update channel and install updates.', keywords: 'update upgrade download github stable dev channel release version' },
       { id: 'about.cluster', label: 'Cluster connection', description: 'The context and API server version selected in the title bar. Connection info is read-only here.', keywords: 'context server version connected kubeconfig' },
     ],
   },

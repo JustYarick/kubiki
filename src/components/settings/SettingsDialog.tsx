@@ -9,6 +9,7 @@ import { UpdateSettings } from '../updates/AppUpdates';
 import { TerminalFontSettings } from '../TerminalFontSettings';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
+import { k8s } from '../../providers/k8s_provider';
 import { DEFAULT_SCROLLBACK, TERMINAL_ACK_TIMEOUT_PRESETS, TERMINAL_SCROLLBACK_PRESETS, useUiStore } from '../../state/ui_store';
 import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
@@ -318,6 +319,51 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
 function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   const rememberNamespaceScope = useClusterStore((s) => s.rememberNamespaceScope);
   const setRememberNamespaceScope = useClusterStore((s) => s.setRememberNamespaceScope);
+  const [kubeconfigPath, setKubeconfigPath] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  React.useEffect(() => {
+    void k8s.getKubeconfigPath().then((path) => {
+      setKubeconfigPath(path);
+    }).catch(() => {});
+  }, []);
+
+  const handleSavePath = async () => {
+    try {
+      setLoading(true);
+      const contexts = await k8s.setKubeconfigPath(kubeconfigPath.trim() || null);
+      useClusterStore.getState().setContexts(contexts);
+      const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+      if (current) {
+        useClusterStore.getState().selectContext(current);
+      }
+      toast.success('Kubeconfig updated', `Found ${contexts.length} context(s).`);
+    } catch (err) {
+      toast.error('Failed to set kubeconfig', String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = async () => {
+    try {
+      setLoading(true);
+      const contexts = await k8s.setKubeconfigPath(null);
+      const defaultPath = await k8s.getKubeconfigPath();
+      setKubeconfigPath(defaultPath);
+      useClusterStore.getState().setContexts(contexts);
+      const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+      if (current) {
+        useClusterStore.getState().selectContext(current);
+      }
+      toast.success('Kubeconfig reset to default', `Found ${contexts.length} context(s).`);
+    } catch (err) {
+      toast.error('Failed to reset kubeconfig', String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -328,8 +374,27 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
           onChange={(event) => setRememberNamespaceScope(event.target.checked)}
         />
       </Row>
-      <Row entry={findEntry('kubernetes.kubeconfig')}>
-        <Input aria-label="Kubeconfig location" value="~/.kube/config or $KUBECONFIG" readOnly className="w-[calc(200px*var(--ui-factor))]" />
+      <Row entry={findEntry('kubernetes.kubeconfig')} wide>
+        <div className="flex flex-col gap-2 w-full max-w-lg">
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label="Kubeconfig location"
+              value={kubeconfigPath}
+              onChange={(e) => setKubeconfigPath(e.target.value)}
+              placeholder="~/.kube/config"
+              className="flex-1"
+            />
+            <Button size="sm" variant="primary" loading={loading} disabled={loading} onClick={handleSavePath}>
+              Apply
+            </Button>
+            <Button size="sm" variant="secondary" disabled={loading} onClick={handleReset} title="Reset to standard ~/.kube/config or $KUBECONFIG">
+              Reset
+            </Button>
+          </div>
+          <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
+            Specify a custom kubeconfig file path, or click Reset to use the default location.
+          </p>
+        </div>
       </Row>
     </div>
   );
@@ -343,9 +408,15 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
       <SectionTitle>{sectionTitle}</SectionTitle>
       <Row entry={findEntry('about.kubiki')} wide>
         <div className="flex items-start gap-3 p-3 rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-surface)]">
-          <div className="w-9 h-9 rounded-[calc(6px*var(--ui-factor))] bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-lg font-bold shadow-xs shrink-0">
-            ⎈
-          </div>
+          <img
+            src="/brand/kubiki-mark-gray-dark.svg"
+            alt=""
+            aria-hidden="true"
+            width={96}
+            height={96}
+            draggable={false}
+            className="w-9 h-9 shrink-0"
+          />
           <div className="min-w-0">
             <div className="text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">
               Kubiki <span className="text-[var(--text-muted)] font-normal">{APP_VERSION}</span>
