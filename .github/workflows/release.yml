@@ -5,8 +5,12 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
+      run_tests:
+        description: 'Run frontend, browser, extension and Rust tests before building'
+        type: boolean
+        default: false
       publish:
-        description: 'Publish after tests and desktop builds pass; disable for a build-only run'
+        description: 'Publish built installers; disable for a build-only run'
         type: boolean
         default: true
       custom_tag:
@@ -24,6 +28,9 @@ on:
         default: ''
   workflow_call:
     inputs:
+      run_tests:
+        type: boolean
+        default: true
       publish:
         type: boolean
         default: false
@@ -49,6 +56,7 @@ jobs:
       sha: ${{ steps.plan.outputs.sha }}
       tag: ${{ steps.plan.outputs.tag }}
       publish: ${{ steps.plan.outputs.publish }}
+      run_tests: ${{ steps.plan.outputs.run_tests }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +66,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           PUBLISH: ${{ inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+          RUN_TESTS: ${{ inputs.run_tests || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
           CUSTOM_TAG: ${{ inputs.custom_tag }}
           TARGET_COMMIT: ${{ inputs.target_commit }}
           BUMP: ${{ inputs.bump || 'patch' }}
@@ -72,6 +81,7 @@ jobs:
             const { nextReleaseTag, installerBundleConfig } = await load('desktop-pipeline.mjs');
             const git = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
             const publish = process.env.PUBLISH === 'true';
+            const runTests = process.env.RUN_TESTS === 'true';
             if (publish && context.eventName === 'pull_request') throw new Error('Pull requests cannot publish releases.');
             if (publish) {
               normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
@@ -105,13 +115,19 @@ jobs:
             core.setOutput('sha', sha);
             core.setOutput('tag', tag);
             core.setOutput('publish', String(publish));
+            core.setOutput('run_tests', String(runTests));
             await core.summary.addHeading(publish ? `Release ${tag}` : `Build only: ${tag}`)
-              .addTable([['Source commit', sha], ['Mode', publish ? 'Publish signed packages after all checks' : 'Test and build installers; download from workflow artifacts']])
+              .addTable([
+                ['Source commit', sha],
+                ['Tests', runTests ? 'Run frontend, browser, extension and Rust tests' : 'Skip tests; build and validate installers'],
+                ['Mode', publish ? 'Publish signed packages after build validation' : 'Download installers from workflow artifacts'],
+              ])
               .write();
 
   frontend:
     name: Frontend, extensions and pipeline tests
     needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
@@ -134,6 +150,7 @@ jobs:
   interface:
     name: Browser interface tests
     needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -157,8 +174,16 @@ jobs:
           retention-days: 7
 
   desktop:
-    name: Test and package (${{ matrix.target }})
+    name: Build installers (${{ matrix.target }})
     needs: [prepare, frontend, interface]
+    # An explicit status function lets builds run after intentionally skipped
+    # test jobs. Failed/cancelled required tests still block the build.
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          ((needs.prepare.outputs.run_tests == 'false' &&
+            needs.frontend.result == 'skipped' && needs.interface.result == 'skipped') ||
+           (needs.prepare.outputs.run_tests == 'true' &&
+            needs.frontend.result == 'success' && needs.interface.result == 'success')) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -207,6 +232,7 @@ jobs:
           pnpm extensions:build
           pnpm desktop:prepare
       - name: Test core and desktop on the target OS
+        if: needs.prepare.outputs.run_tests == 'true'
         run: |
           cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
@@ -245,8 +271,10 @@ jobs:
 
   publish:
     name: Publish verified release
-    needs: [prepare, frontend, interface, desktop]
-    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, desktop]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.desktop.result == 'success' && needs.prepare.outputs.publish == 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:

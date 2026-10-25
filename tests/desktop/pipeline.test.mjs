@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { runInNewContext } from 'node:vm';
 import { DESKTOP_TARGETS, installerBundleConfig, nextReleaseTag, rpmBundleConfig, stageDesktopArtifacts, verifyDesktopArtifacts } from '../../scripts/desktop-pipeline.mjs';
 import { prepareDesktopRelease } from '../../scripts/desktop-release.mjs';
 import { publishDesktopRelease } from '../../scripts/publish-desktop-release.mjs';
@@ -14,11 +15,96 @@ test('manual CI publishes by default and invokes the same pipeline as tag releas
   assert.equal(ci.on.workflow_dispatch.inputs.trigger_release.default, true);
   assert.equal(release.on.workflow_dispatch.inputs.publish.default, true);
   assert.equal(ci.jobs.pipeline.uses, './.github/workflows/release.yml');
+  assert.equal(ci.jobs.pipeline.with.run_tests, true);
+  assert.equal(release.on.workflow_dispatch.inputs.run_tests.default, false);
+  assert.equal(release.on.workflow_call.inputs.run_tests.default, true);
   assert.equal(ci.jobs.pipeline.with.publish, "${{ github.event_name == 'workflow_dispatch' && inputs.trigger_release }}");
-  assert.deepEqual(new Set(release.jobs.publish.needs), new Set(['prepare', 'frontend', 'interface', 'desktop']));
-  assert.equal(release.jobs.publish.if, "needs.prepare.outputs.publish == 'true'");
+  assert.deepEqual(new Set(release.jobs.publish.needs), new Set(['prepare', 'desktop']));
   assert.deepEqual(new Set(release.jobs.desktop.strategy.matrix.include.map(t => t.target)), new Set(Object.keys(DESKTOP_TARGETS)));
   assert.equal(release.jobs.desktop.needs.includes('interface'), true);
+});
+
+// The workflow's conditions use the shared JS-compatible subset of GitHub
+// expressions. Exercise the actual YAML so skipped jobs cannot accidentally
+// block release-only builds or allow failed checks to publish.
+function workflowIf(expression, context) {
+  return runInNewContext(expression.trim().replace(/^\$\{\{/, '').replace(/\}\}$/, ''), {
+    cancelled: () => false,
+    startsWith: (value, prefix) => value.startsWith(prefix),
+    ...context,
+  }, { timeout: 100 });
+}
+
+async function workflowJobs() {
+  return parse(await readFile('.github/workflows/release.yml', 'utf8')).jobs;
+}
+
+function jobResults(runTests, overrides = {}) {
+  return {
+    prepare: { result: 'success', outputs: { run_tests: String(runTests), publish: 'true' } },
+    frontend: { result: runTests ? 'success' : 'skipped' },
+    interface: { result: runTests ? 'success' : 'skipped' },
+    desktop: { result: 'success' },
+    ...overrides,
+  };
+}
+
+test('release-only mode skips every test suite and still runs installer builds and publication', async () => {
+  const jobs = await workflowJobs();
+  const needs = jobResults(false);
+  assert.equal(workflowIf(jobs.frontend.if, { needs }), false);
+  assert.equal(workflowIf(jobs.interface.if, { needs }), false);
+  const nativeTest = jobs.desktop.steps.find(step => step.run?.includes('cargo test'));
+  assert.ok(nativeTest, 'Native test step must be identifiable');
+  assert.equal(workflowIf(nativeTest.if, { needs }), false);
+  assert.equal(workflowIf(jobs.desktop.if, { needs }), true);
+  assert.equal(workflowIf(jobs.publish.if, { needs }), true);
+});
+
+test('full pipeline runs all test suites and requires successful frontend and browser tests', async () => {
+  const jobs = await workflowJobs();
+  const needs = jobResults(true);
+  assert.equal(workflowIf(jobs.frontend.if, { needs }), true);
+  assert.equal(workflowIf(jobs.interface.if, { needs }), true);
+  assert.equal(workflowIf(jobs.desktop.steps.find(step => step.run?.includes('cargo test')).if, { needs }), true);
+  assert.equal(workflowIf(jobs.desktop.if, { needs }), true);
+  for (const suite of ['frontend', 'interface']) {
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      assert.equal(workflowIf(jobs.desktop.if, { needs: jobResults(true, { [suite]: { result } }) }), false, `${suite}: ${result}`);
+    }
+  }
+});
+
+test('build failure, preparation failure, cancellation and disabled publication prevent publishing', async () => {
+  const jobs = await workflowJobs();
+  for (const runTests of [false, true]) {
+    const needs = jobResults(runTests);
+    assert.equal(workflowIf(jobs.desktop.if, { needs, cancelled: () => true }), false);
+    assert.equal(workflowIf(jobs.publish.if, { needs, cancelled: () => true }), false);
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      assert.equal(workflowIf(jobs.publish.if, { needs: jobResults(runTests, { desktop: { result } }) }), false);
+      const failedPrepare = jobResults(runTests, { prepare: { ...needs.prepare, result } });
+      assert.equal(workflowIf(jobs.desktop.if, { needs: failedPrepare }), false);
+      assert.equal(workflowIf(jobs.publish.if, { needs: failedPrepare }), false);
+    }
+    needs.prepare.outputs.publish = 'false';
+    assert.equal(workflowIf(jobs.desktop.if, { needs }), true);
+    assert.equal(workflowIf(jobs.publish.if, { needs }), false);
+  }
+});
+
+test('tag pushes run tests; manual releases honor run_tests instead of requiring previous CI', async () => {
+  const jobs = await workflowJobs();
+  const expression = jobs.prepare.steps.find(step => step.id === 'plan').env.RUN_TESTS;
+  for (const [event_name, ref, runTests, expected] of [
+    ['workflow_dispatch', 'refs/heads/dev', false, false],
+    ['workflow_dispatch', 'refs/heads/main', true, true],
+    ['push', 'refs/heads/dev', true, true],
+    ['pull_request', 'refs/pull/1/merge', true, true],
+    ['push', 'refs/tags/v1.2.3', undefined, true],
+  ]) {
+    assert.equal(workflowIf(expression, { inputs: { run_tests: runTests }, github: { event_name, ref } }), expected);
+  }
 });
 
 test('version selection orders tags numerically and keeps branch previews out of stable', () => {

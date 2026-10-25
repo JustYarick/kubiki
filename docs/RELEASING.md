@@ -1,9 +1,9 @@
 # Desktop builds and releases
 
-CI and Release use the same [pipeline](../.github/workflows/release.yml): frontend
-and extension tests, browser tests, native tests, four desktop builds, artifact
-validation, then publication when requested. A green build includes installers,
-not just `cargo check` or a web bundle.
+CI and Release share the [desktop pipeline](../.github/workflows/release.yml)
+and offer two entry points: CI runs tests before building; a manual Release
+builds and publishes without tests by default. Both build all four desktop
+targets and validate the release artifacts before publishing.
 
 ## Run from GitHub Actions
 
@@ -21,9 +21,28 @@ Open **Actions → CI → Run workflow** and select the source branch.
 - Disable **trigger_release** for tests and downloadable installers without
   publishing. Pushes to branches and pull requests use this mode automatically.
 
-**Actions → Release → Run workflow** runs the same pipeline directly. Its
-**publish** switch also defaults to true. It additionally accepts **target_commit**,
-which must be a full commit SHA and must match an existing custom tag.
+For **build and publish without tests**, open **Actions → Release → Run workflow**:
+
+- Select the source branch, leave **run_tests** disabled (the default), and leave
+  **publish** enabled (the default). Frontend, browser, extension and Rust test
+  suites are skipped; installer builds start after version/signing preparation.
+- Set **run_tests** to true if this release should also run the full test suite.
+- Use **custom_tag** and **bump** as in CI. Optional **target_commit** must be a
+  full commit SHA and must match an existing custom tag.
+- Disable **publish** if only downloadable installer artifacts are needed.
+
+| Entry point | Tests | Build installers | Publish |
+| --- | --- | --- | --- |
+| Branch push / PR → CI | Always | Yes | No |
+| Manual CI (`trigger_release=true`, default) | Always | Yes | Yes |
+| Manual Release (`run_tests=false`, default) | Skipped | Yes | Yes, unless `publish=false` |
+| Manual Release (`run_tests=true`) | All | Yes | Yes, unless `publish=false` |
+| Push a `v*` tag | All | Yes | Yes |
+
+Skipping tests does not require a previous successful CI run. Frontend/extension
+compilation, type checking needed by the build, signing and artifact validation
+still run. The summary records the selected test mode. **Re-run jobs** preserves
+the original inputs; select **Run workflow** to change modes.
 
 Pushing a `v*` tag also runs the complete pipeline and publishes on success:
 
@@ -68,7 +87,8 @@ and macOS signing/notarization, which are not configured here.
 | macOS 15 Intel | macOS Intel | DMG, signed app archive for releases |
 | Windows 2022 | Windows x86_64 | NSIS EXE, MSI |
 
-Every target also builds a standalone CLI and runs its native tests. All jobs
+Every target also builds a standalone CLI and runs its native tests when
+**run_tests** is enabled. All jobs
 check out the same resolved commit SHA. Node.js 24 and the pnpm version pinned in
 `package.json` are used throughout. Cargo builds/tests use committed lockfiles.
 
@@ -106,7 +126,8 @@ Only the final publish job writes GitHub release assets. It:
 5. Publishes the draft. Stable versions become Latest only if newer than the
    current Latest; previews remain prereleases.
 
-A failed test/build never publishes. A failed upload leaves an unpublished draft.
+A failed required test or build never publishes. In release-only mode, skipped
+test jobs allow builds and publication to proceed. A failed upload leaves an unpublished draft.
 Use **Re-run failed jobs** for a transient failure, or rerun the workflow with the
 same **custom_tag** for a complete rebuild. The publish job replaces incomplete
 assets on that draft. There is no heuristic that silently skips a platform based

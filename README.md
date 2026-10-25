@@ -331,7 +331,7 @@ Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, o
 
 ## Publishing releases
 
-Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. For a one-click release, open **Actions → CI → Run workflow** and leave **trigger_release** enabled. Branch pushes and pull requests run the same tests and installer builds without publishing. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
+Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. For tests, builds and publication, open **Actions → CI → Run workflow** and leave **trigger_release** enabled. For builds and publication without tests, open **Actions → Release → Run workflow**, leave **run_tests** disabled and **publish** enabled. Branch pushes and pull requests run tests and installer builds without publishing. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
 
 ## Documentation
 

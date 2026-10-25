@@ -34,6 +34,7 @@ jobs:
       contents: write
     uses: ./.github/workflows/release.yml
     with:
+      run_tests: true
       publish: ${{ github.event_name == 'workflow_dispatch' && inputs.trigger_release }}
       custom_tag: ${{ inputs.custom_tag || '' }}
       bump: ${{ inputs.bump || 'patch' }}
