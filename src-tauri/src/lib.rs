@@ -81,6 +81,8 @@ pub fn run() {
             stop_port_forwards,
             get_kube_contexts,
             get_current_context,
+            get_kubeconfig_path,
+            set_kubeconfig_path,
             ping_cluster,
             get_overview_metrics,
             get_namespaces,

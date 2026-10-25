@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildResourceGraph } from '../../src/core/resources/relationships';
 import { resourceKey } from '../../src/core/resources/identity';
-import { buildTopology, EMPTY_GRAPH, MAX_TOPOLOGY_EDGES } from '../../src/core/resources/topology';
+import { buildTopology, EMPTY_GRAPH } from '../../src/core/resources/topology';
 import { useResourceStore } from '../../src/state/resource_store';
 import type { ResourceItem } from '../../src/types/k8s';
 
@@ -99,11 +99,12 @@ describe('Bounded topology construction', () => {
     const small = pod(0, 'small'); resources.Pod.set(small.uid, small);
     expect(buildTopology(resources, 'namespace:small').items.size).toBe(1);
   });
-  it('bounds dense selector relationships separately from node count', () => {
+  it('supports dense selector relationships with no edge limit', () => {
     const resources = emptyResources();
     for (let index = 0; index < 100; index++) { const item = pod(index); item.labels = { app: 'shared' }; resources.Pod.set(item.uid, item); }
     for (let index = 0; index < 100; index++) resources.Service.set(`svc-${index}`, { uid: `svc-${index}`, name: `svc-${index}`, namespace: 'busy', kind: 'Service', apiVersion: 'v1', spec: { selector: { app: 'shared' } } });
-    expect(() => buildTopology(resources, 'namespace:busy')).toThrow(`${MAX_TOPOLOGY_EDGES} relationships`);
+    const graph = buildTopology(resources, 'namespace:busy');
+    expect(graph.relations.length).toBeGreaterThan(1000);
   });
   it('supports Namespace membership in Related without building unrelated Service/Pod joins', () => {
     const resources = emptyResources(); const item = pod(0); resources.Pod.set(item.uid, item);

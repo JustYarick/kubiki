@@ -2,16 +2,80 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      trigger_release:
+        description: 'Trigger Release workflow after all CI checks pass'
+        type: boolean
+        default: false
+      bump:
+        description: 'Version bump for release (patch, minor, major)'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  frontend:
-    name: Frontend Check & Tests
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.14.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build extension SDK
+        run: pnpm --filter @kubiki/extension-sdk build
+
+      - name: TypeScript type checking
+        run: pnpm typecheck
+
+  unit-tests:
+    name: Frontend Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.14.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Vitest Unit Tests
+        run: pnpm test
+
+  extensions:
+    name: Extension Platform Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -40,42 +104,72 @@ jobs:
       - name: Independent SDK template build
         run: node scripts/check-external-extension.mjs
 
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Run Vitest Unit Tests
-        run: pnpm test
-
       - name: Desktop runtime target tests
         run: pnpm test:desktop
 
-      - name: Build frontend production bundle
+  frontend-build:
+    name: Frontend Production Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.14.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build production bundle
         run: pnpm build
 
   interface:
-    name: Browser Interface Tests
+    name: Browser Interface Tests (Playwright)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 12.14.0
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm extensions:build
-      - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build extension runtime
+        run: pnpm extensions:build
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
+
+      - name: Upload test artifacts on failure
+        uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: interface-test-results
           path: test-results/
           retention-days: 7
 
-  rust-test:
+  rust-core:
     name: Rust Core Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -101,23 +195,78 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: |
-            crates/kubiki-core
-            src-tauri
+          workspaces: crates/kubiki-core
 
       - name: Run kubiki-core tests
         run: cargo test --manifest-path crates/kubiki-core/Cargo.toml
 
-      - uses: pnpm/action-setup@v4
+  rust-desktop:
+    name: Desktop Tauri Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/kubiki-core
+            src-tauri
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 12.14.0
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm extensions:build
-      - run: pnpm desktop:prepare
+          cache: 'pnpm'
 
-      - name: Check src-tauri
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare extension runtime
+        run: |
+          pnpm extensions:build
+          pnpm desktop:prepare
+
+      - name: Run desktop crate unit tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Check src-tauri compilation
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  trigger-release:
+    name: Trigger Release
+    if: inputs.trigger_release == true
+    needs: [typecheck, unit-tests, extensions, frontend-build, interface, rust-core, rust-desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Trigger Release Workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.info(`Triggering release.yml for ref ${context.ref} at sha ${context.sha}`);
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release.yml',
+              ref: context.ref,
+              inputs: {
+                bump: '${{ inputs.bump || 'patch' }}',
+                target_commit: context.sha,
+              },
+            });
