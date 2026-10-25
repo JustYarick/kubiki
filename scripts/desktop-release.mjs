@@ -20,11 +20,6 @@ export function normalizeUpdaterPublicKey(rawKey) {
     throw new Error('KUBIKI_UPDATER_PUBLIC_KEY is missing or empty. See docs/APP_UPDATES.md.');
   }
 
-  // Allow mock identifier in testing fixtures
-  if (trimmed === 'public') {
-    return trimmed;
-  }
-
   // Case 1: Base64 string directly from the generated .pub file.
   // When base64-decoded, it contains the minisign header "untrusted comment:".
   try {
@@ -51,12 +46,12 @@ export function normalizeUpdaterPublicKey(rawKey) {
   );
 }
 
-export async function prepareDesktopRelease(root, tag, env) {
+export async function prepareDesktopRelease(root, tag, env, { signed = true } = {}) {
   const release = desktopRelease(tag);
-  if (!env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
+  if (signed && (!env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !env.TAURI_SIGNING_PRIVATE_KEY?.trim())) {
     throw new Error('Desktop releases require KUBIKI_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY. See docs/APP_UPDATES.md.');
   }
-  const pubkey = normalizeUpdaterPublicKey(env.KUBIKI_UPDATER_PUBLIC_KEY);
+  const pubkey = signed ? normalizeUpdaterPublicKey(env.KUBIKI_UPDATER_PUBLIC_KEY) : '';
   const manifestPath = path.join(root, 'src-tauri/Cargo.toml');
   const lockPath = path.join(root, 'src-tauri/Cargo.lock');
   const manifest = await readFile(manifestPath, 'utf8');
@@ -82,7 +77,7 @@ export async function prepareDesktopRelease(root, tag, env) {
     path.join(root, '.kubiki-build/updater.conf.json'),
     JSON.stringify(
       {
-        bundle: { createUpdaterArtifacts: true },
+        bundle: { createUpdaterArtifacts: signed },
         plugins: {
           updater: {
             pubkey,
@@ -94,82 +89,39 @@ export async function prepareDesktopRelease(root, tag, env) {
     ) + '\n'
   );
   if (env.GITHUB_ENV) {
-    try {
-      await appendFile(env.GITHUB_ENV, `KUBIKI_UPDATER_PUBLIC_KEY=${pubkey}\n`);
-    } catch {}
+    await appendFile(env.GITHUB_ENV, `KUBIKI_UPDATER_PUBLIC_KEY=${pubkey}\n`);
   }
   return release;
 }
 
 export const UPDATE_TARGETS = ['linux-x86_64', 'darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'];
 
-/** Checks if all required release artifacts for a build target have already been uploaded. */
-export function targetArtifactsUploaded(target, assets, cliArtifact) {
-  if (!assets || !Array.isArray(assets) || assets.length === 0) return false;
-  const hasCli = assets.some(a => a.name === cliArtifact && a.size > 0);
-  if (!hasCli) return false;
-
-  const t = target.toLowerCase();
-  if (t.includes('windows') || t.includes('msvc')) {
-    const hasSetup = assets.some(a => (a.name.endsWith('.exe') && a.name !== cliArtifact) || a.name.endsWith('.msi'));
-    const hasSig = assets.some(a => a.name.endsWith('.sig') && (a.name.includes('setup') || a.name.includes('nsis') || a.name.includes('msi') || a.name.includes('x64')));
-    return hasSetup && hasSig;
-  }
-  if (t.includes('linux')) {
-    const hasPkg = assets.some(a => a.name.endsWith('.AppImage') || a.name.endsWith('.deb') || a.name.endsWith('.rpm'));
-    const hasSig = assets.some(a => a.name.endsWith('.sig') && (a.name.includes('AppImage') || a.name.includes('linux') || a.name.includes('amd64')));
-    return hasPkg && hasSig;
-  }
-  if (t.includes('apple') || t.includes('darwin')) {
-    const isArm = t.includes('aarch64') || t.includes('arm64');
-    const filterKeyword = isArm ? 'aarch64' : 'x64';
-    const altKeyword = isArm ? 'arm64' : 'x86_64';
-    const hasDmg = assets.some(a => (a.name.endsWith('.dmg') || a.name.endsWith('.tar.gz')) && (a.name.includes(filterKeyword) || a.name.includes(altKeyword) || a.name.includes('darwin') || a.name.includes('app.tar.gz')) && a.size > 0);
-    const hasSig = assets.some(a => a.name.endsWith('.sig') && (a.name.includes(filterKeyword) || a.name.includes(altKeyword) || a.name.includes('darwin') || a.name.includes('app.tar.gz')) && a.size > 0);
-    return hasDmg && hasSig;
-  }
-  return false;
-}
-
-/** Reconciles and repairs the updater manifest (latest.json) across all target platforms
- * using uploaded release packages and .sig signatures in case of concurrent upload race conditions. */
+/** Build once, after all matrix jobs finish. Never infer one Mac architecture
+ * from the other, or use a DMG as an updater archive. */
 export function reconcileUpdateManifest(manifest, tag, assets, signatures = {}) {
   const release = desktopRelease(tag);
   const result = {
     version: release.version,
     notes: manifest?.notes || `Kubiki ${tag}`,
     pub_date: manifest?.pub_date || new Date().toISOString(),
-    platforms: { ...(manifest?.platforms || {}) },
+    platforms: {},
   };
-
+  const patterns = {
+    'linux-x86_64': /\.AppImage$/,
+    'darwin-aarch64': /_aarch64\.app\.tar\.gz$/,
+    'darwin-x86_64': /_x64\.app\.tar\.gz$/,
+    'windows-x86_64': /[-_]setup\.exe$/,
+  };
   for (const target of UPDATE_TARGETS) {
-    if (result.platforms[target]?.signature?.trim() && result.platforms[target]?.url) {
-      continue;
-    }
-    let pkgAsset, sigAsset;
-    if (target === 'linux-x86_64') {
-      pkgAsset = assets.find(a => (a.name.endsWith('.AppImage.tar.gz') || a.name.endsWith('.AppImage')) && a.size > 0);
-    } else if (target === 'windows-x86_64') {
-      pkgAsset = assets.find(a => (a.name.endsWith('.nsis.zip') || (a.name.endsWith('.exe') && a.name.includes('setup'))) && a.size > 0);
-    } else if (target === 'darwin-aarch64') {
-      pkgAsset = assets.find(a => (a.name.includes('aarch64') || a.name.includes('arm64')) && (a.name.endsWith('.tar.gz') || a.name.endsWith('.dmg')) && a.size > 0)
-        || assets.find(a => a.name.endsWith('.app.tar.gz') && a.size > 0);
-    } else if (target === 'darwin-x86_64') {
-      pkgAsset = assets.find(a => (a.name.includes('x64') || a.name.includes('x86_64')) && (a.name.endsWith('.tar.gz') || a.name.endsWith('.dmg')) && a.size > 0)
-        || assets.find(a => a.name.endsWith('.app.tar.gz') && a.size > 0);
-    }
-
-    if (pkgAsset) {
-      sigAsset = assets.find(a => a.name === `${pkgAsset.name}.sig` && a.size > 0);
-    }
-
-    const signature = signatures[target] || (sigAsset && signatures[sigAsset.name]);
-    if (pkgAsset && signature) {
-      result.platforms[target] = {
-        signature: signature.trim(),
-        url: `https://github.com/JustYarick/kubiki/releases/download/${tag}/${encodeURIComponent(pkgAsset.name)}`,
-      };
-    }
+    const packages = assets.filter(a => patterns[target].test(a.name) && a.size > 0);
+    if (packages.length !== 1) throw new Error(`Expected exactly one updater package for ${target}, found ${packages.length}.`);
+    const pkg = packages[0];
+    const signature = signatures[`${pkg.name}.sig`]?.trim();
+    if (!signature) throw new Error(`Missing signature contents for ${pkg.name}.`);
+    result.platforms[target] = {
+      signature,
+      url: `https://github.com/JustYarick/kubiki/releases/download/${tag}/${encodeURIComponent(pkg.name)}`,
+    };
   }
   return result;
 }
@@ -191,5 +143,5 @@ export function validateUpdateManifest(manifest, tag, assets) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await prepareDesktopRelease(process.cwd(), process.argv[2], process.env);
+  await prepareDesktopRelease(process.cwd(), process.argv[2], process.env, { signed: !process.argv.includes('--unsigned') });
 }

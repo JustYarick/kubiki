@@ -15,7 +15,8 @@
     "test:desktop": "node --test tests/desktop/*.test.mjs",
     "extensions:build": "pnpm --filter @kubiki/extension-sdk build && node scripts/build-extensions.mjs",
     "desktop:prepare": "node scripts/prepare-extension-runtime.mjs",
-    "desktop:build:linux": "OPENSSL_CONF=/dev/null tauri build -- --locked",
+    "desktop:build": "node scripts/desktop-build.mjs",
+    "desktop:build:linux": "pnpm desktop:build",
     "test:extensions": "pnpm extensions:build && node --test tests/extensions/*.test.mjs"
   },
   "dependencies": {

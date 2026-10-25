@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { desktopRelease, prepareDesktopRelease, normalizeUpdaterPublicKey, targetArtifactsUploaded, reconcileUpdateManifest, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
+import { desktopRelease, prepareDesktopRelease, normalizeUpdaterPublicKey, reconcileUpdateManifest, validateUpdateManifest, UPDATE_TARGETS } from '../../scripts/desktop-release.mjs';
+
+const publicKey = 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzMTMxRkEzNTgwNUQzNzQKUldSMDB3VllveDhUMDZRSmVhaUh0c2x6ci95YlY2YUZkcW9qcnJESGpOVWhTbGdQRG4vaXhqZHUK';
 
 test('stable feed excludes dev, test, alpha, beta, rc and build metadata tags', () => {
   for (const version of ['0.1.0', '0.1.1', '0.2.0', '1.10.0']) assert.equal(desktopRelease(`v${version}`).prerelease, false);
@@ -22,7 +24,7 @@ test('release preparation synchronizes embedded versions and locked package iden
     await writeFile(path.join(root, 'src-tauri/Cargo.toml'), '[package]\nname = "kubiki"\nversion = "0.1.0"\n');
     await writeFile(path.join(root, 'src-tauri/Cargo.lock'), '[[package]]\nname = "kubiki"\nversion = "0.1.0"\n\n[[package]]\nname = "other"\nversion = "1.0.0"\n');
     await assert.rejects(prepareDesktopRelease(root, 'v0.2.0', {}), /require/);
-    await prepareDesktopRelease(root, 'v0.2.0', { KUBIKI_UPDATER_PUBLIC_KEY: 'public', TAURI_SIGNING_PRIVATE_KEY: 'private' });
+    await prepareDesktopRelease(root, 'v0.2.0', { KUBIKI_UPDATER_PUBLIC_KEY: publicKey, TAURI_SIGNING_PRIVATE_KEY: 'private' });
     assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'))).version, '0.2.0');
     const config = JSON.parse(await readFile(path.join(root, 'src-tauri/tauri.conf.json')));
     assert.equal(config.version, '0.2.0');
@@ -30,10 +32,10 @@ test('release preparation synchronizes embedded versions and locked package iden
     assert.match(await readFile(path.join(root, 'src-tauri/Cargo.toml'), 'utf8'), /version = "0.2.0"/);
     assert.match(await readFile(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'), /name = "kubiki"\nversion = "0.2.0"/);
     assert.match(await readFile(path.join(root, 'src-tauri/Cargo.lock'), 'utf8'), /name = "other"\nversion = "1.0.0"/);
-    assert.equal(config.plugins?.updater?.pubkey, 'public');
+    assert.equal(config.plugins?.updater?.pubkey, publicKey);
     const updaterConf = JSON.parse(await readFile(path.join(root, '.kubiki-build/updater.conf.json')));
     assert.equal(updaterConf.bundle.createUpdaterArtifacts, true);
-    assert.equal(updaterConf.plugins.updater.pubkey, 'public');
+    assert.equal(updaterConf.plugins.updater.pubkey, publicKey);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -55,9 +57,6 @@ test('normalizeUpdaterPublicKey normalizes base64, plaintext, and raw key format
   const normalizedFromRaw = normalizeUpdaterPublicKey(rawKey);
   assert.match(Buffer.from(normalizedFromRaw, 'base64').toString('utf8'), /^untrusted comment: minisign public key\n/);
   assert.match(Buffer.from(normalizedFromRaw, 'base64').toString('utf8'), /RWR00wVYox/);
-
-  // Test identifier
-  assert.equal(normalizeUpdaterPublicKey('public'), 'public');
 
   // Invalid inputs throw
   assert.throws(() => normalizeUpdaterPublicKey(''), /missing or empty/);
@@ -87,58 +86,15 @@ test('publication requires matching version, all platforms, signatures and tag-p
   assert.throws(() => validateUpdateManifest(other.manifest, 'v0.2.0', other.assets), /pinned/);
 });
 
-test('targetArtifactsUploaded identifies completed build artifacts per target', () => {
-  const assets = [
-    { name: 'kubiki-cli-windows-amd64.exe', size: 1024 },
-    { name: 'kubiki_1.0.0_x64-setup.exe', size: 2048 },
-    { name: 'kubiki_1.0.0_x64-setup.exe.sig', size: 128 },
-    { name: 'kubiki-cli-linux-amd64', size: 1024 },
-    { name: 'kubiki_1.0.0_amd64.AppImage', size: 2048 },
-    { name: 'kubiki_1.0.0_amd64.AppImage.sig', size: 128 },
-  ];
-
-  assert.equal(targetArtifactsUploaded('x86_64-pc-windows-msvc', assets, 'kubiki-cli-windows-amd64.exe'), true);
-  assert.equal(targetArtifactsUploaded('x86_64-unknown-linux-gnu', assets, 'kubiki-cli-linux-amd64'), true);
-  assert.equal(targetArtifactsUploaded('aarch64-apple-darwin', assets, 'kubiki-cli-macos-arm64'), false);
-
-  // Missing CLI binary
-  assert.equal(targetArtifactsUploaded('x86_64-pc-windows-msvc', assets.slice(1), 'kubiki-cli-windows-amd64.exe'), false);
-  // Missing signature
-  const noSigAssets = assets.filter(a => !a.name.endsWith('.sig'));
-  assert.equal(targetArtifactsUploaded('x86_64-pc-windows-msvc', noSigAssets, 'kubiki-cli-windows-amd64.exe'), false);
-});
-
-test('reconcileUpdateManifest repairs missing platforms using signatures and assets', () => {
-  const assets = [
-    { name: 'kubiki_0.2.0_amd64.AppImage.tar.gz', size: 1000 },
-    { name: 'kubiki_0.2.0_amd64.AppImage.tar.gz.sig', size: 100 },
-    { name: 'kubiki_0.2.0_x64-setup.nsis.zip', size: 1000 },
-    { name: 'kubiki_0.2.0_x64-setup.nsis.zip.sig', size: 100 },
-    { name: 'Kubiki.app.tar.gz', size: 1000 },
-    { name: 'Kubiki.app.tar.gz.sig', size: 100 },
-  ];
-
-  const signatures = {
-    'kubiki_0.2.0_amd64.AppImage.tar.gz.sig': 'sig-linux',
-    'kubiki_0.2.0_x64-setup.nsis.zip.sig': 'sig-win',
-    'Kubiki.app.tar.gz.sig': 'sig-mac',
-  };
-
-  // Partially populated manifest (e.g. from race condition where windows overwrote others)
-  const initial = {
-    version: '0.2.0',
-    platforms: {
-      'windows-x86_64': {
-        signature: 'sig-win',
-        url: 'https://github.com/JustYarick/kubiki/releases/download/v0.2.0/kubiki_0.2.0_x64-setup.nsis.zip',
-      },
-    },
-  };
-
-  const reconciled = reconcileUpdateManifest(initial, 'v0.2.0', assets, signatures);
-  assert.equal(reconciled.version, '0.2.0');
-  assert.equal(reconciled.platforms['windows-x86_64'].signature, 'sig-win');
-  assert.equal(reconciled.platforms['linux-x86_64'].signature, 'sig-linux');
-  assert.equal(reconciled.platforms['darwin-aarch64'].signature, 'sig-mac');
-  assert.equal(reconciled.platforms['darwin-x86_64'].signature, 'sig-mac');
+test('manifest requires distinct Mac archives and a matching signature for each platform', () => {
+  const packages = ['kubiki_0.2.0_amd64.AppImage', 'kubiki_0.2.0_x64-setup.exe', 'kubiki_aarch64.app.tar.gz', 'kubiki_x64.app.tar.gz'];
+  const assets = packages.flatMap(name => [{ name, size: 1000 }, { name: `${name}.sig`, size: 100 }]);
+  const signatures = Object.fromEntries(packages.map(name => [`${name}.sig`, `sig-${name}`]));
+  const manifest = reconcileUpdateManifest(null, 'v0.2.0', assets, signatures);
+  validateUpdateManifest(manifest, 'v0.2.0', assets);
+  assert.match(manifest.platforms['darwin-aarch64'].url, /_aarch64\.app\.tar\.gz$/);
+  assert.match(manifest.platforms['darwin-x86_64'].url, /_x64\.app\.tar\.gz$/);
+  assert.throws(() => reconcileUpdateManifest(manifest, 'v0.2.0', assets.filter(a => !a.name.includes('_x64.app')), signatures), /darwin-x86_64/);
+  assert.throws(() => reconcileUpdateManifest(null, 'v0.2.0', assets, {}), /signature contents/);
+  assert.throws(() => reconcileUpdateManifest(null, 'v0.2.0', [...assets, { name: 'old.AppImage', size: 10 }], signatures), /exactly one/);
 });

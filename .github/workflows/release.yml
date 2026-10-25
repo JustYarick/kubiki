@@ -2,472 +2,278 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
+      publish:
+        description: 'Publish after tests and desktop builds pass; disable for a build-only run'
+        type: boolean
+        default: true
       custom_tag:
-        description: 'Custom Tag (e.g. v1.0.1 or v1.0.1-dev.1). Leave empty to auto-generate.'
-        required: false
+        description: 'Optional release tag; existing tags build their exact commit'
+        type: string
         default: ''
       bump:
-        description: 'Version bump if auto-generating (patch, minor, major)'
-        required: false
+        description: 'Version bump when custom_tag is empty'
         type: choice
-        options:
-          - patch
-          - minor
-          - major
+        options: [patch, minor, major]
         default: patch
       target_commit:
-        description: 'Optional commit SHA to release (leave empty for branch HEAD)'
-        required: false
+        description: 'Optional full commit SHA; must match custom_tag if that tag exists'
+        type: string
         default: ''
-      force_rebuild:
-        description: 'Force rebuild all targets even if artifacts exist'
-        required: false
+  workflow_call:
+    inputs:
+      publish:
         type: boolean
         default: false
+      custom_tag:
+        type: string
+        default: ''
+      bump:
+        type: string
+        default: patch
+      target_commit:
+        type: string
+        default: ''
 
 permissions:
-  contents: write
-
-concurrency:
-  group: desktop-release-${{ github.event.inputs.custom_tag || github.event.inputs.tag || github.ref }}
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
+  prepare:
+    name: Resolve commit, version and signing
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
     outputs:
-      release_id: ${{ steps.create-release.outputs.result }}
-      tag: ${{ steps.create-release.outputs.tag }}
-      prerelease: ${{ steps.create-release.outputs.prerelease }}
+      sha: ${{ steps.plan.outputs.sha }}
+      tag: ${{ steps.plan.outputs.tag }}
+      publish: ${{ steps.plan.outputs.publish }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.target_commit || github.ref }}
           fetch-depth: 0
-
-      - name: Create or find draft release
-        id: create-release
+      - name: Plan exact source and release channel
+        id: plan
         uses: actions/github-script@v7
         env:
-          CUSTOM_TAG: ${{ github.event.inputs.custom_tag }}
-          INPUT_TAG: ${{ github.event.inputs.tag }}
-          TARGET_COMMIT: ${{ github.event.inputs.target_commit }}
-          BUMP: ${{ github.event.inputs.bump || 'patch' }}
-          KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBLISH: ${{ inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+          CUSTOM_TAG: ${{ inputs.custom_tag }}
+          TARGET_COMMIT: ${{ inputs.target_commit }}
+          BUMP: ${{ inputs.bump || 'patch' }}
+          KUBIKI_UPDATER_PUBLIC_KEY: ${{ (inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && vars.KUBIKI_UPDATER_PUBLIC_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ (inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
         with:
           script: |
-            const { pathToFileURL } = require('url');
-            const path = require('path');
-            const scriptUrl = pathToFileURL(path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/desktop-release.mjs')).href;
-            const { desktopRelease, normalizeUpdaterPublicKey } = await import(scriptUrl);
-
-            if (!process.env.KUBIKI_UPDATER_PUBLIC_KEY?.trim() || !process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
-              throw new Error('Configure the updater signing key and public key before publishing. See docs/APP_UPDATES.md.');
+            const { execFileSync } = require('node:child_process');
+            const { pathToFileURL } = require('node:url');
+            const load = name => import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/${name}`).href);
+            const { desktopRelease, normalizeUpdaterPublicKey } = await load('desktop-release.mjs');
+            const { nextReleaseTag, installerBundleConfig } = await load('desktop-pipeline.mjs');
+            const git = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+            const publish = process.env.PUBLISH === 'true';
+            if (publish && context.eventName === 'pull_request') throw new Error('Pull requests cannot publish releases.');
+            if (publish) {
+              normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
+              if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) throw new Error('Missing TAURI_SIGNING_PRIVATE_KEY. See docs/APP_UPDATES.md.');
             }
-            normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
-
-            const targetSha = process.env.TARGET_COMMIT?.trim() || context.sha;
-            core.info(`Target commit SHA: ${targetSha}`);
-
-            let tag = (process.env.CUSTOM_TAG?.trim() || process.env.INPUT_TAG?.trim());
-            let isPrerelease = false;
-
+            const requestedSha = process.env.TARGET_COMMIT.trim();
+            if (requestedSha && !/^[0-9a-f]{40}$/.test(requestedSha)) throw new Error('target_commit must be a full commit SHA.');
+            let sha = git(['rev-parse', `${requestedSha || 'HEAD'}^{commit}`]);
+            let tag = process.env.CUSTOM_TAG.trim() || (context.ref.startsWith('refs/tags/') ? context.ref.slice(10) : '');
             if (tag) {
-              const parsed = desktopRelease(tag);
-              tag = parsed.tag;
-              isPrerelease = parsed.prerelease;
-              core.info(`Using explicit tag: ${tag} (prerelease: ${isPrerelease})`);
-            } else if (context.ref.startsWith('refs/tags/')) {
-              tag = context.ref.replace('refs/tags/', '');
-              const parsed = desktopRelease(tag);
-              tag = parsed.tag;
-              isPrerelease = parsed.prerelease;
-              core.info(`Using push tag: ${tag} (prerelease: ${isPrerelease})`);
+              desktopRelease(tag);
+              let taggedSha;
+              try { taggedSha = git(['rev-parse', '--verify', `refs/tags/${tag}^{commit}`]); } catch {}
+              if (taggedSha) {
+                if (requestedSha && sha !== taggedSha) throw new Error(`${tag} does not match target_commit.`);
+                sha = taggedSha;
+              }
             } else {
-              const branch = (context.ref || '').replace(/^refs\/(heads|tags)\//, '');
-              const isMain = branch === 'main';
-              const bumpType = process.env.BUMP || 'patch';
-
-              // Fetch existing tags to find highest stable tag
-              const tagsData = await github.paginate(github.rest.repos.listTags, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                per_page: 100,
+              tag = nextReleaseTag(git(['tag', '--list', 'v*']).split('\n'), {
+                bump: process.env.BUMP, branch: publish ? context.ref.replace('refs/heads/', '') : 'ci',
+                runNumber: context.runNumber,
               });
-              const allTags = new Set(tagsData.map(t => t.name));
-
-              let maxStable = { major: 0, minor: 0, patch: 0 };
-              for (const t of allTags) {
-                const m = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(t);
-                if (m) {
-                  const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
-                  if (maj > maxStable.major || (maj === maxStable.major && min > maxStable.minor) || (maj === maxStable.major && min === maxStable.minor && pat > maxStable.patch)) {
-                    maxStable = { major: maj, minor: min, patch: pat };
-                  }
-                }
-              }
-
-              if (maxStable.major === 0 && maxStable.minor === 0 && maxStable.patch === 0) {
-                try {
-                  const fs = await import('fs');
-                  const pkg = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/package.json`, 'utf8'));
-                  const m = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/.exec(pkg.version);
-                  if (m) {
-                    maxStable = { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
-                  }
-                } catch {}
-              }
-
-              function bump(v, type) {
-                if (type === 'major') return `${v.major + 1}.0.0`;
-                if (type === 'minor') return `${v.major}.${v.minor + 1}.0`;
-                return `${v.major}.${v.minor}.${v.patch + 1}`;
-              }
-
-              const nextVersion = bump(maxStable, bumpType);
-
-              if (isMain) {
-                tag = `v${nextVersion}`;
-                isPrerelease = false;
-              } else {
-                tag = `v${nextVersion}-dev.${context.runNumber}`;
-                isPrerelease = true;
-              }
-
-              core.info(`Auto-generated release tag ${tag} for branch ${branch} (isPrerelease: ${isPrerelease})`);
             }
-
-            // Ensure git tag exists or create it
-            let tagRefExists = false;
-            try {
-              await github.rest.git.getRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `tags/${tag}`,
-              });
-              tagRefExists = true;
-              core.info(`Git tag ${tag} already exists on GitHub.`);
-            } catch (err) {
-              if (err.status !== 404) throw err;
+            installerBundleConfig(desktopRelease(tag).version);
+            if (publish) {
+              let existing;
+              try { existing = (await github.rest.repos.getReleaseByTag({ ...context.repo, tag })).data; }
+              catch (error) { if (error.status !== 404) throw error; }
+              if (existing && !existing.draft) throw new Error(`${tag} is already published. Choose a new version.`);
             }
-
-            if (!tagRefExists) {
-              core.info(`Creating git tag ref refs/tags/${tag} pointing to commit ${targetSha}...`);
-              await github.rest.git.createRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `refs/tags/${tag}`,
-                sha: targetSha,
-              });
-              core.info(`Successfully created git tag refs/tags/${tag}`);
-            }
-
+            core.setOutput('sha', sha);
             core.setOutput('tag', tag);
-            core.setOutput('prerelease', String(isPrerelease));
+            core.setOutput('publish', String(publish));
+            await core.summary.addHeading(publish ? `Release ${tag}` : `Build only: ${tag}`)
+              .addTable([['Source commit', sha], ['Mode', publish ? 'Publish signed packages after all checks' : 'Test and build installers; download from workflow artifacts']])
+              .write();
 
-            let release;
-            try {
-              const { data } = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag,
-              });
-              release = data;
-              core.info(`Found existing release id ${release.id} for tag ${tag}`);
-            } catch (err) {
-              if (err.status !== 404) throw err;
-            }
+  frontend:
+    name: Frontend, extensions and pipeline tests
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm test:desktop
+      - run: pnpm desktop:prepare
+      - run: pnpm test:extensions
+      - run: node scripts/check-external-extension.mjs
 
-            if (!release) {
-              const releaseName = isPrerelease ? `Kubiki ${tag} (Dev Release)` : `Kubiki ${tag}`;
-              const { data } = await github.rest.repos.createRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag_name: tag,
-                name: releaseName,
-                draft: true,
-                prerelease: isPrerelease,
-                make_latest: 'false',
-                generate_release_notes: true
-              });
-              release = data;
-              core.info(`Created new draft release id ${release.id} for tag ${tag} (${releaseName})`);
-            }
-            return release.id;
+  interface:
+    name: Browser interface tests
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm extensions:build
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: interface-test-results
+          path: test-results/
+          retention-days: 7
 
-  build-tauri:
-    name: Build (${{ matrix.target }})
-    needs: create-release
-    runs-on: ${{ matrix.platform }}
+  desktop:
+    name: Test and package (${{ matrix.target }})
+    needs: [prepare, frontend, interface]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-22.04
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            node_arch: x64
-            cli_bin: "crates/kubiki-core/target/x86_64-unknown-linux-gnu/release/kubiki-cli"
-            cli_artifact: "kubiki-cli-linux-amd64"
-          - platform: macos-15
+          - os: macos-15
             target: aarch64-apple-darwin
-            node_arch: arm64
-            cli_bin: "crates/kubiki-core/target/aarch64-apple-darwin/release/kubiki-cli"
-            cli_artifact: "kubiki-cli-macos-arm64"
-          - platform: macos-15-intel
+          - os: macos-15-intel
             target: x86_64-apple-darwin
-            node_arch: x64
-            cli_bin: "crates/kubiki-core/target/x86_64-apple-darwin/release/kubiki-cli"
-            cli_artifact: "kubiki-cli-macos-amd64"
-          - platform: windows-2022
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
-            node_arch: x64
-            cli_bin: "crates/kubiki-core/target/x86_64-pc-windows-msvc/release/kubiki-cli.exe"
-            cli_artifact: "kubiki-cli-windows-amd64.exe"
-
     env:
       KUBIKI_BUILD_TARGET: ${{ matrix.target }}
-      KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
       MACOSX_DEPLOYMENT_TARGET: '13.5'
-
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
-
-      - name: Check if artifacts for this target are already uploaded
-        id: check-existing
-        uses: actions/github-script@v7
-        env:
-          FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
-        with:
-          script: |
-            if (process.env.FORCE_REBUILD === 'true') {
-              core.info('Force rebuild requested. Proceeding with build.');
-              core.setOutput('skip', 'false');
-              return;
-            }
-            const { pathToFileURL } = require('url');
-            const path = require('path');
-            const scriptUrl = pathToFileURL(path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/desktop-release.mjs')).href;
-            const { targetArtifactsUploaded } = await import(scriptUrl);
-            const release_id = ${{ needs.create-release.outputs.release_id }};
-            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
-              owner: context.repo.owner, repo: context.repo.repo, release_id, per_page: 100,
-            });
-            const alreadyBuilt = targetArtifactsUploaded('${{ matrix.target }}', assets, '${{ matrix.cli_artifact }}');
-            if (alreadyBuilt) {
-              core.info(`Artifacts for ${{ matrix.target }} are already present on release ${release_id}. Skipping build!`);
-              core.setOutput('skip', 'true');
-            } else {
-              core.info(`Artifacts for ${{ matrix.target }} not found or incomplete. Proceeding with build.`);
-              core.setOutput('skip', 'false');
-            }
-
-      - name: Install pnpm
-        if: steps.check-existing.outputs.skip != 'true'
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.14.0
-
-      - name: Setup Node.js
-        if: steps.check-existing.outputs.skip != 'true'
-        uses: actions/setup-node@v4
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
-          architecture: ${{ matrix.node_arch }}
-          cache: 'pnpm'
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux' && steps.check-existing.outputs.skip != 'true'
+          cache: pnpm
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
-
-      - name: Setup Rust toolchain
-        if: steps.check-existing.outputs.skip != 'true'
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Rust cache
-        if: steps.check-existing.outputs.skip != 'true'
-        uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
           workspaces: |
             crates/kubiki-core
             src-tauri
-
-      - name: Install frontend dependencies
-        if: steps.check-existing.outputs.skip != 'true'
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify desktop runtime target selection
-        if: steps.check-existing.outputs.skip != 'true'
-        run: pnpm test:desktop
-
-      - name: Prepare release versions and updater artifacts
-        if: steps.check-existing.outputs.skip != 'true'
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
-          KUBIKI_UPDATER_PUBLIC_KEY: ${{ vars.KUBIKI_UPDATER_PUBLIC_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: node scripts/desktop-release.mjs "$RELEASE_TAG"
-
-      - name: Build standalone CLI
-        if: steps.check-existing.outputs.skip != 'true'
-        shell: bash
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare target runtime and extension resources
         run: |
-          cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "${{ matrix.target }}"
-
-      - name: Isolate AppImage tooling from the host OpenSSL configuration
-        if: runner.os == 'Linux' && steps.check-existing.outputs.skip != 'true'
+          pnpm extensions:build
+          pnpm desktop:prepare
+      - name: Test core and desktop on the target OS
+        run: |
+          cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Set build version and updater configuration
         shell: bash
-        run: echo "OPENSSL_CONF=/dev/null" >> "$GITHUB_ENV"
-
-      - name: Build Desktop Application & Upload Bundles
-        if: steps.check-existing.outputs.skip != 'true'
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          tagName: ${{ needs.create-release.outputs.tag }}
-          releaseDraft: true
-          prerelease: ${{ needs.create-release.outputs.prerelease == 'true' }}
-          includeUpdaterJson: true
-          updaterJsonPreferNsis: true
-          args: --target ${{ matrix.target }} --config .kubiki-build/updater.conf.json -- --locked
-
-      - name: Upload CLI to Release
-        if: steps.check-existing.outputs.skip != 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const release_id = ${{ needs.create-release.outputs.release_id }};
-            const filePath = path.resolve('${{ matrix.cli_bin }}');
-            if (!fs.existsSync(filePath)) {
-              throw new Error(`CLI artifact not found: ${filePath}`);
-            }
-            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
-              owner: context.repo.owner, repo: context.repo.repo, release_id, per_page: 100,
-            });
-            const existing = assets.find(a => a.name === '${{ matrix.cli_artifact }}');
-            if (existing) {
-              core.info(`Deleting existing CLI asset ${existing.id}...`);
-              await github.rest.repos.deleteReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                asset_id: existing.id,
-              });
-            }
-            core.info(`Uploading ${filePath} as ${{ matrix.cli_artifact }}`);
-            await github.rest.repos.uploadReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: release_id,
-              name: '${{ matrix.cli_artifact }}',
-              data: fs.readFileSync(filePath)
-            });
-
-      - name: Archive build artifacts to workflow
-        if: steps.check-existing.outputs.skip != 'true'
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+          KUBIKI_UPDATER_PUBLIC_KEY: ${{ needs.prepare.outputs.publish == 'true' && vars.KUBIKI_UPDATER_PUBLIC_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            node scripts/desktop-release.mjs "$RELEASE_TAG"
+          else
+            node scripts/desktop-release.mjs "$RELEASE_TAG" --unsigned
+          fi
+      - name: Build standalone CLI
+        shell: bash
+        run: cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "$KUBIKI_BUILD_TARGET"
+      - name: Build and verify all installers
+        shell: bash
+        env:
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          args=(--target "$KUBIKI_BUILD_TARGET" --config .kubiki-build/updater.conf.json --stage)
+          if [ "$PUBLISH" = true ]; then args+=(--signed); fi
+          pnpm desktop:build "${args[@]}"
+      - name: Upload verified installers, CLI and checksums
         uses: actions/upload-artifact@v4
         with:
-          name: kubiki-build-${{ matrix.target }}
-          path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/
-            ${{ matrix.cli_bin }}
-          if-no-files-found: ignore
-          retention-days: 7
+          name: kubiki-${{ matrix.target }}
+          path: .kubiki-build/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
 
-  publish-release:
-    name: Publish Release
-    needs: [create-release, build-tauri]
-    runs-on: ubuntu-latest
+  publish:
+    name: Publish verified release
+    needs: [prepare, frontend, interface, desktop]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-release-publication
+      cancel-in-progress: false
     steps:
-      - name: Checkout release validation
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
-
-      - name: Validate updater manifest and publish GitHub Release
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kubiki-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Verify provenance and signatures, upload, then publish
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
         with:
           script: |
-            const { pathToFileURL } = require('url');
-            const path = require('path');
-            const scriptUrl = pathToFileURL(path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/desktop-release.mjs')).href;
-            const { desktopRelease, validateUpdateManifest, reconcileUpdateManifest } = await import(scriptUrl);
-            const release = desktopRelease(process.env.RELEASE_TAG);
-            const release_id = Number(process.env.RELEASE_ID);
-            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
-              owner: context.repo.owner, repo: context.repo.repo, release_id, per_page: 100,
+            const { pathToFileURL } = require('node:url');
+            const { publishDesktopRelease } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/publish-desktop-release.mjs`).href);
+            await publishDesktopRelease({ github, context, core }, {
+              tag: process.env.RELEASE_TAG, sha: process.env.SOURCE_SHA,
+              dir: `${process.env.GITHUB_WORKSPACE}/release-artifacts`,
             });
-
-            let manifestAsset = assets.find(asset => asset.name === 'latest.json');
-            let manifest = { platforms: {} };
-            if (manifestAsset) {
-              const { data } = await github.rest.repos.getReleaseAsset({
-                owner: context.repo.owner, repo: context.repo.repo, asset_id: manifestAsset.id,
-                headers: { accept: 'application/octet-stream' },
-              });
-              try {
-                manifest = JSON.parse(Buffer.from(data).toString('utf8'));
-              } catch (e) {
-                core.warning(`Failed to parse existing latest.json: ${e.message}`);
-              }
-            }
-
-            // Fetch signatures from release assets to reconcile any missing platforms
-            const signatures = {};
-            for (const asset of assets) {
-              if (asset.name.endsWith('.sig') && asset.size > 0) {
-                const { data } = await github.rest.repos.getReleaseAsset({
-                  owner: context.repo.owner, repo: context.repo.repo, asset_id: asset.id,
-                  headers: { accept: 'application/octet-stream' },
-                });
-                signatures[asset.name] = Buffer.from(data).toString('utf8').trim();
-              }
-            }
-
-            const reconciled = reconcileUpdateManifest(manifest, release.tag, assets, signatures);
-            validateUpdateManifest(reconciled, release.tag, assets);
-
-            const manifestContent = JSON.stringify(reconciled, null, 2);
-            if (manifestAsset) {
-              await github.rest.repos.deleteReleaseAsset({
-                owner: context.repo.owner, repo: context.repo.repo, asset_id: manifestAsset.id,
-              });
-            }
-            await github.rest.repos.uploadReleaseAsset({
-              owner: context.repo.owner, repo: context.repo.repo, release_id,
-              name: 'latest.json',
-              data: Buffer.from(manifestContent),
-            });
-
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id,
-              prerelease: release.prerelease,
-              make_latest: release.prerelease ? 'false' : 'true',
-              draft: false
-            });
-            core.info(`Successfully published Kubiki ${release.tag}`);

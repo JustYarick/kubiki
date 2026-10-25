@@ -268,7 +268,7 @@ See [Project structure and architecture](docs/STRUCTURE.md) for a module-level r
 
 | Dependency | Requirement |
 | --- | --- |
-| Node.js | Use Node.js 24 for full workspace development, matching release/native CI and the extension tools. Frontend CI also runs on Node.js 22. The bundled extension runtime is pinned separately in `scripts/prepare-extension-runtime.mjs`. |
+| Node.js | Use Node.js 24, matching all CI/release jobs and the extension tools. The bundled extension runtime is pinned separately in `scripts/prepare-extension-runtime.mjs`. |
 | pnpm | Version 12.14.0, pinned in `package.json` and the workflows. |
 | Rust | Stable toolchain with support for Rust edition 2024. |
 | Native build tools | The platform dependencies required by Tauri 2. |
@@ -299,7 +299,7 @@ The Tauri hooks also prepare the pinned Node runtime and build the extension SDK
 ### Building desktop packages
 
 ```sh
-pnpm tauri build -- --locked
+pnpm desktop:build
 ```
 
 This command runs frontend type checking, builds the production frontend, compiles the native application, and creates the platform packages. For a native build without an explicit target override, packages are written under `src-tauri/target/release/bundle/`.
@@ -331,7 +331,7 @@ Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, o
 
 ## Publishing releases
 
-Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
+Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. For a one-click release, open **Actions → CI → Run workflow** and leave **trigger_release** enabled. Branch pushes and pull requests run the same tests and installer builds without publishing. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
 
 ## Documentation
 

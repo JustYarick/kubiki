@@ -14,10 +14,12 @@ Stable tags use plain `vMAJOR.MINOR.PATCH`. Tags containing a prerelease suffix
 published as GitHub prereleases and never promoted to Latest. Native version
 comparison independently rejects these versions and downgrades.
 
-The source branch does not select the channel. A plain `v0.2.0` tag on `dev`
-still creates a stable release; pushing a branch commit alone creates no release.
-The publish job automatically promotes a successful stable release to Latest
-after validation. It has no manual promotion gate.
+An explicit tag selects the channel: a plain `v0.2.0` tag on `dev` still creates
+a stable release. Manual runs with no tag automatically select the next stable
+version on `main` and a dev prerelease on other branches. Pushing a branch commit
+alone runs tests and installer builds without publication.
+The publish job promotes a successful stable release to Latest after validation
+when it is newer than the current Latest. It has no manual promotion gate.
 
 The app checks `https://github.com/JustYarick/kubiki/releases/latest/download/latest.json`
 after the first render, independently of Kubernetes connectivity. The workflow
