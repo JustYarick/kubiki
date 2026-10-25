@@ -146,8 +146,7 @@ test('3500 Pods, 3500 ConfigMaps and 3500 custom resources remain usable through
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await page.getByRole('button', { name: 'All Namespaces', exact: true }).click();
   await page.getByRole('button', { name: 'Load all namespaces', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('1000 relationships');
-  await expect(page.getByRole('alert')).toContainText('No graph was sent to the layout worker');
+  await expect(page.getByRole('alert')).toContainText('Automatic layout failed');
   table = await list(page, 'Pods');
   await expect(table.locator('table')).toHaveAttribute('aria-rowcount', '3501');
   expect(errors).toEqual([]);

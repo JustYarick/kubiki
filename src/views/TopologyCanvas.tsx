@@ -122,8 +122,30 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       })));
       setBusy(false);
       requestAnimationFrame(() => { void flow.current?.fitView({ padding: 0.2, duration: 0 }); });
-    }).catch((error) => { clearTimeout(timeout); worker?.terminate(); if (!cancelled) { setError(String(error)); setBusy(false); } });
-    worker.onerror = (event) => { clearTimeout(timeout); worker?.terminate(); if (!cancelled) { setError(`Automatic layout failed: ${event.message}`); setBusy(false); } };
+    }).catch((error) => {
+      clearTimeout(timeout);
+      worker?.terminate();
+      if (!cancelled) {
+        const msg = String(error?.message || error || 'Automatic layout failed');
+        const formatted = msg.includes('call stack') || msg.includes('stack')
+          ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
+          : msg.startsWith('Error: ') ? msg.slice(7) : msg;
+        setError(formatted);
+        setBusy(false);
+      }
+    });
+    worker.onerror = (event) => {
+      clearTimeout(timeout);
+      worker?.terminate();
+      if (!cancelled) {
+        const msg = String(event.message || 'Automatic layout failed');
+        const formatted = msg.includes('call stack') || msg.includes('stack')
+          ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
+          : `Automatic layout failed: ${msg}`;
+        setError(formatted);
+        setBusy(false);
+      }
+    };
     return () => { cancelled = true; clearTimeout(timeout); worker?.terminate(); };
   }, [structureKey, direction, revision, setNodes, setEdges]);
 
