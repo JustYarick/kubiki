@@ -12,6 +12,12 @@ export class LogBuffer {
   private chars = 0;
   lines: LogLine[] = [];
   truncated = false;
+  private maxLines: number;
+
+  constructor(maxLines: number = MAX_LOG_LINES) {
+    this.maxLines = maxLines;
+  }
+
   push(data: number[], final = false): void {
     const text = this.decoder.decode(new Uint8Array(data), { stream: !final });
     const parts = text.split('\n');
@@ -30,9 +36,9 @@ export class LogBuffer {
     const match = /^(\d{4}-\d\d-\d\dT\S+)\s(.*)$/.exec(text.replace(/\r$/, ''));
     const msg = match?.[2] ?? text.replace(/\r$/, '');
     const t = match?.[1] ?? '';
-    this.lines.push({ t, msg, seq: ++this.sequence, level: /\berror\b/i.test(msg) ? 'error' : /\bwarn(?:ing)?\b/i.test(msg) ? 'warn' : 'info' });
+    this.lines.push({ t, msg, seq: ++this.sequence, level: /\b(?:error|err|fatal|critical|crit|emerg(?:ency)?|alert)\b/i.test(msg) ? 'error' : /\bwarn(?:ing)?\b/i.test(msg) ? 'warn' : /\b(?:debug|trace)\b/i.test(msg) ? 'debug' : 'info' });
     this.chars += msg.length + t.length;
-    while (this.lines.length > MAX_LOG_LINES || this.chars > MAX_LOG_CHARS) {
+    while (this.lines.length > this.maxLines || this.chars > MAX_LOG_CHARS) {
       const removed = this.lines.shift()!; this.chars -= removed.msg.length + removed.t.length; this.truncated = true;
     }
   }

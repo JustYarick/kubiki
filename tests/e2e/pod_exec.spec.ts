@@ -10,6 +10,7 @@ async function setup(page: Page, denied = false) {
     function send(s: any, events: any[]) { s.channel.onmessage({ session_id: s.id, messages: events.map((event) => ({ sequence: ++s.sequence, event })) }); }
     const out = (data: string) => ({ type: 'Output', payload: { data: [...encoder.encode(data)] } });
     w.__execHarness = { starts, input, sizes, acknowledgements, logContainers, logRequests, logAcks,
+      setLogText: (text: string) => { logText = text; },
       logsActive: () => logSessions.size,
       logs: (text: string) => { for (const s of logSessions.values()) send(s, [out(text)]); },
       logsUtf8: () => { logText = '2026-10-20T08:00:00Z привет 🌍\n'; for (const s of logSessions.values()) { const bytes = [...encoder.encode('2026-10-20T08:00:00Z привет 🌍\n')]; send(s, [{ type: 'Output', payload: { data: bytes.slice(0,23) } }, { type: 'Output', payload: { data: bytes.slice(23) } }]); } },
@@ -33,6 +34,7 @@ async function setup(page: Page, denied = false) {
         if (command === 'get_kube_contexts') return [{ name: 'test', is_current: true }];
         if (command === 'ping_cluster') return { git_version: 'v1.34.0' };
         if (command === 'get_namespaces') return ['backend'];
+        if (command === 'get_resources') return { items: args.kind === 'Pod' ? [pod] : [] };
         if (command === 'stop_resource_watches' || command === 'stop_resource_watch') return;
         if (command === 'watch_resources') { queueMicrotask(() => args.onEvent.onmessage({ subscription_id: args.subscriptionId, query: args.query, messages: [{ sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: args.query.kind === 'Pod' ? [pod] : [] } } } }, { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } }] })); return; }
         if (command === 'stop_pod_logs') { logSessions.clear(); return; }
@@ -60,6 +62,51 @@ async function setup(page: Page, denied = false) {
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-table').getByText(name, { exact: true }).click();
 }
+
+test('log levels have no visible badges and backgrounds span horizontally scrolled unwrapped lines', async ({ page }) => {
+  await setup(page);
+  await page.evaluate(async () => {
+    const { useUiStore } = await import(/* @vite-ignore */ '/src/state/ui_store.ts' as string);
+    useUiStore.setState({ logsColorLevels: true, logsStructured: true, logsWrap: true });
+    const messages = [
+      { level: 'error', message: 'long error payload '.repeat(180) + 'end of error' },
+      { level: 'warn', message: 'short warning' },
+      { level: 'info', message: 'short info' },
+    ];
+    (window as any).__execHarness.setLogText(messages.map((line, index) => `2026-10-20T00:00:0${index + 1}Z ${JSON.stringify(line)}\n`).join(''));
+  });
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
+  const output = page.getByTestId('log-output');
+  const error = output.locator('[data-level="error"]');
+  await expect(error).toContainText('end of error');
+  for (const level of ['error', 'warn', 'info']) {
+    await expect(output.getByTestId('log-line').locator('span').filter({ hasText: new RegExp(`^${level}$`) })).toHaveCount(0);
+  }
+  const toolbar = page.getByTestId('logs-toolbar');
+  await toolbar.getByRole('button', { name: 'Pause', exact: true }).click();
+  await toolbar.getByRole('button', { name: 'Wrap', exact: true }).click();
+  await expect.poll(() => output.evaluate(element => element.scrollWidth > element.clientWidth + 1000)).toBe(true);
+  for (const fraction of [0.5, 1]) {
+    await output.evaluate((element, fraction) => { element.scrollLeft = (element.scrollWidth - element.clientWidth) * fraction; }, fraction);
+    for (const level of ['error', 'warn', 'info']) {
+      const row = output.locator(`[data-level="${level}"]`).last();
+      await expect.poll(() => row.evaluate(element => {
+        const viewport = element.closest('[data-testid="log-output"]')!;
+        const bounds = element.getBoundingClientRect();
+        const style = getComputedStyle(viewport);
+        const left = parseFloat(style.paddingLeft); const right = parseFloat(style.paddingRight);
+        return bounds.width + left + right + 1 >= viewport.scrollWidth && bounds.right >= viewport.getBoundingClientRect().right - right - 1;
+      })).toBe(true);
+      expect(await row.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+    }
+  }
+  await toolbar.getByRole('button', { name: 'Highlight levels', exact: true }).click();
+  await expect(error).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await toolbar.getByRole('button', { name: 'Wrap', exact: true }).click();
+  await expect.poll(() => output.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
 
 test('Pod shell carries real adapter input, resize, UTF-8 and exit; container switch closes the old connection', async ({ page }) => {
   await setup(page); await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open shell for app', exact: true }).click();

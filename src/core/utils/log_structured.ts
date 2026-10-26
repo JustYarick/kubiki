@@ -12,15 +12,43 @@ export interface ParsedStructuredLog {
   fields: Array<[string, string]>;
 }
 
-const LEVEL_KEYS = ['level', 'lvl', 'severity', 'sev', 'loglevel', 'log_level', 'priority'];
-const MESSAGE_KEYS = ['msg', 'message', 'log', 'event', 'messageText', 'text'];
+const LEVEL_KEYS = ['level', 'lvl', 'severity', 'sev', 'loglevel', 'log_level', 'priority', 'levelname'];
+const MESSAGE_KEYS = ['msg', 'message', 'log', 'event', 'messageText', 'text', 'description', 'payload', 'body', 'action'];
 const IGNORED_KEYS = new Set([...LEVEL_KEYS, ...MESSAGE_KEYS]);
 
 const LEVEL_MAP: Record<string, StructuredLogLevel> = {
-  error: 'error', err: 'error', fatal: 'error', critical: 'error', alert: 'error', emergency: 'error',
+  error: 'error', err: 'error', fatal: 'error', critical: 'error', crit: 'error', alert: 'error', emergency: 'error', emerg: 'error',
   warning: 'warn', warn: 'warn',
-  info: 'info', informational: 'info', notice: 'info',
+  info: 'info', informational: 'info', information: 'info', notice: 'info',
   debug: 'debug', trace: 'debug', verbose: 'debug',
+};
+
+const normalizeLogLevel = (rawVal: unknown): StructuredLogLevel | undefined => {
+  if (rawVal === null || rawVal === undefined) return undefined;
+  if (typeof rawVal === 'number') {
+    if (rawVal >= 50 && rawVal <= 70) return 'error'; // Pino 50=error, 60=fatal
+    if (rawVal >= 40 && rawVal < 50) return 'warn';   // Pino 40=warn
+    if (rawVal >= 30 && rawVal < 40) return 'info';   // Pino 30=info
+    if (rawVal >= 10 && rawVal < 30) return 'debug';  // Pino 10=trace, 20=debug
+    if (rawVal >= 500) return 'error';                // HTTP 5xx
+    if (rawVal >= 400) return 'warn';                 // HTTP 4xx
+    if (rawVal >= 200 && rawVal < 400) return 'info'; // HTTP 2xx, 3xx
+    return undefined;
+  }
+  const str = String(rawVal).trim().toLowerCase();
+  const candidate = LEVEL_MAP[str];
+  if (candidate) return candidate;
+  const num = Number(str);
+  if (!Number.isNaN(num) && str.length > 0) {
+    if (num >= 50 && num <= 70) return 'error';
+    if (num >= 40 && num < 50) return 'warn';
+    if (num >= 30 && num < 40) return 'info';
+    if (num >= 10 && num < 30) return 'debug';
+    if (num >= 500) return 'error';
+    if (num >= 400) return 'warn';
+    if (num >= 200 && num < 400) return 'info';
+  }
+  return undefined;
 };
 
 const formatFieldValue = (value: unknown): string => {
@@ -32,10 +60,19 @@ const formatFieldValue = (value: unknown): string => {
 
 /** Parses one log line as JSON. Returns null for non-JSON or empty objects. */
 export function parseStructuredLog(line: string): ParsedStructuredLog | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  if (!line || typeof line !== 'string') return null;
+  // Strip ANSI color codes
+  const stripped = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+  const trimmed = stripped.trim();
+
+  // Find boundaries of JSON object even if preceded by timestamps or logger names
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace <= firstBrace) return null;
+
+  const jsonCandidate = trimmed.slice(firstBrace, lastBrace + 1);
   let value: unknown;
-  try { value = JSON.parse(trimmed); } catch { return null; }
+  try { value = JSON.parse(jsonCandidate); } catch { return null; }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const entries = Object.entries(value as Record<string, unknown>);
   if (!entries.length) return null;
@@ -45,7 +82,7 @@ export function parseStructuredLog(line: string): ParsedStructuredLog | null {
   for (const key of LEVEL_KEYS) {
     const entry = entries.find(([name]) => name.toLowerCase() === key);
     if (!entry) continue;
-    const candidate = LEVEL_MAP[formatFieldValue(entry[1]).toLowerCase()];
+    const candidate = normalizeLogLevel(entry[1]);
     if (candidate) { level = candidate; break; }
   }
   for (const key of MESSAGE_KEYS) {
@@ -54,10 +91,11 @@ export function parseStructuredLog(line: string): ParsedStructuredLog | null {
     const text = formatFieldValue(entry[1]);
     if (text) { message = text; break; }
   }
-  for (const [key, value] of entries) {
-    if (message !== undefined && MESSAGE_KEYS.includes(key.toLowerCase())) continue;
-    if (IGNORED_KEYS.has(key.toLowerCase()) && level && message) continue;
-    fields.push([key, formatFieldValue(value)]);
+  for (const [key, val] of entries) {
+    const lower = key.toLowerCase();
+    if (message !== undefined && MESSAGE_KEYS.includes(lower)) continue;
+    if (IGNORED_KEYS.has(lower) && level && message) continue;
+    fields.push([key, formatFieldValue(val)]);
   }
   return { level, message, fields };
 }

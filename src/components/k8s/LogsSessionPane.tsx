@@ -3,7 +3,7 @@ import { ContainerChoices } from './ContainerLaunchDialog';
 import { LogsToolbar } from './LogsToolbar';
 import { useSessionContainers } from './useSessionContainers';
 import { LogBuffer, bumpLogTimestamp, type LogLine } from '../../core/utils/log_buffer';
-import { parseStructuredLog, structuredFieldsText } from '../../core/utils/log_structured';
+import { parseStructuredLog } from '../../core/utils/log_structured';
 import { fetchLogSlice, type LogSliceParams } from '../../providers/tauri_logs';
 import { resourceRef } from '../../core/resources/identity';
 import { k8s } from '../../providers/k8s_provider';
@@ -43,18 +43,19 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const [filter, setFilter] = useState('');
   const [showTimestamps, setShowTimestamps] = useState(() => useUiStore.getState().logsTimestamps);
   const [structured, setStructured] = useState(() => useUiStore.getState().logsStructured);
+  const [colorLevels, setColorLevels] = useState(() => useUiStore.getState().logsColorLevels);
   const [pollMs, setPollMs] = useState(() => useUiStore.getState().logsPollMs);
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
   const native = !k8s.demo && '__TAURI_INTERNALS__' in window;
   const [previous, setPrevious] = useState(false);
-  const [tail, setTail] = useState(500);
+  const [tail, setTail] = useState(() => useUiStore.getState().logsDefaultTail);
   const [since, setSince] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [phase, setPhase] = useState('Connecting');
   const [truncated, setTruncated] = useState(false);
-  const bufferRef = useRef(new LogBuffer());
+  const bufferRef = useRef(new LogBuffer(useUiStore.getState().logsMaxBufferLines));
   const outputRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   /* Keeps the loop on the live cadence without tearing down scrollback. */
@@ -71,7 +72,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   useEffect(() => {
     if (bufferSource.current !== sourceKey) {
       bufferSource.current = sourceKey;
-      bufferRef.current = new LogBuffer();
+      bufferRef.current = new LogBuffer(useUiStore.getState().logsMaxBufferLines);
       setLines([]); setError(''); setTruncated(false);
       clearedWatermark.current = ''; pinned.current = true;
     }
@@ -191,7 +192,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
         <p className="text-[var(--text-muted)]">Reads reload the recent tail, then poll only lines after the newest timestamp. Previous logs are a snapshot.</p>
       </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
         onContainer={onContainerChange ?? ((name) => updateSessionContainer(session.id, name))} filter={filter} onFilter={setFilter} isRegex={filterRegex} onToggleRegex={setFilterRegex}
-        paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)} structured={structured} onStructured={() => setStructured(!structured)}
+        paused={paused} onPause={() => setPaused(!paused)} timestamps={showTimestamps} onTimestamps={() => setShowTimestamps(!showTimestamps)} wrap={wrap} onWrap={() => setWrap(!wrap)} structured={structured} onStructured={() => setStructured(!structured)} colorLevels={colorLevels} onColorLevels={() => setColorLevels(!colorLevels)}
         onClear={() => {
           const buffer = bufferRef.current; const last = buffer.lines[buffer.lines.length - 1]?.t;
           clearedWatermark.current = last ? bumpLogTimestamp(last) : '';
@@ -202,37 +203,92 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
         }} />
 
       {/* Log Output Body */}
-      <div ref={outputRef} onScroll={() => { const el = outputRef.current; if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }} className="flex-1 min-h-0 overflow-auto kubiki-scrollbar bg-[var(--bg-canvas)] px-3 py-2 select-text">
+      <div ref={outputRef} data-testid="log-output" onScroll={() => { const el = outputRef.current; if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < useUiStore.getState().logsScrollStickiness; }} className="flex-1 min-h-0 overflow-auto kubiki-scrollbar bg-[var(--bg-canvas)] px-3 py-2 select-text">
         {shown.length === 0 ? (
           <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] font-mono py-4 text-center">
             No logs matching filter “{filter}” for {session.resourceName}
           </div>
         ) : (
-          <div className="font-mono text-[length:calc(11px*var(--ui-factor))] leading-[1.5]">
+          <div className={cx('font-mono text-[length:calc(11px*var(--ui-factor))] leading-[1.6]', !wrap && 'w-max min-w-full')}>
             {shown.map((l) => {
               const parsed = structured ? parsedLines.get(l.seq) ?? null : null;
               const level = parsed?.level ?? l.level;
-              const message = parsed?.message ?? l.msg;
+              const message = parsed ? (parsed.message ?? (parsed.fields.length ? '' : l.msg)) : l.msg;
+
+              const isErr = level === 'error';
+              const isWarn = level === 'warn';
+              const isInfo = level === 'info';
+              const isDbg = level === 'debug';
+
+              // Text highlighting: error -> red, warning -> yellow, info -> blue ONLY when colorLevels is ON
+              const textHighlightClass = colorLevels
+                ? isErr
+                  ? 'text-[#f87171]'
+                  : isWarn
+                  ? 'text-[#fbbf24]'
+                  : isInfo
+                  ? 'text-[#38bdf8]'
+                  : isDbg
+                  ? 'text-[var(--text-muted)]'
+                  : 'text-[var(--text-primary)]'
+                : 'text-[var(--text-primary)]';
+
+              // Grafana-style left border strip ONLY when colorLevels is ON
+              const leftBorderClass = colorLevels
+                ? isErr
+                  ? 'border-l-[3px] border-l-[#ef4444] bg-red-500/[0.04]'
+                  : isWarn
+                  ? 'border-l-[3px] border-l-[#f59e0b] bg-amber-500/[0.04]'
+                  : isInfo
+                  ? 'border-l-[3px] border-l-[#0284c7] bg-sky-500/[0.02]'
+                  : 'border-l-[3px] border-l-[var(--border-subtle)]'
+                : '';
+
               return (
                 <div
                   key={l.seq}
+                  data-testid="log-line"
+                  data-level={level}
                   className={cx(
+                    'py-0.5 px-2 pl-2.5 my-px rounded-r border-t-0 border-r-0 border-b-0 transition-colors hover:bg-[var(--bg-hover)]',
+                    leftBorderClass,
                     wrap ? 'whitespace-pre-wrap' : 'whitespace-nowrap',
-                    level === 'error' ? 'text-[#e05555]' : level === 'warn' ? 'text-[#e5b742]' : level === 'debug' ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'
+                    textHighlightClass
                   )}
                 >
                   {showTimestamps && (
-                    <span className="text-[var(--text-muted)] select-none pr-2 font-mono">{l.t}</span>
+                    <span className="text-[var(--text-muted)] select-none pr-2 font-mono text-[10px]">
+                      {l.t}
+                    </span>
                   )}
-                  <span
-                    className={cx(
-                      'select-none pr-2 font-semibold',
-                      level === 'error' ? 'text-[var(--status-danger)]' : level === 'warn' ? 'text-[var(--status-warn)]' : level === 'debug' ? 'text-[var(--text-muted)]' : 'text-[var(--status-ok)]'
-                    )}
-                  >
-                    {level.toUpperCase().padEnd(5)}
-                  </span>
-                  <span>{message}{parsed?.fields.length ? <span className="text-[var(--text-muted)]"> {structuredFieldsText(parsed.fields)}</span> : null}</span>
+                  <span className="sr-only">{level}: </span>
+                  {message && <span>{message}</span>}
+                  {parsed?.fields.length ? (
+                    <span className="inline-flex flex-wrap items-center gap-1.5 ml-2 align-middle">
+                      {parsed.fields.map(([k, v], idx) => {
+                        const isNum = !isNaN(Number(v)) && v.trim() !== '';
+                        const isBool = v === 'true' || v === 'false';
+                        const isObj = (v.startsWith('{') && v.endsWith('}')) || (v.startsWith('[') && v.endsWith(']'));
+                        const valColor = isBool
+                          ? 'text-amber-400 font-semibold'
+                          : isNum
+                          ? 'text-cyan-400 font-semibold'
+                          : isObj
+                          ? 'text-purple-300'
+                          : 'text-emerald-300';
+                        return (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center text-[10px] px-1.5 py-0.2 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] transition-colors select-text"
+                            title={`${k}: ${v}`}
+                          >
+                            <span className="text-[var(--text-muted)] font-normal mr-1 select-none">{k}:</span>
+                            <span className={cx('font-mono break-all', valColor)}>{v}</span>
+                          </span>
+                        );
+                      })}
+                    </span>
+                  ) : null}
                 </div>
               );
             })}
