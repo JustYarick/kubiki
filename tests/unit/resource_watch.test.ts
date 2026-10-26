@@ -23,6 +23,21 @@ beforeEach(() => { vi.useFakeTimers(); useResourceStore.getState().reset(); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe('Resource watch session', () => {
+  it('keeps per-kind loading accurate during snapshot transport refreshes without dropping existing rows', async () => {
+    const { session, connections } = harness();
+    const first = session.refresh('Pod'); await Promise.resolve();
+    expect(useResourceStore.getState().syncMode).toBe('snapshot');
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(true);
+    connections[0].emit(delta([pod('existing')]), live); await flush(); await first;
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(false);
+    const refresh = session.refresh('Pod'); await Promise.resolve();
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(true);
+    expect(useResourceStore.getState().resources.Pod.has('existing')).toBe(true);
+    connections[1].emit(delta([pod('new')]), live); await flush(); await refresh;
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(false);
+    expect([...useResourceStore.getState().resources.Pod.keys()]).toEqual(['new']);
+    session.stop();
+  });
   it('releases unused watches, rejects late updates and reopens them with a fresh snapshot', async () => {
     const { session, connections } = harness();
     const initial = session.setKinds(['Pod', 'Service'], new Set()); await Promise.resolve();

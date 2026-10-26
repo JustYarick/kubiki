@@ -51,6 +51,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
       // Scope changes must not leave navigation history pointing to stale, unloaded objects.
       selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => resourceBucket(item) !== kind) : state.selectionHistory,
       watchStates: { ...state.watchStates, [kind]: update.state },
+      loadingKinds: { ...state.loadingKinds, [kind]: update.state.phase === 'connecting' || update.state.phase === 'syncing' },
       loadErrors: { ...state.loadErrors, [kind]: update.error ? normalizeK8sError(update.error, { operation: 'watch', context: useClusterStore.getState().currentContext ?? undefined }) : undefined },
     };
   }),
