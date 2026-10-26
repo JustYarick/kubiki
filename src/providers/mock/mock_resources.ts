@@ -207,10 +207,10 @@ const SC_SEEDS: Array<{ name: string; provisioner: string; reclaim: string; bind
 ];
 
 const NODE_SEEDS: Array<{ name: string; status: string; roles: string; version: string; cpu: string; mem: string; pods: string; ip: string; os: string; taints: number }> = [
-  { name: 'node-1a', status: 'Ready', roles: 'control-plane,worker', version: 'v1.31.2', cpu: '4.0 / 8', mem: '9.6 / 16Gi', pods: '14 / 110', ip: '192.168.58.2', os: 'ubuntu 22.04', taints: 1 },
-  { name: 'node-1b', status: 'Ready', roles: 'worker', version: 'v1.31.2', cpu: '1.2 / 8', mem: '6.4 / 16Gi', pods: '9 / 110', ip: '192.168.58.3', os: 'ubuntu 22.04', taints: 0 },
-  { name: 'node-2a', status: 'Ready', roles: 'worker', version: 'v1.31.1', cpu: '3.1 / 8', mem: '11.9 / 16Gi', pods: '12 / 110', ip: '192.168.58.4', os: 'ubuntu 22.04', taints: 0 },
-  { name: 'gpu-node-1', status: 'NotReady', roles: 'worker,gpu', version: 'v1.31.2', cpu: '0.4 / 16', mem: '2.0 / 32Gi', pods: '6 / 110', ip: '192.168.58.5', os: 'ubuntu 22.04', taints: 1 },
+  { name: 'node-1a', status: 'Ready', roles: 'control-plane,worker', version: 'v1.31.2', cpu: '4.0 / 8', mem: '9.6 / 16Gi', pods: '14', ip: '192.168.58.2', os: 'ubuntu 22.04', taints: 1 },
+  { name: 'node-1b', status: 'Ready', roles: 'worker', version: 'v1.31.2', cpu: '1.2 / 8', mem: '6.4 / 16Gi', pods: '9', ip: '192.168.58.3', os: 'ubuntu 22.04', taints: 0 },
+  { name: 'node-2a', status: 'Ready', roles: 'worker', version: 'v1.31.1', cpu: '3.1 / 8', mem: '11.9 / 16Gi', pods: '12', ip: '192.168.58.4', os: 'ubuntu 22.04', taints: 0 },
+  { name: 'gpu-node-1', status: 'NotReady', roles: 'worker,gpu', version: 'v1.31.2', cpu: '0.4 / 16', mem: '2.0 / 32Gi', pods: '6', ip: '192.168.58.5', os: 'ubuntu 22.04', taints: 1 },
 ];
 
 const NS_SEEDS: Array<{ name: string; status: string; labels: number; age: string }> = [

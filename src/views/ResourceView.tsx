@@ -803,13 +803,13 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                         setFilterMenu({ colId: c.id, x: event.clientX, y: event.clientY });
                       }}
                       className={cx(
-                        'datagrip-th select-none px-2.5 relative text-left font-medium cursor-pointer hover:text-[var(--text-primary)] transition-colors',
-                        c.align === 'right' && 'text-right',
+                        'datagrip-th select-none relative font-medium cursor-pointer hover:text-[var(--text-primary)] transition-colors',
+                        c.align === 'right' ? 'text-right pl-[calc(22px*var(--ui-factor))] pr-2.5' : 'text-left pl-2.5 pr-[calc(24px*var(--ui-factor))]',
                         draggingColumn === c.id && 'opacity-50',
                         dropTarget === c.id && draggingColumn && draggingColumn !== c.id && 'ring-1 ring-inset ring-[var(--accent)]',
                       )}
                     >
-                      <span className="inline-flex items-center gap-1 min-w-0">
+                      <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
                         <span className="truncate">{c.label}</span>
                         {key && (
                           <span className="shrink-0 inline-flex items-center gap-0.5 text-[var(--accent)]" title={key.statusFirst ? `${key.statusFirst} first` : key.direction === 'asc' ? 'Sorted ascending' : 'Sorted descending'}>
