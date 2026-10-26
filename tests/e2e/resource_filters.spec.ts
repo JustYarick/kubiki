@@ -127,6 +127,7 @@ test('columns can be reordered by drag and by the keyboard alternative', async (
   await fixture(page);
   const table = await openPods(page);
   const headers = table.getByRole('columnheader');
+  await expect(headers.first()).toBeVisible();
   const before = await headers.evaluateAll((cells) => cells.map((cell) => cell.getAttribute('aria-label')));
   expect(before).toContain('Namespace');
   expect(before).toContain('Status');

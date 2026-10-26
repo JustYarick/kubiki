@@ -94,6 +94,7 @@ test('unsaved YAML survives a details tab switch and blocks app updates', async 
   await demo(page);
   await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter deployments…').fill('api-gateway');
   await page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway' }).click();
 
   const details = page.getByTestId('resource-details');

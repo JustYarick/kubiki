@@ -11,6 +11,7 @@ for (const { width, scale } of layoutCases('overview')) {
     if (await page.getByTestId('explorer-panel').isVisible()) await page.keyboard.press('ControlOrMeta+b');
     const overview = page.getByTestId('cluster-overview');
     await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('1.6 cores');
+    await expect(overview.locator('details')).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     const blocks = await overview.locator('.overview-section').evaluateAll(elements => elements.map(element => {
       const rect = element.getBoundingClientRect(); return { x: rect.x, width: rect.width, y: rect.y, bottom: rect.bottom };

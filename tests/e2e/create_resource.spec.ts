@@ -111,6 +111,7 @@ test('demo creation stores the actual manifest and opens the YAML workspace', as
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId('yaml-editor').locator('.view-lines')).toContainText('demo-created-config');
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^ConfigMaps(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter configmaps…').fill('demo-created-config');
   await expect(page.getByTestId('resource-table').getByTitle('demo-created-config', { exact: true })).toBeVisible();
 });
 
