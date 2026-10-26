@@ -22,6 +22,7 @@ import { cx } from '../../core/utils/cx';
 export function TerminalSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
   const choice = useSessionContainers(session, true);
   if (choice.needsSelection) return <SessionContainerChoice session={session} shell onContainerChange={onContainerChange} />;
+  if (session.targetType === 'local' && !k8s.simulateHostSessions) return <LiveTerminalPane session={session} visible={visible} />;
   if (!k8s.demo && session.targetType === 'node') return <NodeShellPane session={session} visible={visible} />;
   if (!k8s.demo && (session.targetType === 'pod' || session.targetType === 'local')) return <LiveTerminalPane session={session} visible={visible} onContainerChange={onContainerChange} />;
   if (!k8s.demo) return <div className="p-5 text-xs text-[var(--text-secondary)]">{session.targetType === 'node' ? 'Node debug shell requires a managed debug Pod; this transport is not connected yet.' : 'Local host PTY is not connected yet. Open Shell from a Pod to use Kubernetes exec.'}</div>;

@@ -93,6 +93,7 @@ export default function App() {
     closeNodeDebugConnections();
     closePortForwards();
     setDiscoveredResourceTypes();
+    k8s.activateContext(contextName);
     useClusterStore.getState().selectContext(contextName);
     useClusterStore.setState({ availableResourceKinds: null });
     useResourceStore.getState().reset();
@@ -148,6 +149,16 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    k8s.setDeveloperMode(useUiStore.getState().developerMode);
+    const unsubscribeDeveloperMode = useUiStore.subscribe((state, previous) => {
+      if (state.developerMode === previous.developerMode) return;
+      const contexts = k8s.setDeveloperMode(state.developerMode);
+      if (!contexts || cancelled) return;
+      const previousContext = useClusterStore.getState().currentContext;
+      setContexts(contexts);
+      const current = useClusterStore.getState().currentContext;
+      if (current && current !== previousContext) void connectToContext(current);
+    });
     async function initCluster() {
       setLoading(true);
       try {
@@ -164,6 +175,7 @@ export default function App() {
     void initCluster();
     return () => {
       cancelled = true;
+      unsubscribeDeveloperMode();
       connectionGeneration.current++;
       stopMockWatchEngine();
       stopResourceWatches();

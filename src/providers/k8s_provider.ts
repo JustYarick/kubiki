@@ -15,19 +15,35 @@ import { normalizeK8sError, requestError, type RequestInfo } from './errors';
 import type { ResourceQuery, ResourceRef } from '../core/resources/resource_types';
 import type { WatchBatch } from './watch_types';
 import { parseCustomResources, type CustomResourceInstance } from './custom_resources';
+import { resourceBucket } from '../core/resources/custom_resource_types';
 import { parseHelmPage, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmOffset, validateHelmDocument, type HelmDocument } from './helm_types';
 
 export const DEMO_CONTEXT = 'kubiki-demo';
 
 export class K8sProvider implements KubernetesProvider {
-  constructor(private readonly transport: KubernetesReadTransport = environmentReadTransport) {}
-  readonly demo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
+  constructor(private readonly transport: KubernetesReadTransport = environmentReadTransport, private developerMode = false) {}
+  private readonly forcedDemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
+  private activeContext: string | null = null;
+  private demoListed = false;
+  private realContexts: KubeContextInfo[] | null = null;
+  get demo(): boolean { return this.forcedDemo || this.demoListed && this.activeContext === DEMO_CONTEXT; }
+  // Only the explicit browser demo simulates the workstation's own shell.
+  get simulateHostSessions(): boolean { return this.forcedDemo; }
+  activateContext(context: string) { this.activeContext = context; }
+  setDeveloperMode(enabled: boolean): KubeContextInfo[] | null {
+    this.developerMode = enabled;
+    return this.realContexts ? this.contextList(this.realContexts) : null;
+  }
+  private contextList(contexts: KubeContextInfo[]): KubeContextInfo[] {
+    this.demoListed = (!contexts.length || this.developerMode) && !contexts.some(context => context.name === DEMO_CONTEXT);
+    return this.demoListed ? [...contexts, { name: DEMO_CONTEXT, cluster: 'Demo cluster', user: 'demo', is_current: contexts.length === 0 }] : contexts;
+  }
   private mock: ReturnType<typeof buildMockResources> | undefined;
   get supportsResourceWatch(): boolean { return !this.demo && this.isTauriEnv(); }
   get supportsHelmMutations(): boolean { return !this.demo && this.isTauriEnv(); }
 
   async resetResourceWatches(): Promise<void> {
-    if (!this.supportsResourceWatch) return;
+    if (!this.isTauriEnv()) return;
     const { invoke } = await import('@tauri-apps/api/core');
     try { await invoke('stop_resource_watches'); }
     catch (error) { throw normalizeK8sError(error, { operation: 'unwatch' }); }
@@ -55,18 +71,28 @@ export class K8sProvider implements KubernetesProvider {
   }
 
   async getContexts(): Promise<KubeContextInfo[]> {
-    if (this.demo) return [{ name: DEMO_CONTEXT, cluster: 'Demo cluster', user: 'demo', is_current: true }];
-    return this.request('get_kube_contexts', 'contexts');
+    if (this.forcedDemo) return [{ name: DEMO_CONTEXT, cluster: 'Demo cluster', user: 'demo', is_current: true }];
+    let contexts: KubeContextInfo[];
+    try { contexts = await this.request('get_kube_contexts', 'contexts'); }
+    catch (error) {
+      const message = normalizeK8sError(error).message;
+      const missingConfig = /(?:kubeconfig|config).*?(?:not found|no such file|does not exist|not set)|(?:no such file|not found).*?(?:kubeconfig|config)/i.test(message);
+      if (!this.developerMode && !missingConfig) throw error;
+      contexts = [];
+    }
+    this.realContexts = contexts;
+    return this.contextList(contexts);
   }
 
   async getKubeconfigPath(): Promise<string> {
-    if (this.demo) return '~/.kube/config (demo)';
+    if (this.forcedDemo) return '~/.kube/config (demo)';
     return this.request('get_kubeconfig_path', 'kubeconfig_path');
   }
 
   async setKubeconfigPath(path: string | null): Promise<KubeContextInfo[]> {
-    if (this.demo) return this.getContexts();
-    return this.request('set_kubeconfig_path', 'set_kubeconfig_path', { path });
+    if (this.forcedDemo) return this.getContexts();
+    await this.request('set_kubeconfig_path', 'set_kubeconfig_path', { path });
+    return this.getContexts();
   }
 
   async pingCluster(context: string): Promise<{ status: string; version?: string }> {
@@ -131,7 +157,10 @@ export class K8sProvider implements KubernetesProvider {
         ];
         return parseCustomResources({ items: rawItems }).filter(item => inNamespaceScope(namespace ?? 'all', item.namespace));
       }
-      return [];
+      this.mock ??= buildMockResources();
+      const definition = this.mock.CustomResourceDefinition.find(item => item.name === name);
+      const spec = definition?.raw?.spec;
+      return spec ? (this.mock[resourceBucket({ kind: spec.names.kind, apiVersion: `${spec.group}/${spec.versions.find((version: any) => version.storage)?.name ?? 'v1'}` })] ?? []).filter(item => inNamespaceScope(namespace ?? 'all', item.namespace)) : [];
     }
     return parseCustomResources(await this.request('get_custom_resources', 'custom-resources', { context, name, uid, namespace }, undefined, undefined, signal));
   }

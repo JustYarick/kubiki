@@ -252,7 +252,7 @@ const ExpandedDock: React.FC = () => {
                   <Laptop size="calc(13px * var(--ui-factor))" className="text-sky-400" />
                   <div className="flex flex-col text-left">
                     <span className="font-medium">Local Terminal (Host PC)</span>
-                    <span className="text-[length:calc(9.5px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? 'Simulated local shell' : 'Your workstation · home directory'}</span>
+                    <span className="text-[length:calc(9.5px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.simulateHostSessions ? 'Simulated local shell' : 'Your workstation · home directory'}</span>
                   </div>
                 </button>
                 <button

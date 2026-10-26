@@ -116,7 +116,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: 'developer', title: 'Developer', icon: Code2, sectionTitle: 'Developer tools',
     entries: [
-      { id: 'developer.mode', label: 'Developer mode', description: 'Show the SDK Diagnostics extension in the catalog and workspace. Hidden by default.', keywords: 'dev sdk test diagnostics plugin extension debug' },
+      { id: 'developer.mode', label: 'Developer mode', description: 'Show the demo cluster alongside kubeconfig contexts and enable the SDK Diagnostics extension. Without kubeconfig contexts, the demo cluster is always available.', keywords: 'dev sdk test diagnostics plugin extension debug demo cluster kubeconfig mock' },
     ],
   },
   {

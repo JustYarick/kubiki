@@ -1,11 +1,12 @@
 import { parse, stringify } from 'yaml';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
+import { buildMockDelivery } from './mock_delivery';
 
 /* ------------------------------------------------------------ */
 /* Deterministic mock cluster: realistic data volume. */
 /* ------------------------------------------------------------ */
 
-export const MOCK_NAMESPACES = ['default', 'backend', 'frontend', 'monitoring', 'kube-system', 'logging'];
+export const MOCK_NAMESPACES = ['default', 'backend', 'frontend', 'monitoring', 'kube-system', 'logging', 'flux-system', 'argocd', 'staging', 'infra'];
 
 const NODE_HOSTS = ['node-1a', 'node-1b', 'node-2a', 'gpu-node-1'];
 
@@ -589,7 +590,22 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
     pod.raw!.metadata.ownerReferences = [{ apiVersion: owner.apiVersion, kind: owner.kind, name: owner.name, uid: owner.uid }];
     pod.raw!.spec.nodeName = pod.node === '-' ? undefined : pod.node;
   }
-  for (const list of Object.values(out)) for (const item of list) item.rawYaml = stringify(item.raw);
+  const hook: ResourceItem = { uid: 'demo-loki-migrate', kind: 'Job', apiVersion: 'batch/v1', name: 'loki-migrate', namespace: 'logging', status: 'Failed', raw: { apiVersion: 'batch/v1', kind: 'Job', metadata: { name: 'loki-migrate', namespace: 'logging', uid: 'demo-loki-migrate', annotations: { 'helm.sh/hook': 'pre-upgrade', 'helm.sh/hook-weight': '-5' } }, spec: { backoffLimit: 3 }, status: { failed: 4, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded', message: 'Loki schema migration failed after 4 attempts.' }] } } };
+  out.Job.push(hook);
+  out.Event.push({ uid: 'demo-loki-hook-event', kind: 'Event', apiVersion: 'v1', name: 'loki-migrate.failed', namespace: 'logging', raw: { apiVersion: 'v1', kind: 'Event', metadata: { name: 'loki-migrate.failed', namespace: 'logging', uid: 'demo-loki-hook-event' }, involvedObject: { apiVersion: 'batch/v1', kind: 'Job', namespace: 'logging', name: 'loki-migrate', uid: hook.uid }, type: 'Warning', reason: 'BackoffLimitExceeded', message: 'Job has reached the specified backoff limit.', count: 4, lastTimestamp: new Date(Date.now() - 12 * 60000).toISOString() } });
+  const delivery = buildMockDelivery();
+  out.CustomResourceDefinition = [...out.CustomResourceDefinition.filter(item => !delivery.definitions.some(definition => definition.name === item.name)), ...delivery.definitions];
+  Object.assign(out, delivery.custom);
+  out.Event.push(...delivery.events);
+  for (const workload of [...out.Deployment, ...out.StatefulSet, ...out.DaemonSet, ...out.Job]) {
+    const release = workload.name === 'loki-migrate' ? 'loki' : workload.name === 'payment-worker' ? 'demo-api' : workload.name === 'prometheus-server' ? 'prometheus' : workload.name;
+    workload.raw!.metadata.labels = { ...workload.raw!.metadata.labels, 'app.kubernetes.io/managed-by': 'Helm' };
+    workload.raw!.metadata.annotations = { ...workload.raw!.metadata.annotations, 'meta.helm.sh/release-name': release, 'meta.helm.sh/release-namespace': workload.namespace };
+    workload.metadata = workload.raw!.metadata;
+  }
+  for (const list of Object.values(out)) for (const item of list) {
+    if (!Object.getOwnPropertyDescriptor(item, 'rawYaml')?.get) item.rawYaml = stringify(item.raw);
+  }
   return out;
 }
 

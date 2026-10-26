@@ -20,7 +20,7 @@ export function useOverviewMetrics(context: string | null, namespace: string | n
       if (snapshot.data && snapshot.data !== lastData) {
         lastData = snapshot.data;
         const sample = project.current(snapshot.data);
-        if (k8s.demo && !history.length && sample) history = Array.from({ length: 36 }, (_, index) => ({ at: sample.at - (35 - index) * 15000, cpu: sample.cpu === null ? null : sample.cpu * (0.8 + Math.sin(index * .37) * .14 + Math.cos(index * .71) * .06), memory: sample.memory === null ? null : sample.memory * (0.84 + index / 220 + Math.sin(index * .24) * .03) }));
+        if (k8s.demo && !history.length && sample) history = Array.from({ length: 35 }, (_, index) => ({ at: sample.at - (35 - index) * 15000, cpu: sample.cpu === null ? null : sample.cpu * (0.8 + Math.sin(index * .37) * .14 + Math.cos(index * .71) * .06), memory: sample.memory === null ? null : sample.memory * (0.84 + index / 220 + Math.sin(index * .24) * .03) }));
         history = appendHistory(history, sample);
         if (sample) {
           histories.delete(key); histories.set(key, history);

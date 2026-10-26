@@ -316,6 +316,8 @@ pnpm tauri dev
 
 The Tauri hooks also prepare the pinned Node runtime and build the extension SDK, tools, controller and bundled diagnostics. The first preparation downloads Node and verifies its official archive checksum. For a browser-only demo, run `pnpm dev` and open `http://localhost:1420/?demo=1`; native operations and extension processes require the desktop application.
 
+If kubeconfig is absent or contains no contexts, Kubiki starts `kubiki-demo` automatically, including in installed builds. Enable **Settings → Developer → Developer mode** to also show the demo alongside real kubeconfig contexts. The list updates immediately; disabling Developer mode hides the extra demo and reconnects to a real context if needed. The demo includes workloads, Flux sources and reconciliations, Argo CD applications with separate health/sync states, Helm releases, and a failed hook Job.
+
 ### Building desktop packages
 
 ```sh
