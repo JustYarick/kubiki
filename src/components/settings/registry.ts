@@ -97,6 +97,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     sectionTitle: 'Kubernetes',
     resetLabel: 'Reset Kubernetes defaults',
     entries: [
+      { id: 'kubernetes.remember-context', label: 'Reopen last selected cluster', description: 'Connect to the last selected kubeconfig context after restarting. If it was removed, use the current context from kubeconfig.', keywords: 'cluster context remember startup restore persistence session reopen' },
       { id: 'kubernetes.remember-scope', label: 'Remember namespace scope per context', description: 'Restores the namespace selection of each context when it is selected again.', keywords: 'namespace scope context persistence restore' },
       { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Configure custom kubeconfig file path or use the default location (~/.kube/config / $KUBECONFIG).', keywords: 'config path credentials files' },
       { id: 'kubernetes.port-range', label: 'Local port forward range', description: 'Preferred local port range for auto-assigning local tunnel listeners (e.g. 8000-8999).', keywords: 'port forward range local listen tunnel network' },

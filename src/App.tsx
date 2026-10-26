@@ -154,7 +154,7 @@ export default function App() {
         const contexts = await k8s.getContexts();
         if (cancelled) return;
         setContexts(contexts);
-        const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+        const current = useClusterStore.getState().currentContext;
         if (current) await connectToContext(current);
         else { useClusterStore.getState().setError('No Kubernetes contexts found in kubeconfig.'); setLoading(false); }
       } catch (error) {

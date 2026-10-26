@@ -415,6 +415,8 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
 }
 
 function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
+  const rememberLastContext = useClusterStore((s) => s.rememberLastContext);
+  const setRememberLastContext = useClusterStore((s) => s.setRememberLastContext);
   const rememberNamespaceScope = useClusterStore((s) => s.rememberNamespaceScope);
   const setRememberNamespaceScope = useClusterStore((s) => s.setRememberNamespaceScope);
   const portForwardLocalRange = useUiStore((s) => s.portForwardLocalRange);
@@ -435,7 +437,7 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
       setLoading(true);
       const contexts = await k8s.setKubeconfigPath(kubeconfigPath.trim() || null);
       useClusterStore.getState().setContexts(contexts);
-      const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+      const current = useClusterStore.getState().currentContext;
       if (current) {
         useClusterStore.getState().selectContext(current);
       }
@@ -454,7 +456,7 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
       const defaultPath = await k8s.getKubeconfigPath();
       setKubeconfigPath(defaultPath);
       useClusterStore.getState().setContexts(contexts);
-      const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+      const current = useClusterStore.getState().currentContext;
       if (current) {
         useClusterStore.getState().selectContext(current);
       }
@@ -469,6 +471,9 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <Row entry={findEntry('kubernetes.remember-context')}>
+        <Checkbox aria-label="Reopen last selected cluster" checked={rememberLastContext} onChange={event => setRememberLastContext(event.target.checked)} />
+      </Row>
       <Row entry={findEntry('kubernetes.remember-scope')}>
         <Checkbox
           aria-label="Remember namespace scope per context"
@@ -640,6 +645,7 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     toast.success('Log defaults restored');
   },
   kubernetes: () => {
+    useClusterStore.getState().setRememberLastContext(true);
     useClusterStore.getState().setRememberNamespaceScope(true);
     const ui = useUiStore.getState();
     ui.setPortForwardLocalRange('8000-8999');
