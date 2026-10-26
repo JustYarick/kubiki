@@ -161,7 +161,7 @@ const ExpandedDock: React.FC = () => {
       style={{ height: uiPixels(dockHeight), maxHeight: 'calc(100dvh - 170px)' }}
     >
       {/* Lens-Grade Multi-Session Tab Strip */}
-      <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-stretch px-1 gap-0.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-x-auto overflow-y-hidden kubiki-scrollbar select-none">
+      <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-stretch border-b border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-x-auto overflow-y-hidden kubiki-scrollbar select-none">
         {sessions.map((s) => {
           const isActive = s.id === activeSessionId;
           const Icon = getSessionIcon(s);

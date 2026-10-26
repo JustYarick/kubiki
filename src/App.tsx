@@ -281,8 +281,15 @@ export default function App() {
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
           <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
 
-          {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
-          <BottomDock />
+          {/* Bottom Dock drawer — shares the foreground layer with InspectorPanel, adapting its width */}
+          <div
+            data-testid="bottom-dock-wrapper"
+            style={{ marginRight: showInspector ? uiPixels(detailWidth) : '0px' }}
+            className="flex flex-col min-w-0 shrink-0 z-20"
+          >
+            {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
+            <BottomDock />
+          </div>
         </main>
 
         {/* Right Tool Window (Inspector / Details) — floats above the workspace, the table keeps its size */}

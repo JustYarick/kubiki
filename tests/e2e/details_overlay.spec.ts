@@ -69,3 +69,31 @@ test('keyboard focus in the table is not hidden under the floating panel', async
   const padding = await table.evaluate(element => getComputedStyle(element).scrollPaddingRight);
   expect(parseFloat(padding)).toBeGreaterThan(0);
 });
+
+test('the right panel opening resizes the bottom dock and never occludes it', async ({ page }) => {
+  const table = await openPods(page);
+  await page.keyboard.press('ControlOrMeta+j');
+  const dock = page.getByTestId('bottom-dock-wrapper');
+  await expect(dock).toBeVisible();
+
+  const dockBoxBefore = await box(dock);
+
+  await table.locator('tbody tr').first().click();
+  const panel = page.getByTestId('inspector-panel');
+  await expect(panel).toBeVisible();
+
+  const dockBoxAfter = await box(dock);
+  const panelBox = await box(panel);
+
+  expect(dockBoxAfter[2]).toBeLessThan(dockBoxBefore[2]);
+  expect(dockBoxAfter[0] + dockBoxAfter[2]).toBeLessThanOrEqual(panelBox[0] + 1);
+
+  const collapseButton = page.getByRole('button', { name: 'Collapse', exact: true });
+  await expect(collapseButton).toBeVisible();
+  const btnBox = (await collapseButton.boundingBox())!;
+  expect(btnBox.x + btnBox.width).toBeLessThanOrEqual(panelBox[0] + 1);
+
+  await panel.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
+  await expect(panel).toHaveCount(0);
+  expect((await box(dock))[2]).toBeCloseTo(dockBoxBefore[2], 0);
+});
