@@ -8,12 +8,16 @@ const API = 'https://www.virustotal.com/api/v3';
 export const REQUEST_INTERVAL_MS = 16_000;
 export const REPORT_NAMES = ['VIRUSTOTAL-REPORT.json', 'VIRUSTOTAL-REPORT.md'];
 const CATEGORIES = ['harmless', 'undetected', 'malicious', 'suspicious', 'failure', 'timeout', 'confirmed-timeout', 'type-unsupported'];
+// Large files are uploaded to a separate VirusTotal domain returned by
+// /files/upload_url; it must never be used as an API endpoint.
+const UPLOAD_HOSTS = new Set(['www.virustotal.com', 'bigfiles.virustotal.com']);
 const validAnalysisId = id => typeof id === 'string' && id.length > 0 && id.length <= 512 && /^[\w=+/-]+$/.test(id);
 
-function trustedUrl(value) {
+function trustedUrl(value, { upload = false } = {}) {
   const url = new URL(value);
-  if (url.hostname !== 'www.virustotal.com' || url.username || url.password || url.port) {
-    throw new Error('Unexpected VirusTotal upload host.');
+  const trusted = upload ? UPLOAD_HOSTS.has(url.hostname) : url.hostname === 'www.virustotal.com';
+  if (!trusted || url.username || url.password || url.port) {
+    throw new Error(upload ? 'Unexpected VirusTotal upload host.' : 'Unexpected VirusTotal API host.');
   }
   // The documented large-file endpoint can return an old HTTP URL.
   if (url.protocol === 'http:') url.protocol = 'https:';
@@ -37,8 +41,8 @@ export class VirusTotalClient {
     this.queue = Promise.resolve();
   }
 
-  request(url, bodyFactory) {
-    const run = this.queue.then(() => this.perform(trustedUrl(url), bodyFactory));
+  request(url, bodyFactory, options) {
+    const run = this.queue.then(() => this.perform(trustedUrl(url, options), bodyFactory));
     this.queue = run.catch(() => {});
     return run;
   }
@@ -75,12 +79,16 @@ export class VirusTotalClient {
   async upload(file, name, size) {
     if (size <= 0 || size > 650 * 1024 * 1024) throw new Error(`Unsupported VirusTotal file size: ${name}`);
     let url = `${API}/files`;
-    if (size > 32 * 1024 * 1024) url = (await this.request(`${API}/files/upload_url`)).data;
+    let direct = true;
+    if (size > 32 * 1024 * 1024) {
+      url = (await this.request(`${API}/files/upload_url`)).data;
+      direct = false;
+    }
     const response = await this.request(url, async () => {
       const form = new FormData();
       form.append('file', await openAsBlob(file), name);
       return form;
-    });
+    }, { upload: !direct });
     if (response.data?.type !== 'analysis' || !validAnalysisId(response.data.id)) {
       throw new Error('VirusTotal did not return an analysis ID.');
     }

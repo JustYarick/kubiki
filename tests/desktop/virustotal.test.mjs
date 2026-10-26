@@ -62,7 +62,7 @@ test('large-file URL lookup, upload and analysis calls are all paced; keys canno
     await handle.truncate(33 * 1024 * 1024);
     await handle.close();
     const { client, calls } = mockClient((url, options) => {
-      if (url.endsWith('/upload_url')) return json({ data: 'http://www.virustotal.com/_ah/upload/single-use' });
+      if (url.endsWith('/upload_url')) return json({ data: 'http://bigfiles.virustotal.com/_ah/upload/single-use' });
       if (options.method === 'POST') {
         assert.equal(options.body.get('file').size, 33 * 1024 * 1024);
         assert.equal(options.body.get('file').name, 'app.bin');
@@ -73,11 +73,17 @@ test('large-file URL lookup, upload and analysis calls are all paced; keys canno
     assert.equal(await client.upload(file, 'app.bin', 33 * 1024 * 1024), 'analysis-id');
     await client.analysis('analysis-id');
     assert.deepEqual(calls.map(call => call.at), [16_000, 32_000, 48_000]);
-    assert.equal(calls[1].url, 'https://www.virustotal.com/_ah/upload/single-use');
+    assert.equal(calls[1].url, 'https://bigfiles.virustotal.com/_ah/upload/single-use');
     await assert.rejects(client.upload(file, 'app.bin', 651 * 1024 * 1024), /file size/);
-    const malicious = mockClient(() => json({ data: 'https://attacker.example/upload' }));
-    await assert.rejects(malicious.client.upload(file, 'app.bin', 33 * 1024 * 1024), /upload host/);
-    assert.equal(malicious.calls.length, 1);
+    for (const data of ['https://attacker.example/upload', 'https://bigfiles.virustotal.com:8443/upload',
+      'https://user@www.virustotal.com/upload', 'https://bigfiles.virustotal.com.evil.example/upload']) {
+      const malicious = mockClient(() => json({ data }));
+      await assert.rejects(malicious.client.upload(file, 'app.bin', 33 * 1024 * 1024), /upload host/);
+      assert.equal(malicious.calls.length, 1);
+    }
+    const apiOnly = mockClient(() => json({}));
+    await assert.rejects(apiOnly.client.request('https://bigfiles.virustotal.com/api/v3/files/x'), /API host/);
+    assert.equal(apiOnly.calls.length, 0);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
