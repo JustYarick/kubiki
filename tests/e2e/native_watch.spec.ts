@@ -1,7 +1,5 @@
 import { selectDiagramNamespaces } from './helpers/topology';
-import { RESOURCE_TYPES } from '../../src/core/resources/resource_types';
 import { OVERVIEW_KINDS } from '../../src/core/resources/resource_demand';
-const resourceCount = RESOURCE_TYPES.length;
 import { test, expect, type Page } from '@playwright/test';
 
 async function delayTopologyBuilds(page: Page) {
@@ -69,7 +67,7 @@ async function nativeApi(page: Page, holdPod = false, restricted = false, initia
             return;
           }
           const items = s.query.kind === 'Pod'
-            ? (s.query.namespace === null ? [pod('Running', 'backend'), pod('Running', 'other')] : [pod('Running', s.query.namespace)])
+            ? (s.query.namespace === null ? [pod(initialPhase, 'backend'), pod(initialPhase, 'other')] : [pod(initialPhase, s.query.namespace)])
             : s.query.kind === 'Namespace' ? ['backend', 'other'].map((name) => ({ apiVersion: 'v1', kind: 'Namespace', metadata: { uid: `ns-${name}`, name } })) : [];
           const initial = () => emit(s, [{ type: 'Status', payload: { phase: 'syncing', error: null } }, { type: 'Delta', payload: { type: 'Restarted', payload: { items } } }, { type: 'Status', payload: { phase: 'live', error: null } }]);
           if (s.query.kind === 'Pod' && (holdPod || s.query.namespace === heldNamespace)) held.push(initial); else queueMicrotask(initial);
@@ -81,10 +79,10 @@ async function nativeApi(page: Page, holdPod = false, restricted = false, initia
   }, { holdPod, restricted, initialPhase });
 }
 
-test('connection collects full inventory and health before views open, then watches only demanded sources', async ({ page }) => {
-  await nativeApi(page, true, false, 'Failed'); await page.goto('/');
+test('connection starts with minimal sidebar watches and loads Overview or table sources on demand without full cluster dumps', async ({ page }) => {
+  await nativeApi(page, false, false, 'Failed'); await page.goto('/');
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => (window as any).__watchHarness.stats.snapshots)).toBe(resourceCount);
+  expect(await page.evaluate(() => (window as any).__watchHarness.stats.snapshots)).toBe(0);
   expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(2);
   await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const overview = page.getByTestId('cluster-overview');
@@ -125,7 +123,7 @@ test('Sync replaces subscriptions, ignores old messages, and pagehide releases c
   await page.evaluate(() => (window as any).__watchHarness.late());
   await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
   await expect(page.getByTestId('resource-table').getByText('stale-web', { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).__watchHarness.stats.snapshots)).toBe(resourceCount);
+  expect(await page.evaluate(() => (window as any).__watchHarness.stats.snapshots)).toBe(0);
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.active())).toBe(0);
   expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(0);
@@ -235,11 +233,10 @@ test('context A → B → A isolates old subscriptions, including late callbacks
   }
 });
 
-test('initial inventory stays visible while the first watch snapshot is pending', async ({ page }) => {
+test('first sync is visibly pending and does not pretend the namespace is empty', async ({ page }) => {
   await nativeApi(page, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
-  await expect(table.getByText('live-web', { exact: true })).toBeVisible();
-  await expect(page.getByText('Watch · synchronizing', { exact: true })).toBeVisible();
+  await expect(table.getByRole('status')).toContainText('Waiting for the first complete snapshot');
   await expect(table.getByText('No pods found', { exact: true })).toHaveCount(0);
   await page.evaluate(() => (window as any).__watchHarness.release());
   await expect(table.getByText('live-web', { exact: true })).toBeVisible();

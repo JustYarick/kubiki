@@ -87,10 +87,18 @@ interface ResourceViewProps {
   customType?: CustomResourceType;
 }
 
+const EMPTY_RESOURCE_MAP = new Map<string, ResourceItem>();
+
 export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind, customType }) => {
   const activeKind = useResourceStore(s => s.activeKind);
   const effectiveKind = explicitKind || activeKind;
-  const resources = useResourceStore(useShallow(s => ({ [effectiveKind]: s.resources[effectiveKind], Pod: s.resources.Pod, StorageClass: s.resources.StorageClass })));
+  const needsPods = effectiveKind === 'Pod' || effectiveKind === 'Node' || effectiveKind === 'Service';
+  const needsStorageClass = effectiveKind === 'StorageClass' || effectiveKind === 'PersistentVolumeClaim';
+  const resources = useResourceStore(useShallow(s => ({
+    [effectiveKind]: s.resources[effectiveKind],
+    Pod: needsPods ? s.resources.Pod : EMPTY_RESOURCE_MAP,
+    StorageClass: needsStorageClass ? s.resources.StorageClass : EMPTY_RESOURCE_MAP,
+  })));
   const {
     setActiveKind, selectItem, selectedItem,
     applyDelta,
@@ -109,6 +117,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   const custom = useCustomResources(customType);
   const podsByNode = useMemo(() => {
     const map = new Map<string, number>();
+    if (effectiveKind !== 'Node') return map;
     const podMap = resources.Pod;
     if (!podMap) return map;
     for (const pod of podMap.values()) {
@@ -116,7 +125,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
       if (nodeName) map.set(nodeName, (map.get(nodeName) ?? 0) + 1);
     }
     return map;
-  }, [resources.Pod]);
+  }, [effectiveKind, resources.Pod]);
 
   const tableColumns = useResourceColumns(effectiveKind, customType, podsByNode);
   const tableRef = useRef<HTMLDivElement>(null);
@@ -168,7 +177,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
 
   }, [effectiveKind, currentContext, setSearchQuery]);
 
-  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading });
+  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
   const pending = !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, columnFilters, sorts]);

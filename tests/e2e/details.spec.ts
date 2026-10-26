@@ -15,6 +15,7 @@ test('YAML mounts a real editor repeatedly in inspector, tab and split without h
   const errors = captureReactErrors(page);
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
   for (let index = 0; index < 3; index++) {
@@ -37,6 +38,7 @@ test('YAML mounts a real editor repeatedly in inspector, tab and split without h
 test('Related displays distinct kind badges and preserves resource navigation', async ({ page }) => {
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
   await inspector.getByRole('tab', { name: /^Related/ }).click();
@@ -195,12 +197,10 @@ test('namespace selectors filter by name, support keyboard selection and keep sc
   const globalScope = page.getByRole('button', { name: 'Namespace Scope', exact: true });
   await globalScope.click();
   const menu = page.getByRole('dialog', { name: 'Choose Namespace Scope', exact: true });
-  await expect(menu.getByRole('option')).toHaveCount(50);
+  await expect(menu.getByRole('option')).toHaveCount(131);
   const list = menu.getByRole('listbox');
   await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(menu).toBeVisible();
-  await menu.getByRole('button', { name: 'Show next 50', exact: true }).click();
-  await expect(menu.getByRole('option')).toHaveCount(100);
   const search = menu.getByRole('searchbox', { name: 'Filter Namespace Scope by name', exact: true });
   await search.fill('TEAM-129');
   await expect(menu.getByRole('option')).toHaveCount(1);
@@ -234,6 +234,7 @@ test('the focused editor saves the latest draft without changing another open mo
   const errors = captureReactErrors(page);
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).dblclick();
   const mainEditor = page.locator('main').getByTestId('yaml-editor');
   await expect(mainEditor.locator('.monaco-editor')).toBeVisible();
@@ -259,6 +260,7 @@ test('an editor module load failure leaves the manifest and inspector usable', a
   await page.route('**/*monaco_setup*', (route) => route.abort());
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   const inspector = page.getByTestId('resource-details');
   await inspector.getByRole('tab', { name: 'YAML', exact: true }).click();

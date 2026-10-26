@@ -33,7 +33,10 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     if (session !== next || useClusterStore.getState().currentContext !== context) return;
     useResourceStore.getState().applyWatchCommit(kind, update);
     if (kind === 'Namespace' && update.state.hasSnapshot) {
-      useClusterStore.getState().setAvailableNamespaces([...useResourceStore.getState().resources.Namespace.values()].map((item) => item.name).sort());
+      const watched = [...useResourceStore.getState().resources.Namespace.values()].map((item) => item.name);
+      if (watched.length > 0 || useClusterStore.getState().availableNamespaces.length === 0) {
+        useClusterStore.getState().setAvailableNamespaces(watched.sort());
+      }
     }
   }, useClusterStore.getState().selectedNamespace, new Set(), query => {
     const state = useResourceStore.getState();

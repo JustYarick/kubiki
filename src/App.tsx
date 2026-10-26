@@ -33,7 +33,7 @@ import { errorHint } from './providers/errors';
 import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
 import { closeNodeDebugConnections } from './providers/node_debug';
-import { cancelResourceSnapshots, scanClusterInventory, syncResourceSnapshot } from './providers/snapshot_sync';
+import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snapshot_sync';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
@@ -131,9 +131,7 @@ export default function App() {
       useResourceStore.getState().setSyncMode(k8s.demo ? 'demo' : k8s.supportsResourceWatch ? 'watch' : 'snapshot');
       const results = k8s.demo ? await Promise.allSettled(kinds.map(async (kind) => {
         await syncResourceSnapshot(contextName, kind, 'all');
-      })) : await scanClusterInventory(contextName, kinds, useClusterStore.getState().selectedNamespace);
-      if (!current()) return;
-      if (!k8s.demo) results.push(...await startResourceWatches(contextName));
+      })) : await startResourceWatches(contextName);
       if (!current()) return;
       const failures = results.filter((r) => r.status === 'rejected').length;
       if (failures) toast.warn('Some resources could not be loaded', `${failures} resource types unavailable. See individual views.`);

@@ -150,16 +150,24 @@ export const Sidebar: React.FC = () => {
     }).filter((cat) => cat.groups.length > 0 || cat.label.toLowerCase().includes(q));
   }, [q, searching, tree]);
 
-  const countFor = (kind: string) => {
-    const map = resources[kind as keyof typeof resources];
-    const total = map?.size ?? 0;
-    if (selectedNamespace === 'all') return total;
-    let ns = 0;
-    map?.forEach((item) => {
-      if (inNamespaceScope(selectedNamespace, item.namespace)) ns++;
-    });
-    return ns;
-  };
+  const countsByKind = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const [kind, map] of Object.entries(resources)) {
+      if (!map) continue;
+      if (selectedNamespace === 'all') {
+        counts.set(kind, map.size);
+      } else {
+        let ns = 0;
+        for (const item of map.values()) {
+          if (inNamespaceScope(selectedNamespace, item.namespace)) ns++;
+        }
+        counts.set(kind, ns);
+      }
+    }
+    return counts;
+  }, [resources, selectedNamespace]);
+
+  const countFor = (kind: string) => countsByKind.get(kind) ?? 0;
 
   const handleSelectKind = (kind: ResourceKind) => {
     setActiveKind(kind);

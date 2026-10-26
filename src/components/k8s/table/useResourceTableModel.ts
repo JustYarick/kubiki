@@ -3,7 +3,7 @@ import type { ResourceItem, ResourceKind } from '../../../types/k8s';
 import { useResourceStore } from '../../../state/resource_store';
 import { inNamespaceScope } from '../../../core/resources/namespace_scope';
 import { resourceIssues } from '../../../core/resources/diagnostics';
-import { compareCreation, compareRows, issuePriority, statusChoices, type SortKey } from '../../../core/resources/resource_sort';
+import { compareCreation, compareRows, fastCompare, issuePriority, statusChoices, type SortKey } from '../../../core/resources/resource_sort';
 import type { ColumnDef } from './columns';
 
 interface TableModelOptions {
@@ -19,8 +19,9 @@ interface TableModelOptions {
   columnOrder: Record<string, string[]>;
   isConnected: boolean;
   isLoading: boolean;
+  activeFilterColumnId?: string | null;
 }
-export function useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading }: TableModelOptions) {
+export function useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId }: TableModelOptions) {
   const kindResources = resources[effectiveKind];
   const allItems = useMemo(() => Array.from(kindResources?.values() ?? []), [kindResources]);
   const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
@@ -67,7 +68,10 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
       }
     }
     const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.length > 0);
-    for (const column of tableColumns) {
+    const columnsToCount = activeFilterColumnId === undefined
+      ? tableColumns
+      : tableColumns.filter((c) => c.id === 'status' || c.id === activeFilterColumnId);
+    for (const column of columnsToCount) {
       const counts = new Map<string, number>();
       // Apply every other column's filter so the offered values match the rows the
       // user can actually reach — but skip this column's own filter, otherwise its
@@ -88,7 +92,7 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
       map.set(column.id, counts);
     }
     return map;
-  }, [allItems, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters]);
+  }, [allItems, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, activeFilterColumnId]);
 
   const statusValues = useMemo(() => {
     const column = tableColumns.find((c) => c.id === 'status');
@@ -166,10 +170,10 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
           const diff = compareRows(a, b, [key], value);
           if (diff !== 0) return diff;
         }
-        return (a.namespace && b.namespace && a.namespace !== b.namespace ? a.namespace.localeCompare(b.namespace) : 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid);
+        return (a.namespace && b.namespace && a.namespace !== b.namespace ? fastCompare(a.namespace, b.namespace) : 0) || fastCompare(a.name, b.name) || fastCompare(a.uid, b.uid);
       });
     } else {
-      list = [...list].sort((a, b) => (a.namespace && b.namespace && a.namespace !== b.namespace ? a.namespace.localeCompare(b.namespace) : 0) || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
+      list = [...list].sort((a, b) => (a.namespace && b.namespace && a.namespace !== b.namespace ? fastCompare(a.namespace, b.namespace) : 0) || fastCompare(a.name, b.name) || fastCompare(a.uid, b.uid));
     }
     return { list, cols };
   }, [allItems, selectedNamespace, searchQuery, searchRegex, effectiveKind, sorts, hiddenColumns, columnFilters, issueRanks, tableColumns, columnOrder]);
