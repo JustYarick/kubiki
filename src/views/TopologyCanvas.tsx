@@ -112,7 +112,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     setBusy(true);
     const timeout = setTimeout(() => {
       cancelled = true; worker?.terminate(); setBusy(false);
-      setError('Layout took longer than 10 seconds and was cancelled. Reduce the scope or relationship depth.');
+      setError('Automatic layout failed: layout took longer than 10 seconds and was cancelled. Reduce the scope or relationship depth.');
     }, 10000);
     const layout = topologyLayout(graph, direction, grouping);
     void elk.layout(layout.root).then((result) => {

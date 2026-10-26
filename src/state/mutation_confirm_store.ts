@@ -48,6 +48,9 @@ export async function setupMutationConfirmListener(): Promise<() => void> {
   let closed = false;
   return () => {
     if (closed) return; closed = true;
-    if (--subscribers === 0 && listener === registration) { unlisten(); listener = undefined; }
+    if (--subscribers === 0 && listener === registration) {
+      try { void Promise.resolve(unlisten()).catch(() => {}); } catch {}
+      listener = undefined;
+    }
   };
 }
