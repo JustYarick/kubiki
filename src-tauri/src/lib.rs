@@ -35,6 +35,20 @@ use tauri::Manager;
 use terminal_commands::*;
 use watch_commands::*;
 
+#[cfg(all(test, target_os = "linux"))]
+mod dependency_regressions {
+    #[test]
+    fn optimized_glib_string_variant_iteration_is_safe() {
+        use glib::prelude::ToVariant;
+        let variant = ["first", "middle", "last"].to_variant();
+        assert_eq!(variant.array_iter_str().unwrap().collect::<Vec<_>>(), ["first", "middle", "last"]);
+        let mut iter = variant.array_iter_str().unwrap();
+        assert_eq!(iter.next(), Some("first"));
+        assert_eq!(iter.next_back(), Some("last"));
+        assert_eq!(iter.last(), Some("middle"));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
