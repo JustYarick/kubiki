@@ -98,6 +98,7 @@ export function SearchInput({ value, onChange, placeholder, className, refCb, is
   );
 }
 
-export function Label({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cx('text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]', className)}>{children}</div>;
+export function Label({ children, className, htmlFor }: { children: React.ReactNode; className?: string; htmlFor?: string }) {
+  const Element = htmlFor ? 'label' : 'div';
+  return <Element htmlFor={htmlFor} className={cx('text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]', className)}>{children}</Element>;
 }

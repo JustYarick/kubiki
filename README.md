@@ -149,6 +149,8 @@ Afterward, native Kubernetes watches follow the visible workspace panes and thei
 
 ### YAML editing
 
+To create an object, open its resource list and select **New**. Choose a name and, for namespaced resources, one target namespace; edit the starter YAML, then select **Review & create**. The desktop backend reviews the complete manifest before submitting it to Kubernetes. Existing objects with the same name are never overwritten. This also supports discovered custom resource types; their manifests must satisfy the installed CRD schema. Validation errors, denied permissions, and cancelled reviews preserve your draft. Browser access remains read-only; demo creation stores an object in the current session.
+
 Open the YAML view for an existing resource to inspect or edit its manifest. The editor provides syntax highlighting, search and replace, formatting, copying, and downloading.
 
 The default document view omits `status` and `metadata.managedFields` to make editable configuration easier to read. Switch to the full document view when those fields are needed. Unsaved drafts are associated with the context and resource identity and are retained when navigating within the current application session.

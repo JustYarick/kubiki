@@ -4,13 +4,14 @@ import { useResourceTableModel } from '../components/k8s/table/useResourceTableM
 import { useColumnLayout } from '../components/k8s/table/useColumnLayout';
 import { CellValue } from '../components/k8s/table/CellValue';
 import { NewResourceDialog } from '../components/dialogs/NewResourceDialog';
+import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { useShallow } from 'zustand/react/shallow';
 import { useTableView } from '../state/table_view_store';
 import { resourceIcon } from '../core/resource_icons';
 import { syncResourceSnapshot } from '../providers/snapshot_sync';
 import { ResourceLoading } from '../components/ui/ResourceLoading';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { resourceType, apiVersionFor as typeApiVersion } from '../core/resources/resource_types';
+import { resourceType } from '../core/resources/resource_types';
 import { customResourcePlacement, customResourceType, type CustomResourceType } from '../core/resources/custom_resource_types';
 import { useCustomResources } from '../providers/use_custom_resources';
 import { defaultNamespace } from '../core/resources/namespace_scope';
@@ -137,6 +138,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   const [scaleFor, setScaleFor] = useState<ResourceItem | null>(null);
 
   const [newOpen, setNewOpen] = useState(false);
+  const canCreate = !!currentContext && (k8s.demo || '__TAURI_INTERNALS__' in window);
+  useEffect(() => setNewOpen(false), [currentContext, selectedNamespace, effectiveKind]);
   const [spinning, setSpinning] = useState(false);
   useEffect(() => setSpinning(false), [currentContext, selectedNamespace, effectiveKind]);
 
@@ -658,7 +661,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
           <IconButton icon={RefreshCw} size="sm" onClick={refresh} className={cx(spinning && 'animate-[spin_0.7s_linear_infinite]')} aria-label="Refresh" />
         </Tooltip>
 
-        <Button variant="primary" size="sm" disabled={!!customType || !k8s.demo} title={k8s.demo ? "Create demo resource" : "Live creation is not connected yet"} onClick={() => setNewOpen(true)}>
+        <Button variant="primary" size="sm" disabled={!canCreate} title={canCreate ? `Create ${displayKind}` : 'Open the desktop application to create resources'} onClick={() => setNewOpen(true)}>
           <Plus size="calc(13px * var(--ui-factor))" />
           New
         </Button>
@@ -705,7 +708,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
             iconKind={effectiveKind}
             filtered={(selectedNamespace !== 'all' && allItems.length > 0) || !!searchQuery || activeFilterCount > 0 || sorts.length > 0}
             onClear={() => { selectNamespace('all'); resetAll(); }}
-            isNew={!customType && k8s.demo && allItems.length === 0 && !loadError}
+            isNew={canCreate && allItems.length === 0 && !loadError}
             onNew={() => setNewOpen(true)}
           />
         ) : (
@@ -965,25 +968,26 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
       <ScaleDialog item={scaleFor} onClose={() => setScaleFor(null)} onApply={(n) => scaleFor && doScale(scaleFor, n)} />
       <NewResourceDialog
         open={newOpen}
-        kind={effectiveKind}
+        type={customType ?? resourceType(effectiveKind)}
+        context={currentContext}
         defaultNs={defaultNamespace(selectedNamespace)}
         onClose={() => setNewOpen(false)}
-        onCreate={(name, ns, yaml) => {
-          if (!k8s.demo) return;
-          const item: ResourceItem = {
-            uid: `new-${crypto.randomUUID()}`,
-            name,
-            namespace: ns || undefined,
-            kind: effectiveKind,
-            apiVersion: typeApiVersion(resourceType(effectiveKind)),
-            status: 'Active',
-            age: '0s',
-            rawYaml: yaml,
-          };
-          applyDelta({ type: 'Applied', payload: { gvk: effectiveKind, data: item } });
-          toast.success(`${effectiveKind} created (demo)`, name);
-          setNewOpen(false);
-          openYamlTab(item);
+        onCreate={async (object, yaml) => {
+          if (!currentContext || useClusterStore.getState().currentContext !== currentContext) throw new Error('The selected context changed. Reopen the creation dialog.');
+          if (k8s.demo) {
+            const item = mapK8sResource({ ...object, metadata: { ...object.metadata, uid: `new-${crypto.randomUUID()}`, creationTimestamp: new Date().toISOString() } }, object.kind as ResourceKind);
+            applyDelta({ type: 'Applied', payload: { gvk: effectiveKind, data: item } });
+            toast.success(`${displayKind} created (demo)`, object.metadata.name);
+            setNewOpen(false);
+            openYamlTab(item);
+            return;
+          }
+          await k8s.applyManifest(currentContext, yaml);
+          toast.success(`${displayKind} created`, object.metadata.name);
+          if (useClusterStore.getState().currentContext === currentContext) {
+            setNewOpen(false);
+            await refresh();
+          }
         }}
       />
     </div>
