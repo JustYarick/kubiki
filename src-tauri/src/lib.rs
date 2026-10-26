@@ -1,6 +1,7 @@
 #[cfg(target_os = "linux")]
 mod graphics;
 mod port_forward_commands;
+mod shell_environment;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
 use port_forward_commands::*;
 mod mutation_guard;
@@ -51,6 +52,7 @@ mod dependency_regressions {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    shell_environment::initialize();
     #[cfg(target_os = "linux")]
     {
         let graphics = graphics::initialize().unwrap_or_else(|error| {

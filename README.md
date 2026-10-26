@@ -121,6 +121,8 @@ Before connecting to a cluster, prepare:
 - Any authentication executables referenced by the kubeconfig, available on the application's `PATH`.
 - The `helm` executable on `PATH` if you intend to use Helm features.
 
+On macOS, Kubiki restores the login shell's `PATH` before starting its backend, so a Finder-launched application can find Helm and Kubernetes credential helpers installed through your shell configuration. Both Apple Silicon (`/opt/homebrew/bin`) and Intel (`/usr/local/bin`) Homebrew paths are included as fallbacks. Shell initialization is limited to three seconds; an unavailable or stalled shell does not prevent the application from starting. Restart Kubiki after installing Helm or changing your shell paths.
+
 Desktop Kubernetes reads, watches, logs, exec sessions, and port forwarding use the Rust Kubernetes client. These operations do not require a local `kubectl` executable.
 
 ## Connecting to a cluster
