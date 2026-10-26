@@ -270,12 +270,52 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish:
-    name: Publish verified release
+  malware_scan:
+    name: Scan release files with VirusTotal
     needs: [prepare, desktop]
     if: >-
       ${{ !cancelled() && needs.prepare.result == 'success' &&
           needs.desktop.result == 'success' && needs.prepare.outputs.publish == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    # All platforms share one API queue; concurrent releases share this lock.
+    concurrency:
+      group: virustotal-public-api
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kubiki-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Upload payloads, wait for verdicts and write reports
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: node scripts/scan-desktop-release.mjs release-artifacts antivirus-report
+      - name: Keep reports even when scanning fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: antivirus-report
+          path: antivirus-report/VIRUSTOTAL-REPORT.*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish verified release
+    needs: [prepare, desktop, malware_scan]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.desktop.result == 'success' && needs.malware_scan.result == 'success' &&
+          needs.prepare.outputs.publish == 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
@@ -292,6 +332,10 @@ jobs:
         with:
           pattern: kubiki-*
           merge-multiple: true
+          path: release-artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: antivirus-report
           path: release-artifacts
       - name: Verify provenance and signatures, upload, then publish
         uses: actions/github-script@v7
