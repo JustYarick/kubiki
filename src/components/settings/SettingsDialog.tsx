@@ -20,6 +20,7 @@ import {
 } from '../../state/ui_store';
 import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
+import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_rendering';
 import { cx } from '../../core/utils/cx';
 import { AI_AGENTS, ANALYSIS_INSTRUCTIONS, ANALYSIS_PROMPT_LIMIT, type AiAgent } from '../../core/ai_analysis';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
@@ -162,17 +163,9 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
   const density = useUiStore((s) => s.density);
   const uiScale = useUiStore((s) => s.uiScale);
   const defaultRightTab = useUiStore((s) => s.defaultRightTab);
-  const topologyGrouping = useUiStore((s) => s.topologyGrouping);
-  const topologyPerformanceMode = useUiStore((s) => s.topologyPerformanceMode);
-  const topologyAnimations = useUiStore((s) => s.topologyAnimations);
-  const topologyShowMinimap = useUiStore((s) => s.topologyShowMinimap);
   const setDensity = useUiStore((s) => s.setDensity);
   const setUiScale = useUiStore((s) => s.setUiScale);
   const setDefaultRightTab = useUiStore((s) => s.setDefaultRightTab);
-  const setTopologyGrouping = useUiStore((s) => s.setTopologyGrouping);
-  const setTopologyPerformanceMode = useUiStore((s) => s.setTopologyPerformanceMode);
-  const setTopologyAnimations = useUiStore((s) => s.setTopologyAnimations);
-  const setTopologyShowMinimap = useUiStore((s) => s.setTopologyShowMinimap);
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -228,42 +221,46 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
           options={[{ value: 'overview', label: 'Overview' }, { value: 'yaml', label: 'YAML' }]}
         />
       </Row>
-      <Row entry={findEntry('appearance.topology-grouping')}>
-        <Segmented
-          ariaLabel="Cluster layout grouping"
-          value={topologyGrouping}
-          onChange={setTopologyGrouping}
-          options={[{ value: 'namespace', label: 'Namespace' }, { value: 'flat', label: 'Flat' }]}
-        />
-      </Row>
-      <Row entry={findEntry('appearance.topology-performance')}>
-        <Segmented
-          ariaLabel="Topology rendering profile"
-          value={topologyPerformanceMode}
-          onChange={setTopologyPerformanceMode}
-          options={[
-            { value: 'quality', label: 'Quality' },
-            { value: 'balanced', label: 'Balanced' },
-            { value: 'performance', label: 'Performance' },
-          ]}
-        />
-      </Row>
-      <Row entry={findEntry('appearance.topology-animations')}>
-        <Checkbox
-          aria-label="Topology physics and animation"
-          checked={topologyAnimations}
-          onChange={(event) => setTopologyAnimations(event.target.checked)}
-        />
-      </Row>
-      <Row entry={findEntry('appearance.topology-minimap')}>
-        <Checkbox
-          aria-label="Topology canvas minimap"
-          checked={topologyShowMinimap}
-          onChange={(event) => setTopologyShowMinimap(event.target.checked)}
-        />
-      </Row>
     </div>
   );
+}
+
+function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
+  const ui = useUiStore();
+  const fast = ui.topologyPerformanceMode === 'performance';
+  return <div>
+    <SectionTitle>{sectionTitle}</SectionTitle>
+    <Row entry={findEntry('topology.performance')}>
+      <Segmented ariaLabel="Topology rendering profile" value={ui.topologyPerformanceMode} onChange={ui.setTopologyPerformanceMode}
+        options={[{ value: 'quality', label: 'Quality' }, { value: 'balanced', label: 'Balanced' }, { value: 'performance', label: 'Performance' }]} />
+    </Row>
+    <Row entry={findEntry('topology.grouping')}>
+      <Segmented ariaLabel="Cluster layout grouping" value={ui.topologyGrouping} onChange={ui.setTopologyGrouping}
+        options={[{ value: 'namespace', label: 'Namespace' }, { value: 'flat', label: 'Flat' }]} />
+    </Row>
+    <Row entry={findEntry('topology.edges')}>
+      <select aria-label="Topology connection style" className="ide-select" disabled={fast} value={fast ? 'straight' : ui.topologyEdgeStyle} onChange={event => ui.setTopologyEdgeStyle(event.target.value as typeof ui.topologyEdgeStyle)}>
+        <option value="smooth">Editable routes</option><option value="bezier">Curved</option><option value="straight">Straight</option>
+      </select>
+    </Row>
+    <Row entry={findEntry('topology.animations')}>
+      <Checkbox aria-label="Animate topology connections" disabled={fast} checked={!fast && ui.topologyAnimations} onChange={event => ui.setTopologyAnimations(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.labels')}>
+      <Checkbox aria-label="Topology connection labels" disabled={fast} checked={!fast && ui.topologyShowEdgeLabels} onChange={event => ui.setTopologyShowEdgeLabels(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.minimap')}>
+      <Checkbox aria-label="Topology canvas minimap" disabled={fast} checked={!fast && ui.topologyShowMinimap} onChange={event => ui.setTopologyShowMinimap(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.background')}>
+      <Checkbox aria-label="Topology background grid" disabled={fast} checked={!fast && ui.topologyShowBackground} onChange={event => ui.setTopologyShowBackground(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.updates')}>
+      <select aria-label="Topology live redraw interval" className="ide-select" value={ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
+        {TOPOLOGY_UPDATE_INTERVALS.map(value => <option key={value} value={value}>{value < 1000 ? `${value} ms` : `${value / 1000} s`}{fast && value < 3000 ? ' (3 s in Performance)' : ''}</option>)}
+      </select>
+    </Row>
+  </div>;
 }
 
 function EditorPage({ sectionTitle }: { sectionTitle: string }) {
@@ -596,6 +593,7 @@ function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
 
 function pageContent(page: SettingsPageDef): React.ReactElement {
   switch (page.id) {
+    case 'topology': return <TopologyPage sectionTitle={page.sectionTitle} />;
     case 'developer': return <DeveloperPage sectionTitle={page.sectionTitle} />;
     case 'ai': return <AiPage sectionTitle={page.sectionTitle} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
@@ -613,6 +611,10 @@ function pageContent(page: SettingsPageDef): React.ReactElement {
 /* ------------------------------------------------------------------ */
 
 const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
+  topology: () => {
+    useUiStore.getState().resetTopologyRendering();
+    toast.success('Topology defaults restored');
+  },
   appearance: () => {
     useUiStore.getState().resetAppearance();
     toast.success('Appearance defaults restored');

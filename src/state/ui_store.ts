@@ -6,12 +6,13 @@ import type { Perspective } from '../core/perspectives';
 import { DEFAULT_APPEARANCE, appearanceValue, normalizeAppearance } from '../core/appearance';
 import type { ResourceKind } from '../types/k8s';
 import { DEFAULT_TOPOLOGY_HIDDEN_KINDS } from '../core/resources/topology_visibility';
+import { DEFAULT_TOPOLOGY_RENDERING, normalizeTopologyRendering, type TopologyRenderingPreferences } from '../core/resources/topology_rendering';
 import { ANALYSIS_INSTRUCTIONS, normalizeAnalysisPrompt, normalizeAiAgent, type AiAgent } from '../core/ai_analysis';
 
 export type Density = 'compact' | 'comfortable';
 export type RightTab = 'overview' | 'yaml' | 'related' | 'events';
 
-interface UIState {
+interface UIState extends TopologyRenderingPreferences {
   developerMode: boolean;
   setDeveloperMode: (enabled: boolean) => void;
   aiAnalysisPrompt: string;
@@ -49,11 +50,6 @@ interface UIState {
   portForwardLocalRange: string;
   portForwardAutoOpen: boolean;
   /* topology rendering and performance */
-  topologyGrouping: 'namespace' | 'flat';
-  topologyAnimations: boolean;
-  topologyPerformanceMode: 'quality' | 'balanced' | 'performance';
-  topologyShowMinimap: boolean;
-  topologyEdgeStyle: 'smooth' | 'bezier' | 'straight';
   /** Resource kinds hidden in the topology diagram; persisted across sessions. */
   topologyHiddenKinds: ReadonlySet<ResourceKind>;
   /* cluster behavior */
@@ -105,6 +101,10 @@ interface UIState {
   setTopologyPerformanceMode: (value: 'quality' | 'balanced' | 'performance') => void;
   setTopologyShowMinimap: (value: boolean) => void;
   setTopologyEdgeStyle: (value: 'smooth' | 'bezier' | 'straight') => void;
+  setTopologyShowEdgeLabels: (value: boolean) => void;
+  setTopologyShowBackground: (value: boolean) => void;
+  setTopologyUpdateIntervalMs: (value: number) => void;
+  resetTopologyRendering: () => void;
   setTopologyHiddenKinds: (value: Iterable<string>) => void;
   setRememberNamespaceScope: (value: boolean) => void;
   resetAppearance: () => void;
@@ -182,11 +182,7 @@ export const useUiStore = create<UIState>()(
       logsScrollStickiness: 40,
       portForwardLocalRange: '8000-8999',
       portForwardAutoOpen: false,
-      topologyGrouping: 'namespace' as const,
-      topologyAnimations: true,
-      topologyPerformanceMode: 'balanced' as const,
-      topologyShowMinimap: true,
-      topologyEdgeStyle: 'smooth' as const,
+      ...DEFAULT_TOPOLOGY_RENDERING,
       topologyHiddenKinds: new Set(DEFAULT_TOPOLOGY_HIDDEN_KINDS),
       rememberNamespaceScope: true,
       sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
@@ -232,6 +228,10 @@ export const useUiStore = create<UIState>()(
       setTopologyPerformanceMode: (topologyPerformanceMode) => set({ topologyPerformanceMode }),
       setTopologyShowMinimap: (topologyShowMinimap) => set({ topologyShowMinimap }),
       setTopologyEdgeStyle: (topologyEdgeStyle) => set({ topologyEdgeStyle }),
+      setTopologyShowEdgeLabels: (topologyShowEdgeLabels) => set({ topologyShowEdgeLabels }),
+      setTopologyShowBackground: (topologyShowBackground) => set({ topologyShowBackground }),
+      setTopologyUpdateIntervalMs: (value) => set({ topologyUpdateIntervalMs: normalizeTopologyRendering({ topologyUpdateIntervalMs: value }).topologyUpdateIntervalMs }),
+      resetTopologyRendering: () => set({ ...DEFAULT_TOPOLOGY_RENDERING }),
       setTopologyHiddenKinds: (value) => set({ topologyHiddenKinds: new Set(value) as ReadonlySet<ResourceKind> }),
       setRememberNamespaceScope: (rememberNamespaceScope) => set({ rememberNamespaceScope }),
       resetAppearance: () =>
@@ -239,10 +239,6 @@ export const useUiStore = create<UIState>()(
           ...DEFAULT_APPEARANCE,
           terminalFontFamily: DEFAULT_TERMINAL_FONT,
           terminalLineHeight: 1.2,
-          topologyGrouping: 'namespace',
-          topologyAnimations: true,
-          topologyPerformanceMode: 'balanced',
-          topologyShowMinimap: true,
         }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 420), sidebarCollapsed: false }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -319,11 +315,7 @@ export const useUiStore = create<UIState>()(
           logsScrollStickiness: normalizeNumber(stored?.logsScrollStickiness, 20, 200, 40),
           portForwardLocalRange: typeof stored?.portForwardLocalRange === 'string' ? stored.portForwardLocalRange : '8000-8999',
           portForwardAutoOpen: normalizeBool(stored?.portForwardAutoOpen, false),
-          topologyGrouping: stored?.topologyGrouping === 'flat' ? 'flat' : 'namespace',
-          topologyAnimations: normalizeBool(stored?.topologyAnimations, true),
-          topologyPerformanceMode: ['quality', 'balanced', 'performance'].includes(stored?.topologyPerformanceMode as string) ? stored!.topologyPerformanceMode! : 'balanced',
-          topologyShowMinimap: normalizeBool(stored?.topologyShowMinimap, true),
-          topologyEdgeStyle: ['smooth', 'bezier', 'straight'].includes(stored?.topologyEdgeStyle as string) ? stored!.topologyEdgeStyle! : 'smooth',
+          ...normalizeTopologyRendering(stored),
           topologyHiddenKinds: Array.isArray(stored?.topologyHiddenKinds)
             ? new Set(stored.topologyHiddenKinds as ResourceKind[])
             : new Set(DEFAULT_TOPOLOGY_HIDDEN_KINDS),
@@ -360,6 +352,9 @@ export const useUiStore = create<UIState>()(
         topologyPerformanceMode: s.topologyPerformanceMode,
         topologyShowMinimap: s.topologyShowMinimap,
         topologyEdgeStyle: s.topologyEdgeStyle,
+        topologyShowEdgeLabels: s.topologyShowEdgeLabels,
+        topologyShowBackground: s.topologyShowBackground,
+        topologyUpdateIntervalMs: s.topologyUpdateIntervalMs,
         topologyHiddenKinds: [...s.topologyHiddenKinds],
         rememberNamespaceScope: s.rememberNamespaceScope,
         sidebarWidth: s.sidebarWidth,

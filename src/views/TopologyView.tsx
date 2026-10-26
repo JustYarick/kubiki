@@ -24,10 +24,12 @@ import { namespaceIsOutsideScope } from '../core/resources/resource_types';
 import { TopologyCanvas } from './TopologyCanvas';
 import { TopologyEvents } from './TopologyEvents';
 import { useHelmGraph } from '../providers/use_helm_graph';
+import { topologyRendering } from '../core/resources/topology_rendering';
 
 const NO_EVENTS = new Map<string, ResourceItem>();
 
 export function TopologyView({ item, namespace }: { item?: ResourceItem; namespace?: string }) {
+  const updateInterval = useUiStore(s => topologyRendering(s).updateIntervalMs);
   const resources = useResourceStore(useShallow((s) => ({ ...s.resources, Event: NO_EVENTS })));
   const syncMode = useResourceStore((s) => s.syncMode);
   const watchStates = useResourceStore((s) => s.watchStates);
@@ -65,7 +67,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
     }
     return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [resources, namespaces, selectedNamespace]);
-  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope);
+  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope, updateInterval);
   const chooseScope = !graphScope || scope === 'overview';
   const typeCounts = useMemo(() => topologyTypeCounts(graph), [graph]);
   const chooseNamespaces = (selection: string) => setScope(selection === 'all' ? 'all' : `namespaces:${selection}`);

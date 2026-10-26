@@ -1,8 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
-import { Bot, Boxes, Code2, FileCode2, FileText, Info, Palette, Terminal } from 'lucide-react';
+import { Bot, Boxes, Code2, FileCode2, FileText, Info, Network, Palette, Terminal } from 'lucide-react';
 import { fuzzyScore } from '../../core/utils/fuzzy';
 
-export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'ai' | 'developer' | 'about';
+export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'topology' | 'ai' | 'developer' | 'about';
 
 export interface SettingsEntry {
   /** Stable id used as a DOM anchor when jump-to-match is triggered. */
@@ -43,10 +43,19 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
       { id: 'appearance.ui-scale', label: 'Interface scale', description: 'Scales text, icons and controls. 100% uses a 13px base UI font.', keywords: 'zoom size factor resize' },
       { id: 'appearance.row-density', label: 'Row density', description: 'Affects table rows across all resource views.', keywords: 'table compact comfortable spacing' },
       { id: 'appearance.details-tab', label: 'Default details tab', description: 'Tab opened in the details panel when a resource is selected.', keywords: 'inspector right pane yaml overview' },
-      { id: 'appearance.topology-grouping', label: 'Cluster layout grouping', description: 'Group resources inside enclosing namespace boxes or lay out resources as a flat diagram for higher performance.', keywords: 'topology graph layout grouping namespace cluster flat elk' },
-      { id: 'appearance.topology-performance', label: 'Topology rendering profile', description: 'Tweak rendering fidelity (shadows, line curves, worker timeouts) for high-end GPUs vs low-end laptops.', keywords: 'topology graph rendering profile performance gpu quality slow lag' },
-      { id: 'appearance.topology-animations', label: 'Topology physics and animation', description: 'Enable animated edge flows and pulse transitions between connected resources.', keywords: 'topology graph physics animation flow speed motion' },
-      { id: 'appearance.topology-minimap', label: 'Topology canvas minimap', description: 'Display the overview minimap in the corner of the diagram view.', keywords: 'topology graph minimap map canvas overview' },
+    ],
+  },
+  {
+    id: 'topology', title: 'Topology', icon: Network, sectionTitle: 'Topology rendering', resetLabel: 'Reset topology defaults',
+    entries: [
+      { id: 'topology.performance', label: 'Rendering profile', description: 'Performance uses straight static lines and compact nodes, disables shadows, labels, grid and minimap, and limits live redraws to once every 3 seconds or slower. Useful for large diagrams and Macs with slow panning.', keywords: 'graph renderer performance gpu mac macos webkit lag quality balanced fast' },
+      { id: 'topology.grouping', label: 'Cluster layout grouping', description: 'Namespace boxes preserve hierarchy. Flat layout reduces layout work for large diagrams.', keywords: 'graph layout grouping namespace flat elk' },
+      { id: 'topology.edges', label: 'Connection style', description: 'Editable routes support custom bends. Straight connections need less rendering work. Performance always uses straight lines.', keywords: 'graph edge arrow curves bezier smooth straight routing' },
+      { id: 'topology.animations', label: 'Animate connections', description: 'Animate flow along connections. Disabled in Performance and when the system requests reduced motion.', keywords: 'graph animation motion flow' },
+      { id: 'topology.labels', label: 'Connection labels', description: 'Show relationship names on connections. Disabled in Performance.', keywords: 'graph edge text labels' },
+      { id: 'topology.minimap', label: 'Canvas minimap', description: 'Show a miniature overview of the whole graph. Disabled in Performance.', keywords: 'graph map overview' },
+      { id: 'topology.background', label: 'Background grid', description: 'Show the dotted canvas background. Disabled in Performance.', keywords: 'graph dots grid background' },
+      { id: 'topology.updates', label: 'Live redraw interval', description: 'Coalesce incoming resource changes before rebuilding the diagram. Scope changes skip this delay. This affects local rendering, not Kubernetes API requests; Performance uses at least 3 seconds.', keywords: 'graph refresh throttle delay interval live updates cpu' },
     ],
   },
   {

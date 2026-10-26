@@ -49,9 +49,9 @@ export function TopologyEdge({ id, sourceX, sourceY, targetX, targetY, data, lab
     {segments.map((segment, index) => <path key={index} data-route-segment={index} d={`M ${segment.from.x} ${segment.from.y} L ${segment.to.x} ${segment.to.y}`} fill="none" stroke="transparent" strokeWidth={18}
       className={`nodrag nopan topology-route-segment ${segment.axis === 'x' ? 'route-horizontal-drag' : 'route-vertical-drag'}`} {...handlers(segment.axis)} />)}
     <EdgeLabelRenderer>
-      <div className="topology-edge-control nodrag nopan" data-adjusted={!!data?.bend} style={{ transform: `translate(-50%, -100%) translate(${bend.x}px, ${bend.y - 8}px)`, zIndex: selected ? 1001 : 1 }}>
+      {label != null && <div className="topology-edge-control nodrag nopan" data-adjusted={!!data?.bend} style={{ transform: `translate(-50%, -100%) translate(${bend.x}px, ${bend.y - 8}px)`, zIndex: selected ? 1001 : 1 }}>
         <button className="topology-edge-label" aria-label={`Select ${label} connection`} title="Select connection to edit bends and segments" onClick={() => updateEdge(id, { selected: !selected })} onDoubleClick={reset}><span className="react-flow__edge-text">{label}</span></button>
-      </div>
+      </div>}
       {selected && [{ x: bend.x, y: bend.y, axis: 'both' as Axis, name: 'bend' }, ...segments.filter(segment => segment.length > 40).map((segment, index) => ({ ...segment, name: `segment ${index + 1}` }))].map(handle => <button key={handle.name}
         className={`topology-route-handle nodrag nopan ${handle.axis === 'both' ? 'route-bend' : handle.axis === 'x' ? 'route-horizontal-drag' : 'route-vertical-drag'}`}
         aria-label={`Move connection ${handle.name}`} title={handle.axis === 'both' ? 'Drag bend · Double-click to reset' : 'Drag segment'}

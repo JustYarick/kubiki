@@ -1,4 +1,8 @@
 .topology-view { overflow-y: auto; }
+.topology-canvas[data-rendering-profile="balanced"] .topology-node,
+.topology-canvas[data-rendering-profile="performance"] .topology-node { box-shadow: none; }
+.topology-canvas[data-rendering-profile="performance"] .react-flow__node,
+.topology-canvas[data-rendering-profile="performance"] .react-flow__edge { transition: none; }
 .topology-view > * { flex-shrink: 0; }
 .topology-view > .topology-body { flex: 1 0 calc(280px * var(--ui-factor)); min-height: calc(280px * var(--ui-factor)); }
 .topology-scope-actions { display: flex; flex-wrap: wrap; gap: calc(8px * var(--ui-factor)); margin-top: calc(12px * var(--ui-factor)); }
