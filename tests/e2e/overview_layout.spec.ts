@@ -1,7 +1,9 @@
+import { captureScreenshot } from './helpers/screenshots';
+import { layoutCases } from './helpers/layout';
 import { test, expect } from '@playwright/test';
 import { overviewMetricsFixture } from './helpers/overview';
 
-for (const { width, scale } of [{ width: 1920, scale: 110 }, { width: 1440, scale: 110 }, { width: 768, scale: 150 }, { width: 375, scale: 110 }, { width: 375, scale: 200 }]) {
+for (const { width, scale } of layoutCases('overview')) {
   test(`Overview sections use the full pane without gaps at ${width}px and ${scale}%`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await page.addInitScript(scale => localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { uiScale: scale }, version: 0 })), scale);
@@ -41,7 +43,7 @@ for (const { width, scale } of [{ width: 1920, scale: 110 }, { width: 1440, scal
     expect(await overview.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await overview.evaluate(element => element.scrollTop = 0);
-    await page.screenshot({ path: `test-results/overview-minimal-${width}-${scale}.png`, animations: 'disabled' });
+    await captureScreenshot(page, { path: `test-results/overview-minimal-${width}-${scale}.png`, animations: 'disabled' });
     if (width === 1440) {
       const before = await overview.locator('.overview-section').evaluateAll(elements => elements.map(element => { const rect = element.getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height]; }));
       await telemetry.getByRole('button', { name: 'Refresh metrics', exact: true }).click();

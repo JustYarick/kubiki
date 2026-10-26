@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 import { namespaceList } from './helpers/namespaces';
 
@@ -118,7 +119,7 @@ test('Helm missing binary offers retry, repositories have a real empty state, an
   await page.setViewportSize({ width: 900, height: 900 });
   expect(await view.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect(await document.evaluate(el => el.clientHeight < el.closest('[role=tabpanel]')!.clientHeight && el.scrollHeight > el.clientHeight)).toBe(true);
-  await page.screenshot({ path: 'test-results/helm-narrow.png' });
+  await captureScreenshot(page, { path: 'test-results/helm-narrow.png' });
   await open(page, 'Repositories'); await expect(page.getByTestId('helm-repositories')).toContainText('No repositories configured');
 });
 
@@ -197,7 +198,7 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
   await page.getByRole('button', { name: 'Split Editor', exact: true }).click();
   await expect(workspace.getByTestId('resource-details')).toHaveCount(2);
   await expect(workspace.getByRole('tablist', { name: 'Resource details', exact: true })).toHaveCount(2);
-  await page.screenshot({ path: 'test-results/helm-shared-details.png' });
+  await captureScreenshot(page, { path: 'test-results/helm-shared-details.png' });
   await page.reload();
   await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
   expect(errors).toEqual([]);

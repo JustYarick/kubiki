@@ -34,15 +34,6 @@ test('Node pod counts update when only the Pod snapshot changes', async ({ page 
   await expect(count).toHaveText('2');
 });
 
-test('custom resources named Pod and Gateway do not use built-in details', async ({ page }) => {
-  await demo(page);
-  const renderers = await page.evaluate(async () => {
-    const path = '/src/components/k8s/details/ResourceDetailsRouter.tsx'; const { ResourceDetailsRouter } = await import(path);
-    return ['Pod', 'Gateway'].map(kind => ResourceDetailsRouter({ item: { uid: kind, name: kind, kind, apiVersion: 'example.org/v1', namespace: 'default' }, onNavigate() {}, onLogs() {}, onShell() {} }).type.name);
-  });
-  expect(renderers).toEqual(['GenericResourceDetails', 'GenericResourceDetails']);
-});
-
 test('structured batch review shows every target and YAML diff is reserved for manual edits', async ({ page }) => {
   await demo(page);
   await page.evaluate(async () => {

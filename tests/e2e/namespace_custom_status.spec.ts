@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { openDiagramSettings } from './helpers/topology';
 import { test, expect, type Page } from '@playwright/test';
 
@@ -61,7 +62,7 @@ test('global multi-namespace selection filters tables, Overview and Helm and bui
   await expect(page.locator('[data-namespace-group="alpha"]')).toBeVisible();
   await expect(page.locator('[data-namespace-group="beta"]')).toBeVisible();
   await expect(page.locator('[data-namespace-group="gamma"]')).toHaveCount(0);
-  await page.screenshot({ path: 'test-results/multi-namespace-topology.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/multi-namespace-topology.png', animations: 'disabled' });
   await openDiagramSettings(page);
   await page.getByRole('button', { name: 'Diagram namespaces', exact: true }).click();
   const diagramMenu = page.getByRole('dialog', { name: 'Choose Diagram namespaces', exact: true });
@@ -70,7 +71,7 @@ test('global multi-namespace selection filters tables, Overview and Helm and bui
   await expect(page.locator('[data-namespace-group="alpha"]')).toHaveCount(0);
   await expect(page.locator('[data-namespace-group="beta"]')).toBeVisible();
   await expect(selector).toHaveAttribute('data-value', '["alpha","beta"]');
-  await page.screenshot({ path: 'test-results/multi-namespace-topology.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/multi-namespace-topology.png', animations: 'disabled' });
 });
 
 test('custom kinds have independent group-aware tables, CRD printer columns and reusable details', async ({ page }) => {
@@ -97,7 +98,7 @@ test('custom kinds have independent group-aware tables, CRD printer columns and 
   await select(page, ['alpha', 'beta']);
   await expect(table.locator('tbody tr')).toHaveCount(2);
   await expect(table.getByText('second.example-gamma', { exact: true })).toHaveCount(0);
-  await page.screenshot({ path: 'test-results/custom-resource-tables.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/custom-resource-tables.png', animations: 'disabled' });
 });
 
 test('the status header cycles through every observed status without hiding other rows', async ({ page }) => {

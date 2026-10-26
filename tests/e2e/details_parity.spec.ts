@@ -118,6 +118,9 @@ test('new entity panels follow the shared summary, table and link design', async
   // Quota: a resource table with hard limits and usage, not a raw spec dump.
   details = await open(page, 'Resource Quotas', 'web-quota');
   const quota = details.getByRole('region', { name: 'Resource quota summary' });
+  const sections = await details.locator('.details-section').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label')));
+  expect(sections[0]).toBe('Resource quota summary');
+  expect(sections.at(-1)).toBe('Metadata');
   await expect(quota).toBeVisible();
   await expect(details.getByRole('region', { name: 'Resource limits' }).getByRole('cell', { name: 'cpu' })).toBeVisible();
   await expect(details.getByRole('region', { name: 'Resource limits' }).getByRole('cell', { name: '4' })).toBeVisible();
@@ -156,12 +159,4 @@ test('new entity panels follow the shared summary, table and link design', async
   await expect(details.getByRole('button', { name: 'gpu.example.com' })).toBeVisible();
 
   expect(errors).toEqual([]);
-});
-
-test('every details panel starts with the diagnostic banner and ends with the metadata block', async ({ page }) => {
-  await fixture(page);
-  const details = await open(page, 'Resource Quotas', 'web-quota');
-  const sections = await details.locator('.details-section').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label')));
-  expect(sections[0]).toBe('Resource quota summary');
-  expect(sections[sections.length - 1]).toBe('Metadata');
 });

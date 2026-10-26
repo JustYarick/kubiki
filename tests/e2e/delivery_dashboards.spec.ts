@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 
 const definition = (group: string, kind: string, plural: string) => ({ apiVersion: 'apiextensions.k8s.io/v1', kind: 'CustomResourceDefinition', metadata: { uid: plural, name: `${plural}.${group}` }, spec: { group, names: { kind, plural }, scope: 'Namespaced', versions: [{ name: 'v1', served: true, storage: true }] } });
@@ -54,7 +55,7 @@ test('Flux and Argo dashboards expose status filters, inspection and independent
   await expect(argo.getByRole('button', { name: /Inspect AppProject production/ })).toBeVisible();
   await page.getByRole('button', { name: 'Open Argo CD Overview', exact: true }).click();
   await expect(page.getByRole('tab', { name: /^Argo CD Overview/ })).toHaveCount(1);
-  await page.screenshot({ path: 'test-results/argocd-dashboard.png' });
+  await captureScreenshot(page, { path: 'test-results/argocd-dashboard.png' });
   expect(errors).toEqual([]);
 });
 
@@ -66,7 +67,7 @@ test('Helm summary filters the current page without losing its revision inspecti
   await helm.getByRole('button', { name: /Needs attention 2/ }).click();
   await expect(helm.locator('tbody tr')).toHaveCount(2);
   await expect(helm).toContainText('Current page');
-  await page.screenshot({ path: 'test-results/helm-dashboard.png' });
+  await captureScreenshot(page, { path: 'test-results/helm-dashboard.png' });
 });
 
 test('dashboard snapshot errors retain known data and namespace changes replace the scope', async ({ page }) => {
@@ -114,5 +115,5 @@ test('dashboards reflow on narrow workspaces with reduced motion and increased U
   await expect(page.locator('html')).toHaveAttribute('data-ui-scale', '150');
   await page.setViewportSize({ width: 375, height: 800 });
   expect(await page.getByTestId('flux-dashboard').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-  await page.screenshot({ path: 'test-results/flux-dashboard-narrow.png' });
+  await captureScreenshot(page, { path: 'test-results/flux-dashboard-narrow.png' });
 });

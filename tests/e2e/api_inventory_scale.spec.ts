@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 
 const ns = 'backend';
@@ -68,7 +69,7 @@ test('HPA metrics, EndpointSlices, selected service port and predictable Back', 
   await details.getByRole('button', { name: 'web-slice', exact: true }).click();
   await expect(details.getByRole('region', { name: 'Endpoint slice summary', exact: true })).toContainText('web-service');
   await back.click(); await expect(details.getByRole('region', { name: 'Service summary', exact: true })).toBeVisible();
-  await page.screenshot({ path: 'test-results/service-expanded.png' });
+  await captureScreenshot(page, { path: 'test-results/service-expanded.png' });
   expect(errors).toEqual([]);
 });
 

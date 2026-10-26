@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 
 async function customApi(page: Page) {
@@ -22,7 +23,7 @@ test('fresh launches collapse categories and expose Lens-style direct cluster li
   await expect(explorer.getByRole('button', { name: /^Roles(?: \d+)?$/ })).toHaveCount(0);
   for (const label of ['Nodes', 'Namespaces', 'Events']) await expect(explorer.getByRole('button', { name: new RegExp(`^${label}(?: \\d+)?$`) })).toBeVisible();
   await expect(explorer.getByRole('button', { name: /^Cluster(?: \d+)?$/ })).toHaveCount(0);
-  await page.screenshot({ path: 'test-results/sidebar-collapsed.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/sidebar-collapsed.png', animations: 'disabled' });
   await explorer.getByRole('button', { name: /^Workloads(?: \d+)?$/ }).click();
   const workloads = explorer.locator('#sidebar-category-workloads');
   expect((await workloads.getByRole('button').allTextContents()).map(text => text.trim().replace(/\s*\d+$/, ''))).toEqual(['Pods', 'Deployments', 'DaemonSets', 'StatefulSets', 'ReplicaSets', 'Replication Controllers', 'Jobs', 'CronJobs']);
@@ -33,7 +34,7 @@ test('fresh launches collapse categories and expose Lens-style direct cluster li
   await expect(explorer.getByRole('button', { name: /^(Identity|Namespace RBAC|Cluster RBAC)$/ })).toHaveCount(0);
   await explorer.getByRole('button', { name: /^Nodes(?: \d+)?$/ }).click();
   await expect(page.getByTestId('resource-table').locator('tbody tr').first()).toBeVisible();
-  await page.screenshot({ path: 'test-results/sidebar-lens-navigation.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/sidebar-lens-navigation.png', animations: 'disabled' });
 });
 
 test('search temporarily reveals matching resource ancestors and clearing it restores collapsed categories', async ({ page }) => {

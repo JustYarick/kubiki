@@ -1,4 +1,6 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { captureScreenshot } from './helpers/screenshots';
+import { box, layoutCases } from './helpers/layout';
+import { test, expect, type Page } from '@playwright/test';
 
 const release = { name: 'web-with-a-long-release-name-for-layout', namespace: 'backend', revision: '4', status: 'deployed', chart: 'web-chart-2026.10.21-preview.123', app_version: '2026.10', updated: '2026-10-21 09:00:00 +0300' };
 async function fixture(page: Page) {
@@ -36,12 +38,6 @@ async function open(page: Page) {
   await page.evaluate(() => document.fonts.ready);
   return details;
 }
-async function box(locator: Locator) {
-  return locator.evaluate(element => {
-    const rect = element.getBoundingClientRect();
-    return [rect.x, rect.y, rect.width, rect.height].map(value => Math.round(value * 10) / 10);
-  });
-}
 
 test('refresh retains panel and table geometry; changing resource kinds keeps one header height', async ({ page }) => {
   const hold = await fixture(page);
@@ -77,7 +73,7 @@ test('refresh retains panel and table geometry; changing resource kinds keeps on
   expect((await box(details.locator('.details-header')))[3]).toBe(before[0][3]);
 });
 
-for (const { width, scale } of [{ width: 375, scale: 110 }, { width: 768, scale: 110 }, { width: 900, scale: 150 }, { width: 1440, scale: 200 }, { width: 1920, scale: 110 }, { width: 375, scale: 200 }]) {
+for (const { width, scale } of layoutCases('details')) {
   test(`details and menus fit ${width}px at ${scale}% scale`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.addInitScript(scale => localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { uiScale: scale }, version: 0 })), scale);
@@ -93,13 +89,13 @@ for (const { width, scale } of [{ width: 375, scale: 110 }, { width: 768, scale:
     expect(close!.x + close!.width).toBeLessThanOrEqual(width);
     const settings = await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).boundingBox();
     expect(settings!.x + settings!.width).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `test-results/details-overview-${width}-${scale}.png`, animations: 'disabled' });
+    await captureScreenshot(page, { path: `test-results/details-overview-${width}-${scale}.png`, animations: 'disabled' });
     const header = await box(details.locator('.details-header'));
     await details.getByRole('tab', { name: 'History', exact: true }).click();
     await expect(details.getByRole('table', { name: 'Helm release history' })).toBeVisible();
     expect(await details.locator('.details-scroll').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await box(details.locator('.details-header'))).toEqual(header);
-    await page.screenshot({ path: `test-results/details-history-${width}-${scale}.png`, animations: 'disabled' });
+    await captureScreenshot(page, { path: `test-results/details-history-${width}-${scale}.png`, animations: 'disabled' });
     await details.getByRole('tab', { name: 'Values', exact: true }).click();
     await expect(details.getByLabel('Helm values revision 4')).toBeVisible();
     expect(await box(details.locator('.details-header'))).toEqual(header);
@@ -120,7 +116,7 @@ for (const { width, scale } of [{ width: 375, scale: 110 }, { width: 768, scale:
     await page.keyboard.press('Escape');
     await expect(details).toBeVisible();
     await expect(trigger).toBeFocused();
-    await page.screenshot({ path: `test-results/details-${width}-${scale}.png`, animations: 'disabled' });
+    await captureScreenshot(page, { path: `test-results/details-${width}-${scale}.png`, animations: 'disabled' });
     await details.getByRole('tab', { name: 'Overview', exact: true }).click();
     await details.getByRole('button', { name: 'Inspect Deployment owned-web in backend', exact: true }).click();
     const scaler = details.locator('.details-scaler');
@@ -129,6 +125,6 @@ for (const { width, scale } of [{ width: 375, scale: 110 }, { width: 768, scale:
     await details.getByRole('button', { name: 'Increase replicas', exact: true }).click();
     expect(await box(scaler)).toEqual(scalerBefore);
     expect(await scaler.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-    await page.screenshot({ path: `test-results/details-workload-${width}-${scale}.png`, animations: 'disabled' });
+    await captureScreenshot(page, { path: `test-results/details-workload-${width}-${scale}.png`, animations: 'disabled' });
   });
 }

@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 
 async function pods(page: Page) {
@@ -50,7 +51,7 @@ test('agent preference persists and Analyze passes a restricted diagnostic messa
   await expect(panel.locator('pre')).toContainText('payment-worker-67f98b984-pv4n8');
   const saved = await page.evaluate(() => localStorage.getItem('kubiki.workspace.v3'));
   expect(saved).not.toContain('BEGIN UNTRUSTED');
-  await page.screenshot({ path: 'test-results/analysis-message.png' });
+  await captureScreenshot(page, { path: 'test-results/analysis-message.png' });
   await page.getByRole('button', { name: 'Toggle Explorer', exact: true }).click();
   await page.setViewportSize({ width: 375, height: 800 });
   await page.emulateMedia({ reducedMotion: 'reduce' });

@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 
 // Independent API fixture: mismatched group, version, scope or an extra collection returns an error.
@@ -107,7 +108,7 @@ test('slow Kubernetes responses show animated loading, retain rows on refresh, r
   expect(await loading.locator('.resource-loading-progress > span').evaluate(el => getComputedStyle(el).animationName)).toBe('resource-loading-slide');
   await page.emulateMedia({ reducedMotion: 'reduce' }); expect(await loading.locator('.resource-loading-progress > span').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
   await page.setViewportSize({ width: 500, height: 700 }); expect(await loading.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-  await page.screenshot({ path: 'test-results/resource-loading-reduced.png' });
+  await captureScreenshot(page, { path: 'test-results/resource-loading-reduced.png' });
   release(); await expect(table.getByText(resourceName('Pod'), { exact: true })).toBeVisible(); await expect(table).toHaveAttribute('aria-busy', 'false');
   await page.setViewportSize({ width: 1440, height: 900 });
   const before = await table.locator('table').boundingBox(); const refresh = state.hold('Pod');

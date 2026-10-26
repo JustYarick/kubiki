@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 async function setup(page: Page, mode = 'ok') {
   await page.addInitScript(({ mode }) => {
@@ -61,7 +62,7 @@ test('Pod and Service forwards use native assigned ports, show errors and stop e
   await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
   await service.getByRole('button', { name: 'Stop forward web-service' }).click(); await expect(service).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).__pfHarness.active())).toBe(1);
-  await page.screenshot({ path: 'test-results/port-forwards.png' });
+  await captureScreenshot(page, { path: 'test-results/port-forwards.png' });
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await expect.poll(() => page.evaluate(() => (window as any).__pfHarness.active())).toBe(0);
 });
@@ -107,7 +108,7 @@ test('Ports picker filters targets and compact sessions stay inside the dock', a
   expect(await page.evaluate(() => (window as any).__pfHarness.starts.length)).toBe(1);
   await page.setViewportSize({ width: 900, height: 800 });
   expect(await table.evaluate(el => el.scrollWidth <= el.parentElement!.clientWidth)).toBe(true);
-  await page.screenshot({ path: 'test-results/ports-compact.png' });
+  await captureScreenshot(page, { path: 'test-results/ports-compact.png' });
 });
 
 test('browser snapshots explain the desktop transport requirement', async ({ page }) => {

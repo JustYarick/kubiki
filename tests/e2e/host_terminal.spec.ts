@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
 async function setup(page: import('@playwright/test').Page, failInfo = false) {
   await page.addInitScript(({ failInfo }) => {
@@ -40,7 +41,7 @@ test('host shell works without a cluster, carries keys/resize, preserves hidden 
   await expect.poll(() => page.evaluate(() => (window as any).__hostHarness.starts.length)).toBe(2);await expect.poll(() => page.evaluate(() => (window as any).__hostHarness.active())).toBe(1);
   await page.evaluate(() => (window as any).__hostHarness.late());await expect(pane.locator('.xterm-rows')).not.toContainText('STALE HOST OUTPUT');
   await page.setViewportSize({ width: 900, height: 700 });await expect.poll(() => page.evaluate(() => (window as any).__hostHarness.sizes.length)).toBeGreaterThan(1);
-  await page.screenshot({ path: 'test-results/host-terminal.png' });
+  await captureScreenshot(page, { path: 'test-results/host-terminal.png' });
   await page.evaluate(() => (window as any).__hostHarness.finish());await expect(pane.getByRole('status')).toHaveText('Exited (7)');await expect.poll(() => page.evaluate(() => (window as any).__hostHarness.active())).toBe(0);
   await pane.getByRole('button', { name: 'Reconnect shell' }).click();await expect(pane.getByRole('status')).toHaveText('Connected');
   await pane.getByRole('button', { name: 'Disconnect shell' }).click();await expect(pane.getByRole('status')).toHaveText('Disconnected');
@@ -73,7 +74,7 @@ test('custom typography updates a connected host PTY without losing output or st
   await expect.poll(() => page.evaluate(() => document.fonts.check('14px "Kubiki Nerd Symbols"', '\ue0b0\uf120'))).toBe(true);
   await expect(dialog.getByLabel('Terminal font preview')).toContainText('');
   await dialog.getByLabel('Terminal font preview').scrollIntoViewIfNeeded();
-  await page.screenshot({ path: 'test-results/terminal-font-preview.png' });
+  await captureScreenshot(page, { path: 'test-results/terminal-font-preview.png' });
   await page.keyboard.press('Escape');
   await expect.poll(() => pane.locator('.xterm-rows').evaluate(el => getComputedStyle(el).fontFamily)).toContain('DejaVu Sans Mono');
   await expect(pane.locator('.xterm-rows')).toContainText('local-shell-ready');

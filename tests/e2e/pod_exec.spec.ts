@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 const name = 'pod-with-init-container-and-a-long-name-for-responsive-toolbar';
 async function setup(page: Page, denied = false) {
@@ -154,7 +155,7 @@ test('container indicators and responsive logs toolbar include init/sidecar/ephe
   expect((await toolbar.boundingBox())!.height).toBeLessThan(125);
   await toolbar.getByRole('button', { name: 'Log options', exact: true }).click();
   await expect(page.getByRole('menuitemcheckbox', { name: /Timestamps/ }).or(toolbar.getByRole('button', { name: 'Timestamps', exact: true }))).toBeVisible(); await page.keyboard.press('Escape');
-  await page.screenshot({ path: 'test-results/containers-and-logs.png' });
+  await captureScreenshot(page, { path: 'test-results/containers-and-logs.png' });
 });
 
 test('exec 403 is actionable and closing the UI releases backend sessions and callbacks', async ({ page }) => {

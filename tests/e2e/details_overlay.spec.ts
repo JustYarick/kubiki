@@ -1,12 +1,5 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
-
-/** Geometry of an element, rounded to avoid sub-pixel noise. */
-async function box(locator: Locator) {
-  return locator.evaluate(element => {
-    const rect = element.getBoundingClientRect();
-    return [rect.x, rect.y, rect.width, rect.height].map(value => Math.round(value * 10) / 10);
-  });
-}
+import { box } from './helpers/layout';
+import { test, expect, type Page } from '@playwright/test';
 
 async function openPods(page: Page) {
   await page.goto('/?demo=1');
@@ -15,7 +8,7 @@ async function openPods(page: Page) {
   return page.getByTestId('resource-table');
 }
 
-test('the details panel floats above the resource table and never resizes it', async ({ page }) => {
+test('overlay resizing and detail scrolling preserve table geometry and keyboard access', async ({ page }) => {
   const table = await openPods(page);
   const before = await box(table);
   const viewport = page.viewportSize()!.width;
@@ -35,39 +28,30 @@ test('the details panel floats above the resource table and never resizes it', a
   const tabBar = await box(page.getByRole('tablist', { name: 'Workspace tabs' }));
   expect(panelBox[1]).toBeGreaterThanOrEqual(tabBar[1] - 1);
 
-  // Closing the panel changes nothing about the table either.
-  await panel.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
-  await expect(panel).toHaveCount(0);
-  expect(await box(table)).toEqual(before);
-});
-
-test('the overlay keeps the resource table scrollable and the panel resizable', async ({ page }) => {
-  const table = await openPods(page);
-  const before = await box(table);
-  await table.locator('tbody tr').first().click();
-
-  const panel = page.getByTestId('inspector-panel');
-  const widthBefore = (await box(panel))[2];
-
   const separator = page.getByRole('separator', { name: 'Resize panels', exact: true }).last();
   await separator.focus();
   await separator.press('Shift+ArrowRight');
   await separator.press('Shift+ArrowRight');
-  const widthAfter = (await box(panel))[2];
-  expect(widthAfter).toBeLessThan(widthBefore);
+  expect((await box(panel))[2]).toBeLessThan(panelBox[2]);
   expect(await box(table)).toEqual(before);
 
-  // The panel keeps its own scrolling instead of stretching the table.
-  await expect(panel.getByTestId('resource-details')).toBeVisible();
-  expect(await table.evaluate(element => element.scrollWidth >= element.clientWidth)).toBe(true);
-});
+  await table.focus();
+  await table.press('ArrowDown');
+  const focusedName = table.locator('tr.focused td').nth(1);
+  await expect(focusedName).toBeVisible();
+  const nameBounds = await focusedName.boundingBox();
+  expect(nameBounds!.x + nameBounds!.width).toBeLessThanOrEqual((await panel.boundingBox())!.x + 1);
+  await expect(table).toBeFocused();
 
-test('keyboard focus in the table is not hidden under the floating panel', async ({ page }) => {
-  const table = await openPods(page);
-  await table.locator('tbody tr').first().click();
-  await expect(page.getByTestId('inspector-panel')).toBeVisible();
-  const padding = await table.evaluate(element => getComputedStyle(element).scrollPaddingRight);
-  expect(parseFloat(padding)).toBeGreaterThan(0);
+  const detailsScroll = panel.locator('.details-scroll');
+  await detailsScroll.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect.poll(() => detailsScroll.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  expect(await box(table)).toEqual(before);
+
+  // Closing the panel changes nothing about the table either.
+  await panel.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
+  await expect(panel).toHaveCount(0);
+  expect(await box(table)).toEqual(before);
 });
 
 test('the right panel opening resizes the bottom dock and never occludes it', async ({ page }) => {

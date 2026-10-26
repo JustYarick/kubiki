@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
 import { overviewMetricsFixture as fixture } from './helpers/overview';
 test('CPU/RAM dashboard shows usage, budgets, source history, sorting and container drilldown', async ({ page }) => {
@@ -10,7 +11,7 @@ test('CPU/RAM dashboard shows usage, budgets, source history, sorting and contai
   await telemetry.getByRole('group', { name: 'Sort consumers' }).getByRole('button', { name: 'RAM', exact: true }).click();
   await telemetry.getByRole('row').filter({ hasText: 'web-alpha' }).click();await expect(telemetry.getByText('app', { exact: true })).toBeVisible();await expect(telemetry.getByText('sidecar', { exact: true })).toBeVisible();await expect(telemetry.getByRole('button', { name: 'Open resource', exact: true })).toBeVisible();
   await page.getByTestId('cluster-overview').evaluate(el => el.scrollTop = 0);
-  await page.screenshot({ path: 'test-results/overview-telemetry.png', fullPage: false });
+  await captureScreenshot(page, { path: 'test-results/overview-telemetry.png', fullPage: false });
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'alpha', exact: true }).click();await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();await expect(telemetry.getByTestId('metric-cpu-usage')).toHaveText('625m');await expect(telemetry.getByRole('button', { name: 'Rank Nodes', exact: true })).toHaveCount(0);await expect(telemetry.getByRole('row').filter({ hasText: 'web-beta' })).toHaveCount(0);
   await cpu.locator('.telemetry-history > summary').click();
   for (const width of [900, 700]) {

@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
 import { namespaceList } from './helpers/namespaces';
 async function setup(page: import('@playwright/test').Page, partial = false) {
@@ -30,7 +31,7 @@ test('Overview follows global namespace, refreshes counts, opens resources and p
 test('Overview marks missing data, handles empty namespaces and fits narrow editor panes', async ({ page }) => {
   const { overview } = await setup(page, true);await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByTestId('overview-count-Secret')).toHaveText('—');
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'empty', exact: true }).click();await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('0');
-  await page.setViewportSize({ width: 900, height: 900 });expect(await overview.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);await page.screenshot({ path: 'test-results/overview.png' });
+  await page.setViewportSize({ width: 900, height: 900 });expect(await overview.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);await captureScreenshot(page, { path: 'test-results/overview.png' });
 });
 
 
