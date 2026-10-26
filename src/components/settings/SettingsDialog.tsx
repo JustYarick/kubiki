@@ -10,7 +10,14 @@ import { TerminalFontSettings } from '../TerminalFontSettings';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { k8s } from '../../providers/k8s_provider';
-import { DEFAULT_SCROLLBACK, TERMINAL_ACK_TIMEOUT_PRESETS, TERMINAL_SCROLLBACK_PRESETS, useUiStore } from '../../state/ui_store';
+import {
+  DEFAULT_SCROLLBACK,
+  LOG_BUFFER_PRESETS,
+  LOG_TAIL_PRESETS,
+  TERMINAL_ACK_TIMEOUT_PRESETS,
+  TERMINAL_SCROLLBACK_PRESETS,
+  useUiStore,
+} from '../../state/ui_store';
 import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { cx } from '../../core/utils/cx';
@@ -155,9 +162,17 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
   const density = useUiStore((s) => s.density);
   const uiScale = useUiStore((s) => s.uiScale);
   const defaultRightTab = useUiStore((s) => s.defaultRightTab);
+  const topologyGrouping = useUiStore((s) => s.topologyGrouping);
+  const topologyPerformanceMode = useUiStore((s) => s.topologyPerformanceMode);
+  const topologyAnimations = useUiStore((s) => s.topologyAnimations);
+  const topologyShowMinimap = useUiStore((s) => s.topologyShowMinimap);
   const setDensity = useUiStore((s) => s.setDensity);
   const setUiScale = useUiStore((s) => s.setUiScale);
   const setDefaultRightTab = useUiStore((s) => s.setDefaultRightTab);
+  const setTopologyGrouping = useUiStore((s) => s.setTopologyGrouping);
+  const setTopologyPerformanceMode = useUiStore((s) => s.setTopologyPerformanceMode);
+  const setTopologyAnimations = useUiStore((s) => s.setTopologyAnimations);
+  const setTopologyShowMinimap = useUiStore((s) => s.setTopologyShowMinimap);
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -213,6 +228,40 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
           options={[{ value: 'overview', label: 'Overview' }, { value: 'yaml', label: 'YAML' }]}
         />
       </Row>
+      <Row entry={findEntry('appearance.topology-grouping')}>
+        <Segmented
+          ariaLabel="Cluster layout grouping"
+          value={topologyGrouping}
+          onChange={setTopologyGrouping}
+          options={[{ value: 'namespace', label: 'Namespace' }, { value: 'flat', label: 'Flat' }]}
+        />
+      </Row>
+      <Row entry={findEntry('appearance.topology-performance')}>
+        <Segmented
+          ariaLabel="Topology rendering profile"
+          value={topologyPerformanceMode}
+          onChange={setTopologyPerformanceMode}
+          options={[
+            { value: 'quality', label: 'Quality' },
+            { value: 'balanced', label: 'Balanced' },
+            { value: 'performance', label: 'Performance' },
+          ]}
+        />
+      </Row>
+      <Row entry={findEntry('appearance.topology-animations')}>
+        <Checkbox
+          aria-label="Topology physics and animation"
+          checked={topologyAnimations}
+          onChange={(event) => setTopologyAnimations(event.target.checked)}
+        />
+      </Row>
+      <Row entry={findEntry('appearance.topology-minimap')}>
+        <Checkbox
+          aria-label="Topology canvas minimap"
+          checked={topologyShowMinimap}
+          onChange={(event) => setTopologyShowMinimap(event.target.checked)}
+        />
+      </Row>
     </div>
   );
 }
@@ -222,6 +271,8 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
   const setEditorFontSize = useUiStore((s) => s.setEditorFontSize);
   const yamlCleanView = useUiStore((s) => s.yamlCleanView);
   const setYamlCleanView = useUiStore((s) => s.setYamlCleanView);
+  const yamlHideManagedFields = useUiStore((s) => s.yamlHideManagedFields);
+  const setYamlHideManagedFields = useUiStore((s) => s.setYamlHideManagedFields);
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -234,6 +285,13 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
           value={yamlCleanView ? 'clean' : 'full'}
           onChange={(value) => setYamlCleanView(value === 'clean')}
           options={[{ value: 'clean', label: 'Clean' }, { value: 'full', label: 'Full' }]}
+        />
+      </Row>
+      <Row entry={findEntry('editor.hide-managed-fields')}>
+        <Checkbox
+          aria-label="Hide managedFields by default"
+          checked={yamlHideManagedFields}
+          onChange={(event) => setYamlHideManagedFields(event.target.checked)}
         />
       </Row>
     </div>
@@ -298,8 +356,16 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
   const setLogsWrap = useUiStore((s) => s.setLogsWrap);
   const logsTimestamps = useUiStore((s) => s.logsTimestamps);
   const setLogsTimestamps = useUiStore((s) => s.setLogsTimestamps);
+  const logsColorLevels = useUiStore((s) => s.logsColorLevels);
+  const setLogsColorLevels = useUiStore((s) => s.setLogsColorLevels);
   const logsStructured = useUiStore((s) => s.logsStructured);
   const setLogsStructured = useUiStore((s) => s.setLogsStructured);
+  const logsDefaultTail = useUiStore((s) => s.logsDefaultTail);
+  const setLogsDefaultTail = useUiStore((s) => s.setLogsDefaultTail);
+  const logsMaxBufferLines = useUiStore((s) => s.logsMaxBufferLines);
+  const setLogsMaxBufferLines = useUiStore((s) => s.setLogsMaxBufferLines);
+  const logsScrollStickiness = useUiStore((s) => s.logsScrollStickiness);
+  const setLogsScrollStickiness = useUiStore((s) => s.setLogsScrollStickiness);
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -309,8 +375,40 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
       <Row entry={findEntry('logs.timestamps')}>
         <Checkbox aria-label="Show log timestamps by default" checked={logsTimestamps} onChange={(event) => setLogsTimestamps(event.target.checked)} />
       </Row>
+      <Row entry={findEntry('logs.color-levels')}>
+        <Checkbox aria-label="Highlight log levels by default" checked={logsColorLevels} onChange={(event) => setLogsColorLevels(event.target.checked)} />
+      </Row>
       <Row entry={findEntry('logs.structured')}>
         <Checkbox aria-label="Parse log lines as JSON by default" checked={logsStructured} onChange={(event) => setLogsStructured(event.target.checked)} />
+      </Row>
+      <Row entry={findEntry('logs.default-tail')}>
+        <Segmented
+          ariaLabel="Default log tail lines"
+          value={String(logsDefaultTail)}
+          onChange={(v) => setLogsDefaultTail(Number(v))}
+          options={LOG_TAIL_PRESETS.map((n) => ({ value: String(n), label: `${n}` }))}
+        />
+      </Row>
+      <Row entry={findEntry('logs.max-buffer')}>
+        <Segmented
+          ariaLabel="Max log buffer size"
+          value={String(logsMaxBufferLines)}
+          onChange={(v) => setLogsMaxBufferLines(Number(v))}
+          options={LOG_BUFFER_PRESETS.map((n) => ({ value: String(n), label: `${n.toLocaleString('en-US')}` }))}
+        />
+      </Row>
+      <Row entry={findEntry('logs.stickiness')}>
+        <Segmented
+          ariaLabel="Auto-scroll stickiness"
+          value={String(logsScrollStickiness)}
+          onChange={(v) => setLogsScrollStickiness(Number(v))}
+          options={[
+            { value: '20', label: 'Strict (20px)' },
+            { value: '40', label: 'Normal (40px)' },
+            { value: '80', label: 'Relaxed (80px)' },
+            { value: '120', label: 'High (120px)' },
+          ]}
+        />
       </Row>
     </div>
   );
@@ -319,6 +417,10 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
 function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   const rememberNamespaceScope = useClusterStore((s) => s.rememberNamespaceScope);
   const setRememberNamespaceScope = useClusterStore((s) => s.setRememberNamespaceScope);
+  const portForwardLocalRange = useUiStore((s) => s.portForwardLocalRange);
+  const setPortForwardLocalRange = useUiStore((s) => s.setPortForwardLocalRange);
+  const portForwardAutoOpen = useUiStore((s) => s.portForwardAutoOpen);
+  const setPortForwardAutoOpen = useUiStore((s) => s.setPortForwardAutoOpen);
   const [kubeconfigPath, setKubeconfigPath] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -395,6 +497,22 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
             Specify a custom kubeconfig file path, or click Reset to use the default location.
           </p>
         </div>
+      </Row>
+      <Row entry={findEntry('kubernetes.port-range')}>
+        <Input
+          aria-label="Local port forward range"
+          value={portForwardLocalRange}
+          onChange={(e) => setPortForwardLocalRange(e.target.value)}
+          placeholder="8000-8999"
+          className="w-32"
+        />
+      </Row>
+      <Row entry={findEntry('kubernetes.auto-open-browser')}>
+        <Checkbox
+          aria-label="Auto-open browser on port forward"
+          checked={portForwardAutoOpen}
+          onChange={(event) => setPortForwardAutoOpen(event.target.checked)}
+        />
       </Row>
     </div>
   );
@@ -498,6 +616,7 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     const ui = useUiStore.getState();
     ui.setEditorFontSize(DEFAULT_APPEARANCE.editorFontSize);
     ui.setYamlCleanView(true);
+    ui.setYamlHideManagedFields(true);
     toast.success('Editor defaults restored');
   },
   terminal: () => {
@@ -513,11 +632,18 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     const ui = useUiStore.getState();
     ui.setLogsWrap(true);
     ui.setLogsTimestamps(true);
+    ui.setLogsColorLevels(false);
     ui.setLogsStructured(false);
+    ui.setLogsDefaultTail(500);
+    ui.setLogsMaxBufferLines(1000);
+    ui.setLogsScrollStickiness(40);
     toast.success('Log defaults restored');
   },
   kubernetes: () => {
     useClusterStore.getState().setRememberNamespaceScope(true);
+    const ui = useUiStore.getState();
+    ui.setPortForwardLocalRange('8000-8999');
+    ui.setPortForwardAutoOpen(false);
     toast.success('Kubernetes defaults restored');
   },
 };

@@ -43,6 +43,10 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
       { id: 'appearance.ui-scale', label: 'Interface scale', description: 'Scales text, icons and controls. 100% uses a 13px base UI font.', keywords: 'zoom size factor resize' },
       { id: 'appearance.row-density', label: 'Row density', description: 'Affects table rows across all resource views.', keywords: 'table compact comfortable spacing' },
       { id: 'appearance.details-tab', label: 'Default details tab', description: 'Tab opened in the details panel when a resource is selected.', keywords: 'inspector right pane yaml overview' },
+      { id: 'appearance.topology-grouping', label: 'Cluster layout grouping', description: 'Group resources inside enclosing namespace boxes or lay out resources as a flat diagram for higher performance.', keywords: 'topology graph layout grouping namespace cluster flat elk' },
+      { id: 'appearance.topology-performance', label: 'Topology rendering profile', description: 'Tweak rendering fidelity (shadows, line curves, worker timeouts) for high-end GPUs vs low-end laptops.', keywords: 'topology graph rendering profile performance gpu quality slow lag' },
+      { id: 'appearance.topology-animations', label: 'Topology physics and animation', description: 'Enable animated edge flows and pulse transitions between connected resources.', keywords: 'topology graph physics animation flow speed motion' },
+      { id: 'appearance.topology-minimap', label: 'Topology canvas minimap', description: 'Display the overview minimap in the corner of the diagram view.', keywords: 'topology graph minimap map canvas overview' },
     ],
   },
   {
@@ -54,6 +58,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'editor.font-size', label: 'YAML editor font size', description: 'Independent of the interface scale; applies to open editors.', keywords: 'monaco size text' },
       { id: 'editor.default-view', label: 'Default YAML document view', description: 'The clean view hides status and managedFields; the full view shows the document as stored by the cluster.', keywords: 'clean full status managedfields manifest' },
+      { id: 'editor.hide-managed-fields', label: 'Hide managedFields by default', description: 'Strip metadata.managedFields from manifests in the YAML editor to keep views clean.', keywords: 'managedfields metadata strip clean status server' },
     ],
   },
   {
@@ -78,7 +83,11 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'logs.wrap', label: 'Wrap log lines by default', description: 'New log sessions start with line wrapping enabled; the toolbar toggle still works per session.', keywords: 'soft lines overflow new sessions' },
       { id: 'logs.timestamps', label: 'Show timestamps by default', description: 'New log sessions start with a timestamp column; the toolbar toggle still works per session.', keywords: 'time column new sessions' },
-      { id: 'logs.structured', label: 'Structured log parsing by default', description: 'JSON log lines render as a message with key=value fields and the level from the record. Lines that are not JSON stay as-is; the toolbar toggle still works per session.', keywords: 'json fields grafana parse structured format prettify level' },
+      { id: 'logs.color-levels', label: 'Highlight log levels', description: 'Colorize error in red, warning in yellow, and info in blue across log sessions.', keywords: 'color highlight level error warning info red yellow blue grafana' },
+      { id: 'logs.structured', label: 'Structured log parsing by default', description: 'JSON log lines render as a message with key:value field pills and the level from the record like Grafana. Lines that are not JSON stay as-is; the toolbar toggle still works per session.', keywords: 'json fields grafana parse structured format prettify level pills' },
+      { id: 'logs.default-tail', label: 'Default log tail lines', description: 'Number of lines to read initially when opening container logs.', keywords: 'tail lines initial slice history default' },
+      { id: 'logs.max-buffer', label: 'Max log buffer size', description: 'Maximum lines kept in memory per session before older output is discarded.', keywords: 'buffer size lines memory max limit' },
+      { id: 'logs.stickiness', label: 'Auto-scroll stickiness', description: 'Distance from the bottom of the log viewer to maintain auto-scroll when new lines arrive.', keywords: 'scroll stickiness follow pin distance autoscroll' },
     ],
   },
   {
@@ -90,6 +99,8 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'kubernetes.remember-scope', label: 'Remember namespace scope per context', description: 'Restores the namespace selection of each context when it is selected again.', keywords: 'namespace scope context persistence restore' },
       { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Configure custom kubeconfig file path or use the default location (~/.kube/config / $KUBECONFIG).', keywords: 'config path credentials files' },
+      { id: 'kubernetes.port-range', label: 'Local port forward range', description: 'Preferred local port range for auto-assigning local tunnel listeners (e.g. 8000-8999).', keywords: 'port forward range local listen tunnel network' },
+      { id: 'kubernetes.auto-open-browser', label: 'Auto-open browser on port forward', description: 'Automatically launch the default web browser when a port forward tunnel starts.', keywords: 'browser open url port forward tunnel http' },
     ],
   },
   {
