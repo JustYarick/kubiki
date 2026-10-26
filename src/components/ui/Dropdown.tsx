@@ -30,8 +30,12 @@ export function Popover({ trigger, children, align = 'start', width, className }
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) return;
+    let anchorTop = 0;
+    let anchorLeft = 0;
     const update = () => {
       const r = anchorRef.current!.getBoundingClientRect();
+      anchorTop = r.top;
+      anchorLeft = r.left;
       const panel = panelRef.current;
       const desiredHeight = Math.min(panel?.scrollHeight ?? 0, window.innerHeight * 0.7);
       const below = Math.max(0, window.innerHeight - r.bottom - 12);
@@ -53,6 +57,10 @@ export function Popover({ trigger, children, align = 'start', width, className }
     if (panelRef.current) observer.observe(panelRef.current);
     const onScroll = (event: Event) => {
       if (event.target instanceof Node && panelRef.current?.contains(event.target)) return;
+      // A queued scroll from revealing the trigger can arrive after opening.
+      // Close only when scrolling actually moves the anchor away from the panel.
+      const anchor = anchorRef.current?.getBoundingClientRect();
+      if (anchor && anchor.top === anchorTop && anchor.left === anchorLeft) return;
       close();
     };
     window.addEventListener('resize', update);

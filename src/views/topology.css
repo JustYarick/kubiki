@@ -31,3 +31,5 @@
 .topology-route-handle.route-bend { cursor: move; }
 .topology-route-handle.route-bend::after { background: var(--accent); border-radius: 50%; }
 .topology-route-handle:hover::after, .topology-route-handle:focus-visible::after { width: 10px; height: 10px; }
+
+.react-flow__arrowhead polyline { stroke-linecap: round; stroke-linejoin: round; }

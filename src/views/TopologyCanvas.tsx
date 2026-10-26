@@ -138,7 +138,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       for (const edge of graph.relations) { if (!bundles.has(edge.source)) bundles.set(edge.source, []); bundles.get(edge.source)!.push(edge.id); }
       for (const bundle of bundles.values()) bundle.sort();
       setEdges(graph.relations.map((edge) => ({ id: edge.id, source: layoutNodeId(graph, edge.source, grouping), target: layoutNodeId(graph, edge.target, grouping), label: edge.label,
-        type: 'adjustable', data: { direction, lane: bundles.get(edge.source)!.indexOf(edge.id) - (bundles.get(edge.source)!.length - 1) / 2 }, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: edge.type === 'owns' ? '#7c9bda' : '#626b7c' },
+        type: 'adjustable', data: { direction, lane: bundles.get(edge.source)!.indexOf(edge.id) - (bundles.get(edge.source)!.length - 1) / 2 }, markerEnd: { type: MarkerType.Arrow }, style: { stroke: edge.type === 'owns' ? '#7c9bda' : '#626b7c' },
         labelStyle: { fill: '#b5bac4', fontSize: 10 }, labelBgStyle: { fill: '#25272a' },
       })));
       setBusy(false);
