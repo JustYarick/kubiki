@@ -15,6 +15,8 @@ import { parse } from 'yaml';
 test('manual CI publishes by default and invokes the same pipeline as tag releases', async () => {
   const ci = parse(await readFile('.github/workflows/ci.yml', 'utf8'));
   const release = parse(await readFile('.github/workflows/release.yml', 'utf8'));
+  assert.deepEqual(ci.on.push['branches-ignore'], ['dev', 'main']);
+  assert.deepEqual(ci.on.pull_request['branches-ignore'], ['dev', 'main']);
   assert.equal(ci.on.workflow_dispatch.inputs.trigger_release.default, true);
   assert.equal(release.on.workflow_dispatch.inputs.publish.default, true);
   assert.equal(ci.jobs.pipeline.uses, './.github/workflows/release.yml');
@@ -113,15 +115,17 @@ test('all release targets share a serialized scanner and failed scans retain the
   assert.ok(jobs.publish.steps.some(step => step.uses?.startsWith('actions/download-artifact@') && step.with.name === upload.with.name));
 });
 
-test('tag pushes run tests; manual releases honor run_tests instead of requiring previous CI', async () => {
+test('release tests require run_tests and tag pushes do not enable them implicitly', async () => {
   const jobs = await workflowJobs();
   const expression = jobs.prepare.steps.find(step => step.id === 'plan').env.RUN_TESTS;
   for (const [event_name, ref, runTests, expected] of [
     ['workflow_dispatch', 'refs/heads/dev', false, false],
+    ['workflow_dispatch', 'refs/heads/dev', true, true],
+    ['workflow_dispatch', 'refs/heads/main', false, false],
     ['workflow_dispatch', 'refs/heads/main', true, true],
-    ['push', 'refs/heads/dev', true, true],
+    ['push', 'refs/heads/feature/example', true, true],
     ['pull_request', 'refs/pull/1/merge', true, true],
-    ['push', 'refs/tags/v1.2.3', undefined, true],
+    ['push', 'refs/tags/v1.2.3', undefined, false],
   ]) {
     assert.equal(workflowIf(expression, { inputs: { run_tests: runTests }, github: { event_name, ref } }), expected);
   }

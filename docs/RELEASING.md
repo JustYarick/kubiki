@@ -21,7 +21,9 @@ Open **Actions → CI → Run workflow** and select the source branch.
 - Set **custom_tag**, for example `v1.0.1` or `v1.0.1-rc.1`, to select an exact
   version. An existing tag always selects its own commit.
 - Disable **trigger_release** for tests and downloadable installers without
-  publishing. Pushes to branches and pull requests use this mode automatically.
+  publishing. Pushes and pull requests targeting branches other than `dev`/`main`
+  use this mode automatically. Pushes to `dev`/`main` and pull requests targeting
+  either branch do not start CI; launch it manually from Actions when needed.
 
 For **build and publish without tests**, open **Actions → Release → Run workflow**:
 
@@ -35,11 +37,12 @@ For **build and publish without tests**, open **Actions → Release → Run work
 
 | Entry point | Tests | Build installers | Publish |
 | --- | --- | --- | --- |
-| Branch push / PR → CI | Always | Yes | No |
+| Push to `dev`/`main` or PR targeting either branch | No run | No | No |
+| Other branch push / PR → CI | Always | Yes | No |
 | Manual CI (`trigger_release=true`, default) | Always | Yes | Yes |
 | Manual Release (`run_tests=false`, default) | Skipped | Yes | Yes, unless `publish=false` |
 | Manual Release (`run_tests=true`) | All | Yes | Yes, unless `publish=false` |
-| Push a `v*` tag | All | Yes | Yes |
+| Push a `v*` tag | Skipped | Yes | Yes |
 
 Skipping tests does not require a previous successful CI run. Frontend/extension
 compilation, type checking needed by the build, signing and artifact validation
@@ -47,7 +50,10 @@ still run. The summary records the selected test mode. **Re-run jobs** preserves
 the original inputs; select **Run workflow** to change modes.
 VirusTotal scanning remains mandatory for publication when tests are skipped.
 
-Pushing a `v*` tag also runs the complete pipeline and publishes on success:
+Pushing a `v*` tag builds signed packages, scans them with VirusTotal and publishes
+on success. Tag pushes do not implicitly enable tests. To run tests before
+publication, manually start **CI**, or start **Release** and enable **run_tests**.
+For tag-triggered publication:
 
 ```sh
 git tag -a v1.0.1-rc.1 -m "Kubiki 1.0.1 release candidate 1"
