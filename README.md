@@ -347,6 +347,7 @@ Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validatio
 
 ## Documentation
 
+- [Local state persistence and topology rendering settings](docs/LOCAL_STATE.md)
 - [Publishing desktop releases](docs/RELEASING.md)
 - [Application updates and signing](docs/APP_UPDATES.md)
 - [Project structure and architecture](docs/STRUCTURE.md)
