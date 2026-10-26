@@ -12,13 +12,38 @@ test('empty kubeconfig starts the expanded demo with Developer mode disabled', a
   await page.getByRole('button', { name: 'Open Argo CD Overview', exact: true }).click();
   await expect(page.getByTestId('argocd-dashboard').getByRole('button', { name: 'Health Healthy: 3' })).toBeVisible();
   await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
-  await expect(page.getByTestId('helm-releases').getByRole('button', { name: /Releases 8/ })).toBeVisible();
+  await expect(page.getByTestId('helm-releases').getByRole('button', { name: /Releases 728/ })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Search Helm releases by name or namespace' }).fill('loki');
   await page.getByRole('row', { name: 'Inspect Helm release loki in logging', exact: true }).click();
   const details = page.getByTestId('resource-details');
   await expect(details).toContainText('BackoffLimitExceeded');
   await expect(details).toContainText('Managed by Flux');
   await expect(details.getByRole('button', { name: 'Upgrade', exact: true })).toBeDisabled();
   expect(liveReads).toEqual([]);expect(errors).toEqual([]);
+});
+
+test('large demo loads counts, virtualizes pods and filters down to connected resources', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/?demo=1');
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  const overview = page.getByTestId('cluster-overview');
+  await expect(overview.getByRole('button', { name: 'Pods: 8,476', exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Nodes: 184', exact: true })).toBeVisible();
+  await overview.getByRole('button', { name: 'Pods: 8,476', exact: true }).click();
+  const table = page.getByTestId('resource-table');
+  await expect(table.locator('tbody tr[data-resource-uid]').first()).toBeVisible();
+  expect(await table.locator('tbody tr[data-resource-uid]').count()).toBeLessThan(150);
+  const name = 'payments-api-7f9c800-00001';
+  await page.getByPlaceholder('Filter pods…').fill(name);
+  await table.getByText(name, { exact: true }).click();
+  const details = page.getByTestId('resource-details');
+  await expect(details).toContainText('payments-prod');
+  await details.getByRole('tab', { name: /^Related/ }).click();
+  const relationships = details.getByRole('region', { name: 'Resource relationships' });
+  await expect(relationships.getByRole('button').filter({ hasText: 'payments-api-7f9c800' })).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
 test('Developer mode adds demo immediately and disabling it reconnects to a real context', async ({ page }) => {

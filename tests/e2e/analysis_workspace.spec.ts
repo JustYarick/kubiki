@@ -39,6 +39,7 @@ test('agent preference persists and Analyze passes a restricted diagnostic messa
   await dialog.getByLabel('Analysis agent').selectOption('opencode');
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   await page.reload(); await pods(page);
+  await page.getByPlaceholder('Filter pods…').fill('payment-worker');
   await page.getByTestId('resource-table').getByText('payment-worker-67f98b984-pv4n8', { exact: true }).click();
   const problems = page.getByTestId('problems-banner');
   await expect(problems).toContainText('OpenCode · analysis only');
@@ -99,6 +100,7 @@ test('Analyze uses the custom starting prompt saved in settings', async ({ page 
   await dialog.getByRole('textbox', { name: 'Starting prompt', exact: true }).fill('Explain this failure in English. Include supporting events.');
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   await pods(page);
+  await page.getByPlaceholder('Filter pods…').fill('payment-worker');
   await page.getByTestId('resource-table').getByText('payment-worker-67f98b984-pv4n8', { exact: true }).click();
   const problems = page.getByTestId('problems-banner');
   await expect(problems).toContainText('custom prompt');

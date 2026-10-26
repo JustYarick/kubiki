@@ -9,6 +9,7 @@ import { watchNamespaceSelection } from './multi_namespace_watch';
 import type { KubeContextInfo, ResourceItem, ResourceKind } from '../types/k8s';
 import { mapK8sResourceList } from '../core/utils/k8s_mapper';
 import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
+import { buildMockMetrics } from './mock/mock_metrics';
 import { parseApiVersion, resourceQuery, resourceType } from '../core/resources/resource_types';
 import type { KubernetesProvider } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
@@ -175,10 +176,7 @@ export class K8sProvider implements KubernetesProvider {
     }
     if (this.demo) {
       this.mock ??= buildMockResources();
-      const timestamp = new Date().toISOString();
-      const pods = (this.mock.Pod ?? []).filter(pod => (!namespace || pod.namespace === namespace) && !['Completed', 'Succeeded', 'Failed'].includes(pod.status ?? '')).map((pod, index) => ({ name: pod.name, namespace: pod.namespace!, timestamp, window: '15s', containers: (pod.containers?.length ? pod.containers : [{ name: 'app' }]).map((container, i) => ({ name: container.name, cpu: `${70 + ((index * 47 + i * 19 + Math.floor(Date.now() / 15000) % 17) % 700)}m`, memory: `${40 + (index * 37 + i * 17) % 600}Mi` })) }));
-      const nodes = namespace ? null : (this.mock.Node ?? []).map((node, i) => ({ name: node.name, timestamp, window: '15s', cpu: `${1200 + i * 730}m`, memory: `${1600 + i * 800}Mi` }));
-      return { context, namespace, pods: { items: pods, error: null }, nodes: { items: nodes, error: null } };
+      return buildMockMetrics(this.mock, context, namespace);
     }
     return validateMetrics(await this.request('get_overview_metrics', 'metrics', { context, namespace }, undefined, undefined, signal), context, namespace);
   }

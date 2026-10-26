@@ -44,6 +44,7 @@ test('changing the editor font keeps a live Monaco model and unsaved draft intac
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway-7f9c8b6d5-q7x9z' });
   await row.click();
   await page.getByTestId('resource-details').getByRole('tab', { name: 'YAML', exact: true }).click();
@@ -85,6 +86,7 @@ test('settings stay reachable at maximum scale in a small window and recover inv
 test('a terminal font change resizes text without restarting the open session', async ({ page }) => {
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   await page.getByTestId('resource-table').getByText('api-gateway-7f9c8b6d5-q7x9z', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click();
   const terminal = page.locator('.xterm');

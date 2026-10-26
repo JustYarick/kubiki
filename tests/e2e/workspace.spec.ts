@@ -7,6 +7,7 @@ test('plain table rows, related resource navigation, container logs and persiste
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway-7f9c8b6d5-q7x9z' });
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   await expect(row).toBeVisible(); await row.hover(); await expect(row.locator('button')).toHaveCount(0);
   await row.click();
   const details = page.getByTestId('resource-details');
@@ -34,6 +35,7 @@ test('deployment actions are available through the context menu, with no inline 
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Deployments(?: \d+)?$/ }).click();
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway' }).first();
+  await page.getByPlaceholder('Filter deployments…').fill('api-gateway');
   await expect(row).toBeVisible(); await row.hover(); await expect(row.locator('button')).toHaveCount(0);
   await row.click({ button: 'right' });
   await expect(page.getByText('Scale replicas…', { exact: true })).toBeVisible();

@@ -26,7 +26,9 @@ export function startMockWatchEngine() {
 
     // Pick a random pod to update or simulate lifecycle
     const pods = Array.from(podMap.values());
-    const pendingPod = pods.find((p) => p.status === 'Pending' || p.status === 'ContainerCreating');
+    // Keep deliberate capacity incidents visible until their scheduling constraint changes.
+    const pendingPod = pods.find((p) => (p.status === 'Pending' || p.status === 'ContainerCreating')
+      && !p.raw?.status?.conditions?.some((condition: any) => condition.type === 'PodScheduled' && condition.status === 'False' && condition.reason === 'Unschedulable'));
 
     if (pendingPod) {
       // Advance pending pod lifecycle

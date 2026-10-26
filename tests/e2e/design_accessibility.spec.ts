@@ -57,6 +57,7 @@ test('compact panels keep the table usable and Explorer toggle always works', as
 test('resource action lists support keyboard navigation and activation', async ({ page }) => {
   await page.goto('/?demo=1'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await page.getByPlaceholder('Filter pods…').fill('api-gateway');
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'api-gateway-7f9c8b6d5-q7x9z' });
   await row.click({ button: 'right' });
   const first = page.getByRole('button', { name: /^View in Inspector/ });

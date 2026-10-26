@@ -1,14 +1,16 @@
 import { parse, stringify } from 'yaml';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { buildMockDelivery } from './mock_delivery';
+import { PRODUCTION_NAMESPACES, PRODUCTION_NODES } from './mock_cluster_profile';
+import { appendProductionResources } from './mock_production';
 
 /* ------------------------------------------------------------ */
 /* Deterministic mock cluster: realistic data volume. */
 /* ------------------------------------------------------------ */
 
-export const MOCK_NAMESPACES = ['default', 'backend', 'frontend', 'monitoring', 'kube-system', 'logging', 'flux-system', 'argocd', 'staging', 'infra'];
+export const MOCK_NAMESPACES = ['default', 'backend', 'frontend', 'monitoring', 'kube-system', 'logging', 'flux-system', 'argocd', 'staging', 'infra', ...PRODUCTION_NAMESPACES.map(item => item.name)];
 
-const NODE_HOSTS = ['node-1a', 'node-1b', 'node-2a', 'gpu-node-1'];
+const NODE_HOSTS = ['node-1a', 'node-1b', 'node-2a', 'gpu-node-1', ...PRODUCTION_NODES.map(item => item.name)];
 
 interface PodSeed {
   name: string;
@@ -606,6 +608,7 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
   for (const list of Object.values(out)) for (const item of list) {
     if (!Object.getOwnPropertyDescriptor(item, 'rawYaml')?.get) item.rawYaml = stringify(item.raw);
   }
+  appendProductionResources(out, MOCK_NAMESPACES);
   return out;
 }
 
