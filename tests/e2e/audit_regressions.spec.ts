@@ -27,9 +27,11 @@ test('Node pod counts update when only the Pod snapshot changes', async ({ page 
     (await import(workspacePath)).useWorkspaceStore.getState().openResourceList('Node');
   });
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'audit-node' });
-  await expect(row).toContainText('1 / 110');
+  const column = await page.getByTestId('resource-table').getByRole('columnheader', { name: 'Pods', exact: true }).evaluate(cell => (cell as HTMLTableCellElement).cellIndex);
+  const count = row.getByRole('cell').nth(column);
+  await expect(count).toHaveText('1');
   await page.evaluate(async () => { const path = '/src/state/resource_store.ts'; const { useResourceStore: s } = await import(path); const first = [...s.getState().resources.Pod.values()][0] as any; s.getState().setResourcesForKind('Pod', [first, { ...first, uid: 'two', name: 'two' }]); });
-  await expect(row).toContainText('2 / 110');
+  await expect(count).toHaveText('2');
 });
 
 test('custom resources named Pod and Gateway do not use built-in details', async ({ page }) => {

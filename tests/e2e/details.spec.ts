@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { namespaceList } from './helpers/namespaces';
 
 function captureReactErrors(page: import('@playwright/test').Page) {
   const errors: string[] = [];
@@ -97,7 +98,8 @@ async function mockResourceLists(page: import('@playwright/test').Page, lists: R
     if (url.pathname.endsWith('/contexts')) return route.fulfill({ json: [{ name: 'test', is_current: true }] });
     if (url.pathname.endsWith('/ping')) return route.fulfill({ json: { version: { gitVersion: 'v1.34.0' } } });
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: namespaces });
-    return route.fulfill({ json: { items: lists[url.searchParams.get('kind') ?? ''] ?? [] } });
+    const kind = url.searchParams.get('kind') ?? '';
+    return route.fulfill({ json: { items: lists[kind] ?? (kind === 'Namespace' ? namespaceList(namespaces).items : []) } });
   });
 }
 

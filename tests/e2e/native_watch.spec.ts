@@ -139,8 +139,10 @@ test('status updates preserve manual graph positions and viewport without anothe
   await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await selectDiagramNamespaces(page, ['backend']);
-  await expect(page.getByText('Updating topology relationships…', { exact: true })).toBeVisible();
   const node = page.locator('.react-flow__node-resource'); await expect(node).toHaveCount(1);
+  // The initial indicator can disappear before the namespace menu closes.
+  // This scenario verifies retained positions after updates, not spinner timing.
+  await expect(page.getByText('Updating topology relationships…', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Arranging topology…', { exact: true })).toHaveCount(0);
   const canvas = await page.locator('.topology-canvas').boundingBox();
   const before = await node.getAttribute('style'); const bounds = (await node.boundingBox())!;

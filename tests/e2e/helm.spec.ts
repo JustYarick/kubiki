@@ -1,12 +1,15 @@
 import { test, expect, type Page } from '@playwright/test';
+import { namespaceList } from './helpers/namespaces';
 
 const release = (name = 'web', namespace = 'backend', status = 'deployed') => ({ name, namespace, status, revision: '2', updated: '2026-10-20 12:00:00.123456 +0000 UTC', chart: 'web-chart-1.0', app_version: '1.0' });
 async function baseApi(page: Page) {
   await page.route('**/api/k8s/**', route => {
-    const op = new URL(route.request().url()).pathname.split('/').pop();
+    const url = new URL(route.request().url());
+    const op = url.pathname.split('/').pop();
     if (op === 'contexts') return route.fulfill({ json: [{ name: 'prod', is_current: true }, { name: 'stage', is_current: false }] });
     if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (op === 'namespaces') return route.fulfill({ json: ['backend', 'other'] });
+    if (url.searchParams.get('kind') === 'Namespace') return route.fulfill({ json: namespaceList(['backend', 'other']) });
     return route.fulfill({ json: { items: [] } });
   });
 }

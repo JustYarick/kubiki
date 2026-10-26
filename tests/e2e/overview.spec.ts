@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { namespaceList } from './helpers/namespaces';
 async function setup(page: import('@playwright/test').Page, partial = false) {
   let extra = false;
   await page.route('**/api/k8s/**', route => {
@@ -6,11 +7,13 @@ async function setup(page: import('@playwright/test').Page, partial = false) {
     if (op === 'contexts') return route.fulfill({ json: [{ name: 'test', is_current: true }] });
     if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (op === 'namespaces') return route.fulfill({ json: ['a', 'b', 'empty'] });
+    if (kind === 'Namespace') return route.fulfill({ json: namespaceList(['a', 'b', 'empty']) });
     if (partial && kind === 'Secret') return route.fulfill({ status: 403, json: { error: { code: 'forbidden', status: 403, message: 'Secrets access denied', retryable: false } } });
     const resource = (name: string, namespace?: string, status = {}) => ({ kind, metadata: { uid: name, name, namespace, creationTimestamp: new Date(Date.now() - 600000).toISOString() }, status });
     const items = kind === 'Pod' ? [resource('good', 'a', { phase: 'Running', containerStatuses: [{ name: 'app', ready: true, restartCount: 2, state: { running: {} } }] }), resource('bad', 'b', { phase: 'Failed' }), ...(extra ? [resource('new', 'a', { phase: 'Pending' })] : [])]
       : kind === 'Service' ? [resource('svc', 'a')] : kind === 'Node' ? [resource('worker', undefined, { conditions: [{ type: 'Ready', status: 'True' }] })] : [];
-    return route.fulfill({ json: { items } });
+    const namespace = url.searchParams.get('namespace');
+    return route.fulfill({ json: { items: items.filter(item => !namespace || !item.metadata.namespace || item.metadata.namespace === namespace) } });
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   return { overview: page.getByTestId('cluster-overview'), change: () => { extra = true; } };

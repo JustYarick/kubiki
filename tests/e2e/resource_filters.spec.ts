@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
+import { namespaceList } from './helpers/namespaces';
 
 /** Rows of the resource table as plain names. */
 async function names(table: Locator): Promise<string[]> {
@@ -28,6 +29,7 @@ async function fixture(page: Page) {
     if (url.pathname.endsWith('/contexts')) return route.fulfill({ json: [{ name: 'test', is_current: true }] });
     if (url.pathname.endsWith('/ping')) return route.fulfill({ json: { version: { gitVersion: 'v1.34.0' } } });
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: ['backend', 'other'] });
+    if (url.searchParams.get('kind') === 'Namespace') return route.fulfill({ json: namespaceList(['backend', 'other']) });
     return route.fulfill({ json: { items: url.searchParams.get('kind') === 'Pod' ? pods : [] } });
   });
 }
