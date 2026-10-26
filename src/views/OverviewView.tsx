@@ -12,12 +12,13 @@ import { useWorkspaceStore } from '../state/workspace_store';
 import { buildOverview } from '../core/resources/overview';
 import { ResourceKindBadge } from '../components/k8s/ResourceKindBadge';
 import type { ResourceKind } from '../types/k8s';
+import { k8s } from '../providers/k8s_provider';
 
 const phaseColors: Record<string, string> = { Running: 'var(--status-ok)', Pending: 'var(--status-pending)', Succeeded: 'var(--text-muted)', Failed: 'var(--status-danger)', Terminating: 'var(--status-warn)', Unknown: 'var(--text-muted)' };
 export function OverviewView() {
   const { availableResourceKinds, currentContext, selectedNamespace, isLoading, isConnected, clusterVersion } = useClusterStore();
   const { resources, syncMode, watchStates, loadErrors } = useResourceStore();
-  const summary = useMemo(() => buildOverview({ availableKinds: availableResourceKinds, resources, namespace: selectedNamespace, context: currentContext, syncMode, loading: isLoading, connected: isConnected, watchStates, loadErrors }), [resources, availableResourceKinds, selectedNamespace, currentContext, syncMode, isLoading, isConnected, watchStates, loadErrors]);
+  const summary = useMemo(() => buildOverview({ availableKinds: availableResourceKinds, resources, namespace: selectedNamespace, context: currentContext, syncMode, loading: isLoading, connected: isConnected, watchStates, loadErrors, onDemand: !k8s.demo }), [resources, availableResourceKinds, selectedNamespace, currentContext, syncMode, isLoading, isConnected, watchStates, loadErrors]);
   const open = (kind: ResourceKind) => { useResourceStore.getState().setActiveKind(kind); useWorkspaceStore.getState().openResourceList(kind); };
   const value = (count: number | null | undefined) => count == null ? '—' : count.toLocaleString();
   const pods = summary.row('Pod');
@@ -44,7 +45,7 @@ export function OverviewView() {
       </>}
     </OverviewSection>
     <ResourceTelemetry key={`${currentContext}/${selectedNamespace}`} context={currentContext} namespace={selectedNamespace === 'all' ? null : selectedNamespace} pods={telemetryPods} nodes={telemetryNodes} />
-    <OverviewSection label="Resource inventory" title={<>Resource inventory <span className="overview-muted">· {summary.total.toLocaleString()} objects</span></>} description="Built-in resources in the selected scope. Events are listed separately."><div className="overview-inventory">{summary.inventory.map(entry => <button key={entry.kind} aria-label={`Open ${entry.kind} resources`} className="overview-inventory-item" onClick={() => open(entry.kind)}><span className="flex-1 min-w-0"><ResourceKindBadge kind={entry.kind} />{entry.state !== 'ready' && <span className="block mt-1 text-[var(--status-warn)] text-xs">{entry.state}</span>}</span><span className="font-mono text-sm" data-testid={`overview-count-${entry.kind}`}>{value(entry.count)}</span><ArrowRight size={12} className="text-[var(--text-muted)]" /></button>)}</div></OverviewSection>
+    <OverviewSection label="Resource inventory" title={<>Resource inventory <span className="overview-muted">· {summary.total.toLocaleString()} loaded objects</span></>} description="Open a resource type to load its inventory. Events are listed separately; cached counts may be outdated."><div className="overview-inventory">{summary.inventory.map(entry => <button key={entry.kind} aria-label={`Open ${entry.kind} resources`} className="overview-inventory-item" onClick={() => open(entry.kind)}><span className="flex-1 min-w-0"><ResourceKindBadge kind={entry.kind} />{entry.state !== 'ready' && <span className={`block mt-1 text-xs ${['not loaded', 'cached'].includes(entry.state) ? 'text-[var(--text-muted)]' : 'text-[var(--status-warn)]'}`}>{entry.state}</span>}</span><span className="font-mono text-sm" data-testid={`overview-count-${entry.kind}`}>{value(entry.count)}</span><ArrowRight size={12} className="text-[var(--text-muted)]" /></button>)}</div></OverviewSection>
   </div>;
 }
 function Metric({ label, value, detail, onClick }: { label: string; value: string; detail: string; onClick?: () => void }) {

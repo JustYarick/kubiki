@@ -12,8 +12,9 @@ export function StatusBar() {
   const pods = useResourceStore((s) => s.resources.Pod);
   const syncMode = useResourceStore((s) => s.syncMode);
   const watchStates = useResourceStore((s) => s.watchStates);
-  const states = Object.values(watchStates);
-  const unavailable = states.filter((state) => state?.phase === 'failed' || state?.phase === 'reconnecting' || state?.phase === 'stopped').length;
+  // Cached inventories and intentionally suspended watches are not failures.
+  const states = Object.values(watchStates).filter(state => state?.phase !== 'stopped');
+  const unavailable = states.filter((state) => state?.phase === 'failed' || state?.phase === 'reconnecting').length;
   const watchLabel = unavailable ? `Watch · ${unavailable} unavailable` : states.length && states.every((state) => state?.phase === 'live') ? 'Watch · live' : 'Watch · synchronizing';
   const pfCount = usePfStore((s) => s.sessions.length);
   const { sessions, focusTool, openPorts, openEvents } = useDockStore();

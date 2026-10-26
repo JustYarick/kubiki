@@ -1,5 +1,6 @@
 import { selectDiagramNamespaces } from './helpers/topology';
 import { RESOURCE_TYPES } from '../../src/core/resources/resource_types';
+import { OVERVIEW_KINDS } from '../../src/core/resources/resource_demand';
 const resourceCount = RESOURCE_TYPES.length;
 import { test, expect, type Page } from '@playwright/test';
 
@@ -15,8 +16,8 @@ async function delayTopologyBuilds(page: Page) {
 }
 
 // Exercises the desktop adapter with the real JS Channel SDK. Rust HTTP runtime is tested separately.
-async function nativeApi(page: Page, holdPod = false, restricted = false) {
-  await page.addInitScript(({ holdPod, restricted }: { holdPod: boolean; restricted: boolean }) => {
+async function nativeApi(page: Page, holdPod = false, restricted = false, initialPhase = 'Running') {
+  await page.addInitScript(({ holdPod, restricted, initialPhase }: { holdPod: boolean; restricted: boolean; initialPhase: string }) => {
     const w = window as any;
     const callbacks = new Map<number, unknown>(); let callbackId = 0;
     const subscriptions = new Map<string, any>(); const old: any[] = [];
@@ -49,7 +50,14 @@ async function nativeApi(page: Page, holdPod = false, restricted = false) {
         if (command === 'get_kube_contexts') return [{ name: 'native-test', is_current: true }, { name: 'native-other', is_current: false }];
         if (command === 'ping_cluster') return { git_version: 'v1.34.0' };
         if (command === 'get_namespaces') { if (restricted) throw { code: 'forbidden', status: 403, message: 'namespaces list forbidden', retryable: false }; return ['backend', 'other']; }
-        if (command === 'get_resources') { stats.snapshots++; return { items: [] }; }
+        if (command === 'get_resources') {
+          stats.snapshots++;
+          if (args.kind === 'Pod') {
+            if (restricted && args.namespace === null) throw { code: 'forbidden', status: 403, message: 'All-namespaces listing forbidden', retryable: false };
+            return { items: args.namespace === null ? [pod(initialPhase, 'backend'), pod(initialPhase, 'other')] : [pod(initialPhase, args.namespace)] };
+          }
+          return { items: [] };
+        }
         if (command === 'stop_resource_watches') { old.push(...subscriptions.values()); subscriptions.clear(); return; }
         if (command === 'stop_resource_watch') { const s = subscriptions.get(args.subscriptionId); if (s) { old.push(s); subscriptions.delete(args.subscriptionId); stats.stops++; } return; }
         if (command === 'watch_resources') {
@@ -70,8 +78,25 @@ async function nativeApi(page: Page, holdPod = false, restricted = false) {
         throw new Error(`Unexpected native command: ${command}`);
       },
     };
-  }, { holdPod, restricted });
+  }, { holdPod, restricted, initialPhase });
 }
+
+test('connection collects full inventory and health before views open, then watches only demanded sources', async ({ page }) => {
+  await nativeApi(page, true, false, 'Failed'); await page.goto('/');
+  await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__watchHarness.stats.snapshots)).toBe(resourceCount);
+  expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(2);
+  await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  const overview = page.getByTestId('cluster-overview');
+  await expect(overview.getByRole('region', { name: 'Pod phases', exact: true }).getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed2');
+  await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
+  await expect(overview.getByTestId('overview-count-Secret')).toHaveText('0');
+  await expect(overview.getByTestId('overview-count-Secret').locator('..')).toContainText('cached');
+  expect(await page.evaluate(() => (window as any).__watchHarness.subscriptions().some((query: any) => query.kind === 'Secret'))).toBe(false);
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.subscriptions().map((query: any) => query.kind).sort())).toEqual(['CustomResourceDefinition', 'Namespace', 'Pod']);
+});
 
 test('native watch updates the table/inspector, retains stale data, then recovers with an authoritative empty list', async ({ page }) => {
   await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
@@ -97,12 +122,12 @@ test('Sync replaces subscriptions, ignores old messages, and pagehide releases c
   await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Auto-refresh interval')).toHaveCount(0);
   await page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(resourceCount * 2);
-  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.stops)).toBe(resourceCount);
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(6);
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.stops)).toBe(3);
   await page.evaluate(() => (window as any).__watchHarness.late());
   await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
   await expect(page.getByTestId('resource-table').getByText('stale-web', { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).__watchHarness.stats.snapshots)).toBe(0);
+  expect(await page.evaluate(() => (window as any).__watchHarness.stats.snapshots)).toBe(resourceCount);
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.active())).toBe(0);
   expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(0);
@@ -205,15 +230,16 @@ test('context A → B → A isolates old subscriptions, including late callbacks
     await page.evaluate(() => (window as any).__watchHarness.late());
     await expect(page.getByTestId('resource-table').getByText('live-web', { exact: true })).toBeVisible();
     await expect(page.getByTestId('resource-table').getByText('stale-web', { exact: true })).toHaveCount(0);
-    expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(resourceCount);
-    expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(resourceCount + 1);
+    expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(3);
+    expect(await page.evaluate(() => (window as any).__watchHarness.callbacks())).toBe(4);
   }
 });
 
-test('first sync is visibly pending and does not pretend the namespace is empty', async ({ page }) => {
+test('initial inventory stays visible while the first watch snapshot is pending', async ({ page }) => {
   await nativeApi(page, true); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   const table = page.getByTestId('resource-table');
-  await expect(table.getByRole('status')).toContainText('Waiting for the first complete snapshot');
+  await expect(table.getByText('live-web', { exact: true })).toBeVisible();
+  await expect(page.getByText('Watch · synchronizing', { exact: true })).toBeVisible();
   await expect(table.getByText('No pods found', { exact: true })).toHaveCount(0);
   await page.evaluate(() => (window as any).__watchHarness.release());
   await expect(table.getByText('live-web', { exact: true })).toBeVisible();
@@ -227,18 +253,18 @@ async function namespace(page: Page, name: string) {
   await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
 }
 
-test('namespace changes replace only scoped watches; pinned tabs keep their resource and ignore late snapshots', async ({ page }) => {
+test('namespace changes replace scoped watches and pinned tabs explain resources outside the scope', async ({ page }) => {
   await nativeApi(page); await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
   await namespace(page, 'backend'); await expect(page.getByText('Watch · live', { exact: true })).toBeVisible();
-  const cluster = await page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => ['Node', 'Namespace', 'StorageClass', 'CustomResourceDefinition'].includes(s.kind)));
+  const cluster = await page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => ['Namespace', 'CustomResourceDefinition'].includes(s.kind)));
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Open details in tab' }).click();
   await namespace(page, 'other');
-  // The Pod watch is cluster-wide, so the pinned tab keeps its resource.
-  await expect(page.locator('main').getByText('Resource outside namespace scope', { exact: true })).toHaveCount(0);
+  // A namespaced Pod view must not keep receiving other namespaces.
+  await expect(page.locator('main').getByText('Resource outside namespace scope', { exact: true })).toBeVisible();
   await expect(page.locator('main').getByText('Resource Not Found', { exact: true })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => s.namespace !== null).every((s: any) => s.namespace === 'other'))).toBe(true);
-  expect(await page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => ['Node', 'Namespace', 'StorageClass', 'CustomResourceDefinition'].includes(s.kind)))).toEqual(cluster);
+  expect(await page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => ['Namespace', 'CustomResourceDefinition'].includes(s.kind)))).toEqual(cluster);
   expect(await page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => s.kind === 'Pod'))).toHaveLength(1);
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await expect(page.getByTestId('resource-table').getByText('other-web', { exact: true })).toBeVisible();
@@ -281,11 +307,11 @@ test('a diagram outside the selected namespace explains missing data and loads i
   await expect(page.locator('.react-flow__node-resource').getByText('other-web', { exact: true })).toBeVisible();
 });
 
-test('Overview derives live phase/issue counts from existing watches without adding subscriptions', async ({ page }) => {
+test('Overview updates summary sources while unrelated inventory stays cached', async ({ page }) => {
   await nativeApi(page);await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const overview = page.getByTestId('cluster-overview');const phases = overview.getByRole('region', { name: 'Pod phases', exact: true });
   await expect(overview.getByTestId('overview-count-Pod')).toHaveText('2');await expect(phases.getByText('Running', { exact: true }).locator('..')).toHaveText('Running2');
-  expect(await page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(resourceCount);
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(OVERVIEW_KINDS.length + 1);
   await page.evaluate(() => (window as any).__watchHarness.update('Failed'));await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed2');await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
   await page.evaluate(() => (window as any).__watchHarness.reconnect());await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('2');
   await page.evaluate(() => (window as any).__watchHarness.empty());await expect(overview.getByTestId('overview-count-Pod')).toHaveText('0');await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed0');
@@ -305,11 +331,11 @@ test('multiple selected namespaces use independent desktop watches and commit on
   await picker.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
   const table = page.getByTestId('resource-table');
   await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.subscriptions()
-    .filter((subscription: any) => subscription.kind === 'Deployment')
+    .filter((subscription: any) => subscription.kind === 'Pod')
     .map((subscription: any) => subscription.namespace).sort())).toEqual(['backend', 'other']);
   const subscriptions = await page.evaluate(() => (window as any).__watchHarness.subscriptions());
-  // Pods stay cluster-wide; other namespaced kinds use one watch per selected namespace.
-  expect(subscriptions.filter((subscription: any) => subscription.kind === 'Pod').map((subscription: any) => subscription.namespace)).toEqual([null]);
+  // Only the visible Pod collection uses one watch per selected namespace.
+  expect(subscriptions.filter((subscription: any) => subscription.kind === 'Pod').map((subscription: any) => subscription.namespace).sort()).toEqual(['backend', 'other']);
   await expect(table.getByText('live-web', { exact: true })).toBeVisible();
   await expect(table.getByText('other-web', { exact: true })).toBeVisible();
   await expect(table.locator('tbody tr')).toHaveCount(2);

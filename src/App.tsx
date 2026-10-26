@@ -33,7 +33,7 @@ import { errorHint } from './providers/errors';
 import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
 import { closeNodeDebugConnections } from './providers/node_debug';
-import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snapshot_sync';
+import { cancelResourceSnapshots, scanClusterInventory, syncResourceSnapshot } from './providers/snapshot_sync';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
@@ -74,7 +74,7 @@ export default function App() {
 
   const connectionGeneration = useRef(0);
   useEffect(() => useClusterStore.subscribe((state, previous) => {
-    if (k8s.supportsResourceWatch || state.currentContext !== previous.currentContext || state.selectedNamespace === previous.selectedNamespace || !state.currentContext) return;
+    if (!k8s.demo || state.currentContext !== previous.currentContext || state.selectedNamespace === previous.selectedNamespace || !state.currentContext) return;
     const context = state.currentContext;
     const scope = state.selectedNamespace;
     const current = () => useClusterStore.getState().currentContext === context && useClusterStore.getState().selectedNamespace === scope;
@@ -128,9 +128,11 @@ export default function App() {
       setConnected(true, ping.version);
       const kinds = available.map(type => type.kind) as ResourceKind[];
       useResourceStore.getState().setSyncMode(k8s.demo ? 'demo' : k8s.supportsResourceWatch ? 'watch' : 'snapshot');
-      const results = k8s.supportsResourceWatch ? await startResourceWatches(contextName) : await Promise.allSettled(kinds.map(async (kind) => {
+      const results = k8s.demo ? await Promise.allSettled(kinds.map(async (kind) => {
         await syncResourceSnapshot(contextName, kind, 'all');
-      }));
+      })) : await scanClusterInventory(contextName, kinds, useClusterStore.getState().selectedNamespace);
+      if (!current()) return;
+      if (!k8s.demo) results.push(...await startResourceWatches(contextName));
       if (!current()) return;
       const failures = results.filter((r) => r.status === 'rejected').length;
       if (failures) toast.warn('Some resources could not be loaded', `${failures} resource types unavailable. See individual views.`);

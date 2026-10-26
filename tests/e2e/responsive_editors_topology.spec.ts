@@ -16,6 +16,7 @@ async function fixture(page: Page) {
     const lists: Record<string, object[]> = {
       Pod: ['alpha', 'beta'].filter(name => !namespace || namespace === name).map(name => ({ apiVersion: 'v1', kind: 'Pod', metadata: { uid: `pod-${name}`, name: name === 'alpha' ? longName : 'other-web', namespace: name, managedFields: [{ manager: 'kubectl' }] }, spec: { nodeName: 'worker', containers: [{ name: 'web', image: 'nginx' }] }, status: { phase: 'Running' } })),
       Node: [{ apiVersion: 'v1', kind: 'Node', metadata: { uid: 'node', name: 'worker' } }],
+      Namespace: ['alpha', 'beta'].map(name => ({ apiVersion: 'v1', kind: 'Namespace', metadata: { uid: `ns-${name}`, name } })),
       PersistentVolumeClaim: [{ apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { uid: 'pvc', name: 'data', namespace: 'alpha' }, spec: {} }],
       CustomResourceDefinition: [{ apiVersion: 'apiextensions.k8s.io/v1', kind: 'CustomResourceDefinition', metadata: { uid: 'crd', name: 'widgets.example.com' }, spec: { group: 'example.com', names: { kind: 'Widget', plural: 'widgets' }, scope: 'Namespaced', versions: [{ name: 'v1', served: true, storage: true }] } }],
     };

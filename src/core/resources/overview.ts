@@ -15,16 +15,18 @@ export interface OverviewInput {
   connected: boolean;
   watchStates: Partial<Record<ResourceKind, WatchState>>;
   loadErrors: Partial<Record<ResourceKind, { message: string }>>;
+  onDemand?: boolean;
 }
 export function buildOverview(input: OverviewInput) {
   const { namespace, context, resources, watchStates, loadErrors } = input;
   const inventory = RESOURCE_TYPES.filter(type => (!input.availableKinds || input.availableKinds.includes(type.kind)) && (namespace === 'all' || type.namespaced)).map(type => {
     const kind = type.kind as ResourceKind;
     const watch = watchStates[kind];
-    const covered = input.syncMode !== 'watch' || !!watch && watch.query.context === context && (!type.namespaced || watch.query.namespace === null || watch.query.namespace === namespace);
+    const tracked = input.syncMode === 'watch' || input.onDemand;
+    const covered = !tracked || !!watch && watch.query.context === context && (!type.namespaced || watch.query.namespace === null || watch.query.namespace === namespace);
     const items = covered ? [...resources[kind].values()].filter(item => inNamespaceScope(namespace, item.namespace)) : [];
-    const hasSnapshot = input.syncMode === 'watch' ? covered && watch?.hasSnapshot === true : items.length > 0 || input.connected && !input.loading && !loadErrors[kind];
-    const state = !covered ? 'loading' : loadErrors[kind] ? hasSnapshot ? 'stale' : 'unavailable'
+    const hasSnapshot = tracked ? covered && watch?.hasSnapshot === true : items.length > 0 || input.connected && !input.loading && !loadErrors[kind];
+    const state = tracked && !watch ? 'not loaded' : watch?.phase === 'stopped' ? hasSnapshot ? 'cached' : 'not loaded' : !covered ? 'loading' : loadErrors[kind] ? hasSnapshot ? 'stale' : 'unavailable'
       : !hasSnapshot ? input.loading || input.syncMode === 'watch' && (!watch || ['connecting', 'syncing'].includes(watch.phase)) ? 'loading' : 'unavailable'
       : !input.connected || input.syncMode === 'watch' && watch?.phase !== 'live' ? 'stale' : 'ready';
     return { kind, items: hasSnapshot ? items : [], count: hasSnapshot ? items.length : null, state, message: loadErrors[kind]?.message };
@@ -46,7 +48,7 @@ export function buildOverview(input: OverviewInput) {
   return {
     inventory, row, phases, issues,
     total: inventory.filter(entry => entry.kind !== 'Event').reduce((sum, entry) => sum + (entry.count ?? 0), 0),
-    incomplete: inventory.filter(entry => entry.state !== 'ready'),
+    incomplete: inventory.filter(entry => !['ready', 'not loaded', 'cached'].includes(entry.state)),
     workloads: workloads.every(entry => entry?.count !== null) ? workloads.reduce((sum, entry) => sum + (entry?.count ?? 0), 0) : null,
     restarts: row('Pod')?.count === null ? null : pods.reduce((sum, pod) => {
       const status = pod.raw?.status ?? {};

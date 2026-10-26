@@ -141,7 +141,9 @@ Use the explorer to navigate workloads, configuration, networking, storage, acce
 
 Filter and sort resource tables to narrow the current inventory. Select an object to inspect its metadata, status, conditions, events, and related resources. Follow resource references to move between owners, workloads, Services, and dependent objects.
 
-The overview summarizes cluster state and highlights workload problems. Resource views receive live updates through native Kubernetes watches. Changing context or namespace scope updates the subscriptions used by the workspace.
+On connection, Kubiki collects a complete inventory of accessible built-in resources, with at most four collections loading in parallel. This initial snapshot provides resource counts and health diagnostics even before their views are opened. Failed or forbidden collections remain visibly incomplete.
+
+Afterward, native Kubernetes watches follow the visible workspace panes and their related resources. Unused collections retain their cached snapshot and stop watching; reopening a view refreshes its data. Pods follow the selected namespaces, except when a Node view needs cluster-wide Pod counts. The overview continuously updates its summary sources; its other inventory counts are marked as cached. Changing context or namespace scope updates subscriptions, and CPU/RAM panels share one metrics poll per context and namespace.
 
 ### YAML editing
 

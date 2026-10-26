@@ -18,8 +18,10 @@ export async function overviewMetricsFixture(page: import('@playwright/test').Pa
     const metadata = (name: string, namespace?: string) => ({ name, namespace, uid: name, creationTimestamp: new Date(base - 3600000).toISOString() });
     const resources = { requests: { cpu: '500m', memory: '256Mi' }, limits: { cpu: '2', memory: '1Gi' } };
     const items = kind === 'Pod' ? ['alpha', 'beta'].map(namespace => ({ apiVersion: 'v1', kind, metadata: metadata(`web-${namespace}`, namespace), spec: { containers: [{ name: 'app', resources }, { name: 'sidecar', resources: { requests: { cpu: '100m', memory: '64Mi' }, limits: { cpu: '1', memory: '512Mi' } } }] }, status: { phase: 'Running', containerStatuses: [{ name: 'app', ready: true, state: { running: {} } }, { name: 'sidecar', ready: true, state: { running: {} } }] } }))
-      : kind === 'Node' ? [{ apiVersion: 'v1', kind, metadata: metadata('worker'), status: { capacity: { cpu: '4', memory: '8Gi' }, allocatable: { cpu: '3500m', memory: '7Gi' }, conditions: [{ type: 'Ready', status: 'True' }] } }] : [];
-    return route.fulfill({ json: { items } });
+      : kind === 'Node' ? [{ apiVersion: 'v1', kind, metadata: metadata('worker'), status: { capacity: { cpu: '4', memory: '8Gi' }, allocatable: { cpu: '3500m', memory: '7Gi' }, conditions: [{ type: 'Ready', status: 'True' }] } }]
+      : kind === 'Namespace' ? ['alpha', 'beta'].map(name => ({ apiVersion: 'v1', kind, metadata: metadata(name) })) : [];
+    const namespace = url.searchParams.get('namespace');
+    return route.fulfill({ json: { items: namespace ? items.filter(item => !item.metadata.namespace || item.metadata.namespace === namespace) : items } });
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();return { telemetry: page.getByRole('region', { name: 'CPU and RAM telemetry' }), requests, release: async () => { await release?.(); } };
 }
