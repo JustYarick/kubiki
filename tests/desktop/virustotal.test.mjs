@@ -103,7 +103,7 @@ async function payloadFixture(t) {
   return { dir, assets, sha256 };
 }
 
-function scanApi(fixture, { category = 'undetected', queued = false, mutate, wrongHash = false, incomplete = false } = {}) {
+function scanApi(fixture, { category = 'undetected', queued = false, mutate, wrongHash = false, incomplete = false, analysisId = 'analysis-id', meta = {} } = {}) {
   let polls = 0;
   const verdicts = clearVerdicts();
   if (category !== 'undetected') {
@@ -116,9 +116,9 @@ function scanApi(fixture, { category = 'undetected', queued = false, mutate, wro
     if (options.method === 'POST') return json({ data: { type: 'analysis', id: 'analysis-id' } });
     if (url.includes('/analyses/')) {
       polls++;
-      return json({ data: { type: 'analysis', id: 'analysis-id', attributes: {
+      return json({ data: { type: 'analysis', id: analysisId, attributes: {
         status: queued && polls === 1 ? 'queued' : 'completed', date: 1767225600, ...verdicts,
-      } } });
+      } }, meta });
     }
     if (mutate) await mutate();
     return json({ data: { type: 'file', id: wrongHash ? '0'.repeat(64) : fixture.sha256,
@@ -156,6 +156,34 @@ test('malicious and suspicious verdicts block a release; unsupported-only and em
   for (const options of [{ category: 'type-unsupported' }, { incomplete: true }]) {
     const { client } = scanApi(fixture, options);
     await assert.rejects(scanReleaseAssets(client, fixture.dir, fixture.assets, {}), /No antivirus engine/);
+  }
+});
+
+test('canonical analysis IDs returned by VirusTotal are accepted and adopted for later polls', async t => {
+  const fixture = await payloadFixture(t);
+  const canonical = `f-${fixture.sha256}-1767225600`;
+  const { client, calls } = scanApi(fixture, {
+    queued: true, analysisId: canonical,
+    meta: { file_info: { sha256: fixture.sha256, size: fixture.assets[0].size } },
+  });
+  const report = releaseReport(fixture.assets, 'v1.0.0', 'a'.repeat(40));
+  await scanReleaseAssets(client, fixture.dir, fixture.assets, report);
+  assert.equal(report.status, 'passed');
+  assert.equal(report.files[0].analysisId, canonical);
+  assert.equal(calls[0].url, `${api}/files`);
+  const polls = calls.filter(call => call.url.startsWith(`${api}/analyses/`));
+  assert.ok(polls[0].url.startsWith(`${api}/analyses/analysis-id`));
+  assert.ok(polls.slice(1).every(call => call.url.startsWith(`${api}/analyses/${encodeURIComponent(canonical)}`)));
+  await writeVirusTotalReport(fixture.dir, report);
+  await verifyVirusTotalReport(fixture.dir, report.tag, report.sha, fixture.assets);
+});
+
+test('analysis responses for other files are rejected', async t => {
+  const fixture = await payloadFixture(t);
+  for (const options of [{ analysisId: 'unrelated-analysis-id' },
+    { analysisId: 'unrelated-analysis-id', meta: { file_info: { sha256: '0'.repeat(64), size: fixture.assets[0].size } } }]) {
+    const { client } = scanApi(fixture, options);
+    await assert.rejects(scanReleaseAssets(client, fixture.dir, fixture.assets, {}), /does not belong to/);
   }
 });
 

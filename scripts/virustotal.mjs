@@ -12,6 +12,8 @@ const CATEGORIES = ['harmless', 'undetected', 'malicious', 'suspicious', 'failur
 // /files/upload_url; it must never be used as an API endpoint.
 const UPLOAD_HOSTS = new Set(['www.virustotal.com', 'bigfiles.virustotal.com']);
 const validAnalysisId = id => typeof id === 'string' && id.length > 0 && id.length <= 512 && /^[\w=+/-]+$/.test(id);
+// VirusTotal canonical file analysis IDs embed the SHA-256 of the analyzed bytes.
+const analysisIdForFile = (id, entry) => new RegExp(`^f-${entry.sha256}-\\d+$`).test(id);
 
 function trustedUrl(value, { upload = false } = {}) {
   const url = new URL(value);
@@ -138,7 +140,7 @@ export async function scanReleaseAssets(client, dir, assets, report, { progress 
     if (!entry) {
       progress(`Submitting ${file.name}`);
       const analysisId = await client.upload(fullPath, file.name, file.size);
-      entry = { analysisId, aliases: [] };
+      entry = { sha256: file.sha256, size: file.size, analysisId, aliases: [] };
       unique.set(file.sha256, entry);
     }
     Object.assign(file, { analysisId: entry.analysisId, status: 'submitted', url: `https://www.virustotal.com/gui/file/${file.sha256}` });
@@ -148,9 +150,21 @@ export async function scanReleaseAssets(client, dir, assets, report, { progress 
   while (pending.size) {
     for (const entry of pending) {
       const response = await client.analysis(entry.analysisId);
-      const analysis = response.data?.attributes;
-      if (response.data?.id !== entry.analysisId || response.data?.type !== 'analysis' || !['queued', 'in-progress', 'completed'].includes(analysis?.status)) {
+      const data = response.data;
+      const analysis = data?.attributes;
+      if (data?.type !== 'analysis' || !validAnalysisId(data.id) ||
+          !['queued', 'in-progress', 'completed'].includes(analysis?.status)) {
         throw new Error('Invalid VirusTotal analysis response.');
+      }
+      // The upload response ID and the canonical analysis ID (f-<sha256>-<date>)
+      // can differ; treat both as the same upload when the file identity matches.
+      if (data.id !== entry.analysisId && !analysisIdForFile(data.id, entry) &&
+          (response.meta?.file_info?.sha256 !== entry.sha256 || response.meta?.file_info?.size !== entry.size)) {
+        throw new Error(`VirusTotal analysis does not belong to ${entry.aliases[0].name}.`);
+      }
+      if (data.id !== entry.analysisId) {
+        entry.analysisId = data.id;
+        for (const alias of entry.aliases) alias.analysisId = data.id;
       }
       if (analysis.status !== 'completed') continue;
       const file = entry.aliases[0];
