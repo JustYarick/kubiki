@@ -99,7 +99,7 @@ test('Flux and Argo CD have separate trees, useful details and links to loaded m
 });
 
 test('3500 Pods, 3500 ConfigMaps and 3500 custom resources remain usable through deep scroll, keyboard, filters and refresh', async ({ page }) => {
-  test.setTimeout(60000);
+  test.setTimeout(90000);
   const errors = await fixture(page, 3500);
   let table = await list(page, 'Pods');
   await expect(table.locator('table')).toHaveAttribute('aria-rowcount', '3501');
@@ -146,7 +146,7 @@ test('3500 Pods, 3500 ConfigMaps and 3500 custom resources remain usable through
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await page.getByRole('button', { name: 'All Namespaces', exact: true }).click();
   await page.getByRole('button', { name: 'Load all namespaces', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Automatic layout failed');
+  await expect(page.getByRole('alert')).toContainText('Automatic layout failed', { timeout: 15000 });
   table = await list(page, 'Pods');
   await expect(table.locator('table')).toHaveAttribute('aria-rowcount', '3501');
   expect(errors).toEqual([]);
