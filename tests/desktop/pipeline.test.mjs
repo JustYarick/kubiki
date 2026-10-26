@@ -127,6 +127,15 @@ test('tag pushes run tests; manual releases honor run_tests instead of requiring
   }
 });
 
+test('publication keeps the full layout matrix while ordinary CI uses the standard matrix', async () => {
+  const jobs = await workflowJobs();
+  const step = jobs.interface.steps.find(step => step.run === 'pnpm test:e2e');
+  for (const publish of ['true', 'false']) {
+    const needs = { prepare: { outputs: { publish } } };
+    assert.equal(workflowIf(step.env.E2E_FULL_LAYOUT, { needs }), publish === 'true' ? '1' : '0');
+  }
+});
+
 test('version selection orders tags numerically and keeps branch previews out of stable', () => {
   const tags = ['v1.9.8', 'v1.10.0', 'v8.0.0-dev', 'invalid'];
   assert.equal(nextReleaseTag(tags, { branch: 'main', runNumber: 30 }), 'v1.10.1');

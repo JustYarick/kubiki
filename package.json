@@ -12,6 +12,7 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:full": "node scripts/run-e2e.mjs --full-layout",
     "test:desktop": "node --test tests/desktop/*.test.mjs",
     "extensions:build": "pnpm --filter @kubiki/extension-sdk build && node scripts/build-extensions.mjs",
     "desktop:prepare": "node scripts/prepare-extension-runtime.mjs",
