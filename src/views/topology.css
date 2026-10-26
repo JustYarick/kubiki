@@ -1,4 +1,6 @@
 .topology-view { overflow-y: auto; }
+.topology-view .react-flow__viewport { will-change: transform; backface-visibility: hidden; }
+.topology-view .topology-node { contain: layout style; }
 .topology-canvas[data-rendering-profile="balanced"] .topology-node,
 .topology-canvas[data-rendering-profile="performance"] .topology-node { box-shadow: none; }
 .topology-canvas[data-rendering-profile="performance"] .react-flow__node,

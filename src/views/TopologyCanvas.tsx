@@ -88,6 +88,13 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
 
   const latestGraph = useRef(graph);
   latestGraph.current = graph;
+  const workerRef = useRef<{ worker: Worker; elk: InstanceType<typeof ELK> } | null>(null);
+  const layoutRunRef = useRef(0);
+  const terminateWorker = useCallback(() => {
+    workerRef.current?.worker.terminate();
+    workerRef.current = null;
+  }, []);
+  useEffect(() => () => terminateWorker(), [terminateWorker]);
   const structureKey = useMemo(() => topologyStructureKey(graph, grouping), [graph, grouping]);
   useEffect(() => {
     setNodes((nodes) => nodes.map((node) => {
@@ -98,26 +105,30 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
 
   useEffect(() => {
     const graph = latestGraph.current;
+    const runId = ++layoutRunRef.current;
     setError('');
     setNodes([]);
     setEdges([]);
     if (!graph.items.size) { setBusy(false); return; }
     let cancelled = false;
-    let worker: Worker | undefined;
-    let elk: InstanceType<typeof ELK>;
-    try {
-      worker = new Worker(new URL('./layout_worker.ts', import.meta.url), { type: 'module' });
-      elk = new ELK({ workerFactory: () => worker!, algorithms: ['layered'] });
-    } catch (error) { worker?.terminate(); setError(String(error)); setBusy(false); return; }
+    if (!workerRef.current) {
+      try {
+        const worker = new Worker(new URL('./layout_worker.ts', import.meta.url), { type: 'module' });
+        const elk = new ELK({ workerFactory: () => worker, algorithms: ['layered'] });
+        workerRef.current = { worker, elk };
+      } catch (error) { terminateWorker(); setError(String(error)); setBusy(false); return; }
+    }
+    const { worker, elk } = workerRef.current;
     setBusy(true);
     const timeout = setTimeout(() => {
-      cancelled = true; worker?.terminate(); setBusy(false);
+      if (cancelled || runId !== layoutRunRef.current) return;
+      cancelled = true; terminateWorker(); setBusy(false);
       setError('Automatic layout failed: layout took longer than 10 seconds and was cancelled. Reduce the scope or relationship depth.');
     }, 10000);
     const layout = topologyLayout(graph, direction, grouping);
     void elk.layout(layout.root).then((result) => {
-      clearTimeout(timeout); worker?.terminate();
-      if (cancelled) return;
+      clearTimeout(timeout);
+      if (cancelled || runId !== layoutRunRef.current) return;
       const positioned: GraphNode[] = [];
       for (const node of result.children ?? []) {
         const position = { x: node.x ?? 0, y: node.y ?? 0 };
@@ -145,8 +156,8 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       requestAnimationFrame(() => { void flow.current?.fitView({ padding: 0.2, duration: 0 }); });
     }).catch((error) => {
       clearTimeout(timeout);
-      worker?.terminate();
-      if (!cancelled) {
+      terminateWorker();
+      if (!cancelled && runId === layoutRunRef.current) {
         const msg = String(error?.message || error || 'Automatic layout failed');
         const formatted = msg.includes('call stack') || msg.includes('stack')
           ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
@@ -157,8 +168,8 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     });
     worker.onerror = (event) => {
       clearTimeout(timeout);
-      worker?.terminate();
-      if (!cancelled) {
+      terminateWorker();
+      if (!cancelled && runId === layoutRunRef.current) {
         const msg = String(event.message || 'Automatic layout failed');
         const formatted = msg.includes('call stack') || msg.includes('stack')
           ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
@@ -167,8 +178,8 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
         setBusy(false);
       }
     };
-    return () => { cancelled = true; clearTimeout(timeout); worker?.terminate(); };
-  }, [structureKey, direction, revision, setNodes, setEdges]);
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, [structureKey, direction, revision, setNodes, setEdges, terminateWorker]);
 
   useEffect(() => { setEdges(edges => edges.map(edge => ({ ...edge, data: { ...edge.data!, bend: undefined } }))); }, [routeRevision, setEdges]);
 

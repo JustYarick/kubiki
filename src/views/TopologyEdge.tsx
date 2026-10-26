@@ -46,9 +46,9 @@ export function TopologyEdge({ id, sourceX, sourceY, targetX, targetY, data, lab
   });
   return <>
     <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{ ...style, stroke: selected ? 'var(--accent)' : style?.stroke, strokeWidth: selected ? 2 : 1.4, strokeLinejoin: 'round' }} />
-    {segments.map((segment, index) => <path key={index} data-route-segment={index} d={`M ${segment.from.x} ${segment.from.y} L ${segment.to.x} ${segment.to.y}`} fill="none" stroke="transparent" strokeWidth={18}
+    {selected && segments.map((segment, index) => <path key={index} data-route-segment={index} d={`M ${segment.from.x} ${segment.from.y} L ${segment.to.x} ${segment.to.y}`} fill="none" stroke="transparent" strokeWidth={18}
       className={`nodrag nopan topology-route-segment ${segment.axis === 'x' ? 'route-horizontal-drag' : 'route-vertical-drag'}`} {...handlers(segment.axis)} />)}
-    <EdgeLabelRenderer>
+    {(label != null || selected) && <EdgeLabelRenderer>
       {label != null && <div className="topology-edge-control nodrag nopan" data-adjusted={!!data?.bend} style={{ transform: `translate(-50%, -100%) translate(${bend.x}px, ${bend.y - 8}px)`, zIndex: selected ? 1001 : 1 }}>
         <button className="topology-edge-label" aria-label={`Select ${label} connection`} title="Select connection to edit bends and segments" onClick={() => updateEdge(id, { selected: !selected })} onDoubleClick={reset}><span className="react-flow__edge-text">{label}</span></button>
       </div>}
@@ -66,7 +66,7 @@ export function TopologyEdge({ id, sourceX, sourceY, targetX, targetY, data, lab
             y: bend.y + (handle.axis === 'x' ? 0 : event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0),
           } });
         }} />)}
-    </EdgeLabelRenderer>
+    </EdgeLabelRenderer>}
   </>;
 }
 
