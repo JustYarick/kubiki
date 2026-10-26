@@ -42,3 +42,52 @@ export function deliveryRevision(item: ResourceItem): string {
   const status = item.raw?.status ?? {};
   return status.sync?.revision || status.sync?.revisions?.join(', ') || status.lastAppliedRevision || status.artifact?.revision || status.lastAttemptedRevision || '—';
 }
+
+export type FluxCategory = 'kustomizations' | 'helmreleases' | 'sources' | 'automation' | 'notifications';
+export function fluxCategory(item: Pick<ResourceItem, 'kind' | 'apiVersion'>): FluxCategory | undefined {
+  if (gitOpsFamily(item) !== 'flux') return;
+  if (item.kind === 'Kustomization') return 'kustomizations';
+  if (item.kind === 'HelmRelease') return 'helmreleases';
+  if (item.apiVersion.startsWith('source.')) return 'sources';
+  if (item.apiVersion.startsWith('image.')) return 'automation';
+  if (item.apiVersion.startsWith('notification.')) return 'notifications';
+}
+export function argoSync(item: ResourceItem): string {
+  const status = item.raw?.status?.sync?.status;
+  return ['Synced', 'OutOfSync'].includes(status) ? status : 'Unknown';
+}
+export function argoHealth(item: ResourceItem): string {
+  const status = item.raw?.status?.health?.status;
+  return ['Healthy', 'Progressing', 'Degraded', 'Suspended', 'Missing'].includes(status) ? status : 'Unknown';
+}
+
+/** A failed operation is distinct from a deliberately suspended reconciliation. */
+export function deliveryReason(item: ResourceItem): string {
+  const raw = item.raw ?? {};
+  if (raw.metadata?.deletionTimestamp) return 'Deletion is in progress. Check finalizers and the owning controller if it does not complete.';
+  if (raw.spec?.suspend || raw.status?.health?.status === 'Suspended') return 'Reconciliation is paused for this resource.';
+  const operation = raw.status?.operationState;
+  if (gitOpsFamily(item) === 'argocd') {
+    if (['Failed', 'Error'].includes(operation?.phase) && operation.message) return operation.message;
+    const condition = (raw.status?.conditions ?? []).find((entry: any) => /Error|Warning/.test(entry.type));
+    if (condition?.message) return condition.message;
+    if (argoHealth(item) === 'Degraded' || argoHealth(item) === 'Missing') return raw.status?.health?.message || `Managed resources are ${argoHealth(item).toLowerCase()}. Inspect the application to find the affected workload.`;
+    if (argoSync(item) === 'OutOfSync') return 'Live resources differ from the target Git revision.';
+    return operation?.message || deliveryDescription(item);
+  }
+  const conditions = raw.status?.conditions ?? [];
+  const condition = conditions.find((entry: any) => ['Stalled', 'Failed', 'Degraded'].includes(entry.type) && entry.status === 'True')
+    ?? conditions.find((entry: any) => entry.type === 'Ready' && entry.status === 'False')
+    ?? conditions.find((entry: any) => entry.type === 'Reconciling' && entry.status === 'True');
+  if (!condition && deliveryState(item) === 'progressing') return 'Waiting for the controller to observe the current resource generation.';
+  return condition?.message || condition?.reason || deliveryDescription(item);
+}
+
+export function deliveryTimestamp(item: ResourceItem): { label: string; at: string } | undefined {
+  const status = item.raw?.status ?? {};
+  const operation = status.operationState;
+  const candidates = gitOpsFamily(item) === 'argocd'
+    ? [{ label: 'Sync finished', at: operation?.finishedAt }, { label: 'Sync started', at: operation?.startedAt }, { label: 'Last checked', at: status.reconciledAt }]
+    : (status.conditions ?? []).filter((condition: any) => ['Ready', 'Reconciling', 'Stalled'].includes(condition.type)).map((condition: any) => ({ label: 'Status changed', at: condition.lastTransitionTime }));
+  return candidates.find((candidate: any) => typeof candidate.at === 'string' && Number.isFinite(Date.parse(candidate.at)));
+}

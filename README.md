@@ -172,7 +172,11 @@ Select graph nodes to inspect the corresponding resources. The topology includes
 
 ### Helm releases
 
-Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, and notes.
+Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters cover every page in the selected scope; failed releases and operations in progress are shown separately. The inventory refreshes every 30 seconds while the window is visible.
+
+The release overview shows Helm's operation description, status of loaded rendered objects, and hook Jobs with their conditions and matching events. An unloaded object is marked as unchecked. Flux-managed releases link to their owning HelmRelease; change that resource to keep reconciliation in sync.
+
+Flux and Argo CD overviews focus on reconciliation issues and recent controller events. Flux groups Kustomizations, HelmReleases, and Sources by readiness; Argo CD keeps application sync and health independent. These views refresh every 15 seconds while the window is visible, preserve the previous snapshot on errors, and report unavailable resource types and event permissions.
 
 Use the release actions to install a chart, upgrade a release, roll back to a previous revision, or uninstall it. Repository management and chart search use the local Helm configuration. Operations affecting a cluster are pinned to the context selected in Kubiki.
 

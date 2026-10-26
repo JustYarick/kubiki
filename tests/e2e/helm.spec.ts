@@ -31,7 +31,7 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await page.route('**/api/k8s/helm/**', route => {
     const url = new URL(route.request().url()); calls.push(url);
     const op = url.pathname.split('/').pop();
-    if (op === 'releases') return route.fulfill({ json: { context: url.searchParams.get('context'), namespace: url.searchParams.get('namespace'), offset: Number(url.searchParams.get('offset')), limit: 100, has_more: url.searchParams.get('offset') === '0', items: url.searchParams.get('offset') === '0' ? [release(), release('broken', 'other', 'failed')] : [release('next-page')] } });
+    if (op === 'releases') return route.fulfill({ json: { context: url.searchParams.get('context'), namespace: url.searchParams.get('namespace'), offset: Number(url.searchParams.get('offset')), limit: 100, has_more: url.searchParams.get('offset') === '0', items: url.searchParams.get('offset') === '0' ? [release(), release('broken', 'other', 'failed'), ...Array.from({ length: 98 }, (_, i) => release(`a-filler-${i}`, 'backend'))] : [release('zz-next-page')] } });
     if (op === 'history') return route.fulfill({ json: [1, 2].map(revision => ({ revision, updated: 'today', status: revision === 2 ? 'deployed' : 'superseded', chart: 'web-chart-1.0', app_version: '1', description: 'Upgrade complete' })) });
     if (op === 'content') return route.fulfill({ json: `${url.searchParams.get('document')}: revision-${url.searchParams.get('revision')}\n` });
     return route.fulfill({ json: [{ name: 'stable', url: 'https://example.com/charts' }] });
@@ -48,7 +48,7 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('combobox', { name: 'Helm release status' }).selectOption('all');
   await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('button', { name: 'Done', exact: true }).click();
   const search = view.getByRole('textbox', { name: 'Search Helm releases by name or namespace' });
-  await search.fill('web-chart'); await expect(view.getByText('No releases match the filters on this page.')).toBeVisible();
+  await search.fill('web-chart'); await expect(view.getByText('No releases match these filters.')).toBeVisible();
   await search.fill('backend'); await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeVisible();
   await view.getByRole('row', { name: 'Inspect Helm release web in backend' }).focus(); await page.keyboard.press('Enter');
   const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
@@ -64,8 +64,11 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await expect(details.getByLabel('Helm notes revision 2')).toContainText('revision-2');
   await details.getByRole('button', { name: 'Close details' }).click();
   await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeFocused();
+  await search.fill('zz-next-page');
+  await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
+  await expect(view).toContainText('1 of 1 matching · 101 total');
   await search.fill(''); await view.getByRole('button', { name: 'Next page', exact: true }).click();
-  await expect(view.getByRole('row', { name: 'Inspect Helm release next-page in backend' })).toBeVisible();
+  await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
   await expect(view.getByRole('button', { name: 'Next page', exact: true })).toBeDisabled();
   await open(page, 'Repositories'); await expect(page.getByTestId('helm-repositories')).toContainText('https://example.com/charts');
   await open(page); await expect(page.getByRole('tab', { name: /^Helm Releases/ })).toHaveCount(1);

@@ -2,7 +2,7 @@ import { requestError } from './errors.ts';
 import { isValidNamespaceName } from '../core/resources/resource_types.ts';
 
 export type HelmSection = 'releases' | 'repositories';
-export type HelmDocument = 'values' | 'manifest' | 'notes';
+export type HelmDocument = 'values' | 'manifest' | 'notes' | 'hooks';
 export interface HelmRelease { name: string; namespace: string; revision: string; updated: string; status: string; chart: string; app_version: string }
 export interface HelmHistory { revision: number; updated: string; status: string; chart: string; app_version: string; description: string }
 export interface HelmRepo { name: string; url: string }
@@ -31,7 +31,7 @@ export function validateHelmOffset(offset: number): void {
 }
 
 export function validateHelmDocument(document: string, revision: number): asserts document is HelmDocument {
-  if (!['values', 'manifest', 'notes'].includes(document) || !Number.isSafeInteger(revision) || revision <= 0 || revision > 4294967295) throw requestError('invalid_request', 'A supported document and positive release revision are required', { operation: 'helm' }, 400);
+  if (!['values', 'manifest', 'notes', 'hooks'].includes(document) || !Number.isSafeInteger(revision) || revision <= 0 || revision > 4294967295) throw requestError('invalid_request', 'A supported document and positive release revision are required', { operation: 'helm' }, 400);
 }
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
