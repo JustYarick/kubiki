@@ -29,7 +29,7 @@ for (const { width, scale } of layoutCases('overview')) {
     const cpu = telemetry.getByRole('region', { name: 'CPU usage', exact: true });
     const memory = telemetry.getByRole('region', { name: 'RAM usage', exact: true });
     expect((await cpu.boundingBox())!.width).toBeCloseTo((await memory.boundingBox())!.width, 1);
-    if (width === 1440) expect((await memory.boundingBox())!.y).toBeCloseTo((await cpu.boundingBox())!.y, 1);
+    if (width >= 1440) expect((await memory.boundingBox())!.y).toBeCloseTo((await cpu.boundingBox())!.y, 1);
     else expect((await memory.boundingBox())!.y).toBeGreaterThanOrEqual((await cpu.boundingBox())!.y + (await cpu.boundingBox())!.height);
     for (const metric of [cpu, memory]) {
       expect(await metric.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
