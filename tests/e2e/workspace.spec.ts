@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { selectDiagramNamespaces } from './helpers/topology';
 import { test, expect } from '@playwright/test';
 
@@ -25,7 +26,7 @@ test('plain table rows, related resource navigation, container logs and persiste
   await expect(page.getByRole('button', { name: 'Expand bottom panel' })).toBeVisible();
   await page.keyboard.press('Control+j');
   await expect(page.getByPlaceholder('Filter log lines…')).toHaveValue('readiness');
-  await page.screenshot({ path: 'test-results/inspector-and-logs.png' });
+  await captureScreenshot(page, { path: 'test-results/inspector-and-logs.png' });
   expect(errors).toEqual([]);
 });
 
@@ -49,12 +50,12 @@ test('cluster and focused topology automatically lay out and open resource detai
   await expect(page.getByText('Arranging topology…')).toHaveCount(0);
   const node = page.locator('.react-flow__node').filter({ hasText: 'auth-service-58848db6cb-kl8m2' });
   await node.click(); await expect(page.getByTestId('resource-details')).toBeVisible();
-  await page.screenshot({ path: 'test-results/topology.png', fullPage: true });
+  await captureScreenshot(page, { path: 'test-results/topology.png', fullPage: true });
   await page.getByTestId('resource-details').getByRole('button', { name: 'Topology', exact: true }).click();
   await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', 'resource');
   await expect(page.locator('.react-flow__node').first()).toBeVisible();
   await expect(page.getByText('Arranging topology…')).toHaveCount(0);
-  await page.screenshot({ path: 'test-results/resource-topology.png', fullPage: true });
+  await captureScreenshot(page, { path: 'test-results/resource-topology.png', fullPage: true });
   expect(errors).toEqual([]);
 });
 
@@ -126,5 +127,5 @@ test('details leave usable editor space at the minimum window size', async ({ pa
   await expect(page.getByRole('button', { name: 'Close details' })).toBeVisible();
   const overview = page.getByTestId('resource-details').getByRole('tabpanel').locator(':scope > div');
   expect(await overview.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-  await page.screenshot({ path: 'test-results/inspector-900.png' });
+  await captureScreenshot(page, { path: 'test-results/inspector-900.png' });
 });

@@ -1,12 +1,16 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
+import { namespaceList } from './helpers/namespaces';
 
 const release = (name = 'web', namespace = 'backend', status = 'deployed') => ({ name, namespace, status, revision: '2', updated: '2026-10-20 12:00:00.123456 +0000 UTC', chart: 'web-chart-1.0', app_version: '1.0' });
 async function baseApi(page: Page) {
   await page.route('**/api/k8s/**', route => {
-    const op = new URL(route.request().url()).pathname.split('/').pop();
+    const url = new URL(route.request().url());
+    const op = url.pathname.split('/').pop();
     if (op === 'contexts') return route.fulfill({ json: [{ name: 'prod', is_current: true }, { name: 'stage', is_current: false }] });
     if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (op === 'namespaces') return route.fulfill({ json: ['backend', 'other'] });
+    if (url.searchParams.get('kind') === 'Namespace') return route.fulfill({ json: namespaceList(['backend', 'other']) });
     return route.fulfill({ json: { items: [] } });
   });
 }
@@ -27,7 +31,7 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await page.route('**/api/k8s/helm/**', route => {
     const url = new URL(route.request().url()); calls.push(url);
     const op = url.pathname.split('/').pop();
-    if (op === 'releases') return route.fulfill({ json: { context: url.searchParams.get('context'), namespace: url.searchParams.get('namespace'), offset: Number(url.searchParams.get('offset')), limit: 100, has_more: url.searchParams.get('offset') === '0', items: url.searchParams.get('offset') === '0' ? [release(), release('broken', 'other', 'failed')] : [release('next-page')] } });
+    if (op === 'releases') return route.fulfill({ json: { context: url.searchParams.get('context'), namespace: url.searchParams.get('namespace'), offset: Number(url.searchParams.get('offset')), limit: 100, has_more: url.searchParams.get('offset') === '0', items: url.searchParams.get('offset') === '0' ? [release(), release('broken', 'other', 'failed'), ...Array.from({ length: 98 }, (_, i) => release(`a-filler-${i}`, 'backend'))] : [release('zz-next-page')] } });
     if (op === 'history') return route.fulfill({ json: [1, 2].map(revision => ({ revision, updated: 'today', status: revision === 2 ? 'deployed' : 'superseded', chart: 'web-chart-1.0', app_version: '1', description: 'Upgrade complete' })) });
     if (op === 'content') return route.fulfill({ json: `${url.searchParams.get('document')}: revision-${url.searchParams.get('revision')}\n` });
     return route.fulfill({ json: [{ name: 'stable', url: 'https://example.com/charts' }] });
@@ -44,7 +48,7 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('combobox', { name: 'Helm release status' }).selectOption('all');
   await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('button', { name: 'Done', exact: true }).click();
   const search = view.getByRole('textbox', { name: 'Search Helm releases by name or namespace' });
-  await search.fill('web-chart'); await expect(view.getByText('No releases match the filters on this page.')).toBeVisible();
+  await search.fill('web-chart'); await expect(view.getByText('No releases match these filters.')).toBeVisible();
   await search.fill('backend'); await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeVisible();
   await view.getByRole('row', { name: 'Inspect Helm release web in backend' }).focus(); await page.keyboard.press('Enter');
   const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
@@ -60,8 +64,11 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await expect(details.getByLabel('Helm notes revision 2')).toContainText('revision-2');
   await details.getByRole('button', { name: 'Close details' }).click();
   await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeFocused();
+  await search.fill('zz-next-page');
+  await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
+  await expect(view).toContainText('1 of 1 matching · 101 total');
   await search.fill(''); await view.getByRole('button', { name: 'Next page', exact: true }).click();
-  await expect(view.getByRole('row', { name: 'Inspect Helm release next-page in backend' })).toBeVisible();
+  await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
   await expect(view.getByRole('button', { name: 'Next page', exact: true })).toBeDisabled();
   await open(page, 'Repositories'); await expect(page.getByTestId('helm-repositories')).toContainText('https://example.com/charts');
   await open(page); await expect(page.getByRole('tab', { name: /^Helm Releases/ })).toHaveCount(1);
@@ -115,7 +122,7 @@ test('Helm missing binary offers retry, repositories have a real empty state, an
   await page.setViewportSize({ width: 900, height: 900 });
   expect(await view.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect(await document.evaluate(el => el.clientHeight < el.closest('[role=tabpanel]')!.clientHeight && el.scrollHeight > el.clientHeight)).toBe(true);
-  await page.screenshot({ path: 'test-results/helm-narrow.png' });
+  await captureScreenshot(page, { path: 'test-results/helm-narrow.png' });
   await open(page, 'Repositories'); await expect(page.getByTestId('helm-repositories')).toContainText('No repositories configured');
 });
 
@@ -194,7 +201,7 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
   await page.getByRole('button', { name: 'Split Editor', exact: true }).click();
   await expect(workspace.getByTestId('resource-details')).toHaveCount(2);
   await expect(workspace.getByRole('tablist', { name: 'Resource details', exact: true })).toHaveCount(2);
-  await page.screenshot({ path: 'test-results/helm-shared-details.png' });
+  await captureScreenshot(page, { path: 'test-results/helm-shared-details.png' });
   await page.reload();
   await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
   expect(errors).toEqual([]);

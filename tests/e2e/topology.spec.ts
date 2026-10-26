@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { selectDiagramNamespaces } from './helpers/topology';
 import { test, expect } from '@playwright/test';
 
@@ -43,7 +44,7 @@ test('Events stay in a bounded collapsible island and never consume the namespac
   await toggle.click(); await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await expect(island.locator('li')).toHaveCount(0);
   await toggle.click();
-  await page.screenshot({ path: 'test-results/topology-events.png' });
+  await captureScreenshot(page, { path: 'test-results/topology-events.png' });
   await island.getByRole('button', { name: 'Pod/web', exact: true }).first().click();
   const inspector = page.getByTestId('resource-details');
   await expect(inspector.getByRole('tab', { name: 'Events', exact: true })).toHaveAttribute('aria-selected', 'true');

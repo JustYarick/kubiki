@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
 async function setup(page: import('@playwright/test').Page, mode = '') {
   await page.addInitScript(({ mode }) => {
@@ -53,7 +54,7 @@ test('Secret editor automatically encodes Unicode and preserves binary, adds and
   expect((await writes())[0].body).toMatchObject({ resource: { uid: 'secret-uid', context: 'test', namespace: 'default', kind: 'Secret' }, resource_version: '10', data: { password: Buffer.from('Привет 🌍\nsecond line').toString('base64'), binary: '/wAB', 'new.key': 'bmV3IHZhbHVl' } });
   expect((await writes())[0].body.data).not.toHaveProperty('empty'); expect((await writes())[0].url).not.toContain('password');
   await expect(editor).not.toContainText('new value');
-  await page.setViewportSize({ width: 900, height: 900 });await editor.getByRole('button', { name: 'Edit data' }).click();await page.screenshot({ path: 'test-results/secret-editor.png' });
+  await page.setViewportSize({ width: 900, height: 900 });await editor.getByRole('button', { name: 'Edit data' }).click();await captureScreenshot(page, { path: 'test-results/secret-editor.png' });
 });
 for (const mode of ['denied', 'conflict', 'cancelled']) test(`Secret ${mode} retains draft, and invalid keys never reach transport`, async ({ page }) => {
   const { editor, writes } = await setup(page, mode);await editor.getByRole('button', { name: 'Edit data' }).click();

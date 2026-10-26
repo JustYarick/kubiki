@@ -16,6 +16,7 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
   const release = desktopRelease(tag);
   const repo = { owner: context.repo.owner, repo: context.repo.repo };
   const assets = await verifyDesktopArtifacts(dir, tag, sha);
+  const releaseAssets = [...assets];
   const signatures = {};
   for (const asset of assets.filter(a => a.name.endsWith('.sig'))) {
     signatures[asset.name] = await readFile(path.join(dir, asset.name), 'utf8');
@@ -38,7 +39,7 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
     // Re-running a publish job after feed promotion failed must repair the feed
     // without changing the already published installers or their signatures.
     const uploaded = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id: draft.id, per_page: 100 });
-    verifyUploadedArtifacts(assets, uploaded);
+    verifyUploadedArtifacts(releaseAssets, uploaded);
     const asset = uploaded.find(asset => asset.name === 'latest.json' && asset.size > 0);
     if (!asset) throw new Error('The published dev release has no update manifest.');
     const { data } = await github.rest.repos.getReleaseAsset({ ...repo, asset_id: asset.id,
@@ -66,15 +67,15 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
   // Retries replace an unpublished draft; there is no artifact skip heuristic.
   const existing = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id, per_page: 100 });
   for (const asset of existing) await github.rest.repos.deleteReleaseAsset({ ...repo, asset_id: asset.id });
-  for (const asset of assets) {
+  for (const asset of releaseAssets) {
     await github.rest.repos.uploadReleaseAsset({ ...repo, release_id, name: asset.name, data: await readFile(path.join(dir, asset.name)) });
   }
-  const sums = assets.map(a => `${a.sha256}  ${a.name}`).join('\n') + '\n';
+  const sums = releaseAssets.map(a => `${a.sha256}  ${a.name}`).join('\n') + '\n';
   for (const [name, contents] of [['SHA256SUMS', sums], ['latest.json', JSON.stringify(manifest, null, 2) + '\n']]) {
     await github.rest.repos.uploadReleaseAsset({ ...repo, release_id, name, data: Buffer.from(contents) });
   }
   const uploaded = await github.paginate(github.rest.repos.listReleaseAssets, { ...repo, release_id, per_page: 100 });
-  verifyUploadedArtifacts(assets, uploaded);
+  verifyUploadedArtifacts(releaseAssets, uploaded);
   validateUpdateManifest(manifest, tag, uploaded);
 
   let makeLatest = !release.prerelease;
@@ -92,6 +93,6 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
     await publishDevUpdateFeed({ github, context, core }, { tag, sha, manifest, assets: uploaded });
   }
   if (process.env.GITHUB_STEP_SUMMARY) {
-    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Published Kubiki ${tag}\n\n${published.html_url}\n\nCommit: \`${sha}\`\n\n${assets.length} verified packages/signatures; SHA256SUMS and latest.json uploaded.\n`);
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Published Kubiki ${tag}\n\n${published.html_url}\n\nCommit: \`${sha}\`\n\n${assets.length} verified packages/signatures, SHA256SUMS and latest.json uploaded; the VirusTotal report is optional and published separately.\n`);
   }
 }

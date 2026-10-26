@@ -52,3 +52,9 @@
   .helm-history-status-compact { display: block; }
 }
 @container (max-width: 400px) { .helm-action-label { display: none; } }
+
+.helm-flux-label { display: block; margin-top: 3px; color: var(--text-secondary); font: 10px var(--font-sans); }
+.helm-evidence-row { flex-wrap: wrap; gap: 6px 8px; text-align: left; }
+.helm-evidence-row > :last-child { margin-left: auto; overflow-wrap: anywhere; }
+.helm-hook + .helm-hook { margin-top: 12px; }
+.helm-hook > p { margin: 4px 0; overflow-wrap: anywhere; }

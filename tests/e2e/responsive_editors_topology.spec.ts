@@ -1,3 +1,5 @@
+import { captureScreenshot } from './helpers/screenshots';
+import { layoutCases } from './helpers/layout';
 import { openDiagramSettings } from './helpers/topology';
 import { test, expect, type Page } from '@playwright/test';
 
@@ -16,6 +18,7 @@ async function fixture(page: Page) {
     const lists: Record<string, object[]> = {
       Pod: ['alpha', 'beta'].filter(name => !namespace || namespace === name).map(name => ({ apiVersion: 'v1', kind: 'Pod', metadata: { uid: `pod-${name}`, name: name === 'alpha' ? longName : 'other-web', namespace: name, managedFields: [{ manager: 'kubectl' }] }, spec: { nodeName: 'worker', containers: [{ name: 'web', image: 'nginx' }] }, status: { phase: 'Running' } })),
       Node: [{ apiVersion: 'v1', kind: 'Node', metadata: { uid: 'node', name: 'worker' } }],
+      Namespace: ['alpha', 'beta'].map(name => ({ apiVersion: 'v1', kind: 'Namespace', metadata: { uid: `ns-${name}`, name } })),
       PersistentVolumeClaim: [{ apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { uid: 'pvc', name: 'data', namespace: 'alpha' }, spec: {} }],
       CustomResourceDefinition: [{ apiVersion: 'apiextensions.k8s.io/v1', kind: 'CustomResourceDefinition', metadata: { uid: 'crd', name: 'widgets.example.com' }, spec: { group: 'example.com', names: { kind: 'Widget', plural: 'widgets' }, scope: 'Namespaced', versions: [{ name: 'v1', served: true, storage: true }] } }],
     };
@@ -59,7 +62,7 @@ test('All Namespaces draws the full graph from the namespace picker and the glob
   await expect(page.locator('[data-namespace-group="beta"]')).toBeVisible();
 });
 
-for (const { width, scale } of [{ width: 375, scale: 110 }, { width: 768, scale: 150 }, { width: 1440, scale: 110 }, { width: 375, scale: 200 }]) {
+for (const { width, scale } of layoutCases('editors-topology')) {
   test(`YAML names and topology checkboxes fit ${width}px at ${scale}%`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.addInitScript(scale => localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { uiScale: scale }, version: 0 })), scale);
@@ -89,7 +92,7 @@ for (const { width, scale } of [{ width: 375, scale: 110 }, { width: 768, scale:
     } else await fields.click();
     await expect(editor.locator('.view-lines')).toContainText('managedFields');
     await expect(apply).toBeDisabled();
-    await page.screenshot({ path: `test-results/yaml-responsive-${width}-${scale}.png`, animations: 'disabled' });
+    await captureScreenshot(page, { path: `test-results/yaml-responsive-${width}-${scale}.png`, animations: 'disabled' });
     await details.getByRole('button', { name: 'Close details', exact: true }).click();
     await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
     await expect(page.getByText('Choose a diagram scope', { exact: true })).toBeVisible();
@@ -110,7 +113,7 @@ for (const { width, scale } of [{ width: 375, scale: 110 }, { width: 768, scale:
     expect(geometry.length).toBe(5); expect(geometry.every(Boolean)).toBe(true);
     const popup = await types.locator('xpath=..').boundingBox();
     expect(popup!.x).toBeGreaterThanOrEqual(0); expect(popup!.x + popup!.width).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `test-results/topology-types-${width}-${scale}.png`, animations: 'disabled' });
+    await captureScreenshot(page, { path: `test-results/topology-types-${width}-${scale}.png`, animations: 'disabled' });
     await types.getByRole('checkbox', { name: 'Show PersistentVolumeClaim', exact: true }).uncheck();
     await expect(page.locator('.react-flow__node-resource')).toHaveCount(4);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

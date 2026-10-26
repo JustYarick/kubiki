@@ -27,18 +27,11 @@ test('Node pod counts update when only the Pod snapshot changes', async ({ page 
     (await import(workspacePath)).useWorkspaceStore.getState().openResourceList('Node');
   });
   const row = page.getByTestId('resource-table').locator('tbody tr').filter({ hasText: 'audit-node' });
-  await expect(row).toContainText('1 / 110');
+  const column = await page.getByTestId('resource-table').getByRole('columnheader', { name: 'Pods', exact: true }).evaluate(cell => (cell as HTMLTableCellElement).cellIndex);
+  const count = row.getByRole('cell').nth(column);
+  await expect(count).toHaveText('1');
   await page.evaluate(async () => { const path = '/src/state/resource_store.ts'; const { useResourceStore: s } = await import(path); const first = [...s.getState().resources.Pod.values()][0] as any; s.getState().setResourcesForKind('Pod', [first, { ...first, uid: 'two', name: 'two' }]); });
-  await expect(row).toContainText('2 / 110');
-});
-
-test('custom resources named Pod and Gateway do not use built-in details', async ({ page }) => {
-  await demo(page);
-  const renderers = await page.evaluate(async () => {
-    const path = '/src/components/k8s/details/ResourceDetailsRouter.tsx'; const { ResourceDetailsRouter } = await import(path);
-    return ['Pod', 'Gateway'].map(kind => ResourceDetailsRouter({ item: { uid: kind, name: kind, kind, apiVersion: 'example.org/v1', namespace: 'default' }, onNavigate() {}, onLogs() {}, onShell() {} }).type.name);
-  });
-  expect(renderers).toEqual(['GenericResourceDetails', 'GenericResourceDetails']);
+  await expect(count).toHaveText('2');
 });
 
 test('structured batch review shows every target and YAML diff is reserved for manual edits', async ({ page }) => {

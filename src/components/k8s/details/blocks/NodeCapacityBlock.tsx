@@ -42,7 +42,7 @@ export function NodeCapacityBlock({ item }: NodeCapacityBlockProps) {
           </span>
         </div>
 
-        <div className="p-2 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))' }}>
+        <div className="p-2 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, calc(260px * var(--ui-factor))), 1fr))' }}>
           {/* CPU */}
           <div className="p-2.5 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)]">
             <div className="flex items-center justify-between text-xs mb-1.5">

@@ -18,6 +18,7 @@ import {
   RotateCw,
   Radio,
   ShieldBan,
+  ShieldAlert,
 } from 'lucide-react';
 import type { ResourceItem } from '../../../types/k8s';
 import { kindTone } from '../../../core/perspectives';
@@ -274,6 +275,7 @@ export function ResourceHeader({
 
         {nativeKind === 'Node' && onDrain && (
           <Button size="sm" aria-label="Drain node" title="Drain node" onClick={onDrain}>
+            <ShieldAlert size="calc(12px * var(--ui-factor))" />
             <span className="details-action-label">Drain</span>
           </Button>
         )}

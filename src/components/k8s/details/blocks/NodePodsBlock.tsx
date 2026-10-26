@@ -93,7 +93,7 @@ export function NodePodsBlock({ item, onNavigate }: NodePodsBlockProps) {
             {podsOnNode.length} non-terminated pods
           </span>
         </div>
-        <div className="p-2 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))' }}>
+        <div className="p-2 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, calc(260px * var(--ui-factor))), 1fr))' }}>
           <div className="p-2 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-xs">
             <div className="flex justify-between items-center mb-1">
               <span className="text-[var(--text-secondary)]">CPU Requests</span>

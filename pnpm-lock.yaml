@@ -162,6 +162,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  monaco-editor>dompurify: 3.4.17
+
 importers:
 
   .:
@@ -208,6 +211,9 @@ importers:
       dockview:
         specifier: ^8.6.0
         version: 8.6.0
+      dompurify:
+        specifier: 3.4.17
+        version: 3.4.17
       elkjs:
         specifier: ^0.12.0
         version: 0.12.0
@@ -975,8 +981,8 @@ packages:
   dockview@8.6.0:
     resolution: {integrity: sha512-8vB79viOgyYSes8VzPeHKcnZWFt81hX3ibOYnf2yBbegNm9SgoR8nU3n3xDH3Cnkq5t2xl5X4hlBVRZeI5s8HA==}
 
-  dompurify@3.4.15:
-    resolution: {integrity: sha512-EUBjM+B+lkDE41iE82DDSCfkoPGfXx8IxFxPMjNzm/Uk4xDet77rTN9wqlxlVg71kK7XGuUMv6wUxJUwwv+Xyw==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   elkjs@0.12.0:
     resolution: {integrity: sha512-YZcKynxVxYoKIOEpywEPwCFdg+BTbxQRNf3pbwdDCvc8O3kQD8bmIwSxKU1eOTVc4Xo+VG9Te+575mlfvOrhEQ==}
@@ -1870,7 +1876,7 @@ snapshots:
     dependencies:
       dockview-core: 8.6.0
 
-  dompurify@3.4.15:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -2047,7 +2053,7 @@ snapshots:
 
   monaco-editor@0.57.0:
     dependencies:
-      dompurify: 3.4.15
+      dompurify: 3.4.17
       marked: 14.0.0
 
   nanoid@3.3.20: {}

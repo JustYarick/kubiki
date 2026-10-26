@@ -1,4 +1,6 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
+import { namespaceList } from './helpers/namespaces';
 
 function captureReactErrors(page: import('@playwright/test').Page) {
   const errors: string[] = [];
@@ -48,7 +50,7 @@ test('Related displays distinct kind badges and preserves resource navigation', 
   expect(await deployment.evaluate((element) => getComputedStyle(element).color)).not.toBe(await pod.evaluate((element) => getComputedStyle(element).color));
   await inspector.getByRole('button').filter({ has: page.locator('[data-resource-kind="Deployment"]') }).click();
   await expect(inspector.getByText('Deployment · default')).toBeVisible();
-  await page.screenshot({ path: 'test-results/details-kind-badges.png' });
+  await captureScreenshot(page, { path: 'test-results/details-kind-badges.png' });
 });
 
 test('annotations render readable fields, a last-applied summary and expandable exact source', async ({ page }) => {
@@ -88,7 +90,7 @@ test('annotations render readable fields, a last-applied summary and expandable 
   await lastApplied.getByText('Original value', { exact: true }).click();
   await lastApplied.getByText(/^Manifest fields/).click();
   await expect(lastApplied.getByText('spec.replicas', { exact: true })).toBeVisible();
-  await page.screenshot({ path: 'test-results/annotations.png' });
+  await captureScreenshot(page, { path: 'test-results/annotations.png' });
 });
 
 async function mockResourceLists(page: import('@playwright/test').Page, lists: Record<string, object[]>, namespaces = ['backend']) {
@@ -97,7 +99,8 @@ async function mockResourceLists(page: import('@playwright/test').Page, lists: R
     if (url.pathname.endsWith('/contexts')) return route.fulfill({ json: [{ name: 'test', is_current: true }] });
     if (url.pathname.endsWith('/ping')) return route.fulfill({ json: { version: { gitVersion: 'v1.34.0' } } });
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: namespaces });
-    return route.fulfill({ json: { items: lists[url.searchParams.get('kind') ?? ''] ?? [] } });
+    const kind = url.searchParams.get('kind') ?? '';
+    return route.fulfill({ json: { items: lists[kind] ?? (kind === 'Namespace' ? namespaceList(namespaces).items : []) } });
   });
 }
 
@@ -126,7 +129,7 @@ test('warning reasons are shared by plain table rows, Related and topology nodes
   await expect(graphPod).toBeVisible();
   await graphPod.locator('[data-resource-issues]').hover();
   await expect(page.getByRole('tooltip')).toContainText('Back-off restarting failed container app');
-  await page.screenshot({ path: 'test-results/topology-warnings.png' });
+  await captureScreenshot(page, { path: 'test-results/topology-warnings.png' });
 });
 
 test('Namespace Related shows members with kind badges, filtering and a bounded first page', async ({ page }) => {

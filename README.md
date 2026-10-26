@@ -68,7 +68,7 @@ The screenshots below use the built-in demo cluster.
 
 ### Cluster overview
 
-The overview brings together cluster health, capacity, workload metrics, recent events, and detected problems.
+The overview brings together key resource counts, visible CPU and memory history charts, Pod phase distribution, detected problems, and the highest resource consumers. Charts support keyboard inspection, time ranges, fixed or automatic scales, and pause/resume. Live history is collected while the overview is open; missing metrics stay visibly unavailable instead of appearing as zero.
 
 ![Cluster overview with health indicators, resource metrics, and events](docs/media/overview.png)
 
@@ -121,6 +121,8 @@ Before connecting to a cluster, prepare:
 - Any authentication executables referenced by the kubeconfig, available on the application's `PATH`.
 - The `helm` executable on `PATH` if you intend to use Helm features.
 
+On macOS, Kubiki restores the login shell's `PATH` before starting its backend, so a Finder-launched application can find Helm and Kubernetes credential helpers installed through your shell configuration. Both Apple Silicon (`/opt/homebrew/bin`) and Intel (`/usr/local/bin`) Homebrew paths are included as fallbacks. Shell initialization is limited to three seconds; an unavailable or stalled shell does not prevent the application from starting. Restart Kubiki after installing Helm or changing your shell paths.
+
 Desktop Kubernetes reads, watches, logs, exec sessions, and port forwarding use the Rust Kubernetes client. These operations do not require a local `kubectl` executable.
 
 ## Connecting to a cluster
@@ -141,9 +143,13 @@ Use the explorer to navigate workloads, configuration, networking, storage, acce
 
 Filter and sort resource tables to narrow the current inventory. Select an object to inspect its metadata, status, conditions, events, and related resources. Follow resource references to move between owners, workloads, Services, and dependent objects.
 
-The overview summarizes cluster state and highlights workload problems. Resource views receive live updates through native Kubernetes watches. Changing context or namespace scope updates the subscriptions used by the workspace.
+On connection, Kubiki collects a complete inventory of accessible built-in resources, with at most four collections loading in parallel. This initial snapshot provides resource counts and health diagnostics even before their views are opened. Failed or forbidden collections remain visibly incomplete.
+
+Afterward, native Kubernetes watches follow the visible workspace panes and their related resources. Unused collections retain their cached snapshot and stop watching; reopening a view refreshes its data. Pods follow the selected namespaces, except when a Node view needs cluster-wide Pod counts. The overview continuously updates its summary sources; its other inventory counts are marked as cached. Changing context or namespace scope updates subscriptions, and CPU/RAM panels share one metrics poll per context and namespace.
 
 ### YAML editing
+
+To create an object, open its resource list and select **New**. Choose a name and, for namespaced resources, one target namespace; edit the starter YAML, then select **Review & create**. The desktop backend reviews the complete manifest before submitting it to Kubernetes. Existing objects with the same name are never overwritten. This also supports discovered custom resource types; their manifests must satisfy the installed CRD schema. Validation errors, denied permissions, and cancelled reviews preserve your draft. Browser access remains read-only; demo creation stores an object in the current session.
 
 Open the YAML view for an existing resource to inspect or edit its manifest. The editor provides syntax highlighting, search and replace, formatting, copying, and downloading.
 
@@ -166,7 +172,11 @@ Select graph nodes to inspect the corresponding resources. The topology includes
 
 ### Helm releases
 
-Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, and notes.
+Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters cover every page in the selected scope; failed releases and operations in progress are shown separately. The inventory refreshes every 30 seconds while the window is visible.
+
+The release overview shows Helm's operation description, status of loaded rendered objects, and hook Jobs with their conditions and matching events. An unloaded object is marked as unchecked. Flux-managed releases link to their owning HelmRelease; change that resource to keep reconciliation in sync.
+
+Flux and Argo CD overviews focus on reconciliation issues and recent controller events. Flux groups Kustomizations, HelmReleases, and Sources by readiness; Argo CD keeps application sync and health independent. These views refresh every 15 seconds while the window is visible, preserve the previous snapshot on errors, and report unavailable resource types and event permissions.
 
 Use the release actions to install a chart, upgrade a release, roll back to a previous revision, or uninstall it. Repository management and chart search use the local Helm configuration. Operations affecting a cluster are pinned to the context selected in Kubiki.
 
@@ -306,6 +316,8 @@ pnpm tauri dev
 
 The Tauri hooks also prepare the pinned Node runtime and build the extension SDK, tools, controller and bundled diagnostics. The first preparation downloads Node and verifies its official archive checksum. For a browser-only demo, run `pnpm dev` and open `http://localhost:1420/?demo=1`; native operations and extension processes require the desktop application.
 
+If kubeconfig is absent or contains no contexts, Kubiki starts `kubiki-demo` automatically, including in installed builds. Enable **Settings → Developer → Developer mode** to also show the demo alongside real kubeconfig contexts. The list updates immediately; disabling Developer mode hides the extra demo and reconnects to a real context if needed. The demo includes workloads, Flux sources and reconciliations, Argo CD applications with separate health/sync states, Helm releases, and a failed hook Job.
+
 ### Building desktop packages
 
 ```sh
@@ -341,10 +353,12 @@ Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, o
 
 ## Publishing releases
 
-Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. For tests, builds and publication, open **Actions → CI → Run workflow** and leave **trigger_release** enabled. For builds and publication without tests, open **Actions → Release → Run workflow**, leave **run_tests** disabled and **publish** enabled. Branch pushes and pull requests run tests and installer builds without publishing. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
+Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validation, tags and release recovery. For tests, builds and publication, open **Actions → CI → Run workflow** and leave **trigger_release** enabled. For builds and publication without tests, open **Actions → Release → Run workflow**, leave **run_tests** disabled and **publish** enabled. Pushes to `dev`/`main` and pull requests targeting these branches do not start CI; launch tests manually from Actions. Other branches retain automatic tests and installer builds without publishing. Tag pushes build and publish without enabling tests; use a manual Release run with `run_tests` enabled to test before publication. A plain tag such as `v0.2.0` produces a stable release; `v0.2.0-dev.1` or `v0.2.0-rc.1` produces a prerelease. The workflow uses the tag to synchronize embedded desktop versions and publishes automatically after every target and updater manifest passes. The source branch does not determine the release channel.
 
 ## Documentation
 
+- [Test suites, browser coverage and timing reports](docs/TESTING.md)
+- [Local state persistence and topology rendering settings](docs/LOCAL_STATE.md)
 - [Publishing desktop releases](docs/RELEASING.md)
 - [Application updates and signing](docs/APP_UPDATES.md)
 - [Project structure and architecture](docs/STRUCTURE.md)

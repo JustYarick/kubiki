@@ -3,6 +3,7 @@ import { ArrowRightLeft } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input, Label } from '../ui/Input';
+import { useUiStore } from '../../state/ui_store';
 import { usePfStore } from '../../state/pf_store';
 import { useDockStore } from '../../state/dock_store';
 import { useClusterStore } from '../../state/cluster_store';
@@ -19,7 +20,7 @@ export function PFDialog({ item, onClose, initialRemotePort }: { item: ResourceI
   useEffect(() => { if (context !== openedContext.current) { controller.current?.abort(); onClose(); } }, [context]);
   const controller = useRef<AbortController | null>(null);
   const [remote, setRemote] = useState(''); const [local, setLocal] = useState('');
-  const [browser, setBrowser] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [browser, setBrowser] = useState(() => useUiStore.getState().portForwardAutoOpen); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const ports = useMemo(() => {
     const source = item?.kind === 'Service' ? item.raw?.spec?.ports ?? [] : (item?.raw?.spec?.containers ?? []).flatMap((c: any) => c.ports ?? []);
     return source.filter((p: any) => (p.protocol ?? 'TCP') === 'TCP').map((p: any) => ({ port: p.port ?? p.containerPort, name: p.name }));

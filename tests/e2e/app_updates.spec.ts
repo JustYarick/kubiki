@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
@@ -45,7 +46,7 @@ test('startup offers a stable release, verifies download and requires an explici
   await dialog.getByRole('button', { name: 'Download update' }).click();
   await expect(dialog.getByText('The update is downloaded and its signature has been verified.')).toBeVisible();
   expect(await page.evaluate(() => (window as any).__updateInstalls)).toEqual([]);
-  await page.screenshot({ path: 'test-results/app-update-downloaded.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/app-update-downloaded.png', animations: 'disabled' });
   await dialog.getByRole('button', { name: 'Install and restart' }).click();
   await expect(dialog.getByRole('status')).toContainText('Installing the update');
   await expect.poll(() => page.evaluate(() => (window as any).__updateInstalls)).toEqual(['0.2.1']);

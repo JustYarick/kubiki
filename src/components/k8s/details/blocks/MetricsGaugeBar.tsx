@@ -145,15 +145,15 @@ export function MetricsGaugeBar({ item }: MetricsGaugeBarProps) {
 
       <div className="p-2 details-metrics-grid bg-[var(--bg-canvas)]">
         {/* CPU Bar */}
-        <div className="flex flex-col gap-1.5 p-2 rounded bg-[var(--bg-secondary)]/50 border border-[var(--border-subtle)]">
-          <div className="flex items-center justify-between text-xs font-medium">
-            <span className="text-[var(--text-secondary)]">CPU</span>
-            <span className="font-mono text-[var(--text-primary)]">
-              {currentCpu !== null ? cpuText(currentCpu) : '—'}{' '}
-              <span className="text-[var(--text-muted)] text-[10px]">
+        <div className="flex flex-col gap-1.5 p-2 rounded bg-[var(--bg-secondary)]/50 border border-[var(--border-subtle)] min-w-0">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium flex-wrap">
+            <span className="text-[var(--text-secondary)] shrink-0 font-semibold">CPU</span>
+            <div className="font-mono text-[var(--text-primary)] shrink-0 whitespace-nowrap text-right">
+              <span>{currentCpu !== null ? cpuText(currentCpu) : '—'}</span>{' '}
+              <span className="text-[var(--text-muted)] text-[10px] whitespace-nowrap">
                 (req: {cpuText(cpuReq)} | lim: {cpuText(cpuLim)})
               </span>
-            </span>
+            </div>
           </div>
 
           <div className="w-full h-2 rounded-full bg-[var(--bg-canvas)] border border-[var(--border-subtle)] overflow-hidden relative flex">
@@ -166,22 +166,22 @@ export function MetricsGaugeBar({ item }: MetricsGaugeBarProps) {
               />
             )}
           </div>
-          <div className="flex justify-between text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
+          <div className="flex justify-between text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono whitespace-nowrap">
             <span>Usage: {cpuText(currentCpu)}</span>
             <span>Limit: {cpuText(cpuLim)}</span>
           </div>
         </div>
 
         {/* Memory Bar */}
-        <div className="flex flex-col gap-1.5 p-2 rounded bg-[var(--bg-secondary)]/50 border border-[var(--border-subtle)]">
-          <div className="flex items-center justify-between text-xs font-medium">
-            <span className="text-[var(--text-secondary)]">Memory</span>
-            <span className="font-mono text-[var(--text-primary)]">
-              {currentMem !== null ? memoryText(currentMem) : '—'}{' '}
-              <span className="text-[var(--text-muted)] text-[10px]">
+        <div className="flex flex-col gap-1.5 p-2 rounded bg-[var(--bg-secondary)]/50 border border-[var(--border-subtle)] min-w-0">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium flex-wrap">
+            <span className="text-[var(--text-secondary)] shrink-0 font-semibold">Memory</span>
+            <div className="font-mono text-[var(--text-primary)] shrink-0 whitespace-nowrap text-right">
+              <span>{currentMem !== null ? memoryText(currentMem) : '—'}</span>{' '}
+              <span className="text-[var(--text-muted)] text-[10px] whitespace-nowrap">
                 (req: {memoryText(memReq)} | lim: {memoryText(memLim)})
               </span>
-            </span>
+            </div>
           </div>
 
           <div className="w-full h-2 rounded-full bg-[var(--bg-canvas)] border border-[var(--border-subtle)] overflow-hidden relative flex">
@@ -197,7 +197,7 @@ export function MetricsGaugeBar({ item }: MetricsGaugeBarProps) {
               />
             )}
           </div>
-          <div className="flex justify-between text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
+          <div className="flex justify-between text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono whitespace-nowrap">
             <span>Usage: {memoryText(currentMem)}</span>
             <span>Limit: {memoryText(memLim)}</span>
           </div>

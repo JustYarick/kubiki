@@ -24,6 +24,11 @@ import type { ResourceDetailsProps } from '../components/layout/InspectorPanel';
 import { cacheHelmReleases, inspectHelmRelease } from '../state/helm_resources';
 import { subscribeHelmChanges } from '../providers/use_helm_graph';
 import { useUiStore } from '../state/ui_store';
+import { useHelmInventory } from '../providers/use_helm_inventory';
+import { useFluxHelmOwners } from '../providers/use_flux_helm_owners';
+import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseHealth, releaseObjects } from '../core/resources/helm_diagnostics';
+import { resourceIssues } from '../core/resources/diagnostics';
+import { resourceEvents } from '../core/resources/resource_events';
 import './helm.css';
 import './delivery.css';
 
@@ -68,38 +73,44 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
   const selected = useResourceStore(state => state.selectedItem);
   const [action, setAction] = useState<{ action: HelmAction; release?: HelmRelease } | null>(null);
   const [menu, setMenu] = useState<{ release: HelmRelease; x: number; y: number } | null>(null);
-  const result = useHelmRead(JSON.stringify([context, namespace, offset]), signal => k8s.getHelmReleases(context, namespace, offset, signal));
-  const items = result.data?.items ?? [];
-  useEffect(() => { if (result.data) cacheHelmReleases(context, result.data.items); }, [context, result.data]);
+  const result = useHelmInventory(context, namespace);
+  const owners = useFluxHelmOwners(context, null);
+  const resources = useResourceStore(state => state.resources);
+  const loaded = useMemo(() => Object.values(resources).flatMap(map => [...map.values()]), [resources]);
+  const items = result.data ?? [];
+  useEffect(() => { if (result.data) cacheHelmReleases(context, result.data); }, [context, result.data]);
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
-    const rows = items.filter(item => (!search || item.name.toLowerCase().includes(search) || item.namespace.toLowerCase().includes(search)) && (status === 'all' || (status === 'problems' ? item.status === 'failed' || item.status.startsWith('pending-') || item.status === 'uninstalling' : item.status === status)));
+    const rows = items.filter(item => (!search || item.name.toLowerCase().includes(search) || item.namespace.toLowerCase().includes(search)) && (status === 'all' || (status === 'progressing' ? item.status.startsWith('pending-') || item.status === 'uninstalling' : status === 'problems' ? item.status === 'failed' || item.status.startsWith('pending-') || item.status === 'uninstalling' : item.status === status)));
     const rank = (item: HelmRelease) => item.status === 'failed' ? 0 : item.status.startsWith('pending-') || item.status === 'uninstalling' ? 1 : 2;
     return rows.sort((a, b) => (order === 'problems' ? rank(a) - rank(b) : order === 'newest' ? helmUpdatedAt(b.updated) - helmUpdatedAt(a.updated) : 0) || a.name.localeCompare(b.name) || a.namespace.localeCompare(b.namespace));
   }, [items, query, status, order]);
   // Selection and revision updates share the ordinary resource inspector.
   const current = selected?.kind === 'HelmRelease' && selected.raw?.context === context ? selected : null;
+  useEffect(() => { setOffset(0); }, [query, status, order]);
+  const pageOffset = Math.min(offset, Math.max(0, Math.ceil(filtered.length / 100) - 1) * 100);
+  const visible = filtered.slice(pageOffset, pageOffset + 100);
   const changePage = (next: number) => setOffset(next);
   return <section aria-label="Helm releases" data-testid="helm-releases" aria-busy={result.loading} className="helm-workspace">
     <div className="helm-toolbar">
       <h1><Anchor size={15} aria-hidden="true" />Helm Releases</h1>
       <Button size="sm" aria-label="Install release" title="Install release" disabled={!k8s.supportsHelmMutations} onClick={() => setAction({ action: 'install' })}><Plus size={13} aria-hidden="true" /><span className="helm-action-label">Install release</span></Button>
-      <IconButton icon={RefreshCw} size="sm" disabled={result.loading} onClick={result.refresh} aria-label="Refresh Helm releases" tooltip="Refresh releases" />
+      <IconButton icon={RefreshCw} size="sm" disabled={result.loading} onClick={() => { result.refresh();owners.refresh(); }} aria-label="Refresh Helm releases" tooltip="Refresh releases" />
     </div>
     <div className="helm-dashboard-summary">
       <DeliverySummary active={status} onSelect={setStatus} metrics={[
-        { id: 'all', label: 'Releases', value: result.data ? items.length : null, detail: 'On this page' },
+        { id: 'all', label: 'Releases', value: result.data ? items.length : null, detail: 'Across the selected scope' },
         { id: 'deployed', label: 'Deployed', value: result.data ? items.filter(item => item.status === 'deployed').length : null, detail: 'Successfully deployed', tone: 'ok', icon: deliveryIcons.healthy },
-        { id: 'problems', label: 'Needs attention', value: result.data ? items.filter(item => item.status === 'failed' || item.status.startsWith('pending-') || item.status === 'uninstalling').length : null, detail: 'Failed or in progress', tone: 'warn', icon: deliveryIcons.attention },
-        { id: 'uninstalled', label: 'Uninstalled', value: result.data ? items.filter(item => item.status === 'uninstalled').length : null, detail: 'Retained release history', tone: 'muted', icon: deliveryIcons.suspended },
+        { id: 'failed', label: 'Failed', value: result.data ? items.filter(item => item.status === 'failed').length : null, detail: 'Last operation failed', tone: 'warn', icon: deliveryIcons.attention },
+        { id: 'progressing', label: 'In progress', value: result.data ? items.filter(item => item.status.startsWith('pending-') || item.status === 'uninstalling').length : null, detail: 'Install, upgrade or uninstall', tone: 'muted', icon: deliveryIcons.progressing },
       ]} />
-      <p className="helm-dashboard-caption">Current page · {namespaceScopeLabel(namespace ?? 'all')}{result.data?.has_more ? ' · More releases on the next page' : ''}</p>
+      <p className="helm-dashboard-caption">{namespaceScopeLabel(namespace ?? 'all')} · {result.error ? 'Last complete snapshot' : 'Complete release inventory'} · auto 30s</p>
     </div>
     <div className="helm-filterbar">
       <label className="helm-search"><Search size={13} aria-hidden="true" /><input aria-label="Search Helm releases by name or namespace" placeholder="Filter releases…" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <Popover align="end" width={240} trigger={() => <Button size="sm" aria-label="Helm release filters" className="resource-filter-trigger"><SlidersHorizontal size={13} aria-hidden="true" />Filters<span className="helm-filter-count">{Number(status !== 'all') + Number(order !== 'name') || ''}</span></Button>}>
         {close => <div role="dialog" aria-label="Helm release filters" className="p-2 space-y-2">
-          <label className="resource-filter-field"><span>Status</span><select aria-label="Helm release status" className={field} value={status} onChange={event => setStatus(event.target.value)}><option value="all">All statuses</option><option value="problems">Problems</option><option value="deployed">Deployed</option><option value="failed">Failed</option><option value="uninstalled">Uninstalled</option><option value="superseded">Superseded</option></select></label>
+          <label className="resource-filter-field"><span>Status</span><select aria-label="Helm release status" className={field} value={status} onChange={event => setStatus(event.target.value)}><option value="all">All statuses</option><option value="problems">Problems</option><option value="progressing">In progress</option><option value="deployed">Deployed</option><option value="failed">Failed</option><option value="uninstalled">Uninstalled</option><option value="superseded">Superseded</option></select></label>
           <label className="resource-filter-field"><span>Order</span><select aria-label="Helm release order" className={field} value={order} onChange={event => setOrder(event.target.value)}><option value="name">Name A–Z</option><option value="problems">Problems first</option><option value="newest">Recently updated</option></select></label>
           <Button size="sm" onClick={close}>Done</Button>
         </div>}
@@ -107,18 +118,19 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
     </div>
     <p className="helm-scope">{k8s.demo ? 'Demo · ' : ''}{context} · {namespaceScopeLabel(namespace ?? 'all')} · {k8s.supportsHelmMutations ? 'Backend-confirmed changes' : 'Read only'}</p>
     {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}
+    {owners.error && <RequestErrorNotice error={owners.error} retainedData={!!owners.items.length} onRetry={owners.refresh} />}
     <div className="helm-content">
       <div className="helm-list">
         {result.loading && !result.data && <ResourceLoading label="Loading releases…" />}
         {!result.loading && result.data && !items.length && <p role="status" className="p-6 text-[var(--text-secondary)]">No Helm releases in this scope. Select another namespace or refresh the list.</p>}
-        {!!items.length && <div className="helm-table-scroll kubiki-scrollbar"><table className="helm-table" aria-label="Helm release list"><thead><tr><th>Name</th><th>Namespace</th><th>Status</th><th>Chart</th><th>Revision</th><th>Updated</th></tr></thead><tbody>{filtered.map(release => <tr key={releaseKey(release)} tabIndex={0} onContextMenu={event => { event.preventDefault(); setMenu({ release, x: event.clientX, y: event.clientY }); }} aria-label={`Inspect Helm release ${release.name} in ${release.namespace}`} aria-selected={current?.name === release.name && current.namespace === release.namespace} onClick={() => inspectHelmRelease(context, release)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspectHelmRelease(context, release); } }}><td className="font-mono" title={release.name}>{release.name}</td><td title={release.namespace}>{release.namespace}</td><td><Status status={release.status} /></td><td title={release.chart}>{release.chart}</td><td className="font-mono">{release.revision}</td><td className="text-[var(--text-secondary)]" title={release.updated}>{release.updated}</td></tr>)}</tbody></table>{!filtered.length && <p role="status" className="p-6 text-[var(--text-secondary)]">No releases match the filters on this page.</p>}</div>}
-        {result.data && <div className="helm-pagination"><span>{filtered.length} of {items.length} on this page{offset > 0 ? ` · offset ${offset}` : ''}. Filters apply to this page.</span><div className="flex gap-2"><IconButton icon={ChevronLeft} size="sm" aria-label="Previous page" tooltip="Previous page" disabled={offset === 0 || result.loading} onClick={() => changePage(Math.max(0, offset - result.data!.limit))} /><IconButton icon={ChevronRight} size="sm" aria-label="Next page" tooltip="Next page" disabled={!result.data.has_more || result.loading} onClick={() => changePage(offset + result.data!.limit)} /></div></div>}
+        {!!items.length && <div className="helm-table-scroll kubiki-scrollbar"><table className="helm-table" aria-label="Helm release list"><thead><tr><th>Name</th><th>Namespace</th><th>Status</th><th>Chart</th><th>Observed health</th><th>Revision</th><th>Updated</th></tr></thead><tbody>{visible.map(release => <tr key={releaseKey(release)} tabIndex={0} onContextMenu={event => { event.preventDefault(); setMenu({ release, x: event.clientX, y: event.clientY }); }} aria-label={`Inspect Helm release ${release.name} in ${release.namespace}`} aria-selected={current?.name === release.name && current.namespace === release.namespace} onClick={() => inspectHelmRelease(context, release)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspectHelmRelease(context, release); } }}><td className="font-mono" title={release.name}>{release.name}{fluxReleaseOwner(release, owners.items) && <span className="helm-flux-label">Flux managed</span>}</td><td title={release.namespace}>{release.namespace}</td><td><Status status={release.status} /></td><td title={release.chart}>{release.chart}</td><td><ObservedHealth release={release} loaded={loaded} /></td><td className="font-mono">{release.revision}</td><td className="text-[var(--text-secondary)]" title={release.updated}>{release.updated}</td></tr>)}</tbody></table>{!filtered.length && <p role="status" className="p-6 text-[var(--text-secondary)]">No releases match these filters.</p>}</div>}
+        {result.data && <div className="helm-pagination"><span>{filtered.length ? `${pageOffset + 1}–${Math.min(pageOffset + 100, filtered.length)}` : '0'} of {filtered.length} matching · {items.length} total</span><div className="flex gap-2"><IconButton icon={ChevronLeft} size="sm" aria-label="Previous page" tooltip="Previous page" disabled={pageOffset === 0} onClick={() => changePage(Math.max(0, pageOffset - 100))} /><IconButton icon={ChevronRight} size="sm" aria-label="Next page" tooltip="Next page" disabled={pageOffset + 100 >= filtered.length} onClick={() => changePage(pageOffset + 100)} /></div></div>}
       </div>
     </div>
     {menu && <FixedMenu rect={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} items={([
       { id: 'inspect', label: 'Inspect release', onSelect: () => inspectHelmRelease(context, menu.release) },
       { id: 'topology', label: 'Open Helm topology', onSelect: () => openHelmTopology(context, menu.release) },
-      ...(['upgrade', 'rollback', 'uninstall'] as const).map(operation => ({ id: operation, label: operation === 'rollback' ? 'Roll back…' : operation === 'uninstall' ? 'Uninstall…' : 'Upgrade…', danger: operation === 'uninstall', disabled: !k8s.supportsHelmMutations, onSelect: () => setAction({ action: operation, release: menu.release }) })),
+      ...(['upgrade', 'rollback', 'uninstall'] as const).map(operation => ({ id: operation, label: operation === 'rollback' ? 'Roll back…' : operation === 'uninstall' ? 'Uninstall…' : 'Upgrade…', danger: operation === 'uninstall', disabled: !k8s.supportsHelmMutations || owners.loading || !!fluxReleaseOwner(menu.release, owners.items), onSelect: () => setAction({ action: operation, release: menu.release }) })),
     ] satisfies MenuItem[])} />}
     {action && <HelmActionDialog action={action.action} release={action.release} onClose={() => setAction(null)} onCompleted={() => {
       if (action.action === 'uninstall' && action.release) {
@@ -139,7 +151,7 @@ function Status({ status }: { status: string }) {
 type HelmDetailTab = 'overview' | 'history' | HelmDocument;
 const helmDetailTabs = [
   { id: 'overview', label: 'Overview' }, { id: 'history', label: 'History' },
-  { id: 'values', label: 'Values' }, { id: 'manifest', label: 'Manifest' }, { id: 'notes', label: 'Notes' },
+  { id: 'values', label: 'Values' }, { id: 'manifest', label: 'Manifest' }, { id: 'hooks', label: 'Hooks' }, { id: 'notes', label: 'Notes' },
 ] as const;
 
 export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarget, onNavigate }: ResourceDetailsProps & { item: ResourceItem }) {
@@ -159,7 +171,9 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
   const chooseRevision = (revision: number) => { setSelection({ key: item.uid, tab: 'values', revision }); };
   const managed = useMemo(() => Object.values(resources).flatMap(map => [...map.values()]).filter(resource => { const metadata = resource.raw?.metadata ?? resource.metadata ?? {}; const annotations = metadata.annotations ?? {}; return metadata.labels?.['app.kubernetes.io/managed-by'] === 'Helm' && annotations['meta.helm.sh/release-name'] === item.name && annotations['meta.helm.sh/release-namespace'] === item.namespace; }), [resources, item.name, item.namespace]);
   const navigate = (next: ResourceItem) => { setTab('overview'); onNavigate(next); };
-  const canChange = k8s.supportsHelmMutations && !!release && !history.loading && !history.error;
+  const owners = useFluxHelmOwners(context, null);
+  const owner = fluxReleaseOwner({ name: item.name, namespace: item.namespace! }, owners.items);
+  const canChange = !owner && !owners.loading && k8s.supportsHelmMutations && !!release && !history.loading && !history.error;
   return <DetailsPanel busy={history.loading} busyLabel="Refreshing release…" item={item} inspector={inspector} onClose={onClose} onBack={onBack} backTarget={backTarget} onNavigate={navigate}
     rightTab={tab} setTab={setTab} tabs={helmDetailTabs}
     copyActions={[{ label: 'Release name', value: item.name }, { label: 'Namespace', value: item.namespace ?? '' }]}
@@ -182,8 +196,11 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
       {history.error && tab !== 'history' && <RequestErrorNotice error={history.error} onRetry={history.refresh} retainedData={!!release} />}
       {history.loading && !release && tab !== 'history' && <ResourceLoading label="Loading release revision…" />}
       {!history.loading && !history.error && !release && tab !== 'history' && <p role="status" className="p-3 text-xs text-[var(--text-secondary)]">No release revision is available. Refresh or choose another release.</p>}
-      {tab === 'history' ? <HelmHistoryPane result={history} release={release} onSelect={chooseRevision} onRestore={revision => setAction({ kind: 'rollback', revision })} />
+      {tab === 'history' ? <HelmHistoryPane result={history} release={release} onSelect={chooseRevision} canRestore={canChange} onRestore={revision => setAction({ kind: 'rollback', revision })} />
         : release && tab === 'overview' ? <div className="details-body details-stack">
+          {owner && <DetailsSection title="Managed by Flux"><p className="details-caption">Change the Flux HelmRelease to keep the release in sync with its source.</p><button className="details-resource-row" onClick={() => navigate(owner)}>{owner.namespace}/{owner.name}</button></DetailsSection>}
+          {owners.error && <RequestErrorNotice error={owners.error} onRetry={owners.refresh} retainedData={!!owners.items.length} />}
+          <ReleaseEvidence key={`${context}/${item.uid}/${release.revision}`} context={context} release={release} history={history.data ?? []} resources={Object.values(resources).flatMap(map => [...map.values()])} onNavigate={navigate} />
           <DetailsSection title="Latest release snapshot" label="Release overview" icon={Package}>
             <dl className="details-properties">{[['Status', <Status key="status" status={release.status} />], ['Chart', release.chart], ['App version', release.app_version || '—'], ['Revision', release.revision], ['Updated', release.updated || '—'], ['Namespace', release.namespace], ['Context', context]].map(([label, value]) => <Fragment key={String(label)}><dt>{label}</dt><dd>{value}</dd></Fragment>)}</dl>
           </DetailsSection>
@@ -200,7 +217,7 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
   </DetailsPanel>;
 }
 
-function HelmHistoryPane({ result, release, onSelect, onRestore }: { result: ReturnType<typeof useHelmRead<HelmHistory[]>>; release?: HelmRelease; onSelect: (revision: number) => void; onRestore: (revision: number) => void }) {
+function HelmHistoryPane({ result, release, onSelect, onRestore, canRestore }: { canRestore: boolean; result: ReturnType<typeof useHelmRead<HelmHistory[]>>; release?: HelmRelease; onSelect: (revision: number) => void; onRestore: (revision: number) => void }) {
   const rows = [...(result.data ?? [])].sort((a, b) => b.revision - a.revision);
   return <div className="details-body details-stack">
     {result.loading && !result.data && <ResourceLoading label="Loading history…" />}
@@ -216,7 +233,7 @@ function HelmHistoryPane({ result, release, onSelect, onRestore }: { result: Ret
           <td title={row.updated}>{row.updated}</td>
           <td><div className="helm-history-actions">
             <IconButton icon={FileCode} size="sm" aria-label={`Inspect Helm revision ${row.revision}`} tooltip={`Values for revision ${row.revision}`} onClick={() => onSelect(row.revision)} />
-            <IconButton icon={RotateCcw} size="sm" disabled={row.revision === Number(release?.revision) || !k8s.supportsHelmMutations || !!result.error || result.loading} aria-label={`Restore Helm revision ${row.revision}`} tooltip={`Restore revision ${row.revision}`} onClick={() => onRestore(row.revision)} />
+            <IconButton icon={RotateCcw} size="sm" disabled={!canRestore || row.revision === Number(release?.revision) || !k8s.supportsHelmMutations || !!result.error || result.loading} aria-label={`Restore Helm revision ${row.revision}`} tooltip={`Restore revision ${row.revision}`} onClick={() => onRestore(row.revision)} />
           </div></td>
         </tr>)}</tbody>
       </table>{!rows.length && <p className="details-empty">No revision history available.</p>}
@@ -264,4 +281,35 @@ function openHelmTopology(context: string, release: HelmRelease) {
   const previous = [...useResourceStore.getState().resources.HelmRelease.values()].filter(value => value.name !== item.name || value.namespace !== item.namespace);
   useResourceStore.getState().setResourcesForKind('HelmRelease', [...previous.slice(-249), item]);
   useWorkspaceStore.getState().openTopology(item);
+}
+
+function ObservedHealth({ release, loaded }: { release: HelmRelease; loaded: ResourceItem[] }) {
+  const objects = releaseObjects(release, loaded);
+  const issues = objects.filter(item => resourceIssues(item).length);
+  return <span className={issues.length ? 'text-[var(--status-warn)]' : 'text-[var(--text-secondary)]'} title="Health of loaded objects with Helm ownership annotations; not a complete release check">{!objects.length ? 'Not loaded' : issues.length ? `${issues.length} with issues / ${objects.length} loaded` : `${objects.length} loaded · no issues`}</span>;
+}
+
+function ReleaseEvidence({ context, release, history, resources, onNavigate }: { context: string; release: HelmRelease; history: HelmHistory[]; resources: ResourceItem[]; onNavigate: (item: ResourceItem) => void }) {
+  const revision = Number(release.revision);
+  const result = useHelmRead(JSON.stringify([context, releaseKey(release), revision, 'evidence']), async signal => {
+    const [manifest, hooks] = await Promise.allSettled(['manifest', 'hooks'].map(document => k8s.getHelmContent(context, release.namespace, release.name, revision, document as HelmDocument, signal)));
+    const parse = (value: PromiseSettledResult<string>) => value.status === 'fulfilled' ? parseReleaseManifest(value.value, release.namespace) : [];
+    return { objects: parse(manifest), hooks: parse(hooks), manifestError: manifest.status === 'rejected' ? normalizeK8sError(manifest.reason) : undefined, hookError: hooks.status === 'rejected' ? normalizeK8sError(hooks.reason) : undefined };
+  });
+  const operation = helmOperation(release, history);
+  const health = releaseHealth(result.data?.objects ?? [], resources);
+  const hooks = releaseHealth(result.data?.hooks ?? [], resources);
+  const events = resources.filter(item => item.kind === 'Event');
+  return <>
+    {(operation.pending || operation.failed) && <DetailsSection title={operation.label}><p className="details-caption">{operation.message}</p>{operation.started > 0 && <p className="details-caption">Started {new Date(operation.started).toLocaleString()}{operation.longRunning ? ' · Pending for over 10 minutes' : ''}</p>}</DetailsSection>}
+    {result.loading && !result.data && <ResourceLoading label="Checking rendered objects and hooks…" />}
+    {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}
+    {result.data?.manifestError && <RequestErrorNotice error={result.data.manifestError} onRetry={result.refresh} />}
+    {!!health.length && <DetailsSection title={`Rendered objects (${health.length})`}><p className="details-caption">Live status from the loaded scope. Unloaded objects have not been checked.</p>{health.slice(0, 50).map(row => <button key={`${row.reference.apiVersion}/${row.reference.kind}/${row.reference.namespace}/${row.reference.name}`} className="details-resource-row helm-evidence-row" disabled={!row.item} onClick={() => row.item && onNavigate(row.item)}><ResourceKindBadge kind={row.reference.kind} apiVersion={row.reference.apiVersion} /><span>{row.reference.name}</span><span className={row.issues.length ? 'text-[var(--status-warn)]' : 'details-caption'}>{row.label}</span></button>)}{health.length > 50 && <p className="details-caption">First 50 shown. The complete manifest is available in Manifest.</p>}</DetailsSection>}
+    <DetailsSection title={`Hooks${result.data ? ` (${hooks.length})` : ''}`}>
+      {result.data?.hookError && <RequestErrorNotice error={result.data.hookError} onRetry={result.refresh} />}
+      {!hooks.length && result.data && !result.data.hookError && <p className="details-caption">No hooks in this revision.</p>}
+      {hooks.slice(0, 50).map(row => <div key={`${row.reference.kind}/${row.reference.name}`} className="helm-hook"><button className="details-resource-row helm-evidence-row" disabled={!row.item} onClick={() => row.item && onNavigate(row.item)}><ResourceKindBadge kind={row.reference.kind} /><span>{row.reference.name}</span><span className={row.issues.length ? 'text-[var(--status-warn)]' : 'details-caption'}>{row.item ? row.label : 'No live object loaded'}</span></button><p className="details-caption">{row.reference.raw?.metadata?.annotations?.['helm.sh/hook'] ?? 'Hook'} · weight {row.reference.raw?.metadata?.annotations?.['helm.sh/hook-weight'] ?? '0'} · {row.reference.raw?.metadata?.annotations?.['helm.sh/hook-delete-policy'] ?? 'before-hook-creation'}</p>{!row.item && <p className="details-caption">The hook may have been cleaned up, or its namespace is outside the loaded scope.</p>}{row.item && resourceEvents(events, row.item).slice(0, 3).map(event => <p key={event.event.uid} className="details-caption">{event.reason}: {event.message}</p>)}</div>)}
+    </DetailsSection>
+  </>;
 }

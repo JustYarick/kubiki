@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
 
 test('UI scale changes text and controls, persists after restart, and can be reset by keyboard', async ({ page }) => {
@@ -17,7 +18,7 @@ test('UI scale changes text and controls, persists after restart, and can be res
   const larger = await row.evaluate((element) => ({ height: element.getBoundingClientRect().height, font: parseFloat(getComputedStyle(element.querySelector('td')!).fontSize) }));
   expect(larger.font / initial.font).toBeCloseTo(150 / 110, 1);
   expect(larger.height).toBeGreaterThan(initial.height);
-  await page.screenshot({ path: 'test-results/settings-scale-150.png' });
+  await captureScreenshot(page, { path: 'test-results/settings-scale-150.png' });
   await categories.getByRole('button', { name: 'Editor', exact: true }).click();
   await dialog.getByLabel('YAML editor font size').fill('18');
   await categories.getByRole('button', { name: 'Terminal', exact: true }).click();

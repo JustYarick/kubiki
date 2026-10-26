@@ -1,11 +1,12 @@
 import { parse, stringify } from 'yaml';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
+import { buildMockDelivery } from './mock_delivery';
 
 /* ------------------------------------------------------------ */
 /* Deterministic mock cluster: realistic data volume. */
 /* ------------------------------------------------------------ */
 
-export const MOCK_NAMESPACES = ['default', 'backend', 'frontend', 'monitoring', 'kube-system', 'logging'];
+export const MOCK_NAMESPACES = ['default', 'backend', 'frontend', 'monitoring', 'kube-system', 'logging', 'flux-system', 'argocd', 'staging', 'infra'];
 
 const NODE_HOSTS = ['node-1a', 'node-1b', 'node-2a', 'gpu-node-1'];
 
@@ -207,10 +208,10 @@ const SC_SEEDS: Array<{ name: string; provisioner: string; reclaim: string; bind
 ];
 
 const NODE_SEEDS: Array<{ name: string; status: string; roles: string; version: string; cpu: string; mem: string; pods: string; ip: string; os: string; taints: number }> = [
-  { name: 'node-1a', status: 'Ready', roles: 'control-plane,worker', version: 'v1.31.2', cpu: '4.0 / 8', mem: '9.6 / 16Gi', pods: '14 / 110', ip: '192.168.58.2', os: 'ubuntu 22.04', taints: 1 },
-  { name: 'node-1b', status: 'Ready', roles: 'worker', version: 'v1.31.2', cpu: '1.2 / 8', mem: '6.4 / 16Gi', pods: '9 / 110', ip: '192.168.58.3', os: 'ubuntu 22.04', taints: 0 },
-  { name: 'node-2a', status: 'Ready', roles: 'worker', version: 'v1.31.1', cpu: '3.1 / 8', mem: '11.9 / 16Gi', pods: '12 / 110', ip: '192.168.58.4', os: 'ubuntu 22.04', taints: 0 },
-  { name: 'gpu-node-1', status: 'NotReady', roles: 'worker,gpu', version: 'v1.31.2', cpu: '0.4 / 16', mem: '2.0 / 32Gi', pods: '6 / 110', ip: '192.168.58.5', os: 'ubuntu 22.04', taints: 1 },
+  { name: 'node-1a', status: 'Ready', roles: 'control-plane,worker', version: 'v1.31.2', cpu: '4.0 / 8', mem: '9.6 / 16Gi', pods: '14', ip: '192.168.58.2', os: 'ubuntu 22.04', taints: 1 },
+  { name: 'node-1b', status: 'Ready', roles: 'worker', version: 'v1.31.2', cpu: '1.2 / 8', mem: '6.4 / 16Gi', pods: '9', ip: '192.168.58.3', os: 'ubuntu 22.04', taints: 0 },
+  { name: 'node-2a', status: 'Ready', roles: 'worker', version: 'v1.31.1', cpu: '3.1 / 8', mem: '11.9 / 16Gi', pods: '12', ip: '192.168.58.4', os: 'ubuntu 22.04', taints: 0 },
+  { name: 'gpu-node-1', status: 'NotReady', roles: 'worker,gpu', version: 'v1.31.2', cpu: '0.4 / 16', mem: '2.0 / 32Gi', pods: '6', ip: '192.168.58.5', os: 'ubuntu 22.04', taints: 1 },
 ];
 
 const NS_SEEDS: Array<{ name: string; status: string; labels: number; age: string }> = [
@@ -589,7 +590,22 @@ export function buildMockResources(): Record<ResourceKind, ResourceItem[]> {
     pod.raw!.metadata.ownerReferences = [{ apiVersion: owner.apiVersion, kind: owner.kind, name: owner.name, uid: owner.uid }];
     pod.raw!.spec.nodeName = pod.node === '-' ? undefined : pod.node;
   }
-  for (const list of Object.values(out)) for (const item of list) item.rawYaml = stringify(item.raw);
+  const hook: ResourceItem = { uid: 'demo-loki-migrate', kind: 'Job', apiVersion: 'batch/v1', name: 'loki-migrate', namespace: 'logging', status: 'Failed', raw: { apiVersion: 'batch/v1', kind: 'Job', metadata: { name: 'loki-migrate', namespace: 'logging', uid: 'demo-loki-migrate', annotations: { 'helm.sh/hook': 'pre-upgrade', 'helm.sh/hook-weight': '-5' } }, spec: { backoffLimit: 3 }, status: { failed: 4, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded', message: 'Loki schema migration failed after 4 attempts.' }] } } };
+  out.Job.push(hook);
+  out.Event.push({ uid: 'demo-loki-hook-event', kind: 'Event', apiVersion: 'v1', name: 'loki-migrate.failed', namespace: 'logging', raw: { apiVersion: 'v1', kind: 'Event', metadata: { name: 'loki-migrate.failed', namespace: 'logging', uid: 'demo-loki-hook-event' }, involvedObject: { apiVersion: 'batch/v1', kind: 'Job', namespace: 'logging', name: 'loki-migrate', uid: hook.uid }, type: 'Warning', reason: 'BackoffLimitExceeded', message: 'Job has reached the specified backoff limit.', count: 4, lastTimestamp: new Date(Date.now() - 12 * 60000).toISOString() } });
+  const delivery = buildMockDelivery();
+  out.CustomResourceDefinition = [...out.CustomResourceDefinition.filter(item => !delivery.definitions.some(definition => definition.name === item.name)), ...delivery.definitions];
+  Object.assign(out, delivery.custom);
+  out.Event.push(...delivery.events);
+  for (const workload of [...out.Deployment, ...out.StatefulSet, ...out.DaemonSet, ...out.Job]) {
+    const release = workload.name === 'loki-migrate' ? 'loki' : workload.name === 'payment-worker' ? 'demo-api' : workload.name === 'prometheus-server' ? 'prometheus' : workload.name;
+    workload.raw!.metadata.labels = { ...workload.raw!.metadata.labels, 'app.kubernetes.io/managed-by': 'Helm' };
+    workload.raw!.metadata.annotations = { ...workload.raw!.metadata.annotations, 'meta.helm.sh/release-name': release, 'meta.helm.sh/release-namespace': workload.namespace };
+    workload.metadata = workload.raw!.metadata;
+  }
+  for (const list of Object.values(out)) for (const item of list) {
+    if (!Object.getOwnPropertyDescriptor(item, 'rawYaml')?.get) item.rawYaml = stringify(item.raw);
+  }
   return out;
 }
 

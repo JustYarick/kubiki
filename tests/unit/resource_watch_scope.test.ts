@@ -2,12 +2,14 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { startResourceWatches, stopResourceWatches, refreshResourceWatches } from '../../src/state/resource_watch';
 import { useClusterStore } from '../../src/state/cluster_store';
 import { useResourceStore } from '../../src/state/resource_store';
-import { RESOURCE_TYPES, SCOPE_INDEPENDENT_KINDS, isValidNamespaceName, namespaceIsOutsideScope, resourceType, type ResourceQuery } from '../../src/core/resources/resource_types';
+import { isValidNamespaceName, namespaceIsOutsideScope, resourceType, type ResourceQuery } from '../../src/core/resources/resource_types';
 import type { WatchBatch } from '../../src/providers/watch_types';
+import { useWorkspaceStore } from '../../src/state/workspace_store';
+import { useUiStore } from '../../src/state/ui_store';
 
-const mock = vi.hoisted(() => ({ watchResources: vi.fn() }));
+const mock = vi.hoisted(() => ({ supportsResourceWatch: true, watchResources: vi.fn() }));
 vi.mock('../../src/providers/k8s_provider', () => ({ k8s: mock }));
-beforeEach(() => { vi.useFakeTimers(); useResourceStore.getState().reset(); useClusterStore.setState({ currentContext: 'test', selectedNamespace: 'backend', availableNamespaces: [] }); mock.watchResources.mockReset(); });
+beforeEach(() => { vi.useFakeTimers(); useResourceStore.getState().reset(); useWorkspaceStore.setState({ tabs: [{ id: 'pods', type: 'resource-list', kind: 'Pod', title: 'Pods' }], activeTabId: 'pods', splitTabId: null }); useUiStore.setState({ inspectorCollapsed: true }); useClusterStore.setState({ currentContext: 'test', selectedNamespace: 'backend', availableNamespaces: [], availableResourceKinds: null }); mock.watchResources.mockReset(); });
 afterEach(() => { stopResourceWatches(); vi.useRealTimers(); });
 
 it('subscribes to selected namespace, preserves cluster watches and removes the namespace listener on stop', async () => {
@@ -18,14 +20,13 @@ it('subscribes to selected namespace, preserves cluster watches and removes the 
     return vi.fn();
   });
   const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(50); await ready;
-  expect(queries).toHaveLength(RESOURCE_TYPES.length);
-  // Scope-independent kinds stay cluster-wide; every other namespaced kind follows the selection.
-  for (const query of queries) expect(query.namespace).toBe(SCOPE_INDEPENDENT_KINDS.has(query.kind as any) || !resourceType(query.kind as any).namespaced ? null : 'backend');
+  expect(queries.map(query => query.kind)).toEqual(['Namespace', 'CustomResourceDefinition', 'Pod']);
+  for (const query of queries) expect(query.namespace).toBe(!resourceType(query.kind as any).namespaced ? null : 'backend');
   const cluster = queries.filter((query) => !resourceType(query.kind as any).namespaced);
   useClusterStore.getState().selectNamespace('other'); await vi.advanceTimersByTimeAsync(50);
-  expect(queries.slice(RESOURCE_TYPES.length).every((query) => query.namespace === 'other' || query.namespace === null)).toBe(true);
-  for (let i = 0; i < RESOURCE_TYPES.length; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced && !SCOPE_INDEPENDENT_KINDS.has(queries[i].kind as any));
-  expect(queries.filter((query) => query.namespace === null)).toHaveLength(cluster.length + SCOPE_INDEPENDENT_KINDS.size);
+  expect(queries.slice(3).map(query => [query.kind, query.namespace])).toEqual([['Pod', 'other']]);
+  for (let i = 0; i < 3; i++) expect(signals[i].aborted).toBe(resourceType(queries[i].kind as any).namespaced);
+  expect(queries.filter((query) => query.namespace === null)).toHaveLength(cluster.length);
   stopResourceWatches(); const count = queries.length;
   useClusterStore.getState().selectNamespace('backend'); await vi.advanceTimersByTimeAsync(50);
   expect(queries).toHaveLength(count); expect(signals.every((signal) => signal.aborted)).toBe(true);

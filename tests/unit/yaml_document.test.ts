@@ -10,6 +10,10 @@ it('projects clean YAML without mutating the full manifest and restores its serv
   expect(parse(clean).metadata.managedFields).toBeUndefined();
   expect(parse(clean).metadata.resourceVersion).toBe('12');
   expect(sameYaml(restoreServerFields(clean, full), full)).toBe(true);
+
+  const cleanWithManaged = cleanYaml(full, { hideManagedFields: false });
+  expect(parse(cleanWithManaged).status).toBeUndefined();
+  expect(parse(cleanWithManaged).metadata.managedFields).toBeDefined();
 });
 
 it('preserves real edits across repeated view switches without introducing false edits', () => {

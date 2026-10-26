@@ -27,6 +27,7 @@ pub enum HelmDocument {
     Values,
     Manifest,
     Notes,
+    Hooks,
 }
 
 impl HelmDocument {
@@ -35,6 +36,7 @@ impl HelmDocument {
             Self::Values => "values",
             Self::Manifest => "manifest",
             Self::Notes => "notes",
+            Self::Hooks => "hooks",
         }
     }
 }

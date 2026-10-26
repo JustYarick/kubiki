@@ -7,6 +7,18 @@ import { useResourceStore } from '../../src/state/resource_store';
 import type { ResourceItem } from '../../src/types/k8s';
 
 describe('Compound namespace layout', () => {
+  it('keeps Namespace vertices and their edge endpoints valid in a flat diagram', async () => {
+    const namespace: ResourceItem = { uid: 'ns', kind: 'Namespace', apiVersion: 'v1', name: 'backend' };
+    const pod: ResourceItem = { uid: 'pod', kind: 'Pod', apiVersion: 'v1', name: 'web', namespace: 'backend' };
+    const resources = { ...useResourceStore.getState().resources, Namespace: new Map([[namespace.uid, namespace]]), Pod: new Map([[pod.uid, pod]]) };
+    const graph = buildResourceGraph(resources, { includeMissing: false });
+    const { root } = topologyLayout(graph, 'RIGHT', 'flat');
+    const ids = new Set(root.children!.map(node => node.id));
+    expect(ids).toEqual(new Set([resourceKey(namespace), resourceKey(pod)]));
+    expect(root.children!.every(node => !node.children)).toBe(true);
+    expect(root.edges!.every(edge => [...edge.sources, ...edge.targets].every(id => ids.has(id)))).toBe(true);
+    await expect(new ELK().layout(root)).resolves.toMatchObject({ id: 'root' });
+  });
   it.each(['RIGHT', 'DOWN'] as const)('applies %s to connected nodes inside the namespace as well as the cluster', async direction => {
     const owner: ResourceItem = { uid: 'owner', kind: 'Deployment', apiVersion: 'apps/v1', name: 'owner', namespace: 'backend' };
     const pod: ResourceItem = { uid: 'pod', kind: 'Pod', apiVersion: 'v1', name: 'web', namespace: 'backend', metadata: { ownerReferences: [{ uid: owner.uid, name: owner.name, kind: owner.kind, apiVersion: owner.apiVersion }] } };

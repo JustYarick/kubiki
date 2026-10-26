@@ -23,6 +23,32 @@ beforeEach(() => { vi.useFakeTimers(); useResourceStore.getState().reset(); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe('Resource watch session', () => {
+  it('keeps per-kind loading accurate during snapshot transport refreshes without dropping existing rows', async () => {
+    const { session, connections } = harness();
+    const first = session.refresh('Pod'); await Promise.resolve();
+    expect(useResourceStore.getState().syncMode).toBe('snapshot');
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(true);
+    connections[0].emit(delta([pod('existing')]), live); await flush(); await first;
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(false);
+    const refresh = session.refresh('Pod'); await Promise.resolve();
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(true);
+    expect(useResourceStore.getState().resources.Pod.has('existing')).toBe(true);
+    connections[1].emit(delta([pod('new')]), live); await flush(); await refresh;
+    expect(useResourceStore.getState().loadingKinds.Pod).toBe(false);
+    expect([...useResourceStore.getState().resources.Pod.keys()]).toEqual(['new']);
+    session.stop();
+  });
+  it('releases unused watches, rejects late updates and reopens them with a fresh snapshot', async () => {
+    const { session, connections } = harness();
+    const initial = session.setKinds(['Pod', 'Service'], new Set()); await Promise.resolve();
+    connections[0].emit(delta([pod('old')]), live); connections[1].emit(delta([]), live); await flush(); await initial;
+    await session.setKinds(['Service']);
+    expect(connections[0].signal.aborted).toBe(true); expect(connections[1].signal.aborted).toBe(false);
+    connections[0].emit(delta([pod('late')])); await flush(); expect(useResourceStore.getState().resources.Pod.has('late')).toBe(false);
+    const reopened = session.setKinds(['Pod', 'Service']); await Promise.resolve();
+    expect(connections).toHaveLength(3); connections[2].emit(delta([pod('new')]), live); await flush(); await reopened;
+    expect([...useResourceStore.getState().resources.Pod.keys()]).toEqual(['new']); session.stop();
+  });
   it('publishes one complete snapshot, coalesces a burst by UID and updates selection', async () => {
     const { session, connections, commits } = harness();
     const ready = session.refresh('Pod'); await Promise.resolve();

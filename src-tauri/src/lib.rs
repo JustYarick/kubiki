@@ -1,6 +1,7 @@
 #[cfg(target_os = "linux")]
 mod graphics;
 mod port_forward_commands;
+mod shell_environment;
 use kubiki_core::pod_ops::port_forward::PortForwardManager;
 use port_forward_commands::*;
 mod mutation_guard;
@@ -35,8 +36,23 @@ use tauri::Manager;
 use terminal_commands::*;
 use watch_commands::*;
 
+#[cfg(all(test, target_os = "linux"))]
+mod dependency_regressions {
+    #[test]
+    fn optimized_glib_string_variant_iteration_is_safe() {
+        use glib::prelude::ToVariant;
+        let variant = ["first", "middle", "last"].to_variant();
+        assert_eq!(variant.array_iter_str().unwrap().collect::<Vec<_>>(), ["first", "middle", "last"]);
+        let mut iter = variant.array_iter_str().unwrap();
+        assert_eq!(iter.next(), Some("first"));
+        assert_eq!(iter.next_back(), Some("last"));
+        assert_eq!(iter.last(), Some("middle"));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    shell_environment::initialize();
     #[cfg(target_os = "linux")]
     {
         let graphics = graphics::initialize().unwrap_or_else(|error| {

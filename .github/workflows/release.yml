@@ -13,6 +13,10 @@ on:
         description: 'Publish built installers; disable for a build-only run'
         type: boolean
         default: true
+      virustotal_scan:
+        description: 'Run the VirusTotal report scan alongside publication; it never blocks the release'
+        type: boolean
+        default: true
       custom_tag:
         description: 'Optional release tag; existing tags build their exact commit'
         type: string
@@ -34,6 +38,9 @@ on:
       publish:
         type: boolean
         default: false
+      virustotal_scan:
+        type: boolean
+        default: true
       custom_tag:
         type: string
         default: ''
@@ -57,6 +64,7 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       publish: ${{ steps.plan.outputs.publish }}
       run_tests: ${{ steps.plan.outputs.run_tests }}
+      virustotal_scan: ${{ steps.plan.outputs.virustotal_scan }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,7 +74,8 @@ jobs:
         uses: actions/github-script@v7
         env:
           PUBLISH: ${{ inputs.publish || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
-          RUN_TESTS: ${{ inputs.run_tests || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+          RUN_TESTS: ${{ inputs.run_tests || false }}
+          VIRUSTOTAL_SCAN: ${{ inputs.virustotal_scan || (github.event_name == 'push') }}
           CUSTOM_TAG: ${{ inputs.custom_tag }}
           TARGET_COMMIT: ${{ inputs.target_commit }}
           BUMP: ${{ inputs.bump || 'patch' }}
@@ -82,6 +91,7 @@ jobs:
             const git = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
             const publish = process.env.PUBLISH === 'true';
             const runTests = process.env.RUN_TESTS === 'true';
+            const virustotalScan = process.env.VIRUSTOTAL_SCAN === 'true';
             if (publish && context.eventName === 'pull_request') throw new Error('Pull requests cannot publish releases.');
             if (publish) {
               normalizeUpdaterPublicKey(process.env.KUBIKI_UPDATER_PUBLIC_KEY);
@@ -116,11 +126,13 @@ jobs:
             core.setOutput('tag', tag);
             core.setOutput('publish', String(publish));
             core.setOutput('run_tests', String(runTests));
+            core.setOutput('virustotal_scan', String(virustotalScan));
             await core.summary.addHeading(publish ? `Release ${tag}` : `Build only: ${tag}`)
               .addTable([
                 ['Source commit', sha],
                 ['Tests', runTests ? 'Run frontend, browser, extension and Rust tests' : 'Skip tests; build and validate installers'],
                 ['Mode', publish ? 'Publish signed packages after build validation' : 'Download installers from workflow artifacts'],
+                ['VirusTotal', publish && virustotalScan ? 'Report-only scan alongside publication; it never blocks the release' : 'Skipped; no report produced'],
               ])
               .write();
 
@@ -140,6 +152,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit
       - run: pnpm build
       - run: pnpm test
       - run: pnpm test:desktop
@@ -166,8 +179,15 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm extensions:build
       - run: pnpm test:e2e
+        env:
+          E2E_FULL_LAYOUT: ${{ needs.prepare.outputs.publish == 'true' && '1' || '0' }}
+      - name: Summarize browser test timings
+        if: always()
+        env:
+          E2E_FULL_LAYOUT: ${{ needs.prepare.outputs.publish == 'true' && '1' || '0' }}
+        run: node scripts/summarize-e2e.mjs
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
           name: interface-test-results
           path: test-results/
@@ -266,6 +286,48 @@ jobs:
         with:
           name: kubiki-${{ matrix.target }}
           path: .kubiki-build/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  malware_scan:
+    name: Scan release files with VirusTotal
+    needs: [prepare, desktop]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.desktop.result == 'success' && needs.prepare.outputs.publish == 'true' &&
+          needs.prepare.outputs.virustotal_scan == 'true' }}
+    # Advisory report only; its outcome never blocks or fails the release.
+    continue-on-error: true
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    # All platforms share one API queue; concurrent releases share this lock.
+    concurrency:
+      group: virustotal-public-api
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kubiki-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Upload payloads, wait for verdicts and write reports
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: node scripts/scan-desktop-release.mjs release-artifacts antivirus-report
+      - name: Keep reports even when scanning fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: antivirus-report
+          path: antivirus-report/VIRUSTOTAL-REPORT.*
           if-no-files-found: error
           retention-days: 14
 

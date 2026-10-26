@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
 import { openDiagramSettings } from './helpers/topology';
 
@@ -57,7 +58,7 @@ test('settings stay in one island, both directions apply inside namespaces, and 
   expect(await page.locator('.react-flow__edge-path').evaluateAll(paths => paths.map(path => path.getAttribute('d')))).not.toEqual(paths);
   expect(await page.locator('.react-flow__node-resource').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')))).toEqual(nodePositions);
   expect(workers.length).toBe(workerCount);
-  await page.screenshot({ path: 'test-results/diagram-direct-arrow-edit.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/diagram-direct-arrow-edit.png', animations: 'disabled' });
   await bend.focus(); await bend.press('ArrowDown');
   const beforeNudge = await page.locator('.react-flow__edge-path').evaluateAll(paths => paths.map(path => path.getAttribute('d')));
   const segment = (await page.locator('.react-flow__edge').first().locator('[data-route-segment="0"]').boundingBox())!;
@@ -77,5 +78,5 @@ test('settings stay in one island, both directions apply inside namespaces, and 
     expect(reset).toHaveLength(original.length);
     reset.forEach((coordinate, offset) => expect(coordinate).toBeCloseTo(original[offset], 2));
   }
-  await page.screenshot({ path: 'test-results/diagram-settings-and-arrows.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/diagram-settings-and-arrows.png', animations: 'disabled' });
 });

@@ -28,3 +28,25 @@ it('leaves unknown levels with plain fields and keeps raw rendering for non-JSON
   expect(parseStructuredLog(JSON.stringify([1, 2]))).toBeNull();
   expect(parseStructuredLog('{"nested":{"a":[1]}}')!.fields).toEqual([['nested', '{"a":[1]}']]);
 });
+
+it('handles production logs with timestamp prefixes, ANSI codes and numeric levels like Pino', () => {
+  // Timestamp prefix before JSON
+  expect(parseStructuredLog('2026-10-26T10:15:30.123456789Z {"level":"info","msg":"server ready"}')).toMatchObject({
+    level: 'info',
+    message: 'server ready',
+  });
+  // ANSI colors
+  expect(parseStructuredLog('\x1b[32m{"level":"warn","message":"cache miss"}\x1b[0m')).toMatchObject({
+    level: 'warn',
+    message: 'cache miss',
+  });
+  // Pino numeric levels: 30 = info, 40 = warn, 50 = error
+  expect(parseStructuredLog('{"level":50,"time":1600000000,"msg":"database connection failed"}')).toMatchObject({
+    level: 'error',
+    message: 'database connection failed',
+  });
+  expect(parseStructuredLog('{"level":30,"time":1600000000,"msg":"handled request"}')).toMatchObject({
+    level: 'info',
+    message: 'handled request',
+  });
+});

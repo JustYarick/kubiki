@@ -1,8 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
-import { Bot, Boxes, Code2, FileCode2, FileText, Info, Palette, Terminal } from 'lucide-react';
+import { Bot, Boxes, Code2, FileCode2, FileText, Info, Network, Palette, Terminal } from 'lucide-react';
 import { fuzzyScore } from '../../core/utils/fuzzy';
 
-export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'ai' | 'developer' | 'about';
+export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'topology' | 'ai' | 'developer' | 'about';
 
 export interface SettingsEntry {
   /** Stable id used as a DOM anchor when jump-to-match is triggered. */
@@ -46,6 +46,19 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     ],
   },
   {
+    id: 'topology', title: 'Topology', icon: Network, sectionTitle: 'Topology rendering', resetLabel: 'Reset topology defaults',
+    entries: [
+      { id: 'topology.performance', label: 'Rendering profile', description: 'Performance uses straight static lines and compact nodes, disables shadows, labels, grid and minimap, and limits live redraws to once every 3 seconds or slower. Useful for large diagrams and Macs with slow panning.', keywords: 'graph renderer performance gpu mac macos webkit lag quality balanced fast' },
+      { id: 'topology.grouping', label: 'Cluster layout grouping', description: 'Namespace boxes preserve hierarchy. Flat layout reduces layout work for large diagrams.', keywords: 'graph layout grouping namespace flat elk' },
+      { id: 'topology.edges', label: 'Connection style', description: 'Editable routes support custom bends. Straight connections need less rendering work. Performance always uses straight lines.', keywords: 'graph edge arrow curves bezier smooth straight routing' },
+      { id: 'topology.animations', label: 'Animate connections', description: 'Animate flow along connections. Disabled in Performance and when the system requests reduced motion.', keywords: 'graph animation motion flow' },
+      { id: 'topology.labels', label: 'Connection labels', description: 'Show relationship names on connections. Disabled in Performance.', keywords: 'graph edge text labels' },
+      { id: 'topology.minimap', label: 'Canvas minimap', description: 'Show a miniature overview of the whole graph. Disabled in Performance.', keywords: 'graph map overview' },
+      { id: 'topology.background', label: 'Background grid', description: 'Show the dotted canvas background. Disabled in Performance.', keywords: 'graph dots grid background' },
+      { id: 'topology.updates', label: 'Live redraw interval', description: 'Coalesce incoming resource changes before rebuilding the diagram. Scope changes skip this delay. This affects local rendering, not Kubernetes API requests; Performance uses at least 3 seconds.', keywords: 'graph refresh throttle delay interval live updates cpu' },
+    ],
+  },
+  {
     id: 'editor',
     title: 'Editor',
     icon: FileCode2,
@@ -54,6 +67,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'editor.font-size', label: 'YAML editor font size', description: 'Independent of the interface scale; applies to open editors.', keywords: 'monaco size text' },
       { id: 'editor.default-view', label: 'Default YAML document view', description: 'The clean view hides status and managedFields; the full view shows the document as stored by the cluster.', keywords: 'clean full status managedfields manifest' },
+      { id: 'editor.hide-managed-fields', label: 'Hide managedFields by default', description: 'Strip metadata.managedFields from manifests in the YAML editor to keep views clean.', keywords: 'managedfields metadata strip clean status server' },
     ],
   },
   {
@@ -78,7 +92,11 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'logs.wrap', label: 'Wrap log lines by default', description: 'New log sessions start with line wrapping enabled; the toolbar toggle still works per session.', keywords: 'soft lines overflow new sessions' },
       { id: 'logs.timestamps', label: 'Show timestamps by default', description: 'New log sessions start with a timestamp column; the toolbar toggle still works per session.', keywords: 'time column new sessions' },
-      { id: 'logs.structured', label: 'Structured log parsing by default', description: 'JSON log lines render as a message with key=value fields and the level from the record. Lines that are not JSON stay as-is; the toolbar toggle still works per session.', keywords: 'json fields grafana parse structured format prettify level' },
+      { id: 'logs.color-levels', label: 'Highlight log levels', description: 'Colorize error in red, warning in yellow, and info in blue across log sessions.', keywords: 'color highlight level error warning info red yellow blue grafana' },
+      { id: 'logs.structured', label: 'Structured log parsing by default', description: 'JSON log lines render as a message with key:value field pills and the level from the record like Grafana. Lines that are not JSON stay as-is; the toolbar toggle still works per session.', keywords: 'json fields grafana parse structured format prettify level pills' },
+      { id: 'logs.default-tail', label: 'Default log tail lines', description: 'Number of lines to read initially when opening container logs.', keywords: 'tail lines initial slice history default' },
+      { id: 'logs.max-buffer', label: 'Max log buffer size', description: 'Maximum lines kept in memory per session before older output is discarded.', keywords: 'buffer size lines memory max limit' },
+      { id: 'logs.stickiness', label: 'Auto-scroll stickiness', description: 'Distance from the bottom of the log viewer to maintain auto-scroll when new lines arrive.', keywords: 'scroll stickiness follow pin distance autoscroll' },
     ],
   },
   {
@@ -88,14 +106,17 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     sectionTitle: 'Kubernetes',
     resetLabel: 'Reset Kubernetes defaults',
     entries: [
+      { id: 'kubernetes.remember-context', label: 'Reopen last selected cluster', description: 'Connect to the last selected kubeconfig context after restarting. If it was removed, use the current context from kubeconfig.', keywords: 'cluster context remember startup restore persistence session reopen' },
       { id: 'kubernetes.remember-scope', label: 'Remember namespace scope per context', description: 'Restores the namespace selection of each context when it is selected again.', keywords: 'namespace scope context persistence restore' },
       { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Configure custom kubeconfig file path or use the default location (~/.kube/config / $KUBECONFIG).', keywords: 'config path credentials files' },
+      { id: 'kubernetes.port-range', label: 'Local port forward range', description: 'Preferred local port range for auto-assigning local tunnel listeners (e.g. 8000-8999).', keywords: 'port forward range local listen tunnel network' },
+      { id: 'kubernetes.auto-open-browser', label: 'Auto-open browser on port forward', description: 'Automatically launch the default web browser when a port forward tunnel starts.', keywords: 'browser open url port forward tunnel http' },
     ],
   },
   {
     id: 'developer', title: 'Developer', icon: Code2, sectionTitle: 'Developer tools',
     entries: [
-      { id: 'developer.mode', label: 'Developer mode', description: 'Show the SDK Diagnostics extension in the catalog and workspace. Hidden by default.', keywords: 'dev sdk test diagnostics plugin extension debug' },
+      { id: 'developer.mode', label: 'Developer mode', description: 'Show the demo cluster alongside kubeconfig contexts and enable the SDK Diagnostics extension. Without kubeconfig contexts, the demo cluster is always available.', keywords: 'dev sdk test diagnostics plugin extension debug demo cluster kubeconfig mock' },
     ],
   },
   {

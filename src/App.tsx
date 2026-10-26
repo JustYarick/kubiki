@@ -33,7 +33,7 @@ import { errorHint } from './providers/errors';
 import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
 import { closeNodeDebugConnections } from './providers/node_debug';
-import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snapshot_sync';
+import { cancelResourceSnapshots, scanClusterInventory, syncResourceSnapshot } from './providers/snapshot_sync';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
@@ -74,7 +74,7 @@ export default function App() {
 
   const connectionGeneration = useRef(0);
   useEffect(() => useClusterStore.subscribe((state, previous) => {
-    if (k8s.supportsResourceWatch || state.currentContext !== previous.currentContext || state.selectedNamespace === previous.selectedNamespace || !state.currentContext) return;
+    if (!k8s.demo || state.currentContext !== previous.currentContext || state.selectedNamespace === previous.selectedNamespace || !state.currentContext) return;
     const context = state.currentContext;
     const scope = state.selectedNamespace;
     const current = () => useClusterStore.getState().currentContext === context && useClusterStore.getState().selectedNamespace === scope;
@@ -93,6 +93,7 @@ export default function App() {
     closeNodeDebugConnections();
     closePortForwards();
     setDiscoveredResourceTypes();
+    k8s.activateContext(contextName);
     useClusterStore.getState().selectContext(contextName);
     useClusterStore.setState({ availableResourceKinds: null });
     useResourceStore.getState().reset();
@@ -128,9 +129,11 @@ export default function App() {
       setConnected(true, ping.version);
       const kinds = available.map(type => type.kind) as ResourceKind[];
       useResourceStore.getState().setSyncMode(k8s.demo ? 'demo' : k8s.supportsResourceWatch ? 'watch' : 'snapshot');
-      const results = k8s.supportsResourceWatch ? await startResourceWatches(contextName) : await Promise.allSettled(kinds.map(async (kind) => {
+      const results = k8s.demo ? await Promise.allSettled(kinds.map(async (kind) => {
         await syncResourceSnapshot(contextName, kind, 'all');
-      }));
+      })) : await scanClusterInventory(contextName, kinds, useClusterStore.getState().selectedNamespace);
+      if (!current()) return;
+      if (!k8s.demo) results.push(...await startResourceWatches(contextName));
       if (!current()) return;
       const failures = results.filter((r) => r.status === 'rejected').length;
       if (failures) toast.warn('Some resources could not be loaded', `${failures} resource types unavailable. See individual views.`);
@@ -146,13 +149,23 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    k8s.setDeveloperMode(useUiStore.getState().developerMode);
+    const unsubscribeDeveloperMode = useUiStore.subscribe((state, previous) => {
+      if (state.developerMode === previous.developerMode) return;
+      const contexts = k8s.setDeveloperMode(state.developerMode);
+      if (!contexts || cancelled) return;
+      const previousContext = useClusterStore.getState().currentContext;
+      setContexts(contexts);
+      const current = useClusterStore.getState().currentContext;
+      if (current && current !== previousContext) void connectToContext(current);
+    });
     async function initCluster() {
       setLoading(true);
       try {
         const contexts = await k8s.getContexts();
         if (cancelled) return;
         setContexts(contexts);
-        const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+        const current = useClusterStore.getState().currentContext;
         if (current) await connectToContext(current);
         else { useClusterStore.getState().setError('No Kubernetes contexts found in kubeconfig.'); setLoading(false); }
       } catch (error) {
@@ -162,6 +175,7 @@ export default function App() {
     void initCluster();
     return () => {
       cancelled = true;
+      unsubscribeDeveloperMode();
       connectionGeneration.current++;
       stopMockWatchEngine();
       stopResourceWatches();
@@ -279,8 +293,15 @@ export default function App() {
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
           <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
 
-          {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
-          <BottomDock />
+          {/* Bottom Dock drawer — shares the foreground layer with InspectorPanel, adapting its width */}
+          <div
+            data-testid="bottom-dock-wrapper"
+            style={{ marginRight: showInspector ? uiPixels(detailWidth) : '0px' }}
+            className="flex flex-col min-w-0 shrink-0 z-20"
+          >
+            {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
+            <BottomDock />
+          </div>
         </main>
 
         {/* Right Tool Window (Inspector / Details) — floats above the workspace, the table keeps its size */}

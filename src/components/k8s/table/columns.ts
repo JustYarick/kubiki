@@ -161,14 +161,12 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
         { id: 'version', label: 'Version', mono: true, get: (i) => i.nodeVersion },
         { id: 'ip', label: 'Internal IP', mono: true, get: (i) => i.nodeIp || i.ip },
         { id: 'cpu', label: 'CPU cores', get: (i) => i.nodeCpu },
-        { id: 'mem', label: 'Memory (used / total)', get: (i) => { const bytes = quantity(i.nodeMem); return bytes === null ? i.nodeMem : memoryText(bytes); } },
+        { id: 'mem', label: 'Memory', get: (i) => { const bytes = quantity(i.nodeMem); return bytes === null ? i.nodeMem : memoryText(bytes); } },
         { id: 'pods', label: 'Pods', hint: 'Pods running on the node · cluster-wide, not affected by the namespace selection', get: (i) => {
-          if (i.nodePods?.includes('/')) return i.nodePods;
+          if (i.nodePods?.includes('/')) return i.nodePods.split('/')[0].trim();
           const running = options?.podsByNode?.get(i.name);
-          const allocatable = (i.raw as any)?.status?.allocatable?.pods || (i.raw as any)?.status?.capacity?.pods || i.nodePods;
-          if (running !== undefined && allocatable) return `${running} / ${allocatable}`;
           if (running !== undefined) return String(running);
-          return i.nodePods || (allocatable ? `0 / ${allocatable}` : '—');
+          return i.nodePods ?? '0';
         } },
         { id: 'taints', label: 'Taints', align: 'right', mono: true, get: (i) => {
           const rawTaints = (i.raw as any)?.spec?.taints;

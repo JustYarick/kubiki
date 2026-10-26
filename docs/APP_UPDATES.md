@@ -37,7 +37,9 @@ After the first render, independently of Kubernetes connectivity, the app checks
 
 The workflow
 keeps releases as drafts until the combined manifest contains all four supported
-OS/architecture combinations and their packages and signatures. Package URLs
+OS/architecture combinations and their packages and signatures. The optional
+[VirusTotal scan](RELEASING.md#virustotal-setup) is report-only: it runs alongside
+publication and its results never block or gate the release. Package URLs
 must point to the exact release tag. Do not mark a CLI-only or preview release
 as Latest manually. After a signed dev release is published, the workflow advances
 the separate `updates-dev` prerelease's manifest. That release contains only the

@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { openDiagramSettings } from './helpers/topology';
 import { test, expect } from '@playwright/test';
 
@@ -46,7 +47,7 @@ test('desktop Helm edit/install/rollback/uninstall and repository CRUD use backe
   await expect(details.getByRole('region', { name: 'Release overview' }).getByText('3', { exact: true })).toBeVisible();
   await details.getByRole('tab', { name: 'History', exact: true }).click();
   await expect(details.getByRole('button', { name: 'Restore Helm revision 3', exact: true })).toBeDisabled();
-  await page.screenshot({ path: 'test-results/helm-history-actions.png', animations: 'disabled' });
+  await captureScreenshot(page, { path: 'test-results/helm-history-actions.png', animations: 'disabled' });
   await details.getByRole('button', { name: 'Restore Helm revision 1', exact: true }).click();
   dialog = page.getByRole('dialog', { name: 'Roll back Helm release' }); await expect(dialog.getByLabel('Helm rollback revision')).toHaveValue('1');
   await dialog.getByRole('button', { name: 'Review in system dialog' }).click(); await expect(dialog).toHaveCount(0);
@@ -116,7 +117,7 @@ test('RBAC diagrams show declared chains; Helm nodes connect to owned objects an
   await types.getByLabel('Show Namespace', { exact: true }).uncheck(); await expect(pod).toBeVisible();
   await types.getByRole('button', { name: 'Hide all', exact: true }).click(); await expect(page.getByText('All resource types are hidden. Enable a type to display it.')).toBeVisible();
   await types.getByRole('button', { name: 'Show all', exact: true }).click(); await expect(pod).toBeVisible(); await expect(pod).toHaveAttribute('style', position!);
-  await page.screenshot({ path: 'test-results/topology-type-filter.png' });
+  await captureScreenshot(page, { path: 'test-results/topology-type-filter.png' });
   await page.keyboard.press('Escape'); await expect(types).toHaveCount(0);
   await page.getByRole('button', { name: 'Open Helm Releases' }).click(); await page.getByTestId('helm-releases').getByRole('row', { name: 'Inspect Helm release web in backend' }).click();
   await page.getByTestId('inspector-panel').getByRole('button', { name: 'Topology', exact: true }).click();

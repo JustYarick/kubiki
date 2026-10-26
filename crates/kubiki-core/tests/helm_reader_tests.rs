@@ -214,3 +214,19 @@ async fn stalled_process_times_out_and_is_killed() {
     }
     panic!("Timed-out Helm child is still alive");
 }
+
+#[tokio::test]
+async fn hook_documents_use_read_only_pinned_get() {
+    let fixture = Fixture::new(
+        r#"
+assert a == ['--kube-context=prod', '--namespace=backend', 'get', 'hooks', 'web', '--revision=2']
+print('apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate')
+"#,
+    );
+    let output = fixture
+        .reader()
+        .content("prod", "backend", "web", 2, HelmDocument::Hooks)
+        .await
+        .unwrap();
+    assert!(output.contains("kind: Job"));
+}

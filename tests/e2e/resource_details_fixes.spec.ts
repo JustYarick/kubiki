@@ -1,3 +1,4 @@
+import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
 
 const metadata = (name: string, namespace?: string) => ({ name, namespace, uid: `${namespace ?? 'cluster'}/${name}` });
@@ -36,7 +37,7 @@ test('Namespace and Secret show consumers; Node quantities are readable and Even
   await expect(details.getByRole('region', { name: 'Node capacity and allocatable resources' })).toContainText('3.82 GiB');
   await expect(details).not.toContainText('4009156Ki');
   await expect(details.getByRole('region', { name: 'Pods on this node' })).toContainText('No pods');
-  await page.screenshot({ path: 'test-results/node-readable-quantities.png' });
+  await captureScreenshot(page, { path: 'test-results/node-readable-quantities.png' });
   await select(page, 'Events', 'notice');
   await expect(usedBy).toHaveCount(0);
 });

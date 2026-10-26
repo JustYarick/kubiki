@@ -47,6 +47,17 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 keyring = "4"
 
+[patch.crates-io]
+# GTK3 requires glib 0.18. Backport the upstream VariantStrIter safety fix.
+glib = { path = "../vendor/glib" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+glib = "0.18.5"
+
+# Exercise the backported out-pointer fix with optimizer assumptions enabled.
+[profile.test.package.glib]
+opt-level = 2
+
 [profile.release]
 codegen-units = 1
 lto = true

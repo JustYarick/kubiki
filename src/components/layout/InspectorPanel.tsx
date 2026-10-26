@@ -27,6 +27,8 @@ import type { ResourceItem } from '../../types/k8s';
 import { DetailsPanel } from '../k8s/details/DetailsPanel';
 import { ResourceLoading } from '../ui/ResourceLoading';
 import { ResourceDetailsRouter } from '../k8s/details/ResourceDetailsRouter';
+import { retainResourceKinds } from '../../state/resource_requirements';
+import { RESOURCE_TYPES } from '../../core/resources/resource_types';
 
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 const HelmReleaseDetails = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmReleaseDetails })));
@@ -97,6 +99,11 @@ function KubernetesResourceDetails({
   );
   const childPods = useMemo(() => item ? findWorkloadPods(item, resources) : [], [item, resources]);
   const currentContext = useClusterStore((s) => s.currentContext);
+  useEffect(() => {
+    if (!inspector && item && currentContext && rightTab === 'related') {
+      return retainResourceKinds(currentContext, RESOURCE_TYPES.map(type => type.kind));
+    }
+  }, [inspector, item?.uid, currentContext, rightTab]);
 
   if (!item) {
     return (

@@ -33,7 +33,12 @@ async function setup(page: import('@playwright/test').Page, mode = '') {
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'debug', exact: true }).click();await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();await page.getByRole('button', { name: /^Nodes(?: \d+)?$/ }).click();await page.getByTestId('resource-table').getByTitle('worker', { exact: true }).click();
 }
 
-async function closeTab(page: import('@playwright/test').Page, index: number) { await page.locator('[title*="(Cluster Node)"]').nth(index).hover();await page.locator('[title*="(Cluster Node)"]').nth(index).getByTitle('Close Session', { exact: true }).click(); }
+async function closeTab(page: import('@playwright/test').Page, index: number) {
+  // OverflowTooltip temporarily removes native titles on hover.
+  const tab = page.getByTestId('bottom-dock-wrapper').locator('.group').filter({ has: page.getByText('Cluster Node', { exact: true }) }).nth(index);
+  await tab.hover();
+  await tab.getByRole('button', { name: 'Close Session', exact: true }).click();
+}
 
 test('shells auto-start with one shared helper Pod that dies with the last terminal', async ({ page }) => {
   await setup(page);await page.getByTestId('resource-details').getByRole('button', { name: 'Node shell', exact: true }).click();

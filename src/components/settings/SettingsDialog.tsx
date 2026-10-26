@@ -10,9 +10,17 @@ import { TerminalFontSettings } from '../TerminalFontSettings';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { k8s } from '../../providers/k8s_provider';
-import { DEFAULT_SCROLLBACK, TERMINAL_ACK_TIMEOUT_PRESETS, TERMINAL_SCROLLBACK_PRESETS, useUiStore } from '../../state/ui_store';
+import {
+  DEFAULT_SCROLLBACK,
+  LOG_BUFFER_PRESETS,
+  LOG_TAIL_PRESETS,
+  TERMINAL_ACK_TIMEOUT_PRESETS,
+  TERMINAL_SCROLLBACK_PRESETS,
+  useUiStore,
+} from '../../state/ui_store';
 import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
+import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_rendering';
 import { cx } from '../../core/utils/cx';
 import { AI_AGENTS, ANALYSIS_INSTRUCTIONS, ANALYSIS_PROMPT_LIMIT, type AiAgent } from '../../core/ai_analysis';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
@@ -217,11 +225,51 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
   );
 }
 
+function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
+  const ui = useUiStore();
+  const fast = ui.topologyPerformanceMode === 'performance';
+  return <div>
+    <SectionTitle>{sectionTitle}</SectionTitle>
+    <Row entry={findEntry('topology.performance')}>
+      <Segmented ariaLabel="Topology rendering profile" value={ui.topologyPerformanceMode} onChange={ui.setTopologyPerformanceMode}
+        options={[{ value: 'quality', label: 'Quality' }, { value: 'balanced', label: 'Balanced' }, { value: 'performance', label: 'Performance' }]} />
+    </Row>
+    <Row entry={findEntry('topology.grouping')}>
+      <Segmented ariaLabel="Cluster layout grouping" value={ui.topologyGrouping} onChange={ui.setTopologyGrouping}
+        options={[{ value: 'namespace', label: 'Namespace' }, { value: 'flat', label: 'Flat' }]} />
+    </Row>
+    <Row entry={findEntry('topology.edges')}>
+      <select aria-label="Topology connection style" className="ide-select" disabled={fast} value={fast ? 'straight' : ui.topologyEdgeStyle} onChange={event => ui.setTopologyEdgeStyle(event.target.value as typeof ui.topologyEdgeStyle)}>
+        <option value="smooth">Editable routes</option><option value="bezier">Curved</option><option value="straight">Straight</option>
+      </select>
+    </Row>
+    <Row entry={findEntry('topology.animations')}>
+      <Checkbox aria-label="Animate topology connections" disabled={fast} checked={!fast && ui.topologyAnimations} onChange={event => ui.setTopologyAnimations(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.labels')}>
+      <Checkbox aria-label="Topology connection labels" disabled={fast} checked={!fast && ui.topologyShowEdgeLabels} onChange={event => ui.setTopologyShowEdgeLabels(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.minimap')}>
+      <Checkbox aria-label="Topology canvas minimap" disabled={fast} checked={!fast && ui.topologyShowMinimap} onChange={event => ui.setTopologyShowMinimap(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.background')}>
+      <Checkbox aria-label="Topology background grid" disabled={fast} checked={!fast && ui.topologyShowBackground} onChange={event => ui.setTopologyShowBackground(event.target.checked)} />
+    </Row>
+    <Row entry={findEntry('topology.updates')}>
+      <select aria-label="Topology live redraw interval" className="ide-select" value={ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
+        {TOPOLOGY_UPDATE_INTERVALS.map(value => <option key={value} value={value}>{value < 1000 ? `${value} ms` : `${value / 1000} s`}{fast && value < 3000 ? ' (3 s in Performance)' : ''}</option>)}
+      </select>
+    </Row>
+  </div>;
+}
+
 function EditorPage({ sectionTitle }: { sectionTitle: string }) {
   const editorFontSize = useUiStore((s) => s.editorFontSize);
   const setEditorFontSize = useUiStore((s) => s.setEditorFontSize);
   const yamlCleanView = useUiStore((s) => s.yamlCleanView);
   const setYamlCleanView = useUiStore((s) => s.setYamlCleanView);
+  const yamlHideManagedFields = useUiStore((s) => s.yamlHideManagedFields);
+  const setYamlHideManagedFields = useUiStore((s) => s.setYamlHideManagedFields);
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -234,6 +282,13 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
           value={yamlCleanView ? 'clean' : 'full'}
           onChange={(value) => setYamlCleanView(value === 'clean')}
           options={[{ value: 'clean', label: 'Clean' }, { value: 'full', label: 'Full' }]}
+        />
+      </Row>
+      <Row entry={findEntry('editor.hide-managed-fields')}>
+        <Checkbox
+          aria-label="Hide managedFields by default"
+          checked={yamlHideManagedFields}
+          onChange={(event) => setYamlHideManagedFields(event.target.checked)}
         />
       </Row>
     </div>
@@ -298,8 +353,16 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
   const setLogsWrap = useUiStore((s) => s.setLogsWrap);
   const logsTimestamps = useUiStore((s) => s.logsTimestamps);
   const setLogsTimestamps = useUiStore((s) => s.setLogsTimestamps);
+  const logsColorLevels = useUiStore((s) => s.logsColorLevels);
+  const setLogsColorLevels = useUiStore((s) => s.setLogsColorLevels);
   const logsStructured = useUiStore((s) => s.logsStructured);
   const setLogsStructured = useUiStore((s) => s.setLogsStructured);
+  const logsDefaultTail = useUiStore((s) => s.logsDefaultTail);
+  const setLogsDefaultTail = useUiStore((s) => s.setLogsDefaultTail);
+  const logsMaxBufferLines = useUiStore((s) => s.logsMaxBufferLines);
+  const setLogsMaxBufferLines = useUiStore((s) => s.setLogsMaxBufferLines);
+  const logsScrollStickiness = useUiStore((s) => s.logsScrollStickiness);
+  const setLogsScrollStickiness = useUiStore((s) => s.setLogsScrollStickiness);
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
@@ -309,16 +372,54 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
       <Row entry={findEntry('logs.timestamps')}>
         <Checkbox aria-label="Show log timestamps by default" checked={logsTimestamps} onChange={(event) => setLogsTimestamps(event.target.checked)} />
       </Row>
+      <Row entry={findEntry('logs.color-levels')}>
+        <Checkbox aria-label="Highlight log levels by default" checked={logsColorLevels} onChange={(event) => setLogsColorLevels(event.target.checked)} />
+      </Row>
       <Row entry={findEntry('logs.structured')}>
         <Checkbox aria-label="Parse log lines as JSON by default" checked={logsStructured} onChange={(event) => setLogsStructured(event.target.checked)} />
+      </Row>
+      <Row entry={findEntry('logs.default-tail')}>
+        <Segmented
+          ariaLabel="Default log tail lines"
+          value={String(logsDefaultTail)}
+          onChange={(v) => setLogsDefaultTail(Number(v))}
+          options={LOG_TAIL_PRESETS.map((n) => ({ value: String(n), label: `${n}` }))}
+        />
+      </Row>
+      <Row entry={findEntry('logs.max-buffer')}>
+        <Segmented
+          ariaLabel="Max log buffer size"
+          value={String(logsMaxBufferLines)}
+          onChange={(v) => setLogsMaxBufferLines(Number(v))}
+          options={LOG_BUFFER_PRESETS.map((n) => ({ value: String(n), label: `${n.toLocaleString('en-US')}` }))}
+        />
+      </Row>
+      <Row entry={findEntry('logs.stickiness')}>
+        <Segmented
+          ariaLabel="Auto-scroll stickiness"
+          value={String(logsScrollStickiness)}
+          onChange={(v) => setLogsScrollStickiness(Number(v))}
+          options={[
+            { value: '20', label: 'Strict (20px)' },
+            { value: '40', label: 'Normal (40px)' },
+            { value: '80', label: 'Relaxed (80px)' },
+            { value: '120', label: 'High (120px)' },
+          ]}
+        />
       </Row>
     </div>
   );
 }
 
 function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
+  const rememberLastContext = useClusterStore((s) => s.rememberLastContext);
+  const setRememberLastContext = useClusterStore((s) => s.setRememberLastContext);
   const rememberNamespaceScope = useClusterStore((s) => s.rememberNamespaceScope);
   const setRememberNamespaceScope = useClusterStore((s) => s.setRememberNamespaceScope);
+  const portForwardLocalRange = useUiStore((s) => s.portForwardLocalRange);
+  const setPortForwardLocalRange = useUiStore((s) => s.setPortForwardLocalRange);
+  const portForwardAutoOpen = useUiStore((s) => s.portForwardAutoOpen);
+  const setPortForwardAutoOpen = useUiStore((s) => s.setPortForwardAutoOpen);
   const [kubeconfigPath, setKubeconfigPath] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -333,7 +434,7 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
       setLoading(true);
       const contexts = await k8s.setKubeconfigPath(kubeconfigPath.trim() || null);
       useClusterStore.getState().setContexts(contexts);
-      const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+      const current = useClusterStore.getState().currentContext;
       if (current) {
         useClusterStore.getState().selectContext(current);
       }
@@ -352,7 +453,7 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
       const defaultPath = await k8s.getKubeconfigPath();
       setKubeconfigPath(defaultPath);
       useClusterStore.getState().setContexts(contexts);
-      const current = contexts.find((c) => c.is_current)?.name || contexts[0]?.name;
+      const current = useClusterStore.getState().currentContext;
       if (current) {
         useClusterStore.getState().selectContext(current);
       }
@@ -367,6 +468,9 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <Row entry={findEntry('kubernetes.remember-context')}>
+        <Checkbox aria-label="Reopen last selected cluster" checked={rememberLastContext} onChange={event => setRememberLastContext(event.target.checked)} />
+      </Row>
       <Row entry={findEntry('kubernetes.remember-scope')}>
         <Checkbox
           aria-label="Remember namespace scope per context"
@@ -395,6 +499,22 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
             Specify a custom kubeconfig file path, or click Reset to use the default location.
           </p>
         </div>
+      </Row>
+      <Row entry={findEntry('kubernetes.port-range')}>
+        <Input
+          aria-label="Local port forward range"
+          value={portForwardLocalRange}
+          onChange={(e) => setPortForwardLocalRange(e.target.value)}
+          placeholder="8000-8999"
+          className="w-32"
+        />
+      </Row>
+      <Row entry={findEntry('kubernetes.auto-open-browser')}>
+        <Checkbox
+          aria-label="Auto-open browser on port forward"
+          checked={portForwardAutoOpen}
+          onChange={(event) => setPortForwardAutoOpen(event.target.checked)}
+        />
       </Row>
     </div>
   );
@@ -473,6 +593,7 @@ function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
 
 function pageContent(page: SettingsPageDef): React.ReactElement {
   switch (page.id) {
+    case 'topology': return <TopologyPage sectionTitle={page.sectionTitle} />;
     case 'developer': return <DeveloperPage sectionTitle={page.sectionTitle} />;
     case 'ai': return <AiPage sectionTitle={page.sectionTitle} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
@@ -490,6 +611,10 @@ function pageContent(page: SettingsPageDef): React.ReactElement {
 /* ------------------------------------------------------------------ */
 
 const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
+  topology: () => {
+    useUiStore.getState().resetTopologyRendering();
+    toast.success('Topology defaults restored');
+  },
   appearance: () => {
     useUiStore.getState().resetAppearance();
     toast.success('Appearance defaults restored');
@@ -498,6 +623,7 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     const ui = useUiStore.getState();
     ui.setEditorFontSize(DEFAULT_APPEARANCE.editorFontSize);
     ui.setYamlCleanView(true);
+    ui.setYamlHideManagedFields(true);
     toast.success('Editor defaults restored');
   },
   terminal: () => {
@@ -513,11 +639,19 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     const ui = useUiStore.getState();
     ui.setLogsWrap(true);
     ui.setLogsTimestamps(true);
+    ui.setLogsColorLevels(false);
     ui.setLogsStructured(false);
+    ui.setLogsDefaultTail(500);
+    ui.setLogsMaxBufferLines(1000);
+    ui.setLogsScrollStickiness(40);
     toast.success('Log defaults restored');
   },
   kubernetes: () => {
+    useClusterStore.getState().setRememberLastContext(true);
     useClusterStore.getState().setRememberNamespaceScope(true);
+    const ui = useUiStore.getState();
+    ui.setPortForwardLocalRange('8000-8999');
+    ui.setPortForwardAutoOpen(false);
     toast.success('Kubernetes defaults restored');
   },
 };
