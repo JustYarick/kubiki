@@ -46,7 +46,18 @@ function Dashboard({ family, result }: { family: 'flux' | 'argocd'; result: Retu
       .sort((a, b) => (order === 'attention' ? stateOrder.indexOf(deliveryState(a)) - stateOrder.indexOf(deliveryState(b)) : 0) || a.name.localeCompare(b.name) || (a.namespace ?? '').localeCompare(b.namespace ?? ''));
   }, [items, query, filter, kind, order, family]);
   const metrics: DeliveryMetric[] = [{ id: 'all', label: family === 'flux' ? 'Resources' : 'Applications', value: metricsAvailable ? primary.length : null, detail: errors.length ? 'Loaded snapshot · partial or stale' : 'In the selected scope' },
-    ...(['healthy', 'attention', family === 'flux' ? 'suspended' : 'progressing', 'unknown'] as DeliveryState[]).map(state => ({ id: state, label: deliveryLabels[state], value: metricsAvailable ? primary.filter(item => deliveryState(item) === state).length : null, detail: state === 'healthy' ? family === 'flux' ? 'Readiness confirmed' : 'Healthy and synced' : state === 'attention' ? family === 'flux' ? 'Reconciliation needs review' : 'Health or sync needs review' : state === 'unknown' ? 'No confirmed readiness' : state === 'suspended' ? 'Reconciliation paused' : 'Delivery is running', tone: state === 'healthy' ? 'ok' as const : state === 'attention' ? 'warn' as const : 'muted' as const, icon: deliveryIcons[state] }))];
+    ...(['healthy', 'attention', 'progressing', 'suspended', 'unknown'] as DeliveryState[]).map(state => ({
+      id: state,
+      label: deliveryLabels[state],
+      value: metricsAvailable ? primary.filter(item => deliveryState(item) === state).length : null,
+      detail: state === 'healthy' ? (family === 'flux' ? 'Readiness confirmed' : 'Healthy and synced')
+        : state === 'attention' ? (family === 'flux' ? 'Reconciliation needs review' : 'Health or sync needs review')
+        : state === 'progressing' ? (family === 'flux' ? 'Reconciliation in progress' : 'Delivery running')
+        : state === 'suspended' ? 'Reconciliation paused'
+        : 'No confirmed readiness',
+      tone: state === 'healthy' ? 'ok' as const : state === 'attention' ? 'warn' as const : state === 'progressing' ? 'pending' as const : 'muted' as const,
+      icon: deliveryIcons[state]
+    }))];
   const inspect = (item: ResourceItem) => { useResourceStore.getState().selectItem(item); useUiStore.setState({ inspectorCollapsed: false }); };
   const reset = () => { setQuery(''); setFilter('all'); setKind('all'); };
   const pageKey = JSON.stringify([query, filter, kind, order]);
