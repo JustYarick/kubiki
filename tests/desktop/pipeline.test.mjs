@@ -24,7 +24,9 @@ test('manual CI publishes by default and invokes the same pipeline as tag releas
   assert.equal(release.on.workflow_dispatch.inputs.run_tests.default, false);
   assert.equal(release.on.workflow_call.inputs.run_tests.default, true);
   assert.equal(ci.jobs.pipeline.with.publish, "${{ github.event_name == 'workflow_dispatch' && inputs.trigger_release }}");
-  assert.deepEqual(new Set(release.jobs.publish.needs), new Set(['prepare', 'desktop', 'malware_scan']));
+  assert.deepEqual(new Set(release.jobs.publish.needs), new Set(['prepare', 'desktop']));
+  assert.equal(release.on.workflow_dispatch.inputs.virustotal_scan.default, true);
+  assert.equal(release.on.workflow_call.inputs.virustotal_scan.default, true);
   assert.deepEqual(new Set(release.jobs.desktop.strategy.matrix.include.map(t => t.target)), new Set(Object.keys(DESKTOP_TARGETS)));
   assert.equal(release.jobs.desktop.needs.includes('interface'), true);
 });
@@ -46,7 +48,7 @@ async function workflowJobs() {
 
 function jobResults(runTests, overrides = {}) {
   return {
-    prepare: { result: 'success', outputs: { run_tests: String(runTests), publish: 'true' } },
+    prepare: { result: 'success', outputs: { run_tests: String(runTests), publish: 'true', virustotal_scan: 'true' } },
     frontend: { result: runTests ? 'success' : 'skipped' },
     interface: { result: runTests ? 'success' : 'skipped' },
     desktop: { result: 'success' },
@@ -91,10 +93,10 @@ test('build failure, preparation failure, cancellation and disabled publication 
     for (const result of ['failure', 'cancelled', 'skipped']) {
       assert.equal(workflowIf(jobs.publish.if, { needs: jobResults(runTests, { desktop: { result } }) }), false);
       assert.equal(workflowIf(jobs.malware_scan.if, { needs: jobResults(runTests, { desktop: { result } }) }), false);
-      assert.equal(workflowIf(jobs.publish.if, { needs: jobResults(runTests, { malware_scan: { result } }) }), false);
       const failedPrepare = jobResults(runTests, { prepare: { ...needs.prepare, result } });
       assert.equal(workflowIf(jobs.desktop.if, { needs: failedPrepare }), false);
       assert.equal(workflowIf(jobs.publish.if, { needs: failedPrepare }), false);
+      assert.equal(workflowIf(jobs.malware_scan.if, { needs: failedPrepare }), false);
     }
     needs.prepare.outputs.publish = 'false';
     assert.equal(workflowIf(jobs.desktop.if, { needs }), true);
@@ -103,16 +105,27 @@ test('build failure, preparation failure, cancellation and disabled publication 
   }
 });
 
-test('all release targets share a serialized scanner and failed scans retain their report artifact', async () => {
+test('the optional scanner runs serialized, never blocks publication and retains its report artifact', async () => {
   const jobs = await workflowJobs();
   assert.deepEqual(new Set(jobs.malware_scan.needs), new Set(['prepare', 'desktop']));
   assert.deepEqual(jobs.malware_scan.concurrency, { group: 'virustotal-public-api', 'cancel-in-progress': false });
   assert.equal(jobs.malware_scan.strategy, undefined);
+  assert.equal(jobs.malware_scan['continue-on-error'], true);
+  assert.ok(jobs.malware_scan.if.includes("needs.prepare.outputs.virustotal_scan == 'true'"));
   const scan = jobs.malware_scan.steps.find(step => step.run?.includes('scan-desktop-release.mjs'));
   assert.equal(scan.env.VIRUSTOTAL_API_KEY, '${{ secrets.VIRUSTOTAL_API_KEY }}');
   const upload = jobs.malware_scan.steps.find(step => step.uses?.startsWith('actions/upload-artifact@'));
   assert.equal(upload.if, 'always()');
-  assert.ok(jobs.publish.steps.some(step => step.uses?.startsWith('actions/download-artifact@') && step.with.name === upload.with.name));
+  assert.deepEqual(new Set(jobs.publish.needs), new Set(['prepare', 'desktop']));
+  assert.equal(jobs.publish.if.includes('malware_scan'), false);
+  assert.equal(jobs.publish.steps.some(step => step.uses?.startsWith('actions/download-artifact@') && step.with.name === upload.with.name), false);
+  // A failed or skipped scan cannot influence the run outcome or publication.
+  for (const result of ['failure', 'cancelled', 'skipped']) {
+    assert.equal(workflowIf(jobs.publish.if, { needs: jobResults(false, { malware_scan: { result } }) }), true);
+  }
+  const noScan = jobResults(false, { prepare: { ...jobResults(false).prepare, outputs: { ...jobResults(false).prepare.outputs, virustotal_scan: 'false' } } });
+  assert.equal(workflowIf(jobs.malware_scan.if, { needs: noScan }), false);
+  assert.equal(workflowIf(jobs.publish.if, { needs: noScan }), true);
 });
 
 test('release tests require run_tests and tag pushes do not enable them implicitly', async () => {
@@ -207,7 +220,6 @@ async function artifacts(tag = 'v9876.1.0-rc.1') {
     await stageDesktopArtifacts(root, target, { tag, sha, signed: true });
   }
   const dir = path.join(root, '.kubiki-build/artifacts');
-  await writeVirusTotalReport(dir, releaseReport(await verifyDesktopArtifacts(dir, tag, sha), tag, sha));
   return { root, dir, tag, sha };
 }
 
@@ -303,32 +315,21 @@ test('failed upload keeps the release unpublished; retry reuses the draft and pu
     assert.equal(published.length, 1);
     assert.equal(published[0].prerelease, true);
     assert.equal(published[0].make_latest, 'false');
-    for (const name of REPORT_NAMES) assert.ok(mock.events.includes(name));
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 
-test('missing, detected, incomplete or mismatched scan reports block publication before GitHub writes', async () => {
+test('publication works without reports and detected VirusTotal verdicts are advisory only', async () => {
   const fixture = await artifacts();
   try {
-    const original = JSON.parse(await readFile(path.join(fixture.dir, REPORT_NAMES[0]), 'utf8'));
-    for (const change of [
-      report => { report.status = 'detected'; },
-      report => { report.files.pop(); },
-      report => { report.files[0].sha256 = '0'.repeat(64); },
-      report => { report.files[0].stats.malicious = 1; },
-      report => { report.sha = 'b'.repeat(40); },
-    ]) {
-      const report = structuredClone(original);
-      change(report);
-      await writeVirusTotalReport(fixture.dir, report);
-      const mock = githubMock();
-      await assert.rejects(publishDesktopRelease(mock, fixture), /VirusTotal/);
-      assert.deepEqual(mock.events, []);
-    }
-    await rm(path.join(fixture.dir, REPORT_NAMES[0]));
+    const assets = await verifyDesktopArtifacts(fixture.dir, fixture.tag, fixture.sha);
+    const report = releaseReport(assets, fixture.tag, fixture.sha);
+    report.status = 'detected';
+    for (const file of report.files) file.stats.malicious = 1;
+    await writeVirusTotalReport(fixture.dir, report);
     const mock = githubMock();
-    await assert.rejects(publishDesktopRelease(mock, fixture), /ENOENT/);
-    assert.deepEqual(mock.events, []);
+    await publishDesktopRelease(mock, fixture);
+    assert.equal(mock.events.includes('latest.json'), true);
+    for (const name of REPORT_NAMES) assert.equal(mock.events.includes(name), false);
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 

@@ -4,7 +4,6 @@ import path from 'node:path';
 import { desktopRelease, reconcileUpdateManifest, updateChannel, validateUpdateManifest } from './desktop-release.mjs';
 import { compareStableTags, verifyDesktopArtifacts } from './desktop-pipeline.mjs';
 import { publishDevUpdateFeed } from './dev-update-feed.mjs';
-import { verifyVirusTotalReport } from './virustotal.mjs';
 
 function verifyUploadedArtifacts(assets, uploaded) {
   for (const asset of assets) {
@@ -17,8 +16,7 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
   const release = desktopRelease(tag);
   const repo = { owner: context.repo.owner, repo: context.repo.repo };
   const assets = await verifyDesktopArtifacts(dir, tag, sha);
-  const reports = await verifyVirusTotalReport(dir, tag, sha, assets);
-  const releaseAssets = [...assets, ...reports];
+  const releaseAssets = [...assets];
   const signatures = {};
   for (const asset of assets.filter(a => a.name.endsWith('.sig'))) {
     signatures[asset.name] = await readFile(path.join(dir, asset.name), 'utf8');
@@ -95,6 +93,6 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
     await publishDevUpdateFeed({ github, context, core }, { tag, sha, manifest, assets: uploaded });
   }
   if (process.env.GITHUB_STEP_SUMMARY) {
-    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Published Kubiki ${tag}\n\n${published.html_url}\n\nCommit: \`${sha}\`\n\n${assets.length} verified packages/signatures; VirusTotal JSON/Markdown reports, SHA256SUMS and latest.json uploaded.\n`);
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Published Kubiki ${tag}\n\n${published.html_url}\n\nCommit: \`${sha}\`\n\n${assets.length} verified packages/signatures, SHA256SUMS and latest.json uploaded; the VirusTotal report is optional and published separately.\n`);
   }
 }

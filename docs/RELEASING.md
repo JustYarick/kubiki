@@ -47,12 +47,13 @@ For **build and publish without tests**, open **Actions → Release → Run work
 Skipping tests does not require a previous successful CI run. Frontend/extension
 compilation, type checking needed by the build, signing and artifact validation
 still run. The summary records the selected test mode. **Re-run jobs** preserves
-the original inputs; select **Run workflow** to change modes.
-VirusTotal scanning remains mandatory for publication when tests are skipped.
+the original inputs; select **Run workflow** to change modes. The VirusTotal
+scan is an optional report; it never blocks publication.
 
-Pushing a `v*` tag builds signed packages, scans them with VirusTotal and publishes
-on success. Tag pushes do not implicitly enable tests. To run tests before
-publication, manually start **CI**, or start **Release** and enable **run_tests**.
+Pushing a `v*` tag builds signed packages, publishes them and runs the optional
+VirusTotal report scan afterwards. Tag pushes do not implicitly enable tests. To
+run tests before publication, manually start **CI**, or start **Release** and
+enable **run_tests**.
 For tag-triggered publication:
 
 ```sh
@@ -94,6 +95,12 @@ and macOS signing/notarization, which are not configured here.
 
 ## VirusTotal setup
 
+The scan is an **optional, report-only job**. Enable or disable it per run with
+the `virustotal_scan` input (default: enabled); it runs alongside publication
+and its verdicts, failures and errors never block or fail the release. To
+rescan an already published payload, use **Re-run jobs** on that publishing
+run: the original inputs are preserved, so the scan repeats on the same files.
+
 Register a free [VirusTotal Community account](https://www.virustotal.com/gui/join-us).
 Find the personal API key in your account settings ([official instructions](https://docs.virustotal.com/reference/getting-started)).
 In GitHub **Settings → Secrets and variables → Actions → New repository secret**,
@@ -121,18 +128,16 @@ its quota, so reserve it for this pipeline when possible.
 The scanner waits for completed analyses and checks individual engine verdicts
 and file identity. Any malicious/suspicious verdict, missing key, API error,
 timeout, inconsistent report, or absence of supported completed engine results
-blocks publication. Engines may still report individual failures, timeouts and
-unsupported types; these are visible in the report. Investigate detections,
-including possible false positives, before retrying; the pipeline does not
-automatically ignore them.
+is recorded in the report, but publication never depends on it. Investigate
+detections, including possible false positives, yourself; the pipeline does not
+ignore them automatically.
 
 The `antivirus-report` workflow artifact contains **`VIRUSTOTAL-REPORT.json`**
 and **`VIRUSTOTAL-REPORT.md`**, retained for 14 days even after a scan failure
-when the report step can run. Successful reports are attached to the published
-release and included in `SHA256SUMS`. JSON records hashes, analysis IDs, engine
-names/versions/verdicts and links to VirusTotal; Markdown gives a readable table.
-The publisher rechecks that both reports match every payload's exact hash and
-size before making any GitHub writes.
+when the report step can run. They are published separately from the release;
+the release contains only packages, signatures, `SHA256SUMS` and `latest.json`.
+JSON records hashes, analysis IDs, engine names/versions/verdicts and links to
+VirusTotal; Markdown gives a readable table.
 
 Uploaded files become part of VirusTotal's shared dataset. No detections is not
 a safety guarantee: some engines cannot inspect every installer format or all
@@ -177,12 +182,11 @@ section (`kubiki-TARGET`, retained for 14 days), including build-only runs.
 Only the final publish job writes GitHub release assets. It:
 
 1. Downloads all four matrix artifacts and checks their source SHA, tag, target,
-   signed mode, package presence and file hashes, and verifies successful
-   VirusTotal reports against those exact payloads.
+   signed mode, package presence and file hashes.
 2. Creates one updater manifest from matching package/signature pairs. macOS ARM
    and Intel require distinct app archives; Windows uses NSIS; Linux uses AppImage.
 3. Creates the tag if needed and creates or reuses an unpublished draft.
-4. Uploads packages, signatures, VirusTotal JSON/Markdown reports, `SHA256SUMS`
+4. Uploads packages, signatures, `SHA256SUMS`
    and a single `latest.json`, then
    verifies the uploaded package sizes and tag-pinned updater URLs.
 5. Publishes the draft. Stable versions become Latest only if newer than the
@@ -191,8 +195,10 @@ Only the final publish job writes GitHub release assets. It:
    after the real dev release is published. Packages stay at their exact versioned
    URLs; this feed never becomes Latest and never moves to an older dev version.
 
-A failed required test, build or malware scan never publishes. In release-only mode, skipped
-test jobs allow builds and publication to proceed. A failed upload leaves an unpublished draft.
+A failed required test or build never publishes. In release-only mode, skipped
+test jobs allow builds and publication to proceed. The VirusTotal scan is
+advisory: its failures and detections never publish-block, and publication runs
+independently of it. A failed upload leaves an unpublished draft.
 Use **Re-run failed jobs** for a transient failure, or rerun the workflow with the
 same **custom_tag** for a complete rebuild. The publish job replaces incomplete
 assets on that draft. There is no heuristic that silently skips a platform based

@@ -72,7 +72,7 @@ export class VirusTotalClient {
       }
       if (!response.ok) {
         await response.body?.cancel();
-        throw new Error(`VirusTotal API returned HTTP ${response.status}; publication is blocked.`);
+        throw new Error(`VirusTotal API returned HTTP ${response.status}.`);
       }
       return response.json();
     }
