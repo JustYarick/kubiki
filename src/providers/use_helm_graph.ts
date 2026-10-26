@@ -4,6 +4,7 @@ import { k8s } from './k8s_provider';
 import { useClusterStore } from '../state/cluster_store';
 import { useResourceStore } from '../state/resource_store';
 import { helmResource } from '../core/resources/helm';
+import type { HelmRelease } from './helm_types';
 import type { ResourceItem } from '../types/k8s';
 
 const cache = new Map<string, { at: number; items: ResourceItem[] }>();
@@ -12,6 +13,11 @@ let generation = 0;
 const listeners = new Set<() => void>();
 export function subscribeHelmChanges(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function invalidateHelmGraphs() { generation++; cache.clear(); pending.clear(); for (const listener of listeners) listener(); }
+export function primeHelmGraphCache(context: string, namespace: string | null, releases: HelmRelease[]) {
+  const key = JSON.stringify([context, namespace ?? 'all']);
+  cache.set(key, { at: Date.now(), items: releases.map(release => helmResource(context, release)) });
+  if (cache.size > 8) cache.delete(cache.keys().next().value!);
+}
 export async function loadHelmGraph(context: string, namespace: string): Promise<ResourceItem[]> {
   const key = JSON.stringify([context, namespace]);
   const previous = cache.get(key);

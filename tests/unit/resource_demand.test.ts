@@ -31,3 +31,7 @@ it('loads summary sources without continuously watching Secrets or unrelated adm
 it('ignores tabs pinned to another cluster', () => {
   expect(demand([{ ...tab('secret', 'Secret'), context: 'other' }]).kinds).not.toContain('Secret');
 });
+it('does not trigger cluster-wide Pod or workload watches when opening Helm Releases', () => {
+  const result = demand([{ id: 'helm-releases', title: 'Helm Releases', type: 'helm-releases' }]);
+  expect(result.kinds).toEqual(['Namespace', 'CustomResourceDefinition']);
+});

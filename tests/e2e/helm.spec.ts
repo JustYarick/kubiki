@@ -67,9 +67,10 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await search.fill('zz-next-page');
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
   await expect(view).toContainText('1 of 1 matching · 101 total');
-  await search.fill(''); await view.getByRole('button', { name: 'Next page', exact: true }).click();
+  await search.fill('');
+  await view.locator('.helm-table-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
-  await expect(view.getByRole('button', { name: 'Next page', exact: true })).toBeDisabled();
+  await expect(view).toContainText('1–101 of 101 matching · 101 total');
   await open(page, 'Repositories'); await expect(page.getByTestId('helm-repositories')).toContainText('https://example.com/charts');
   await open(page); await expect(page.getByRole('tab', { name: /^Helm Releases/ })).toHaveCount(1);
   expect(calls.filter(url => ['history', 'content'].includes(url.pathname.split('/').pop()!)).every(url => url.searchParams.get('context') === 'prod' && url.searchParams.get('namespace') === 'backend' && url.searchParams.get('name') === 'web')).toBe(true);

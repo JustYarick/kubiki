@@ -40,7 +40,7 @@ export function resourceDemand(input: {
     if (kind === 'Node') { kinds.add('Pod'); clusterKinds.add('Pod'); }
     if (inspect) {
       kinds.add('Event');
-      if (kind === 'HelmRelease') for (const related of ['Pod', 'Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'Service', 'Ingress', 'PersistentVolumeClaim'] as ResourceKind[]) kinds.add(related);
+      if (kind === 'HelmRelease') for (const related of ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'Service', 'Ingress', 'PersistentVolumeClaim'] as ResourceKind[]) kinds.add(related);
       for (const dependency of details[kind] ?? []) kinds.add(dependency);
     }
   };
@@ -49,7 +49,6 @@ export function resourceDemand(input: {
   for (const tab of visible) {
     if (tab.context && tab.context !== input.context) continue;
     if (tab.type === 'overview') for (const kind of OVERVIEW_KINDS) kinds.add(kind);
-    else if (tab.type === 'helm-releases') { for (const kind of ['Pod', 'Deployment', 'StatefulSet', 'DaemonSet', 'Job'] as ResourceKind[]) kinds.add(kind); }
     else if (tab.type === 'topology') {
       for (const kind of structuralKinds) kinds.add(kind);
       kinds.add('Event');
