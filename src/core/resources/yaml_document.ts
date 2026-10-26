@@ -1,12 +1,17 @@
 import { parse, stringify } from 'yaml';
 
+export interface CleanYamlOptions {
+  hideManagedFields?: boolean;
+}
+
 /** Display projections keep server fields out of the editable manifest by default. */
-export function cleanYaml(source: string): string {
+export function cleanYaml(source: string, options: CleanYamlOptions = {}): string {
+  const { hideManagedFields = true } = options;
   try {
     const value = parse(source);
     if (!value || typeof value !== 'object') return source;
     delete value.status;
-    if (value.metadata) delete value.metadata.managedFields;
+    if (hideManagedFields && value.metadata) delete value.metadata.managedFields;
     return stringify(value);
   } catch { return source; }
 }

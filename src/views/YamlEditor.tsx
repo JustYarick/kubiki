@@ -21,6 +21,7 @@ interface YamlEditorProps {
 
 export function YamlEditor({ item, onApply }: YamlEditorProps) {
   const fontSize = useUiStore((state) => state.editorFontSize);
+  const hideManagedFields = useUiStore((state) => state.yamlHideManagedFields);
   const context = useClusterStore((state) => state.currentContext) || '';
   const draftKey = useMemo(
     () => yamlDraftKey(context, item.kind, item.namespace, item.name, item.uid),
@@ -28,6 +29,11 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
   );
   const original = item.rawYaml ?? '';
   const existingMemento = useYamlDraftStore.getState().getDraft(draftKey);
+
+  const clean = useCallback(
+    (source: string) => cleanYaml(source, { hideManagedFields }),
+    [hideManagedFields]
+  );
 
   const [cleanView, setCleanView] = useState(() => (existingMemento && existingMemento.uid === item.uid ? existingMemento.cleanView : useUiStore.getState().yamlCleanView));
   const cleanViewRef = useRef(cleanView);
@@ -37,7 +43,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
     if (existingMemento && existingMemento.uid === item.uid && existingMemento.dirty) {
       return existingMemento.draft;
     }
-    return cleanYaml(original);
+    return cleanYaml(original, { hideManagedFields: useUiStore.getState().yamlHideManagedFields });
   });
   const [ready, setReady] = useState(false);
   const [editorError, setEditorError] = useState('');
@@ -53,11 +59,11 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
   const modelRef = useRef<editor.ITextModel | null>(null);
   const draftRef = useRef(draft);
   const previous = useRef({ uid: item.uid, original });
-  const baseline = useMemo(() => cleanView ? cleanYaml(original) : original, [cleanView, original]);
+  const baseline = useMemo(() => cleanView ? clean(original) : original, [cleanView, clean, original]);
   const dirty = !sameYaml(draft, baseline);
 
   const persistDraft = useCallback((value: string) => {
-    const isDirty = !sameYaml(value, cleanViewRef.current ? cleanYaml(original) : original);
+    const isDirty = !sameYaml(value, cleanViewRef.current ? clean(original) : original);
     useYamlDraftStore.getState().saveDraft(draftKey, {
       draft: value,
       fullDraft: fullDraftRef.current,
@@ -66,7 +72,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
       uid: item.uid,
       dirty: isDirty,
     });
-  }, [cleanViewRef, draftKey, item.raw?.metadata?.resourceVersion, item.uid, original]);
+  }, [clean, cleanViewRef, draftKey, item.raw?.metadata?.resourceVersion, item.uid, original]);
   const persistDraftRef = useRef(persistDraft);
   persistDraftRef.current = persistDraft;
 
@@ -85,14 +91,14 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
     const hasUnsavedDraft = memento && memento.uid === item.uid && memento.dirty;
 
     if (!hasUnsavedDraft) {
-      const pristine = sameYaml(draftRef.current, cleanViewRef.current ? cleanYaml(prior.original) : prior.original);
+      const pristine = sameYaml(draftRef.current, cleanViewRef.current ? clean(prior.original) : prior.original);
       if (prior.uid !== item.uid || pristine) {
         fullDraftRef.current = original;
-        replaceDraft(cleanViewRef.current ? cleanYaml(original) : original);
+        replaceDraft(cleanViewRef.current ? clean(original) : original);
       }
     }
     previous.current = { uid: item.uid, original };
-  }, [draftKey, item.uid, original, replaceDraft]);
+  }, [clean, draftKey, item.uid, original, replaceDraft]);
 
   const apply = useCallback(async () => {
     if (sameYaml(draftRef.current, baseline) || applying) return;
@@ -108,13 +114,13 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
       await onApply(manifest);
       useYamlDraftStore.getState().clearDraft(draftKey);
       fullDraftRef.current = manifest;
-      replaceDraft(cleanViewRef.current ? cleanYaml(manifest) : manifest);
+      replaceDraft(cleanViewRef.current ? clean(manifest) : manifest);
     } catch (error) {
       toast.error('Apply failed', String(error));
     } finally {
       setApplying(false);
     }
-  }, [baseline, item.kind, item.name, onApply, replaceDraft, applying]);
+  }, [baseline, clean, item.kind, item.name, onApply, replaceDraft, applying]);
   const applyRef = useRef(apply);
   applyRef.current = apply;
 
@@ -249,7 +255,7 @@ export function YamlEditor({ item, onApply }: YamlEditorProps) {
       if (cleanView) replaceDraft(restoreServerFields(draftRef.current, fullDraftRef.current));
       else {
         fullDraftRef.current = draftRef.current;
-        replaceDraft(cleanYaml(draftRef.current));
+        replaceDraft(clean(draftRef.current));
       }
       setCleanView(!cleanView);
     } catch (err) {
