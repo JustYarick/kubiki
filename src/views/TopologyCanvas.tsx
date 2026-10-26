@@ -50,6 +50,12 @@ const focusNode: NodeMouseHandler<GraphNode> = (_, node) => {
 export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, revision, routeRevision, hiddenKinds, focusKey }: {
   graph: ResourceGraph; direction: 'RIGHT' | 'DOWN'; revision: number; routeRevision: number; hiddenKinds: ReadonlySet<ResourceKind>; focusKey?: string;
 }) {
+  const grouping = useUiStore((s) => s.topologyGrouping);
+  const animations = useUiStore((s) => s.topologyAnimations);
+  const performanceMode = useUiStore((s) => s.topologyPerformanceMode);
+  const showMinimap = useUiStore((s) => s.topologyShowMinimap);
+  const edgeStyle = useUiStore((s) => s.topologyEdgeStyle);
+
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<DiagramEdge>([]);
   const [busy, setBusy] = useState(false);
@@ -59,15 +65,16 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     : { ...node, hidden: hiddenKinds.has(node.data.item.kind) }), [nodes, hiddenKinds]);
   const visibleEdges = useMemo(() => {
     const hidden = new Set(visibleNodes.filter(node => node.type === 'namespace' ? hiddenKinds.has('Namespace') : node.hidden).map(node => node.id));
-    return edges.map(edge => ({ ...edge, hidden: hidden.has(edge.source) || hidden.has(edge.target) }));
-  }, [edges, visibleNodes, hiddenKinds]);
+    const type: NonNullable<DiagramEdge['type']> = performanceMode === 'performance' || edgeStyle === 'straight' ? 'straight' : edgeStyle === 'bezier' ? 'default' : 'adjustable';
+    return edges.map(edge => ({ ...edge, type, animated: animations, hidden: hidden.has(edge.source) || hidden.has(edge.target) }));
+  }, [edges, visibleNodes, hiddenKinds, performanceMode, edgeStyle, animations]);
   const flow = useRef<ReactFlowInstance<GraphNode, DiagramEdge> | null>(null);
   const onInit = useCallback((instance: ReactFlowInstance<GraphNode, DiagramEdge>) => { flow.current = instance; }, []);
   const nodeColor = useCallback((node: Node) => node.type === 'namespace' && hiddenKinds.has('Namespace') ? 'transparent' : node.id === focusKey ? '#3574f0' : '#545d70', [focusKey, hiddenKinds]);
 
   const latestGraph = useRef(graph);
   latestGraph.current = graph;
-  const structureKey = topologyStructureKey(graph);
+  const structureKey = topologyStructureKey(graph, grouping);
   useEffect(() => {
     setNodes((nodes) => nodes.map((node) => {
       const item = node.type === 'resource' ? graph.items.get(node.id) : [...graph.items.values()].find((item) => item.kind === 'Namespace' && item.name === node.data.name);
@@ -93,7 +100,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       cancelled = true; worker?.terminate(); setBusy(false);
       setError('Layout took longer than 10 seconds and was cancelled. Reduce the scope or relationship depth.');
     }, 10000);
-    const layout = topologyLayout(graph, direction);
+    const layout = topologyLayout(graph, direction, grouping);
     void elk.layout(layout.root).then((result) => {
       clearTimeout(timeout); worker?.terminate();
       if (cancelled) return;
@@ -116,7 +123,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       const bundles = new Map<string, string[]>();
       for (const edge of graph.relations) { if (!bundles.has(edge.source)) bundles.set(edge.source, []); bundles.get(edge.source)!.push(edge.id); }
       for (const bundle of bundles.values()) bundle.sort();
-      setEdges(graph.relations.map((edge) => ({ id: edge.id, source: layoutNodeId(graph, edge.source), target: layoutNodeId(graph, edge.target), label: edge.label,
+      setEdges(graph.relations.map((edge) => ({ id: edge.id, source: layoutNodeId(graph, edge.source, grouping), target: layoutNodeId(graph, edge.target, grouping), label: edge.label,
         type: 'adjustable', data: { direction, lane: bundles.get(edge.source)!.indexOf(edge.id) - (bundles.get(edge.source)!.length - 1) / 2 }, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: edge.type === 'owns' ? '#7c9bda' : '#626b7c' },
         labelStyle: { fill: '#b5bac4', fontSize: 10 }, labelBgStyle: { fill: '#25272a' },
       })));
@@ -155,7 +162,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     <ReactFlow<GraphNode, DiagramEdge> nodes={visibleNodes} edges={visibleEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} edgeTypes={diagramEdgeTypes} nodeTypes={nodeTypes} onInit={onInit}
       colorMode="dark" fitView onlyRenderVisibleElements minZoom={0.1} maxZoom={2} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null}
       onNodeClick={inspectNode} onNodeDoubleClick={focusNode}>
-      <Background gap={20} size={1} /><Controls showInteractive={false} /><MiniMap pannable zoomable nodeColor={nodeColor} />
+      <Background gap={20} size={1} /><Controls showInteractive={false} />{showMinimap && <MiniMap pannable zoomable nodeColor={nodeColor} />}
     </ReactFlow>
     {busy && <div role="status" className="absolute top-3 left-3 flex items-center gap-2 bg-[var(--bg-secondary)] rounded border border-[var(--border-default)] px-3 py-2"><Loader2 size="calc(13px * var(--ui-factor))" className="animate-spin" /> Arranging topology…</div>}
     {error && <div role="alert" className="absolute top-3 left-3 p-3 bg-[var(--bg-secondary)] text-[var(--status-danger)]">{error}</div>}

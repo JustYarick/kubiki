@@ -1,7 +1,7 @@
 import { BaseEdge, EdgeLabelRenderer, useReactFlow, type Edge, type EdgeProps } from '@xyflow/react';
 import { useRef, type PointerEvent as ReactPointerEvent } from 'react';
 
-export type DiagramEdge = Edge<{ direction: 'RIGHT' | 'DOWN'; lane: number; bend?: { x: number; y: number } }, 'adjustable'>;
+export type DiagramEdge = Edge<{ direction: 'RIGHT' | 'DOWN'; lane: number; bend?: { x: number; y: number } }, 'adjustable' | 'default' | 'straight'>;
 type Axis = 'x' | 'y' | 'both';
 
 /** Edit an orthogonal connection directly; its endpoints remain attached to the nodes. */
