@@ -67,6 +67,9 @@ impl Reconciler {
         }
         value["kind"] = self.query.kind.clone().into();
         value["apiVersion"] = api_version.into();
+        if let Some(metadata) = value.get_mut("metadata").and_then(Value::as_object_mut) {
+            metadata.remove("managedFields");
+        }
         Ok(value)
     }
 

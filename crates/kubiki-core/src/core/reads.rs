@@ -75,6 +75,7 @@ async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result
             .await
             .map_err(|e| e.with_resource(query))?;
         items.extend(page.items.into_iter().map(|mut item| {
+            item.metadata.managed_fields = None;
             item.types = Some(kube::core::TypeMeta {
                 api_version: ar.api_version.clone(),
                 kind: ar.kind.clone(),

@@ -314,12 +314,16 @@ async fn run_watch<F>(
                         Event::Init
                     }
                     Event::InitDone => Event::InitDone,
-                    Event::Apply(value) => {
+                    Event::Apply(mut value) => {
+                        value.metadata.managed_fields = None;
                         Event::Apply(serde_json::to_value(value).expect("DynamicObject is JSON"))
                     }
-                    Event::InitApply(value) => Event::InitApply(
-                        serde_json::to_value(value).expect("DynamicObject is JSON"),
-                    ),
+                    Event::InitApply(mut value) => {
+                        value.metadata.managed_fields = None;
+                        Event::InitApply(
+                            serde_json::to_value(value).expect("DynamicObject is JSON"),
+                        )
+                    }
                     Event::Delete(value) => {
                         Event::Delete(serde_json::to_value(value).expect("DynamicObject is JSON"))
                     }

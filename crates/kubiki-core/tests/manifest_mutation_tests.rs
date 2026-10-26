@@ -349,3 +349,97 @@ async fn every_builtin_delete_requires_fresh_identity_and_cancel_never_deletes()
         }
     }
 }
+
+#[tokio::test]
+async fn watch_and_list_strip_managed_fields_while_yaml_and_action_updates_preserve_them_on_server() {
+    use kube::runtime::watcher::Event;
+    use kubiki_core::{
+        core::{
+            api::ResourceQuery,
+            mutations::ResourceAction,
+            reads::resources,
+        },
+        informer::{delta::ResourceDelta, reconcile::Reconciler},
+    };
+
+    let query = ResourceQuery {
+        context: "prod".into(),
+        group: "apps".into(),
+        version: "v1".into(),
+        kind: "Deployment".into(),
+        namespace: Some("team".into()),
+    };
+
+    // 1. Verify watch Reconciler strips metadata.managedFields on InitApply and Apply.
+    let mut reconciler = Reconciler::new(query.clone());
+    assert!(reconciler.consume(Event::Init).unwrap().is_none());
+    assert!(reconciler.consume(Event::InitApply(object())).unwrap().is_none());
+    let Some(ResourceDelta::Restarted { items }) = reconciler.consume(Event::InitDone).unwrap() else {
+        panic!("expected Restarted delta");
+    };
+    assert_eq!(items.len(), 1);
+    assert!(items[0]["metadata"].get("managedFields").is_none());
+
+    let Some(ResourceDelta::Applied { data: streamed }) = reconciler.consume(Event::Apply(object())).unwrap() else {
+        panic!("expected Applied delta");
+    };
+    assert!(streamed["metadata"].get("managedFields").is_none());
+
+    // 2. Verify list (reads::resources) strips metadata.managedFields.
+    let list_fixture = fixture(
+        Some(json!({
+            "apiVersion": "apps/v1",
+            "kind": "DeploymentList",
+            "metadata": { "resourceVersion": "10" },
+            "items": [object()]
+        })),
+        200,
+    );
+    let listed = resources(list_fixture.client, query.clone()).await.unwrap();
+    let mut client_doc = listed["items"][0].clone();
+    assert!(client_doc["metadata"].get("managedFields").is_none());
+
+    // 3. Edit the stripped client document via YAML editor and verify PUT preserves server managedFields.
+    let yaml_fixture = fixture(Some(object()), 200);
+    client_doc["spec"]["replicas"] = json!(5);
+    PreparedMutation::prepare(
+        yaml_fixture.client,
+        manifest(client_doc, Some(target(&object()))),
+    )
+    .await
+    .unwrap()
+    .confirm_and_commit(|_| async { Ok(true) })
+    .await
+    .unwrap();
+    let yaml_writes = writes(&yaml_fixture.requests);
+    assert_eq!(yaml_writes.len(), 1);
+    assert_eq!(yaml_writes[0].0, "PUT");
+    assert_eq!(
+        yaml_writes[0].2["metadata"]["managedFields"],
+        object()["metadata"]["managedFields"]
+    );
+
+    // 4. Execute a ResourceAction (Restart) and verify PUT preserves server managedFields.
+    let action_fixture = fixture(Some(object()), 200);
+    let target_ref = target(&object());
+    PreparedMutation::prepare(
+        action_fixture.client,
+        MutationIntent::Action {
+            resource: target_ref.resource,
+            resource_version: target_ref.resource_version,
+            action: ResourceAction::Restart,
+        },
+    )
+    .await
+    .unwrap()
+    .confirm_and_commit(|_| async { Ok(true) })
+    .await
+    .unwrap();
+    let action_writes = writes(&action_fixture.requests);
+    assert_eq!(action_writes.len(), 1);
+    assert_eq!(action_writes[0].0, "PUT");
+    assert_eq!(
+        action_writes[0].2["metadata"]["managedFields"],
+        object()["metadata"]["managedFields"]
+    );
+}
