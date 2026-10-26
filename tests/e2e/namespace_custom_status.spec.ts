@@ -48,8 +48,8 @@ test('global multi-namespace selection filters tables, Overview and Helm and bui
   await expect(table.locator('tbody tr')).toHaveCount(2);
   await expect(table.getByText('gamma-Running', { exact: true })).toHaveCount(0);
   await page.getByTestId('explorer-panel').getByRole('button', { name: 'Open Overview', exact: true }).click();
-  await expect(page.getByTestId('overview-count-Pod')).toHaveText('2');
-  await expect(page.getByRole('heading', { name: 'Namespace overview' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pods: 2', exact: true })).toBeVisible();
+  await expect(page.getByTestId('cluster-overview').getByRole('region', { name: 'Summary', exact: true })).toHaveAttribute('data-metric-count', '3');
   await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
   await expect(page.getByRole('row', { name: 'Inspect Helm release release-alpha in alpha', exact: true })).toBeVisible();
   await expect(page.getByRole('row', { name: 'Inspect Helm release release-beta in beta', exact: true })).toBeVisible();

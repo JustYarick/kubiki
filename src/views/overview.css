@@ -1,80 +1,58 @@
-.overview-page { container-type: inline-size; max-width: 100%; display: flex; flex-direction: column; gap: calc(12px * var(--ui-factor)); padding: calc(12px * var(--ui-factor)); }
+/* Overview uses application theme tokens and scales with its workspace pane. */
+.overview-page { container-type: inline-size; max-width: 100%; display: flex; flex-direction: column; gap: calc(16px * var(--ui-factor)); padding: calc(20px * var(--ui-factor)); }
 .overview-page > * { min-width: 0; flex: none; }
-.overview-page-header { display: flex; align-items: flex-start; flex-wrap: wrap; gap: calc(10px * var(--ui-factor)); padding-right: calc(var(--inspector-overlay, 0px) + calc(12px * var(--ui-factor))); }
-.overview-context { margin-top: calc(3px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); overflow-wrap: anywhere; }
 .overview-muted { color: var(--text-muted); font-weight: 400; font-size: calc(10px * var(--ui-factor)); }
-.overview-section, .overview-summary { min-width: 0; border: 1px solid var(--border-default); border-radius: calc(5px * var(--ui-factor)); background: var(--bg-secondary); }
-.overview-section-header { display: flex; align-items: center; flex-wrap: wrap; gap: calc(8px * var(--ui-factor)); padding: calc(10px * var(--ui-factor)) calc(12px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); }
+.overview-section, .overview-summary { min-width: 0; border: 1px solid var(--border-default); border-radius: calc(8px * var(--ui-factor)); background: var(--bg-secondary); }
+.overview-section-header { display: flex; align-items: center; flex-wrap: wrap; gap: calc(8px * var(--ui-factor)); padding: calc(13px * var(--ui-factor)) calc(16px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); }
 .overview-section-heading { flex: 1 1 calc(160px * var(--ui-factor)); min-width: 0; }
-.overview-section-heading h2 { font-size: calc(12px * var(--ui-factor)); font-weight: 500; overflow-wrap: anywhere; }
-.overview-section-heading p { margin-top: calc(3px * var(--ui-factor)); color: var(--text-muted); font-size: calc(10px * var(--ui-factor)); overflow-wrap: anywhere; }
+.overview-section-heading h2 { font-size: calc(13px * var(--ui-factor)); font-weight: 600; overflow-wrap: anywhere; }
+.overview-section-heading p { margin-top: calc(3px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); overflow-wrap: anywhere; line-height: 1.5; }
 .overview-section-actions { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: calc(6px * var(--ui-factor)); }
 .overview-section-actions select { min-width: 0; max-width: 100%; }
-.overview-section-body { padding: calc(12px * var(--ui-factor)); min-width: 0; }
-.overview-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
-.overview-summary[data-metric-count="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.overview-summary-item { padding: calc(12px * var(--ui-factor)); min-width: 0; text-align: left; overflow-wrap: anywhere; }
-.overview-summary-item:not(:first-child) { border-left: 1px solid var(--border-subtle); }
+.overview-section-body { padding: calc(16px * var(--ui-factor)); min-width: 0; }
+.overview-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; }
+.overview-summary[data-metric-count="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.overview-summary-item { padding: calc(16px * var(--ui-factor)); min-width: 0; text-align: left; overflow-wrap: anywhere; position: relative; box-shadow: inset 1px 0 var(--border-subtle); border: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; }
 button.overview-summary-item:hover { background: var(--bg-hover); }
-.overview-summary-value { font: 500 calc(20px * var(--ui-factor))/1.5 var(--font-mono); font-variant-numeric: tabular-nums; margin: calc(2px * var(--ui-factor)) 0; }
+.overview-summary-value { font: 500 calc(20px * var(--ui-factor))/1.5 var(--font-mono); font-variant-numeric: tabular-nums; margin: calc(2px * var(--ui-factor)) 0; font-size: calc(26px * var(--ui-factor)); letter-spacing: -.04em; }
 .overview-problems-title { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); }
 .overview-problems-title svg { flex: none; }
 .overview-problem-filters { display: flex; flex-wrap: wrap; gap: calc(6px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); }
-.overview-problems-list { min-width: 0; max-height: min(calc(320px * var(--ui-factor)), 45vh); overflow: auto; }
-.overview-problem-row { width: 100%; min-width: 0; text-align: left; padding: calc(8px * var(--ui-factor)) 0; overflow-wrap: anywhere; }
+.overview-problems-list { min-width: 0; max-height: calc(190px * var(--ui-factor)); overflow: auto; }
+.overview-problem-row { width: 100%; min-width: 0; text-align: left; padding: calc(10px * var(--ui-factor)) calc(4px * var(--ui-factor)); overflow-wrap: anywhere; }
 .overview-problem-row + .overview-problem-row { border-top: 1px solid var(--border-subtle); }
 .overview-problem-row:hover { background: var(--bg-hover); }
-.overview-phase-track { display: flex; height: calc(4px * var(--ui-factor)); background: var(--bg-canvas); border-radius: 2px; overflow: hidden; }
-.overview-phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(120px * var(--ui-factor))), 1fr)); gap: calc(8px * var(--ui-factor)) calc(16px * var(--ui-factor)); margin-top: calc(10px * var(--ui-factor)); }
+.overview-phases { display: grid; grid-template-columns: 1fr; gap: calc(9px * var(--ui-factor)); margin-top: calc(10px * var(--ui-factor)); flex: 1 1 calc(140px * var(--ui-factor)); margin: 0; }
 .overview-phases > div { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); min-width: 0; }
 .overview-phases dt { min-width: 0; overflow-wrap: anywhere; }
 .overview-phases dd { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .overview-phase-dot { width: calc(6px * var(--ui-factor)); height: calc(6px * var(--ui-factor)); border-radius: 50%; flex: none; }
-.overview-inventory { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(210px * var(--ui-factor))), 1fr)); gap: 0 calc(16px * var(--ui-factor)); }
-.overview-inventory-item { display: flex; align-items: center; gap: calc(8px * var(--ui-factor)); min-width: 0; text-align: left; padding: calc(8px * var(--ui-factor)) calc(4px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); }
-.overview-inventory-item:hover { background: var(--bg-hover); }
-.overview-inventory-item > svg { flex: none; }
-.telemetry-section { display: grid; gap: calc(12px * var(--ui-factor)); min-width: 0; }
+.telemetry-section { display: grid; gap: calc(16px * var(--ui-factor)); min-width: 0; }
 .telemetry-options { display: grid; gap: calc(8px * var(--ui-factor)); padding: calc(8px * var(--ui-factor)); }
-.telemetry-metric { min-width: 0; padding-bottom: calc(12px * var(--ui-factor)); }
-.telemetry-metric + .telemetry-metric { border-top: 1px solid var(--border-default); padding-top: calc(12px * var(--ui-factor)); }
-.telemetry-metric-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: calc(6px * var(--ui-factor)) calc(12px * var(--ui-factor)); min-width: 0; }
-.telemetry-metric-heading h3 { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); min-width: calc(70px * var(--ui-factor)); font-size: calc(12px * var(--ui-factor)); font-weight: 500; }
-.telemetry-metric-heading h3 svg { color: var(--text-muted); flex: none; }
-.telemetry-value { font: 500 calc(18px * var(--ui-factor))/1.5 var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.telemetry-utilization { color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); margin-left: auto; overflow-wrap: anywhere; }
+.telemetry-metric { min-width: 0; padding-bottom: calc(12px * var(--ui-factor)); padding: 0; }
+.telemetry-metric + .telemetry-metric { border-top: 1px solid var(--border-default); padding-top: calc(12px * var(--ui-factor)); border: 0; border-left: 1px solid var(--border-subtle); padding: 0 0 0 calc(20px * var(--ui-factor)); }
+.telemetry-metric-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: calc(4px * var(--ui-factor)) calc(8px * var(--ui-factor)); min-width: 0; }
+.telemetry-metric-heading h3 { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); min-width: 0; font-size: calc(11px * var(--ui-factor)); font-weight: 500; width: 100%; margin-bottom: calc(4px * var(--ui-factor)); }
+.telemetry-metric-heading h3 svg { color: var(--telemetry-color); flex: none; }
+.telemetry-value { font: 500 calc(18px * var(--ui-factor))/1.5 var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; font-size: calc(27px * var(--ui-factor)); line-height: 1.3; letter-spacing: -.04em; }
+.telemetry-utilization { color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); margin-left: auto; overflow-wrap: anywhere; }
 .telemetry-usage-track { height: calc(3px * var(--ui-factor)); background: var(--border-subtle); margin: calc(8px * var(--ui-factor)) 0 calc(12px * var(--ui-factor)); border-radius: 2px; overflow: hidden; }
 .telemetry-usage-track > span { display: block; height: 100%; background: var(--telemetry-color); }
-.telemetry-budgets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(120px * var(--ui-factor))), 1fr)); gap: calc(10px * var(--ui-factor)); }
-.telemetry-budgets > div { min-width: 0; overflow-wrap: anywhere; }
-.telemetry-budgets dt { color: var(--text-muted); font-size: calc(10px * var(--ui-factor)); }
-.telemetry-budgets dd { font-family: var(--font-mono); font-size: calc(12px * var(--ui-factor)); margin-top: calc(3px * var(--ui-factor)); font-variant-numeric: tabular-nums; }
-.telemetry-budgets small { display: block; margin-top: calc(2px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); color: var(--text-muted); }
-.telemetry-history { margin-top: calc(10px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); color: var(--text-secondary); }
-.telemetry-history > summary { cursor: pointer; width: fit-content; }
-.telemetry-footnote { display: flex; flex-wrap: wrap; justify-content: space-between; gap: calc(6px * var(--ui-factor)); color: var(--text-muted); font-size: calc(10px * var(--ui-factor)); padding-top: calc(8px * var(--ui-factor)); border-top: 1px solid var(--border-subtle); }
+.telemetry-footnote { display: flex; flex-wrap: wrap; justify-content: space-between; gap: calc(6px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); padding-top: calc(8px * var(--ui-factor)); border-top: 1px solid var(--border-subtle); margin-top: calc(14px * var(--ui-factor)); }
 .telemetry-notice { display: grid; gap: calc(4px * var(--ui-factor)); border-left: 2px solid var(--status-warn); padding: calc(8px * var(--ui-factor)); margin-bottom: calc(12px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); overflow-wrap: anywhere; }
 .telemetry-notice strong { color: var(--status-warn); font-weight: 500; }
-.telemetry-chart { position: relative; padding-left: calc(50px * var(--ui-factor)); margin-top: calc(10px * var(--ui-factor)); }
-.telemetry-chart svg { width: 100%; height: 110px; display: block; overflow: visible; }
-.telemetry-chart-grid { stroke: var(--border-subtle); stroke-width: .7; }
-.telemetry-chart-line { fill: none; stroke: var(--telemetry-color); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.telemetry-chart { position: relative; margin-top: calc(12px * var(--ui-factor)); overflow-wrap: anywhere; }
+.telemetry-chart svg { width: 100%; height: calc(100px * var(--ui-factor)); display: block; overflow: visible; }
+.telemetry-chart-grid { stroke: var(--border-default); stroke-width: .6; opacity: .5; }
+.telemetry-chart-line { fill: none; stroke: var(--telemetry-color); stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .telemetry-chart-cursor { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 4; }
-.telemetry-chart-scale { position: absolute; left: 0; top: 10px; height: 78px; width: calc(45px * var(--ui-factor)); display: flex; flex-direction: column; justify-content: space-between; font: calc(10px * var(--ui-factor))/1.4 var(--font-mono); color: var(--text-muted); overflow-wrap: anywhere; }
-.telemetry-chart-collecting { position: absolute; top: 35px; left: calc(50px * var(--ui-factor)); right: 0; text-align: center; font-size: calc(10px * var(--ui-factor)); color: var(--text-muted); pointer-events: none; }
+.telemetry-chart-collecting { position: absolute; top: 35px; left: 0; right: 0; text-align: center; font-size: calc(10px * var(--ui-factor)); color: var(--text-muted); pointer-events: none; }
 .telemetry-chart-tooltip { position: absolute; left: 0; right: 0; top: 0; width: fit-content; max-width: 100%; margin: auto; padding: 4px 6px; border: 1px solid var(--border-strong); background: var(--bg-overlay); border-radius: 3px; font-size: calc(10px * var(--ui-factor)); overflow-wrap: anywhere; pointer-events: none; }
-.telemetry-chart-times, .telemetry-history-stats { display: flex; justify-content: space-between; flex-wrap: wrap; gap: calc(6px * var(--ui-factor)); color: var(--text-muted); font-size: calc(10px * var(--ui-factor)); }
-.telemetry-chart-times { font-family: var(--font-mono); margin-bottom: calc(8px * var(--ui-factor)); }
-.telemetry-history-help { font-size: calc(10px * var(--ui-factor)); color: var(--text-secondary); margin-bottom: calc(8px * var(--ui-factor)); }
-.telemetry-history-stats { justify-content: flex-start; gap: calc(6px * var(--ui-factor)) calc(16px * var(--ui-factor)); }
-.telemetry-history-stats b { color: var(--text-primary); font-family: var(--font-mono); font-weight: 500; }
-.telemetry-history-data { margin-top: calc(8px * var(--ui-factor)); }
-.telemetry-history-data summary { cursor: pointer; width: fit-content; }
-.telemetry-history-data table { width: 100%; text-align: left; font-family: var(--font-mono); }
-.telemetry-history-data th, .telemetry-history-data td { padding: calc(4px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.telemetry-chart-times { display: flex; justify-content: space-between; flex-wrap: wrap; gap: calc(6px * var(--ui-factor)); color: var(--text-muted); font-size: calc(10px * var(--ui-factor)); }
+.telemetry-chart-times { font-family: var(--font-mono); padding-inline: 2.3%; font-size: calc(9px * var(--ui-factor)); }
 .telemetry-ranking .overview-section-body { padding: 0; }
 .telemetry-segment { display: flex; max-width: 100%; border: 1px solid var(--border-default); border-radius: 4px; overflow: hidden; }
-.telemetry-segment button { padding: calc(5px * var(--ui-factor)) calc(10px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); color: var(--text-secondary); }
+.telemetry-segment button { padding: calc(5px * var(--ui-factor)) calc(10px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); color: var(--text-secondary); min-height: calc(26px * var(--ui-factor)); }
 .telemetry-segment button[aria-pressed="true"] { background: var(--bg-hover); color: var(--text-primary); }
 .telemetry-table-scroll { max-height: min(45vh, calc(360px * var(--ui-factor))); overflow: auto; }
 .telemetry-table { width: 100%; min-width: calc(440px * var(--ui-factor)); table-layout: fixed; border-collapse: collapse; font-size: calc(11px * var(--ui-factor)); }
@@ -95,8 +73,30 @@ button.overview-summary-item:hover { background: var(--bg-hover); }
 .telemetry-container-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(170px * var(--ui-factor))), 1fr)); gap: calc(8px * var(--ui-factor)); margin-top: calc(8px * var(--ui-factor)); }
 .telemetry-container-grid > div { display: flex; flex-wrap: wrap; gap: calc(6px * var(--ui-factor)); padding: calc(8px * var(--ui-factor)); border: 1px solid var(--border-subtle); border-radius: 3px; font-size: calc(10px * var(--ui-factor)); }
 .telemetry-container-grid strong { width: 100%; font-weight: 400; }
-/* Container em units follow the pane's scaled font size, including split editors. */
-@container (width < 75em) { .overview-summary[data-metric-count="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@container (width < 50em) { .overview-summary[data-metric-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@container (width < 37.5em) { .overview-summary[data-metric-count="6"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.overview-metric-label { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); line-height: 1.5; }
+.overview-metric-label > svg { flex: none; }
+.overview-metric-link { margin-left: auto; opacity: 0; }
+.overview-summary-item:hover .overview-metric-link, .overview-summary-item:focus-visible .overview-metric-link { opacity: 1; }
+.overview-metric-detail { font-size: calc(10px * var(--ui-factor)); line-height: 1.5; color: var(--text-secondary); }
+.telemetry-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(20px * var(--ui-factor)); }
+.overview-health-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: calc(16px * var(--ui-factor)); }
+.overview-health-grid > * { min-width: 0; }
+.overview-pod-distribution { display: flex; align-items: center; flex-wrap: wrap; gap: calc(16px * var(--ui-factor)); min-height: calc(150px * var(--ui-factor)); }
+.overview-donut { width: calc(132px * var(--ui-factor)); max-width: 100%; flex: 0 1 calc(132px * var(--ui-factor)); }
+.overview-donut-count { fill: var(--text-primary); font: 500 26px var(--font-mono); letter-spacing: -.04em; }
+.overview-donut-label { fill: var(--text-secondary); font-size: 11px; }
+.overview-phase-percent { color: var(--text-secondary); font: calc(10px * var(--ui-factor)) var(--font-mono); min-width: 3.5ch; text-align: right; }
+.overview-page button:focus-visible, .telemetry-chart svg:focus-visible, .overview-page summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.overview-page button { transition: background-color 150ms ease; }
+
+@container (width < 56em) { .overview-summary[data-metric-count="5"] { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (width < 40em) { .overview-summary[data-metric-count="3"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (width < 34em) { .overview-summary[data-metric-count="5"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container (width < 25em) { .overview-summary[data-metric-count] { grid-template-columns: minmax(0, 1fr); } }
+@container (width < 52em) { .telemetry-metrics, .overview-health-grid { grid-template-columns: minmax(0, 1fr); }
+  .telemetry-metric + .telemetry-metric { border-left: 0; border-top: 1px solid var(--border-subtle); padding: calc(18px * var(--ui-factor)) 0 0; } }
+@media (prefers-reduced-motion: reduce) { .overview-page button { transition: none; } }
+@media (max-width: 600px) { .overview-page { padding: calc(8px * var(--ui-factor)); }
+  .overview-section-header, .overview-section-body { padding: calc(10px * var(--ui-factor)); }
+  .overview-summary-item { padding: calc(12px * var(--ui-factor)); }
+}

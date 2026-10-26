@@ -98,11 +98,18 @@ test('readable text tokens meet contrast on IDE surfaces and chart labels follow
   }
   for (const fill of ['--accent-fill', '--accent-fill-hover']) expect(contrast('#ffffff', tokens[fill])).toBeGreaterThanOrEqual(4.5);
   await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
+  let baseLabelSize = 0;
+  await expect(page.locator('.telemetry-chart-scale')).toHaveCount(0);
   for (const scale of [100, 110, 150, 200]) {
     await page.keyboard.press('Control+,');
     await page.getByRole('button', { name: `Set interface scale to ${scale}%`, exact: true }).click();
     await page.keyboard.press('Escape');
-    await expect.poll(() => page.locator('.telemetry-chart-scale').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(10.8 * scale / 100);
+    const labels = page.locator('.telemetry-chart-times').first();
+    if (scale === 100) {
+      baseLabelSize = await labels.evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+      expect(baseLabelSize).toBeGreaterThanOrEqual(9);
+    }
+    await expect.poll(() => labels.evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeCloseTo(baseLabelSize * scale / 100, 1);
     expect(await page.getByTestId('cluster-overview').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   }
 });

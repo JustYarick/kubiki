@@ -1,22 +1,19 @@
 import './overview.css';
-import { OverviewSection } from '../components/k8s/OverviewSection';
-import { namespaceScopeLabel } from '../core/resources/namespace_scope';
-import { inNamespaceScope } from '../core/resources/namespace_scope';
+import { namespaceScopeLabel, inNamespaceScope } from '../core/resources/namespace_scope';
 import { OverviewProblems } from '../components/k8s/OverviewProblems';
+import { PodDistribution } from '../components/k8s/PodDistribution';
 import { ResourceTelemetry } from '../components/k8s/ResourceTelemetry';
 import { useMemo } from 'react';
-import { LayoutDashboard, ArrowRight } from 'lucide-react';
+import { ArrowRight, Boxes, Layers, Network, Server, Folder, type LucideIcon } from 'lucide-react';
 import { useClusterStore } from '../state/cluster_store';
 import { useResourceStore } from '../state/resource_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { buildOverview } from '../core/resources/overview';
-import { ResourceKindBadge } from '../components/k8s/ResourceKindBadge';
 import type { ResourceKind } from '../types/k8s';
 import { k8s } from '../providers/k8s_provider';
 
-const phaseColors: Record<string, string> = { Running: 'var(--status-ok)', Pending: 'var(--status-pending)', Succeeded: 'var(--text-muted)', Failed: 'var(--status-danger)', Terminating: 'var(--status-warn)', Unknown: 'var(--text-muted)' };
 export function OverviewView() {
-  const { availableResourceKinds, currentContext, selectedNamespace, isLoading, isConnected, clusterVersion } = useClusterStore();
+  const { availableResourceKinds, currentContext, selectedNamespace, isLoading, isConnected } = useClusterStore();
   const { resources, syncMode, watchStates, loadErrors } = useResourceStore();
   const summary = useMemo(() => buildOverview({ availableKinds: availableResourceKinds, resources, namespace: selectedNamespace, context: currentContext, syncMode, loading: isLoading, connected: isConnected, watchStates, loadErrors, onDemand: !k8s.demo }), [resources, availableResourceKinds, selectedNamespace, currentContext, syncMode, isLoading, isConnected, watchStates, loadErrors]);
   const open = (kind: ResourceKind) => { useResourceStore.getState().setActiveKind(kind); useWorkspaceStore.getState().openResourceList(kind); };
@@ -27,28 +24,26 @@ export function OverviewView() {
   const telemetryPods = useMemo(() => pods?.count == null ? null : [...resources.Pod.values()].filter(pod => inNamespaceScope(selectedNamespace, pod.namespace)), [resources.Pod, pods?.count, selectedNamespace, currentContext]);
   const telemetryNodes = useMemo(() => nodeCount == null ? null : [...resources.Node.values()], [resources.Node, nodeCount, currentContext]);
   if (!currentContext) return <div className="p-6 text-[var(--text-secondary)]">Select a cluster to view its overview.</div>;
-  return <div data-testid="cluster-overview" className="overview-page h-full min-h-0 min-w-0 overflow-auto kubiki-scrollbar select-text">
-    <header className="overview-page-header"><LayoutDashboard size={22} className="text-[var(--accent)] shrink-0 mt-1" /><div className="min-w-0 flex-1"><h1 className="text-lg font-semibold">{selectedNamespace === 'all' ? 'Cluster overview' : 'Namespace overview'}</h1><p className="overview-context">{currentContext} · {namespaceScopeLabel(selectedNamespace)}{clusterVersion ? ` · ${clusterVersion}` : ''}</p></div><span className="text-xs text-[var(--text-muted)]">{syncMode === 'demo' ? 'Demo data' : syncMode === 'watch' ? 'Live watch' : 'Snapshot'} · {isConnected ? 'Connected' : 'Disconnected'}</span></header>
+  return <div role="region" aria-label={`Overview: ${currentContext}, ${namespaceScopeLabel(selectedNamespace)}`} data-testid="cluster-overview" className="overview-page h-full min-h-0 min-w-0 overflow-auto kubiki-scrollbar select-text">
     {!!summary.incomplete.length && <details className="rounded border border-[var(--status-warn)]/40 p-3 text-xs"><summary className="cursor-pointer text-[var(--status-warn)]">{isLoading ? 'Synchronizing' : 'Partial or stale data'} · {summary.incomplete.length} resource type{summary.incomplete.length === 1 ? '' : 's'}</summary><p className="mt-2 text-[var(--text-secondary)]">Counts include only available snapshots. Unavailable data is shown as —; retained counts may be stale.</p><ul className="mt-2 space-y-1">{summary.incomplete.map(entry => <li key={entry.kind} className="break-words">{entry.kind}: {entry.state}{entry.message ? ` · ${entry.message}` : ''}</li>)}</ul></details>}
-    <section aria-label="Summary" className="overview-summary" data-metric-count={selectedNamespace === 'all' ? 6 : 4}>
-      <Metric label="Pods" value={value(pods?.count)} detail={pods?.count == null ? 'Awaiting Pod data' : `${summary.phases.Running} running · ${summary.phases.Pending} pending`} onClick={() => open('Pod')} />
-      <Metric label="Workload controllers" value={value(summary.workloads)} detail="Deployments, StatefulSets, DaemonSets, Jobs, CronJobs" />
-      <Metric label="Services" value={value(summary.row('Service')?.count)} detail="Services in this scope" onClick={() => open('Service')} />
-      <Metric label="Container restarts" value={value(summary.restarts)} detail="Cumulative across loaded Pods" onClick={() => open('Pod')} />
-      {selectedNamespace === 'all' && <><Metric label="Nodes" value={value(summary.row('Node')?.count)} detail={summary.row('Node')?.count == null ? 'Awaiting Node data' : `${summary.readyNodes} ready`} onClick={() => open('Node')} /><Metric label="Namespaces" value={value(summary.row('Namespace')?.count)} detail="Loaded namespaces" onClick={() => open('Namespace')} /></>}
+    <section aria-label="Summary" className="overview-summary" data-metric-count={selectedNamespace === 'all' ? 5 : 3}>
+      <Metric icon={Boxes} label="Pods" value={value(pods?.count)} detail={pods?.count == null ? 'Awaiting Pod data' : `${summary.phases.Running} running · ${summary.phases.Pending} pending`} onClick={() => open('Pod')} />
+      <Metric icon={Layers} label="Workload controllers" value={value(summary.workloads)} detail="Deployments, jobs & other controllers" />
+      <Metric icon={Network} label="Services" value={value(summary.row('Service')?.count)} detail="In the selected scope" onClick={() => open('Service')} />
+      {selectedNamespace === 'all' && <><Metric icon={Server} label="Nodes" value={value(summary.row('Node')?.count)} detail={summary.row('Node')?.count == null ? 'Awaiting Node data' : `${summary.readyNodes} ready`} onClick={() => open('Node')} /><Metric icon={Folder} label="Namespaces" value={value(summary.row('Namespace')?.count)} detail="Loaded namespaces" onClick={() => open('Namespace')} /></>}
     </section>
-    <OverviewProblems problems={summary.issues} warningEvents={summary.row('Event')?.count === null ? null : summary.warningEvents} partial={summary.incomplete.length > 0} />
-    <OverviewSection label="Pod phases" title="Pod phases">
-      {pods?.count == null ? <p className="overview-muted">Pod data unavailable or synchronizing.</p> : <>
-        <div className="overview-phase-track" aria-hidden="true">{Object.entries(summary.phases).map(([phase, count]) => count > 0 && <div key={phase} style={{ width: `${count / (pods?.count || 1) * 100}%`, background: phaseColors[phase] }} />)}</div>
-        <dl className="overview-phases">{Object.entries(summary.phases).map(([phase, count]) => <div key={phase}><span className="overview-phase-dot" style={{ background: phaseColors[phase] }} /><dt>{phase}</dt><dd>{count}</dd></div>)}</dl>
-      </>}
-    </OverviewSection>
-    <ResourceTelemetry key={`${currentContext}/${selectedNamespace}`} context={currentContext} namespace={selectedNamespace === 'all' ? null : selectedNamespace} pods={telemetryPods} nodes={telemetryNodes} />
-    <OverviewSection label="Resource inventory" title={<>Resource inventory <span className="overview-muted">· {summary.total.toLocaleString()} loaded objects</span></>} description="Open a resource type to load its inventory. Events are listed separately; cached counts may be outdated."><div className="overview-inventory">{summary.inventory.map(entry => <button key={entry.kind} aria-label={`Open ${entry.kind} resources`} className="overview-inventory-item" onClick={() => open(entry.kind)}><span className="flex-1 min-w-0"><ResourceKindBadge kind={entry.kind} />{entry.state !== 'ready' && <span className={`block mt-1 text-xs ${['not loaded', 'cached'].includes(entry.state) ? 'text-[var(--text-muted)]' : 'text-[var(--status-warn)]'}`}>{entry.state}</span>}</span><span className="font-mono text-sm" data-testid={`overview-count-${entry.kind}`}>{value(entry.count)}</span><ArrowRight size={12} className="text-[var(--text-muted)]" /></button>)}</div></OverviewSection>
+    <ResourceTelemetry key={`${currentContext}/${selectedNamespace}`} context={currentContext} namespace={selectedNamespace === 'all' ? null : selectedNamespace} pods={telemetryPods} nodes={telemetryNodes}>
+      <div className="overview-health-grid">
+        <PodDistribution phases={summary.phases} count={pods?.count} />
+        <OverviewProblems problems={summary.issues} warningEvents={summary.row('Event')?.count == null ? null : summary.warningEvents} partial={summary.incomplete.length > 0} />
+      </div>
+    </ResourceTelemetry>
   </div>;
 }
-function Metric({ label, value, detail, onClick }: { label: string; value: string; detail: string; onClick?: () => void }) {
+function Metric({ icon: Icon, label, value, detail, onClick }: { icon: LucideIcon; label: string; value: string; detail: string; onClick?: () => void }) {
   const Element = onClick ? 'button' : 'div';
-  return <Element aria-label={`${label}: ${value}`} title={detail} onClick={onClick} className="overview-summary-item"><div className="text-xs text-[var(--text-secondary)]">{label}</div><div className="overview-summary-value">{value}</div>{(label === 'Pods' || label === 'Nodes') && <div className="text-xs text-[var(--text-muted)]" title={detail}>{detail}</div>}</Element>;
+  return <Element aria-label={`${label}: ${value}`} title={detail} onClick={onClick} className="overview-summary-item">
+    <div className="overview-metric-label"><Icon size={14} aria-hidden="true" /><span>{label}</span>{onClick && <ArrowRight size={12} className="overview-metric-link" aria-hidden="true" />}</div>
+    <div className="overview-summary-value">{value}</div><div className="overview-metric-detail">{detail}</div>
+  </Element>;
 }

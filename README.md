@@ -68,7 +68,7 @@ The screenshots below use the built-in demo cluster.
 
 ### Cluster overview
 
-The overview brings together cluster health, capacity, workload metrics, recent events, and detected problems.
+The overview brings together key resource counts, visible CPU and memory history charts, Pod phase distribution, detected problems, and the highest resource consumers. Charts support keyboard inspection, time ranges, fixed or automatic scales, and pause/resume. Live history is collected while the overview is open; missing metrics stay visibly unavailable instead of appearing as zero.
 
 ![Cluster overview with health indicators, resource metrics, and events](docs/media/overview.png)
 

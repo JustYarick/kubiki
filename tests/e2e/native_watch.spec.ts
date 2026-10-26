@@ -88,10 +88,8 @@ test('connection collects full inventory and health before views open, then watc
   expect(await page.evaluate(() => (window as any).__watchHarness.active())).toBe(2);
   await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const overview = page.getByTestId('cluster-overview');
-  await expect(overview.getByRole('region', { name: 'Pod phases', exact: true }).getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed2');
+  await expect(overview.getByRole('region', { name: 'Pod phases', exact: true }).getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed2100%');
   await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
-  await expect(overview.getByTestId('overview-count-Secret')).toHaveText('0');
-  await expect(overview.getByTestId('overview-count-Secret').locator('..')).toContainText('cached');
   expect(await page.evaluate(() => (window as any).__watchHarness.subscriptions().some((query: any) => query.kind === 'Secret'))).toBe(false);
   await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
@@ -312,11 +310,11 @@ test('a diagram outside the selected namespace explains missing data and loads i
 test('Overview updates summary sources while unrelated inventory stays cached', async ({ page }) => {
   await nativeApi(page);await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
   const overview = page.getByTestId('cluster-overview');const phases = overview.getByRole('region', { name: 'Pod phases', exact: true });
-  await expect(overview.getByTestId('overview-count-Pod')).toHaveText('2');await expect(phases.getByText('Running', { exact: true }).locator('..')).toHaveText('Running2');
+  await expect(overview.getByRole('button', { name: 'Pods: 2', exact: true })).toBeVisible();await expect(phases.getByText('Running', { exact: true }).locator('..')).toHaveText('Running2100%');
   await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.stats.starts)).toBe(OVERVIEW_KINDS.length + 1);
-  await page.evaluate(() => (window as any).__watchHarness.update('Failed'));await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed2');await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
-  await page.evaluate(() => (window as any).__watchHarness.reconnect());await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByTestId('overview-count-Pod')).toHaveText('2');
-  await page.evaluate(() => (window as any).__watchHarness.empty());await expect(overview.getByTestId('overview-count-Pod')).toHaveText('0');await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed0');
+  await page.evaluate(() => (window as any).__watchHarness.update('Failed'));await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed2100%');await expect(overview.getByRole('region', { name: 'Detected issues', exact: true })).toContainText('live-web');
+  await page.evaluate(() => (window as any).__watchHarness.reconnect());await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.getByRole('button', { name: 'Pods: 2', exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).__watchHarness.empty());await expect(overview.getByRole('button', { name: 'Pods: 0', exact: true })).toBeVisible();await expect(phases.getByText('Failed', { exact: true }).locator('..')).toHaveText('Failed00%');
 });
 
 

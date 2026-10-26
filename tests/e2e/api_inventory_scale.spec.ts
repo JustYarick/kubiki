@@ -142,8 +142,7 @@ test('3500 Pods, 3500 ConfigMaps and 3500 custom resources remain usable through
   await expect(page.getByTestId('resource-details')).toContainText('widget-3499');
   expect(await table.locator('tbody tr[data-resource-uid]').count()).toBeLessThan(100);
   await page.getByTestId('explorer-panel').getByRole('button', { name: 'Open Overview', exact: true }).click();
-  await expect(page.getByTestId('overview-count-Pod')).toHaveText('3,500');
-  await expect(page.getByTestId('overview-count-ConfigMap')).toHaveText('3,500');
+  await expect(page.getByRole('button', { name: 'Pods: 3,500', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await page.getByRole('button', { name: 'All Namespaces', exact: true }).click();
   await page.getByRole('button', { name: 'Load all namespaces', exact: true }).click();
