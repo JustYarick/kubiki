@@ -126,37 +126,14 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
       {/* Top Controls Toolbar */}
       <div className="p-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2.5 bg-[var(--bg-secondary)]/30">
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Container Selector: Tabs if <= 3, Dropdown if > 3 (e.g. pods with many sidecars) */}
-          {containers.length > 3 ? (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] uppercase font-semibold text-[var(--text-muted)]">Container:</span>
-              <ContainerSelect
-                containers={containers}
-                value={selectedContainer}
-                onChange={setSelectedContainer}
-                headerLabel="Environment · all containers"
-              />
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 bg-[var(--bg-secondary)] p-1 rounded border border-[var(--border-subtle)]">
-              <span className="text-[10px] uppercase font-semibold text-[var(--text-muted)] px-1">Container:</span>
-              {containers.map((c) => (
-                <button
-                  key={c.name}
-                  onClick={() => setSelectedContainer(c.name)}
-                  className={`px-2 py-0.5 rounded font-mono text-[11px] transition-colors ${
-                    selectedContainer === c.name
-                      ? 'bg-[var(--accent-primary)] text-white font-medium shadow-xs'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-                  }`}
-                >
-                  {c.name}
-                  {c.role && c.role !== 'application' && (
-                    <span className="ml-1 text-[9px] opacity-75">({c.role})</span>
-                  )}
-                </button>
-              ))}
-            </div>
+          {/* Container Selector Dropdown */}
+          {containers.length > 0 && (
+            <ContainerSelect
+              containers={containers}
+              value={selectedContainer}
+              onChange={setSelectedContainer}
+              headerLabel="Environment · all containers"
+            />
           )}
 
           {/* Quick Reveal Toggle */}
