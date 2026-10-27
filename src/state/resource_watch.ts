@@ -9,7 +9,7 @@ import { useUiStore } from './ui_store';
 import { resourceDemand } from '../core/resources/resource_demand';
 import type { ResourceWatchProvider } from '../providers/watch_types';
 import { useDockStore } from './dock_store';
-import { inNamespaceScope } from '../core/resources/namespace_scope';
+import { inNamespaceScope, mergeNamespaceScopes, namespaceScopeCovers } from '../core/resources/namespace_scope';
 import { useResourceRequirements } from './resource_requirements';
 
 let session: ResourceWatchSession | undefined;
@@ -61,7 +61,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
   }, useClusterStore.getState().selectedNamespace, new Set(), query => {
     const state = useResourceStore.getState();
     const snapshot = state.watchStates[query.kind as ResourceKind];
-    if (!snapshot?.hasSnapshot || snapshot.query.context !== query.context || snapshot.query.namespace !== null && snapshot.query.namespace !== query.namespace) return;
+    if (!snapshot?.hasSnapshot || snapshot.query.context !== query.context || !namespaceScopeCovers(snapshot.query.namespace ?? 'all', query.namespace ?? 'all')) return;
     return [...state.resources[query.kind as ResourceKind].values()].filter(item => inNamespaceScope(query.namespace ?? 'all', item.namespace));
   });
   session = next;
@@ -72,14 +72,19 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     const { inspectorCollapsed, rightTab } = useUiStore.getState();
     const dock = useDockStore.getState();
     const dockType = !dock.dockCollapsed ? dock.sessions.find(entry => entry.id === dock.activeSessionId)?.type : undefined;
-    const demand = resourceDemand({ context, tabs, activeTabId, splitTabId, inspectorCollapsed, rightTab, eventsVisible: dockType === 'events', portsVisible: dockType === 'ports', selectedItem: useResourceStore.getState().selectedItem });
+    const demand = resourceDemand({ context, tabs, activeTabId, splitTabId, inspectorCollapsed, rightTab, selectedNamespace: useClusterStore.getState().selectedNamespace, eventsVisible: dockType === 'events', portsVisible: dockType === 'ports', selectedItem: useResourceStore.getState().selectedItem });
     const available = useClusterStore.getState().availableResourceKinds;
-    const extra = [...useResourceRequirements.getState().entries.values()].filter(entry => entry.context === context).flatMap(entry => entry.kinds);
+    const requirements = [...useResourceRequirements.getState().entries.values()].filter(entry => entry.context === context);
+    const extra = requirements.flatMap(entry => entry.kinds);
+    for (const entry of requirements) for (const kind of entry.kinds) {
+      const type = RESOURCE_TYPES.find(type => type.kind === kind);
+      if (type) demand.scopes.set(kind, mergeNamespaceScopes(demand.scopes.get(kind), type.namespaced ? entry.namespace : 'all'));
+    }
     const kinds = [...new Set([...demand.kinds, ...extra])].filter(kind => RESOURCE_TYPES.some(type => type.kind === kind) && (!available || available.includes(kind)));
-    const key = JSON.stringify([kinds, [...demand.clusterKinds]]);
+    const key = JSON.stringify([kinds, [...demand.clusterKinds], [...demand.scopes]]);
     if (key === demandKey) return Promise.resolve([]);
     demandKey = key;
-    return next.setKinds(kinds, demand.clusterKinds);
+    return next.setKinds(kinds, demand.clusterKinds, demand.scopes);
   };
   let scheduled = false;
   const schedule = () => {
@@ -90,6 +95,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
   unsubscribers = [useClusterStore.subscribe((state, previous) => {
     if (session === next && state.currentContext === context && state.selectedNamespace !== previous.selectedNamespace) {
       void next.setNamespace(state.selectedNamespace);
+      schedule();
       void syncResourceCounts(context, state.selectedNamespace);
     }
   }), useWorkspaceStore.subscribe(schedule), useUiStore.subscribe(schedule), useDockStore.subscribe(schedule), useResourceRequirements.subscribe(schedule), useResourceStore.subscribe((state, previous) => {

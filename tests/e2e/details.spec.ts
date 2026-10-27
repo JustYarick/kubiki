@@ -1,6 +1,7 @@
 import { captureScreenshot } from './helpers/screenshots';
 import { test, expect } from '@playwright/test';
 import { namespaceList } from './helpers/namespaces';
+import { RESOURCE_TYPES } from '../../src/core/resources/resource_types';
 
 function captureReactErrors(page: import('@playwright/test').Page) {
   const errors: string[] = [];
@@ -55,7 +56,7 @@ test('Related displays distinct kind badges and preserves resource navigation', 
   await captureScreenshot(page, { path: 'test-results/details-kind-badges.png' });
 });
 
-test('Related in all namespaces sends only local Pods to its worker and avoids unrelated collections', async ({ page }) => {
+test('Related with All Namespaces requests namespace-local dependencies and cluster resources', async ({ page }) => {
   await page.addInitScript(() => {
     const original = Worker.prototype.postMessage;
     (window as any).__relatedSnapshots = [];
@@ -67,10 +68,10 @@ test('Related in all namespaces sends only local Pods to its worker and avoids u
       original.call(this, message, options as StructuredSerializeOptions);
     };
   });
-  const reads: string[] = [];
+  const reads: Array<{ kind: string; namespace: string | null }> = [];
   page.on('request', request => {
     const url = new URL(request.url());
-    if (url.pathname.endsWith('/resources')) reads.push(url.searchParams.get('kind') ?? '');
+    if (url.pathname.endsWith('/resources')) reads.push({ kind: url.searchParams.get('kind') ?? '', namespace: url.searchParams.get('namespace') });
   });
   await mockResourceLists(page, {
     Pod: ['backend', 'outside'].flatMap(namespace => Array.from({ length: namespace === 'backend' ? 1 : 3000 }, (_, index) => ({
@@ -90,8 +91,35 @@ test('Related in all namespaces sends only local Pods to its worker and avoids u
   const snapshots = await page.evaluate(() => (window as any).__relatedSnapshots);
   expect(snapshots.length).toBeGreaterThan(0);
   expect(snapshots.every((snapshot: any) => snapshot.pods === 1 && snapshot.namespaces[0] === 'backend')).toBe(true);
-  expect(reads).not.toContain('MutatingAdmissionPolicy');
-  expect(reads).not.toContain('StorageClass');
+  for (const type of RESOURCE_TYPES) if (!type.namespaced) await expect.poll(() => reads.some(read => read.kind === type.kind && read.namespace === null)).toBe(true);
+  // The Pod table explicitly displays all namespaces. Related's other consumers
+  // must carry the object's namespace in the actual API request.
+  expect(reads.some(read => read.kind === 'Secret' && read.namespace === 'backend')).toBe(true);
+  for (const read of reads) if (read.kind !== 'Pod' && RESOURCE_TYPES.find(type => type.kind === read.kind)?.namespaced) expect(read.namespace).toBe('backend');
+});
+
+test('Related changes its API namespace with the object without requesting all Pods', async ({ page }) => {
+  const reads: Array<{ kind: string; namespace: string | null }> = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/resources')) reads.push({ kind: url.searchParams.get('kind') ?? '', namespace: url.searchParams.get('namespace') });
+  });
+  await mockResourceLists(page, {
+    ConfigMap: ['backend', 'outside'].map(namespace => ({ metadata: { uid: `config-${namespace}`, name: `config-${namespace}`, namespace }, data: {} })),
+    Pod: ['backend', 'outside'].map(namespace => ({ metadata: { uid: `pod-${namespace}`, name: `pod-${namespace}`, namespace }, spec: { containers: [], volumes: [{ configMap: { name: `config-${namespace}` } }] } })),
+  }, ['backend', 'outside']);
+  await page.goto('/');
+  const explorer = page.getByTestId('explorer-panel');
+  await explorer.getByRole('button', { name: 'Expand All', exact: true }).click();
+  await explorer.locator('[data-resource-type="ConfigMap"]').click();
+  const details = page.getByTestId('resource-details');
+  for (const namespace of ['backend', 'outside']) {
+    await page.getByTestId('resource-table').getByText(`config-${namespace}`, { exact: true }).click();
+    await details.getByRole('tab', { name: /^Related/ }).click();
+    await expect(details.getByText(`pod-${namespace}`, { exact: true })).toBeVisible();
+    expect(reads.some(read => read.kind === 'Pod' && read.namespace === namespace)).toBe(true);
+    expect(reads.filter(read => read.kind === 'Pod').every(read => read.namespace === 'backend' || read.namespace === 'outside')).toBe(true);
+  }
 });
 
 test('annotations render readable fields, a last-applied summary and expandable exact source', async ({ page }) => {
@@ -141,7 +169,9 @@ async function mockResourceLists(page: import('@playwright/test').Page, lists: R
     if (url.pathname.endsWith('/ping')) return route.fulfill({ json: { version: { gitVersion: 'v1.34.0' } } });
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: namespaces });
     const kind = url.searchParams.get('kind') ?? '';
-    return route.fulfill({ json: { items: lists[kind] ?? (kind === 'Namespace' ? namespaceList(namespaces).items : []) } });
+    const namespace = url.searchParams.get('namespace');
+    const items = lists[kind] ?? (kind === 'Namespace' ? namespaceList(namespaces).items : []);
+    return route.fulfill({ json: { items: items.filter((item: any) => !namespace || !item.metadata?.namespace || item.metadata.namespace === namespace) } });
   });
 }
 

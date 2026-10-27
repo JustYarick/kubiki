@@ -100,7 +100,7 @@ function KubernetesResourceDetails({
   const currentContext = useClusterStore((s) => s.currentContext);
   useEffect(() => {
     if (!inspector && item && currentContext && rightTab === 'related') {
-      return retainResourceKinds(currentContext, relatedResourceKinds(item));
+      return retainResourceKinds(currentContext, relatedResourceKinds(item), item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? '[]');
     }
   }, [inspector, item, currentContext, rightTab]);
 

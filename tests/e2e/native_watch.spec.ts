@@ -288,7 +288,11 @@ test('a restricted user can enter an unlisted namespace and recover namespaced r
   await page.getByTestId('resource-table').getByText('live-web', { exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Open details in tab' }).click();
   await namespace(page, 'All Namespaces');
-  await expect(page.locator('main').getByRole('alert')).toHaveAttribute('data-error-code', 'forbidden');
+  // All Namespaces must not turn this resource's namespace-local reads into
+  // cluster-wide LIST requests that this account is forbidden from making.
+  await expect(page.locator('main').getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('main').getByTestId('resource-details')).toContainText('live-web');
+  await expect.poll(() => page.evaluate(() => (window as any).__watchHarness.subscriptions().filter((s: any) => s.namespace !== null).every((s: any) => s.namespace === 'backend'))).toBe(true);
   await expect(page.locator('main').getByText('Resource Not Found', { exact: true })).toHaveCount(0);
 });
 

@@ -1,7 +1,7 @@
 import { gitOpsFamily, gitOpsGroup } from '../../core/resources/gitops';
 import { customResourcePlacement, customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
 import { resourceIcon } from '../../core/resource_icons';
-import { inNamespaceScope } from '../../core/resources/namespace_scope';
+import { inNamespaceScope, namespaceScopeCovers } from '../../core/resources/namespace_scope';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
@@ -171,6 +171,10 @@ export const Sidebar: React.FC = () => {
     }
     for (const [kind, map] of Object.entries(resources)) {
       if (!map) continue;
+      // A dependency loaded for one inspector must not replace the global tree
+      // count with that namespace's partial collection.
+      const watchedScope = watchStates[kind]?.query.namespace;
+      if (watchedScope && !namespaceScopeCovers(watchedScope, selectedNamespace)) continue;
       const loaded = watchStates[kind]?.hasSnapshot || map.size > 0;
       if (!loaded && counts.has(kind)) continue;
       if (selectedNamespace === 'all') {

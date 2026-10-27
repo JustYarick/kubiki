@@ -24,19 +24,21 @@ export class ResourceWatchSession {
   private subscriptions = new Map<ResourceKind, Subscription>();
   /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
   private scopedFallback = new Set<ResourceKind>();
+  private kindScopes: ReadonlyMap<ResourceKind, string> = new Map();
   private initialSync = new InitialSyncQueue();
   constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery) => ResourceItem[] | undefined) {}
 
   async start(kinds: ResourceKind[]): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled(kinds.map((kind) => this.refresh(kind))); }
 
   private scope(kind: ResourceKind): string {
-    return this.clusterKinds.has(kind) && !this.scopedFallback.has(kind) ? 'all' : this.namespace;
+    return this.clusterKinds.has(kind) && !this.scopedFallback.has(kind) ? 'all' : this.kindScopes.get(kind) ?? this.namespace;
   }
 
   /** Stop unused streams and keep exactly one subscription for each demanded kind. */
-  async setKinds(kinds: readonly ResourceKind[], clusterKinds: ReadonlySet<ResourceKind> = this.clusterKinds): Promise<PromiseSettledResult<void>[]> {
+  async setKinds(kinds: readonly ResourceKind[], clusterKinds: ReadonlySet<ResourceKind> = this.clusterKinds, scopes: ReadonlyMap<ResourceKind, string> = this.kindScopes): Promise<PromiseSettledResult<void>[]> {
     if (!this.active) return [];
     this.clusterKinds = clusterKinds;
+    this.kindScopes = scopes;
     const wanted = new Set(kinds);
     for (const [kind, subscription] of this.subscriptions) if (!wanted.has(kind)) {
       this.closeSubscription(subscription);
@@ -181,7 +183,7 @@ export class ResourceWatchSession {
     this.namespace = namespace;
     // Scope-independent kinds keep their cluster-wide watch — unless RBAC denied it,
     // in which case they follow the selected namespace like every other namespaced kind.
-    const scoped = [...this.subscriptions.keys()].filter((kind) => resourceType(kind).namespaced && (this.scopedFallback.has(kind) || !this.clusterKinds.has(kind)));
+    const scoped = [...this.subscriptions].filter(([kind, subscription]) => !sameQuery(subscription.query, resourceQuery(this.context, kind, this.scope(kind)))).map(([kind]) => kind);
     return Promise.allSettled(scoped.map((kind) => this.refresh(kind)));
   }
 

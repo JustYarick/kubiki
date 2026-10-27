@@ -110,14 +110,14 @@ describe('Bounded topology construction', () => {
     // Explicitly opening the shared resource still reveals its consumers.
     expect(buildTopology(resources, 'resource', priority, 1).items.has(resourceKey(other))).toBe(true);
   });
-  it('slices Related before serialization while retaining kinds with cross-namespace references', () => {
+  it('slices every namespaced kind in Related before serialization', () => {
     const resources = emptyResources(); const focus = pod(0, 'small'); const other = pod(1, 'other');
     resources.Pod.set(focus.uid, focus); resources.Pod.set(other.uid, other);
     const binding: ResourceItem = { uid: 'binding', name: 'binding', namespace: 'other', kind: 'RoleBinding', apiVersion: 'rbac.authorization.k8s.io/v1' };
     resources.RoleBinding.set(binding.uid, binding);
     const scoped = relatedResourceScope(resources, focus);
     expect([...scoped.Pod.values()]).toEqual([focus]);
-    expect(scoped.RoleBinding).toBe(resources.RoleBinding);
+    expect(scoped.RoleBinding.size).toBe(0);
     expect(relatedResourceScope(resources, focus).Pod).toBe(scoped.Pod);
     expect(resources.Pod.size).toBe(2);
     const updated = { ...resources, Pod: new Map(resources.Pod).set('new', { ...focus, uid: 'new', name: 'new' }) };

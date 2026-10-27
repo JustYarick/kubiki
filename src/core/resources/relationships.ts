@@ -53,8 +53,6 @@ export function relatedResourceScope(resources: Record<ResourceKind, Map<string,
   const namespace = focus.namespace ?? (focus.kind === 'Namespace' ? focus.name : undefined);
   if (!namespace) return resources;
   return Object.fromEntries(Object.entries(resources).map(([kind, map]) => {
-    // Keep kinds that may carry explicit cross-namespace references intact.
-    if (!SINGLE_NAMESPACE_KINDS.has(kind)) return [kind, map];
     let cached = namespaceCache.get(map);
     if (!cached) { cached = new Map(); namespaceCache.set(map, cached); }
     let scoped = cached.get(namespace);

@@ -11,6 +11,16 @@ export function namespaceScope(names: readonly string[] | null): string {
   const unique = [...new Set(names)].sort();
   return unique.length === 1 ? unique[0] : JSON.stringify(unique);
 }
+/** Union consumers' scopes without broadening a namespace-only request to all. */
+export function mergeNamespaceScopes(left: string | undefined, right: string): string {
+  if (left === undefined) return right;
+  const a = namespaceNames(left); const b = namespaceNames(right);
+  return namespaceScope(a === null || b === null ? null : [...a, ...b]);
+}
+export function namespaceScopeCovers(loaded: string, requested: string): boolean {
+  const available = namespaceNames(loaded); const needed = namespaceNames(requested);
+  return available === null || needed !== null && needed.every(name => available.includes(name));
+}
 export function inNamespaceScope(scope: string, namespace?: string): boolean {
   if (!namespace) return true;
   const names = namespaceNames(scope);
