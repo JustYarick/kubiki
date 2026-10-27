@@ -778,6 +778,11 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                       tabIndex={0}
                       draggable
                       onDragStart={(event) => {
+                        const target = event.target as HTMLElement;
+                        if (target.closest('[role="separator"]') || target.closest('[data-column-caret]')) {
+                          event.preventDefault();
+                          return;
+                        }
                         event.dataTransfer.effectAllowed = 'move';
                         event.dataTransfer.setData('text/plain', c.id);
                         setDraggingColumn(c.id);
@@ -872,13 +877,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                       <span
                         role="separator" aria-label={`Resize ${c.label} column`} tabIndex={0} aria-valuenow={widthFor(c.id)} onKeyDown={(e) => resizeColumnWithKeyboard(e, c.id)} aria-orientation="vertical"
                         title="Drag or use arrow keys to resize · Home to reset"
+                        draggable={false}
+                        onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
                         onPointerDown={(e) => startColResize(e, c.id)}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
                           resetColumn(c.id);
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors"
+                        className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors z-10"
                       />
                     </th>
                   );
