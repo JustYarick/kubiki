@@ -6,7 +6,7 @@ export interface ReadVisibility {
   addEventListener(type: 'visibilitychange', listener: () => void): void;
   removeEventListener(type: 'visibilitychange', listener: () => void): void;
 }
-interface Entry<T> { snapshot: ReadSnapshot<T>; listeners: Set<(snapshot: ReadSnapshot<T>) => void>; refresh: () => void; stop: () => void }
+interface Entry<T> { snapshot: ReadSnapshot<T>; listeners: Set<(snapshot: ReadSnapshot<T>) => void>; refresh: (cancelCurrent?: boolean) => void; stop: () => void }
 
 /** Shares reads across panes, bounds retained scopes, and cancels hidden/unmounted work. */
 export class ReadSubscriptions<T> {
@@ -51,7 +51,10 @@ export class ReadSubscriptions<T> {
         }
       };
       const visible = () => { clearTimeout(timer); if (visibility.hidden) controller?.abort(); else void poll(); };
-      current.refresh = () => { void poll(); };
+      current.refresh = (cancelCurrent = false) => {
+        if (cancelCurrent && busy) controller?.abort();
+        void poll();
+      };
       current.stop = () => { clearTimeout(timer); controller?.abort(); visibility.removeEventListener('visibilitychange', visible); };
       this.active.set(key, current);
       visibility.addEventListener('visibilitychange', visible);
@@ -64,5 +67,6 @@ export class ReadSubscriptions<T> {
       if (!current.listeners.size && this.active.get(key) === current) { this.active.delete(key);current.stop(); }
     };
   }
-  refresh(key: string) { this.active.get(key)?.refresh(); }
+  refresh(key: string, cancelCurrent = false) { this.active.get(key)?.refresh(cancelCurrent); }
+  clearCache(): void { this.cache.clear(); }
 }

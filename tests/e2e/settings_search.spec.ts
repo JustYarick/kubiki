@@ -30,6 +30,12 @@ test('settings search filters pages and rows, highlights matches, jumps on Enter
   await dialog.getByLabel('Clear search').click();
   await expect(categories.getByRole('button')).toHaveCount(9);
   await expect(categories.getByRole('button', { name: 'Terminal', exact: true })).toHaveAttribute('aria-current', 'true');
+  await search.fill('minimap');
+  await categories.getByRole('button', { name: 'Topology', exact: true }).click();
+  await expect(dialog.getByLabel('Topology canvas minimap', { exact: true })).toBeVisible();
+  await dialog.getByLabel('Clear search').click();
+  await categories.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await expect(dialog.getByLabel('Topology rendering profile')).toHaveCount(0);
 });
 
 test('starting prompt is saved, restored after reload and reset to the default', async ({ page }) => {
