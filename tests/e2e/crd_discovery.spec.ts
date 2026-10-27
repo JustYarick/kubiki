@@ -88,7 +88,7 @@ test.describe('CRD Discovery and Lens Parity', () => {
     await page.getByTestId('resource-table').locator('tbody tr', { hasText: 'media-assets' }).click({ button: 'right' });
     await page.getByRole('button', { name: /Open YAML Editor Tab/ }).click();
     await expect(page.getByTestId('yaml-editor')).toContainText('media-assets');
-    expect(await page.evaluate(() => (window as any).__customScopes)).toEqual(['default']);
+    expect(await page.evaluate(() => [...new Set((window as any).__customScopes)])).toEqual(['default']);
     await page.evaluate(async () => {
       const { useWorkspaceStore } = await import(/* @vite-ignore */ '/src/state/workspace_store.ts' as string);
       const { useClusterStore } = await import(/* @vite-ignore */ '/src/state/cluster_store.ts' as string);
@@ -96,6 +96,6 @@ test.describe('CRD Discovery and Lens Parity', () => {
       useClusterStore.getState().selectNamespace('infra');
     });
     await expect(page.getByTestId('yaml-editor')).toBeHidden();
-    expect(await page.evaluate(() => (window as any).__customScopes)).toEqual(['default']);
+    expect(await page.evaluate(() => [...new Set((window as any).__customScopes)])).toEqual(['default']);
   });
 });

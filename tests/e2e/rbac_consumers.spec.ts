@@ -26,7 +26,9 @@ test('Used by follows roles to bindings to subjects, including identities and un
     if (op === 'contexts') return route.fulfill({ json: [{ name: 'prod', is_current: true }] });
     if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (op === 'namespaces') return route.fulfill({ json: ['backend', 'other'] });
-    return route.fulfill({ json: { items: objects[url.searchParams.get('kind') ?? ''] ?? [] } });
+    const ns = url.searchParams.get('namespace');
+    const allItems = objects[url.searchParams.get('kind') ?? ''] ?? [];
+    return route.fulfill({ json: { items: allItems.filter(item => !ns || !item.metadata?.namespace || item.metadata.namespace === ns) } });
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   await page.getByRole('button', { name: /^Roles(?: \d+)?$/ }).click();

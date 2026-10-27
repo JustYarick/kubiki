@@ -142,8 +142,8 @@ test('replacing an unfinished layout cancels its worker and ignores its late fai
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
   });
-  expect(await page.evaluate(() => (window as any).__layouts.firstStopped())).toBe(true);
-  expect(await page.evaluate(() => (window as any).__layouts.latestStopped())).toBe(false);
+  await expect.poll(() => page.evaluate(() => (window as any).__layouts.firstStopped())).toBe(true);
+  await expect.poll(() => page.evaluate(() => (window as any).__layouts.latestStopped())).toBe(false);
   await page.evaluate(() => (window as any).__layouts.releaseLatest());
   await expect(page.locator('.react-flow__node-resource')).toHaveCount(2);
   await expect(page.getByRole('alert')).toHaveCount(0);

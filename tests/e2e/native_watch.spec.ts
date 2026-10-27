@@ -190,9 +190,18 @@ test('a completed build from an earlier scope is ignored while the new scope wai
     const postMessage = Worker.prototype.postMessage;
     const queued: Array<() => void> = [];
     const scopes: string[] = [];
-    (window as any).__topologyBuildHarness = { scopes, release: () => queued.shift()?.() };
+    (window as any).__topologyBuildHarness = {
+      scopes,
+      passthrough: false,
+      release: () => {
+        const fn = queued.shift();
+        fn?.();
+      },
+      queuedCount: () => queued.length,
+    };
     Worker.prototype.postMessage = function(message: any, options?: StructuredSerializeOptions | Transferable[]) {
       const send = () => postMessage.call(this, message, Array.isArray(options) ? { transfer: options } : options);
+      if ((window as any).__topologyBuildHarness?.passthrough) return send();
       if (message?.resources && message?.scope) {
         scopes.push(message.scope);
         queued.push(send);
@@ -211,7 +220,10 @@ test('a completed build from an earlier scope is ignored while the new scope wai
   await expect.poll(() => page.evaluate(() => (window as any).__topologyBuildHarness.scopes.length)).toBe(2);
   await expect(page.locator('.react-flow__node-resource')).toHaveCount(0);
   await expect(page.getByText('Updating topology relationships…', { exact: true })).toBeVisible();
-  await page.evaluate(() => (window as any).__topologyBuildHarness.release());
+  await page.evaluate(() => {
+    (window as any).__topologyBuildHarness.passthrough = true;
+    while ((window as any).__topologyBuildHarness.queuedCount() > 0) (window as any).__topologyBuildHarness.release();
+  });
   const node = page.locator('.react-flow__node-resource');
   await expect(node).toHaveCount(1);
   await expect(node).toContainText('other-web');

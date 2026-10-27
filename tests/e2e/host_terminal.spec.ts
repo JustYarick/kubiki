@@ -55,8 +55,13 @@ test('host shell metadata error can be retried with Reconnect', async ({ page })
   await pane.getByRole('button', { name: 'Reconnect shell' }).click();await expect(pane.getByRole('status')).toHaveText('Connected');
 });
 test('browser local terminal explains desktop requirement and does not simulate a real shell', async ({ page }) => {
-  await page.route('**/api/k8s/contexts', (route) => route.fulfill({ json: [] }));await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
-  await page.getByRole('button', { name: 'Expand bottom panel', exact: true }).click();await page.getByRole('button', { name: 'Open Local Terminal (Host PC)', exact: true }).click();
+  await page.route('**/api/k8s/contexts', (route) => route.fulfill({ json: [] }));
+  await page.goto('/');
+  await expect(page.getByText('Demo cluster · simulated resources and sessions', { exact: true })).toBeVisible();
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  const expand = page.getByRole('button', { name: 'Expand bottom panel', exact: true });
+  if (await expand.isVisible()) await expand.click();
+  await page.getByRole('button', { name: 'Open Local Terminal (Host PC)', exact: true }).click();
   await expect(page.getByTestId('live-terminal').getByRole('alert')).toContainText('Local shell is available in the desktop app');
   await expect(page.getByTestId('live-terminal').getByRole('status')).toHaveText('Failed');
 });

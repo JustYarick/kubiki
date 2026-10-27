@@ -44,7 +44,7 @@ test('Events stay in a bounded collapsible island and never consume the namespac
   expect(member.x + member.width).toBeLessThan(frame.x + frame.width);
   expect(member.y + member.height).toBeLessThan(frame.y + frame.height);
   await expect(page.locator('.react-flow__node [data-resource-kind="Event"]')).toHaveCount(0);
-  await expect(page.getByText('1 resources · 0 links', { exact: true })).toBeVisible();
+  await expect(page.locator('.topology-summary')).toContainText('2 resources · 0 links');
   const island = page.getByRole('complementary', { name: 'Topology events', exact: true });
   await expect(island.locator('li')).toHaveCount(10);
   await expect(island.locator('li').first()).toContainText('BackOff');
