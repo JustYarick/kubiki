@@ -28,6 +28,7 @@ import type { ResourceItem } from '../../types/k8s';
 import { DetailsPanel } from '../k8s/details/DetailsPanel';
 import { ResourceLoading } from '../ui/ResourceLoading';
 import { ResourceDetailsRouter } from '../k8s/details/ResourceDetailsRouter';
+import { PodEnvironmentTab } from '../k8s/details/PodEnvironmentTab';
 import { retainResourceKinds } from '../../state/resource_requirements';
 
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
@@ -320,6 +321,13 @@ function KubernetesResourceDetails({
         onPorts={() => setPfOpen(true)}
         rightTab={rightTab}
         setTab={setTab}
+        tabs={item.kind === 'Pod' ? [
+          { id: 'overview', label: 'Overview' },
+          { id: 'env', label: 'Environment' },
+          { id: 'related', label: 'Related' },
+          { id: 'events', label: 'Events' },
+          { id: 'yaml', label: 'YAML' },
+        ] : undefined}
         busy={rightTab === 'related' && (helm.loading || relatedLoading)}
         busyLabel="Loading resource relationships…"
         footer={
@@ -418,6 +426,8 @@ function KubernetesResourceDetails({
           </div>
         ) : rightTab === 'events' ? (
           <ResourceEvents key={item.uid} item={item} />
+        ) : rightTab === 'env' && item.kind === 'Pod' ? (
+          <PodEnvironmentTab key={item.uid} item={item} onNavigate={navigate} />
         ) : (
           <div className="details-scroll details-body kubiki-scrollbar">
             <ResourceDetailsRouter key={item.uid} item={item} onNavigate={navigate} onLogs={logs} onShell={shell} />

@@ -11,7 +11,7 @@ import { DEFAULT_TOPOLOGY_RENDERING, normalizeTopologyRendering, type TopologyRe
 import { ANALYSIS_INSTRUCTIONS, normalizeAnalysisPrompt, normalizeAiAgent, type AiAgent } from '../core/ai_analysis';
 
 export type Density = 'compact' | 'comfortable';
-export type RightTab = 'overview' | 'yaml' | 'related' | 'events';
+export type RightTab = 'overview' | 'yaml' | 'related' | 'events' | 'env';
 
 interface UIState extends TopologyRenderingPreferences {
   developerMode: boolean;
