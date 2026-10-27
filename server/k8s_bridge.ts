@@ -29,7 +29,7 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
     };
     const invalid = (message: string) => requestError('invalid_request', message, info, 400);
     try {
-      const methods: Record<string, string> = { 'api-resources': 'GET', contexts: 'GET', kubeconfig_path: 'GET', set_kubeconfig_path: 'POST', ping: 'GET', namespaces: 'GET', resources: 'GET', 'custom-resources': 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET', apply: 'POST', delete: 'POST', mutate: 'POST' };
+      const methods: Record<string, string> = { 'api-resources': 'GET', contexts: 'GET', kubeconfig_path: 'GET', set_kubeconfig_path: 'POST', ping: 'GET', namespaces: 'GET', resources: 'GET', 'resource-counts': 'GET', 'custom-resources': 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET', apply: 'POST', delete: 'POST', mutate: 'POST' };
       if (!methods[operation]) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== methods[operation]) throw requestError('invalid_request', 'Method not allowed', info, 405);
       if (operation === 'scale' || operation === 'secrets' || operation === 'apply' || operation === 'delete' || operation === 'mutate') throw requestError('forbidden', 'Kubernetes changes require the desktop application and backend system confirmation. HTTP bridge is read-only', info, 403);
@@ -78,6 +78,30 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
         const plural = type.group ? `${type.plural}.${type.group}` : type.plural;
         const data = JSON.parse(await kubectl([...contextArgs, 'get', plural, ...namespaceArgs, '-o', 'json']));
         return send(data);
+      }
+      if (operation === 'resource-counts') {
+        const namespace = url.searchParams.get('namespace');
+        if (namespace !== null && (!isValidNamespaceName(namespace) || namespace === 'all')) throw invalid('Invalid namespace');
+        const requested = new Set((url.searchParams.get('kinds') ?? '').split(',').filter(Boolean));
+        const types = RESOURCE_TYPES.filter(type => requested.size === 0 || requested.has(type.kind));
+        const counts: Record<string, number> = {};
+        for (let i = 0; i < types.length; i += 8) {
+          await Promise.all(types.slice(i, i + 8).map(async (type) => {
+            const nsPrefix = type.namespaced && namespace ? `namespaces/${namespace}/` : '';
+            const rawPath = type.group
+              ? `/apis/${type.group}/${type.version}/${nsPrefix}${type.plural}?limit=1`
+              : `/api/${type.version}/${nsPrefix}${type.plural}?limit=1`;
+            try {
+              const data = JSON.parse(await kubectl([...contextArgs, 'get', '--raw', rawPath]));
+              const items = Array.isArray(data?.items) ? data.items.length : 0;
+              const remaining = Math.max(0, Number(data?.metadata?.remainingItemCount ?? 0) || 0);
+              counts[type.kind] = items + remaining;
+            } catch {
+              // Ignore individual forbidden or unavailable resource kinds
+            }
+          }));
+        }
+        return send(counts);
       }
       if (operation === 'custom-resources') {
         const name = url.searchParams.get('name') ?? '';

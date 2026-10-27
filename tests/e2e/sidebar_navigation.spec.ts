@@ -68,5 +68,35 @@ test('custom resources nest by API group, groups start collapsed, and legacy exp
   await expect(explorer.getByRole('button', { name: 'Widget', exact: true })).toHaveCount(1);
   await explorer.getByRole('button', { name: 'Widget', exact: true }).click();
   await expect(page.getByTestId('resource-table')).toHaveAttribute('aria-label', 'Widget resource table');
+  await expect(explorer.getByRole('button', { name: 'second.example', exact: true })).toHaveCount(1);
   await expect(explorer.getByRole('button', { name: 'second.example', exact: true })).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('sidebar displays lightweight resource counts on connect without loading unopened collections', async ({ page }) => {
+  const fullReads: string[] = [];
+  await page.route('**/api/k8s/**', route => {
+    const url = new URL(route.request().url());
+    const operation = url.pathname.split('/').pop();
+    if (operation === 'contexts') return route.fulfill({ json: [{ name: 'cluster', is_current: true }] });
+    if (operation === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
+    if (operation === 'namespaces') return route.fulfill({ json: ['default', 'payments'] });
+    if (operation === 'resource-counts') {
+      const ns = url.searchParams.get('namespace');
+      return route.fulfill({ json: ns === 'payments' ? { Pod: 42, Deployment: 5, Secret: 12, Node: 18 } : { Pod: 9000, Deployment: 120, Secret: 340, Node: 18 } });
+    }
+    if (operation === 'resources') {
+      const kind = url.searchParams.get('kind') ?? '';
+      fullReads.push(kind);
+    }
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/');
+  const explorer = page.getByTestId('explorer-panel');
+  await expect(explorer.getByRole('button', { name: 'Workloads 9120', exact: true })).toBeVisible();
+  await expect(explorer.getByRole('button', { name: 'Nodes 18', exact: true })).toBeVisible();
+  await explorer.getByRole('button', { name: 'Workloads 9120', exact: true }).click();
+  await expect(explorer.getByRole('button', { name: 'Pods 9000', exact: true })).toBeVisible();
+  await expect(explorer.getByRole('button', { name: 'Deployments 120', exact: true })).toBeVisible();
+  expect(fullReads).not.toContain('Deployment');
+  expect(fullReads).not.toContain('Secret');
 });

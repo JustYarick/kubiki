@@ -93,3 +93,19 @@ it('discovers API resources in the selected context with literal arguments', asy
   expect((await fetch(`${base}api-resources`)).status).toBe(400);
   expect(run).not.toHaveBeenCalled();
 });
+
+it('fetches lightweight resource counts with limit=1 and remainingItemCount', async () => {
+  run.mockImplementation(async (args) => {
+    const rawPath = args.at(-1) ?? '';
+    if (rawPath === '/api/v1/namespaces/backend/pods?limit=1') {
+      return JSON.stringify({ metadata: { remainingItemCount: 8999 }, items: [{ metadata: { name: 'pod-0' } }] });
+    }
+    if (rawPath === '/api/v1/nodes?limit=1') {
+      return JSON.stringify({ metadata: { remainingItemCount: 179 }, items: [{ metadata: { name: 'node-0' } }] });
+    }
+    throw { stderr: 'Error from server (Forbidden): secrets is forbidden' };
+  });
+  const response = await fetch(`${base}resource-counts?context=production&namespace=backend&kinds=Pod,Node,Secret`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ Pod: 9000, Node: 180 });
+});

@@ -171,6 +171,15 @@ pub async fn get_resources(
     kubiki_core::core::reads::resources(read_client(&pool, &query.context).await?, query).await
 }
 #[tauri::command]
+pub async fn get_resource_counts(
+    context: String,
+    queries: Vec<ResourceQuery>,
+    pool: tauri::State<'_, ClusterClientPool>,
+) -> Result<std::collections::HashMap<String, usize>, ApiError> {
+    let client = read_client(&pool, &context).await?;
+    Ok(kubiki_core::core::reads::resource_counts(client, queries).await)
+}
+#[tauri::command]
 pub async fn get_custom_resources(
     context: String,
     name: String,

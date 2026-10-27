@@ -30,7 +30,11 @@ import type { ResourceKind } from '../../types/k8s';
 const key = (cat: string, group?: string) => (group ? `${cat}/${group}` : cat);
 
 export const Sidebar: React.FC = () => {
-  const { activeKind, setActiveKind, resources } = useResourceStore();
+  const activeKind = useResourceStore((s) => s.activeKind);
+  const setActiveKind = useResourceStore((s) => s.setActiveKind);
+  const resources = useResourceStore((s) => s.resources);
+  const resourceCounts = useResourceStore((s) => s.resourceCounts);
+  const watchStates = useResourceStore((s) => s.watchStates);
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   const availableKinds = useClusterStore(state => state.availableResourceKinds);
   const groups = useUiStore((s) => s.sidebarGroups);
@@ -152,8 +156,13 @@ export const Sidebar: React.FC = () => {
 
   const countsByKind = useMemo(() => {
     const counts = new Map<string, number>();
+    for (const [kind, count] of Object.entries(resourceCounts)) {
+      if (typeof count === 'number') counts.set(kind, count);
+    }
     for (const [kind, map] of Object.entries(resources)) {
       if (!map) continue;
+      const loaded = watchStates[kind]?.hasSnapshot || map.size > 0;
+      if (!loaded && counts.has(kind)) continue;
       if (selectedNamespace === 'all') {
         counts.set(kind, map.size);
       } else {
@@ -165,7 +174,7 @@ export const Sidebar: React.FC = () => {
       }
     }
     return counts;
-  }, [resources, selectedNamespace]);
+  }, [resources, resourceCounts, watchStates, selectedNamespace]);
 
   const countFor = (kind: string) => countsByKind.get(kind) ?? 0;
 

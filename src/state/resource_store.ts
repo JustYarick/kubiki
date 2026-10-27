@@ -9,6 +9,8 @@ import type { WatchCommit, WatchState } from '../providers/watch_types';
 
 interface ResourceState {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
+  resourceCounts: Partial<Record<ResourceKind, number>>;
+  setResourceCounts: (counts: Partial<Record<ResourceKind, number>>) => void;
   loadErrors: Partial<Record<ResourceKind, K8sRequestError>>;
   loadingKinds: Partial<Record<ResourceKind, boolean>>;
   setKindLoading: (kind: ResourceKind, loading: boolean) => void;
@@ -37,6 +39,8 @@ const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => 
 
 export const useResourceStore = create<ResourceState>((set, get) => ({
   resources: initialResources(),
+  resourceCounts: {},
+  setResourceCounts: (resourceCounts) => set({ resourceCounts }),
   loadErrors: {},
   loadingKinds: {},
   setKindLoading: (kind, loading) => set(state => ({ loadingKinds: { ...state.loadingKinds, [kind]: loading } })),
@@ -67,7 +71,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     }
     return { selectionHistory: [] };
   }),
-  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, watchStates: {}, syncMode: 'snapshot' }),
+  reset: () => set({ resources: initialResources(), resourceCounts: {}, selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, watchStates: {}, syncMode: 'snapshot' }),
   setLoadError: (kind, error) => set((state) => ({ loadingKinds: error == null ? state.loadingKinds : { ...state.loadingKinds, [kind]: false }, loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
 
   setActiveKind: (activeKind) => set({ activeKind }),

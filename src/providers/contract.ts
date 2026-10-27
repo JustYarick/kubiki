@@ -15,6 +15,7 @@ export interface KubernetesProvider extends ResourceWatchProvider {
   getNamespaces(context: string): Promise<string[]>;
   getApiResources(context: string): Promise<import('../core/resources/resource_types').ResourceType[]>;
   getResources(context: string, kind: ResourceKind, namespace?: string, signal?: AbortSignal): Promise<ResourceItem[]>;
+  getResourceCounts?(context: string, kinds: ResourceKind[], namespace?: string, signal?: AbortSignal): Promise<Partial<Record<ResourceKind, number>>>;
   getCustomResources(context: string, name: string, uid: string, namespace: string | null, signal?: AbortSignal): Promise<import('./custom_resources').CustomResourceInstance[]>;
   getLogs(context: string, name: string, namespace: string, container?: string): Promise<string>;
   getOverviewMetrics(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./overview_metrics').OverviewMetrics>;

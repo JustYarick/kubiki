@@ -14,7 +14,26 @@ import { useResourceRequirements } from './resource_requirements';
 
 let session: ResourceWatchSession | undefined;
 let unsubscribers: (() => void)[] = [];
-export function stopResourceWatches(): void { unsubscribers.forEach(close => close()); unsubscribers = []; session?.stop(); session = undefined; }
+let countsController: AbortController | undefined;
+
+export function syncResourceCounts(context: string, namespace: string): Promise<void> {
+  countsController?.abort();
+  if (!k8s.getResourceCounts) return Promise.resolve();
+  const controller = new AbortController();
+  countsController = controller;
+  const available = useClusterStore.getState().availableResourceKinds;
+  const kinds = RESOURCE_TYPES
+    .map(type => type.kind as ResourceKind)
+    .filter(kind => !available || available.includes(kind));
+  return k8s.getResourceCounts(context, kinds, namespace, controller.signal).then((counts) => {
+    if (controller.signal.aborted || useClusterStore.getState().currentContext !== context || useClusterStore.getState().selectedNamespace !== namespace) return;
+    if (Object.keys(counts).length > 0) {
+      useResourceStore.getState().setResourceCounts(counts);
+    }
+  }).catch(() => {});
+}
+
+export function stopResourceWatches(): void { countsController?.abort(); countsController = undefined; unsubscribers.forEach(close => close()); unsubscribers = []; session?.stop(); session = undefined; }
 export async function startResourceWatches(context: string): Promise<PromiseSettledResult<void>[]> {
   stopResourceWatches();
   const provider: ResourceWatchProvider = k8s.supportsResourceWatch ? k8s : {
@@ -70,17 +89,21 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
   unsubscribers = [useClusterStore.subscribe((state, previous) => {
     if (session === next && state.currentContext === context && state.selectedNamespace !== previous.selectedNamespace) {
       void next.setNamespace(state.selectedNamespace);
+      void syncResourceCounts(context, state.selectedNamespace);
     }
   }), useWorkspaceStore.subscribe(schedule), useUiStore.subscribe(schedule), useDockStore.subscribe(schedule), useResourceRequirements.subscribe(schedule), useResourceStore.subscribe((state, previous) => {
     if (state.selectedItem !== previous.selectedItem) schedule();
   })];
   useResourceStore.getState().setSyncMode(k8s.supportsResourceWatch ? 'watch' : 'snapshot');
+  void syncResourceCounts(context, useClusterStore.getState().selectedNamespace);
   return synchronize();
 }
 export async function refreshResourceWatches(kind?: ResourceKind): Promise<boolean> {
   if (!session) return false;
   if (kind) await session.refresh(kind);
   else {
+    const context = useClusterStore.getState().currentContext;
+    if (context) void syncResourceCounts(context, useClusterStore.getState().selectedNamespace);
     const results = await session.refreshAll();
     const failed = results.find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected') throw failed.reason;

@@ -130,6 +130,65 @@ export class K8sProvider implements KubernetesProvider {
     return mapK8sResourceList(raw, kind);
   }
 
+  async getResourceCounts(context: string, kinds: ResourceKind[], namespace?: string, signal?: AbortSignal): Promise<Partial<Record<ResourceKind, number>>> {
+    if (this.demo) {
+      this.mock ??= buildMockResources();
+      const counts: Partial<Record<ResourceKind, number>> = {};
+      for (const kind of kinds) {
+        const items = this.mock[kind];
+        if (!items) continue;
+        counts[kind] = items.filter((item) => inNamespaceScope(namespace ?? 'all', item.namespace)).length;
+      }
+      return counts;
+    }
+    const builtinKinds = kinds.filter(kind => !kind.startsWith('custom:'));
+    if (!builtinKinds.length) return {};
+    const names = namespaceNames(namespace ?? 'all');
+    if (names && names.length !== 1 && !this.isTauriEnv()) {
+      const slices = await Promise.all(names.map(name => this.getResourceCounts(context, builtinKinds, name, signal)));
+      const totals: Partial<Record<ResourceKind, number>> = {};
+      for (const slice of slices) {
+        for (const [kind, count] of Object.entries(slice)) {
+          if (typeof count === 'number') {
+            totals[kind as ResourceKind] = (totals[kind as ResourceKind] ?? 0) + (resourceType(kind as ResourceKind).namespaced ? count : (totals[kind as ResourceKind] === undefined ? count : 0));
+          }
+        }
+      }
+      return totals;
+    }
+    const queries: ResourceQuery[] = [];
+    for (const kind of builtinKinds) {
+      const type = resourceType(kind);
+      if (names && names.length !== 1 && type.namespaced) {
+        for (const name of names) {
+          queries.push(resourceQuery(context, kind, name));
+        }
+      } else {
+        queries.push(resourceQuery(context, kind, names ? names[0] : namespace));
+      }
+    }
+    const singleNamespace = names ? names[0] : namespace && namespace !== 'all' ? namespace : undefined;
+    try {
+      const raw = await this.request<Record<string, unknown>>(
+        'get_resource_counts',
+        'resource-counts',
+        { context, ...(singleNamespace ? { namespace: singleNamespace } : {}), kinds: builtinKinds.join(',') },
+        undefined,
+        { context, queries },
+        signal,
+      );
+      const counts: Partial<Record<ResourceKind, number>> = {};
+      for (const [kind, count] of Object.entries(raw ?? {})) {
+        if (typeof count === 'number' && Number.isFinite(count) && count >= 0) {
+          counts[kind as ResourceKind] = count;
+        }
+      }
+      return counts;
+    } catch {
+      return {};
+    }
+  }
+
   async getLogs(context: string, name: string, namespace: string, container?: string): Promise<string> {
     if (this.demo) return '';
     return this.request('get_pod_logs', 'logs', { ...resourceQuery(context, 'Pod', namespace), name, container });

@@ -103,6 +103,7 @@ pub fn run() {
             get_overview_metrics,
             get_namespaces,
             get_resources,
+            get_resource_counts,
             get_api_resources,
             get_custom_resources,
             delete_resource,
