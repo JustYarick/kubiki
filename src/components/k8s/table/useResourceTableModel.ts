@@ -3,7 +3,7 @@ import type { ResourceItem, ResourceKind } from '../../../types/k8s';
 import { useResourceStore } from '../../../state/resource_store';
 import { inNamespaceScope } from '../../../core/resources/namespace_scope';
 import { resourceIssues } from '../../../core/resources/diagnostics';
-import { compareCreation, compareRows, fastCompare, issuePriority, statusChoices, type SortKey } from '../../../core/resources/resource_sort';
+import { compareValues, statusOrder, fastCompare, issuePriority, statusChoices, type SortKey } from '../../../core/resources/resource_sort';
 import { matchesColumnFilter, columnFilterCount, type ColumnFilters } from '../../../core/resources/column_filters';
 import type { ColumnDef } from './columns';
 
@@ -54,6 +54,10 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
   /** Values of one column with their occurrence counts — the filter popup lists them. */
   const columnValues = useMemo(() => {
     const map = new Map<string, Map<string, number>>();
+    if (!activeFilterColumnId) return map;
+    const targetColumn = tableColumns.find((c) => c.id === activeFilterColumnId);
+    if (!targetColumn) return map;
+
     // Count values over the namespace + search scoped set so the popup only offers
     // values that are actually present in the current result set (not stale ones).
     let list = namespaceScopedItems;
@@ -72,28 +76,23 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
       }
     }
     const activeFilters = Object.entries(columnFilters).filter(([, filter]) => columnFilterCount(filter) > 0);
-    const columnsToCount = activeFilterColumnId === undefined
-      ? tableColumns
-      : tableColumns.filter((c) => c.id === activeFilterColumnId);
-    for (const column of columnsToCount) {
-      const counts = new Map<string, number>();
-      // Apply every other column's filter so the offered values match the rows the
-      // user can actually reach — but skip this column's own filter, otherwise its
-      // remaining values would disappear as soon as one value is selected.
-      let candidates = list;
-      for (const [colId, values] of activeFilters) {
-        if (colId === column.id) continue;
-        const filterColumn = tableColumns.find((c) => c.id === colId);
-        if (!filterColumn) continue;
-        candidates = candidates.filter((item) => matchesColumnFilter(filterColumn.get(item), values));
-      }
-      for (const item of candidates) {
-        const value = column.get(item);
-        const normalized = value == null || value === '' ? '—' : value;
-        counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
-      }
-      map.set(column.id, counts);
+    const counts = new Map<string, number>();
+    // Apply every other column's filter so the offered values match the rows the
+    // user can actually reach — but skip this column's own filter, otherwise its
+    // remaining values would disappear as soon as one value is selected.
+    let candidates = list;
+    for (const [colId, values] of activeFilters) {
+      if (colId === targetColumn.id) continue;
+      const filterColumn = tableColumns.find((c) => c.id === colId);
+      if (!filterColumn) continue;
+      candidates = candidates.filter((item) => matchesColumnFilter(filterColumn.get(item), values));
     }
+    for (const item of candidates) {
+      const value = targetColumn.get(item);
+      const normalized = value == null || value === '' ? '—' : value;
+      counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+    }
+    map.set(targetColumn.id, counts);
     return map;
   }, [namespaceScopedItems, tableColumns, searchQuery, searchRegex, columnFilters, activeFilterColumnId]);
 
@@ -147,26 +146,81 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
         })
       : visible;
     if (sorts.length) {
-      const value = (key: SortKey, item: ResourceItem): string | undefined =>
-        tableColumns.find((column) => column.id === key.columnId)?.get(item);
-      // Keys are evaluated in click order: the first key groups the rows, later keys order each group.
-      list = [...list].sort((a, b) => {
-        for (const key of sorts) {
+      // Pre-resolve columns for each sort key once before iterating rows
+      const resolvedSorts = sorts.map((key) => {
+        const column = tableColumns.find((c) => c.id === key.columnId);
+        return { key, column };
+      });
+
+      // Pre-extract sort values for each row (Schwartzian transform)
+      interface RowSortEntry {
+        item: ResourceItem;
+        sortValues: Array<number | string>;
+        namespace: string;
+        name: string;
+        uid: string;
+      }
+
+      const entries: RowSortEntry[] = list.map((item) => {
+        const sortValues: Array<number | string> = [];
+        for (const { key, column } of resolvedSorts) {
           if (key.columnId === '__issues') {
-            const diff = (issueRanks.get(b.uid) ?? 0) - (issueRanks.get(a.uid) ?? 0);
+            sortValues.push(issueRanks.get(item.uid) ?? 0);
+          } else if (key.columnId === '__created' || key.columnId === 'age') {
+            const rawTime = item.creationTimestamp ?? item.raw?.metadata?.creationTimestamp ?? item.metadata?.creationTimestamp;
+            const parsed = typeof rawTime === 'string' ? Date.parse(rawTime) : NaN;
+            sortValues.push(parsed);
+          } else if (key.statusFirst !== undefined) {
+            const val = column?.get(item);
+            sortValues.push(statusOrder(val, key.statusFirst));
+          } else {
+            sortValues.push(column?.get(item) ?? '');
+          }
+        }
+        return {
+          item,
+          sortValues,
+          namespace: item.namespace ?? '',
+          name: item.name,
+          uid: item.uid,
+        };
+      });
+
+      entries.sort((a, b) => {
+        for (let i = 0; i < resolvedSorts.length; i++) {
+          const { key } = resolvedSorts[i];
+          const valA = a.sortValues[i];
+          const valB = b.sortValues[i];
+
+          if (key.columnId === '__issues') {
+            const diff = (valB as number) - (valA as number);
             if (diff !== 0) return diff;
             continue;
           }
           if (key.columnId === '__created' || key.columnId === 'age') {
-            const diff = compareCreation(a, b, key.direction === 'asc' ? 1 : -1);
-            if (diff !== 0) return diff;
+            const left = valA as number;
+            const right = valB as number;
+            const dir = key.direction === 'asc' ? 1 : -1;
+            if (Number.isNaN(left) || Number.isNaN(right)) {
+              if (Number.isNaN(left) !== Number.isNaN(right)) return Number.isNaN(left) ? 1 : -1;
+            } else if (left !== right) {
+              return (left - right) * dir;
+            }
             continue;
           }
-          const diff = compareRows(a, b, [key], value);
-          if (diff !== 0) return diff;
+          if (key.statusFirst !== undefined) {
+            const order = (valA as number) - (valB as number);
+            if (order !== 0) return order;
+            continue;
+          }
+          if (valA === valB) continue;
+          const cmp = compareValues(valA as string, valB as string);
+          if (cmp !== 0) return key.direction === 'asc' ? cmp : -cmp;
         }
         return (a.namespace && b.namespace && a.namespace !== b.namespace ? fastCompare(a.namespace, b.namespace) : 0) || fastCompare(a.name, b.name) || fastCompare(a.uid, b.uid);
       });
+
+      list = entries.map((e) => e.item);
     } else {
       list = [...list].sort((a, b) => (a.namespace && b.namespace && a.namespace !== b.namespace ? fastCompare(a.namespace, b.namespace) : 0) || fastCompare(a.name, b.name) || fastCompare(a.uid, b.uid));
     }
