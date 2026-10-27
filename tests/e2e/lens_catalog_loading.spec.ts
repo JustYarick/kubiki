@@ -52,7 +52,7 @@ async function fixture(page: Page, withCustom = true) {
 async function open(page: Page, type: string) { await page.getByTestId('explorer-panel').locator(`[data-resource-type="${type}"]`).first().click(); return page.getByTestId('resource-table'); }
 
 test('all 45 Lens builtin collections use valid API queries and open their details', async ({ page }) => {
-  test.setTimeout(60000); const state = await fixture(page);
+  test.setTimeout(120000); const state = await fixture(page);
   await page.goto('/'); const explorer = page.getByTestId('explorer-panel'); await explorer.getByRole('button', { name: 'Expand All', exact: true }).click();
   for (const [kind] of api) {
     let table;

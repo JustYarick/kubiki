@@ -340,7 +340,9 @@ export default function App() {
 function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
   const error = useClusterStore((s) => s.error);
   const loading = useClusterStore((s) => s.isLoading);
-  if (!error && !k8s.demo) return null;
+  const currentContext = useClusterStore((s) => s.currentContext);
+  const isDemo = k8s.demo || currentContext === 'kubiki-demo';
+  if (!error && !isDemo) return null;
   return <div role="status" className="flex items-center gap-3 px-3 py-1.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] text-xs">
     <span className={error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'}>{error ? <>{error.message}{errorHint(error) && <span className="ml-2 text-[var(--text-secondary)]">{errorHint(error)}</span>}</> : 'Demo cluster · simulated resources and sessions'}</span>
     {error && <button disabled={loading} onClick={onRetry} className="text-[var(--accent)] shrink-0">Reconnect</button>}
