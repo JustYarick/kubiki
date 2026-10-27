@@ -135,6 +135,7 @@ test('filter values cycle include, exclude, reset and status sorting uses only f
 
   // Exclusions also apply when another value of this column is included.
   await popup.getByRole('checkbox', { name: 'Pending', exact: true }).click();
+  await expect(popup.getByRole('checkbox').first()).toHaveAttribute('aria-label', 'Pending');
   await running.click();
   await expect(table.locator('tbody tr')).toHaveCount(3);
   await running.click();

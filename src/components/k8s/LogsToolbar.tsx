@@ -7,6 +7,8 @@ import { IconButton } from '../ui/Button';
 import { SearchInput } from '../ui/Input';
 import { Popover } from '../ui/Dropdown';
 import type { ResourceContainer } from '../../types/k8s';
+import { LogTimeZoneSelect } from './LogTimeZoneSelect';
+import { selectedFirst } from '../../core/utils/selected_first';
 
 export function LogsToolbar({ name, namespace, context, containers, container, onContainer, filter, onFilter, isRegex, onToggleRegex, paused, onPause, timestamps, onTimestamps, wrap, onWrap, structured, onStructured, colorLevels, onColorLevels, onDownload, onClear, sourceControls }: {
   sourceControls?: ReactNode;
@@ -25,9 +27,9 @@ export function LogsToolbar({ name, namespace, context, containers, container, o
     <IconButton icon={paused ? Play : Pause} size="sm" active={paused} aria-pressed={paused} onClick={onPause} tooltip={paused ? 'Resume log updates' : 'Pause log updates'} aria-label="Pause" />
     <IconButton icon={Palette} size="sm" active={colorLevels} aria-pressed={colorLevels} onClick={onColorLevels ?? (() => {})} tooltip={colorLevels ? 'Highlight levels (On)' : 'Highlight levels (Off)'} aria-label="Highlight levels" />
     <IconButton icon={Braces} size="sm" active={structured} aria-pressed={structured} onClick={onStructured} tooltip={structured ? 'Structured JSON (On)' : 'Structured JSON (Off)'} aria-label="Structured JSON" />
-    {(compact || sourceControls) && <Popover align="end" width={210} trigger={({ open }) => <IconButton icon={MoreHorizontal} size="sm" active={open} aria-label="Log options" tooltip="Log options" />}>
-      {(close) => <div role="menu" aria-label="Log options">{compact && actions.map(({ icon: Icon, label, active, run }) => <button key={label} type="button" role={active === undefined ? 'menuitem' : 'menuitemcheckbox'} aria-checked={active} onClick={() => { run(); if (active === undefined) close(); }} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-[var(--bg-hover)]"><Icon size="calc(13px * var(--ui-factor))" /><span className="flex-1">{label}</span>{active !== undefined && <span>{active ? 'On' : 'Off'}</span>}</button>)}{sourceControls}</div>}
-    </Popover>}
+    <Popover align="end" width={260} trigger={({ open }) => <IconButton icon={MoreHorizontal} size="sm" active={open} aria-label="Log options" tooltip="Log options" />}>
+      {(close) => <div role="menu" aria-label="Log options">{compact && selectedFirst(actions, action => action.active === true).map(({ icon: Icon, label, active, run }) => <button key={label} type="button" role={active === undefined ? 'menuitem' : 'menuitemcheckbox'} aria-checked={active} onClick={() => { run(); if (active === undefined) close(); }} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-[var(--bg-hover)]"><Icon size="calc(13px * var(--ui-factor))" /><span className="flex-1">{label}</span>{active !== undefined && <span>{active ? 'On' : 'Off'}</span>}</button>)}<label className="block px-2 py-2 text-xs space-y-1"><span>Timestamp time zone</span><LogTimeZoneSelect /></label>{sourceControls}</div>}
+    </Popover>
     {!compact && actions.map(({ icon, label, active, run }) => <IconButton key={label} icon={icon} size="sm" active={active} aria-pressed={active} onClick={run} tooltip={label} aria-label={label} />)}
   </div>;
   return <div ref={ref} data-testid="logs-toolbar" className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] min-w-0">

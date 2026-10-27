@@ -1,3 +1,4 @@
+import { selectedFirst } from '../../core/utils/selected_first';
 import { useId, useState } from 'react';
 import { Check, ChevronDown, Search, type LucideIcon } from 'lucide-react';
 import { Popover } from './Dropdown';
@@ -24,7 +25,7 @@ function SelectMenu({ label, value, options, onSelect, customOption, customHint 
   const listId = useId();
   const extra = customOption?.(query.trim());
   const candidates = extra && !options.some((option) => option.value === extra.value) ? [...options, extra] : options;
-  const filtered = candidates.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase()));
+  const filtered = selectedFirst(candidates.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase())), option => option.value === value);
   return <div role="dialog" aria-label={`Choose ${label}`}>
     <div className="px-2 pb-2 pt-1">
       <div className="relative"><Search size="calc(13px * var(--ui-factor))" className="absolute left-2 top-2 text-[var(--text-muted)]" />

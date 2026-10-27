@@ -1,3 +1,4 @@
+import { selectedFirst } from '../../core/utils/selected_first';
 import { Check, ChevronDown, Circle } from 'lucide-react';
 import type { ResourceContainer } from '../../types/k8s';
 import { canExecContainer, containerSummary, containerTone, CONTAINER_ROLE_LABEL } from '../../core/resources/containers';
@@ -18,7 +19,7 @@ export function ContainerSelect({ containers, value, onChange, shell = false }: 
   </button>}>
     {(close) => <div role="listbox" aria-label={shell ? 'Shell containers' : 'Log containers'} className="max-h-[50vh] overflow-auto">
       <div className="px-3 py-1 text-xs text-[var(--text-muted)]">{shell ? 'Shell · running containers' : 'Logs · all containers'}</div>
-      {containers.map((container) => <button type="button" role="option" aria-selected={container.name === value} disabled={shell && !canExecContainer(container)} key={container.name} title={containerSummary(container)} onClick={() => { onChange(container.name); close(); }} className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-[var(--bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed">
+      {selectedFirst(containers, container => container.name === value).map((container) => <button type="button" role="option" aria-selected={container.name === value} disabled={shell && !canExecContainer(container)} key={container.name} title={containerSummary(container)} onClick={() => { onChange(container.name); close(); }} className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-[var(--bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed">
         <ContainerStatusIcon container={container} /><span className="min-w-0 flex-1"><span className="block font-mono text-xs truncate">{container.name}</span><span className="block text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] truncate">{CONTAINER_ROLE_LABEL[container.role ?? 'application']} · {container.reason ?? container.state ?? 'unknown'}{container.exitCode !== undefined ? ` · exit ${container.exitCode}` : ''}</span></span>{container.name === value && <Check size="calc(12px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />}
       </button>)}
     </div>}

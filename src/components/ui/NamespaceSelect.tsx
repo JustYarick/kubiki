@@ -1,4 +1,5 @@
-import { useId, useState } from 'react';
+import { useId, useLayoutEffect, useState } from 'react';
+import { selectedFirst } from '../../core/utils/selected_first';
 import { Check, ChevronDown, Layers, Search } from 'lucide-react';
 import { namespaceNames, namespaceScope, namespaceScopeLabel } from '../../core/resources/namespace_scope';
 import { isValidNamespaceName } from '../../core/resources/resource_types';
@@ -25,6 +26,12 @@ function NamespaceMenu({ label, value, options, allowCustom, onApply }: { label:
   const candidates = [...new Set([...options, ...(selected ?? []), ...(allowCustom && isValidNamespaceName(query.trim()) && query.trim() !== 'all' ? [query.trim()] : [])])].sort();
   const showAll = !query.trim() || 'all namespaces'.includes(query.trim().toLowerCase());
   const filtered = candidates.filter(name => name.toLowerCase().includes(query.trim().toLowerCase()));
+  const choices = selectedFirst([...(showAll ? [null] : []), ...filtered], name => name === null ? selected === null : selected?.includes(name) ?? false);
+  useLayoutEffect(() => {
+    const list = document.getElementById(id);
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && list?.contains(focused)) focused.scrollIntoView({ block: 'nearest' });
+  }, [selected, id]);
   const toggle = (name: string) => setSelected(previous => previous?.includes(name) ? previous.filter(value => value !== name) : [...(previous ?? []), name]);
   return <div role="dialog" aria-label={`Choose ${label}`} className="text-xs">
     <div className="px-2 pb-2 pt-1">
@@ -43,8 +50,7 @@ function NamespaceMenu({ label, value, options, allowCustom, onApply }: { label:
       const next = event.key === 'ArrowDown' ? buttons[(index + 1) % buttons.length] : event.key === 'ArrowUp' ? buttons[(index + buttons.length - 1) % buttons.length] : undefined;
       if (next) { event.preventDefault(); next.focus(); }
     }}>
-      {showAll && <button type="button" role="option" aria-selected={selected === null} onClick={() => setSelected(null)} className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)]"><span className="flex-1">All Namespaces</span>{selected === null && <Check size={13} className="text-[var(--accent)]" />}</button>}
-      {filtered.map(name => <button type="button" role="option" aria-selected={selected?.includes(name) ?? false} key={name} onClick={() => toggle(name)} className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)]">
+      {choices.map(name => name === null ? <button key="all" type="button" role="option" aria-selected={selected === null} onClick={() => setSelected(null)} className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)]"><span className="flex-1">All Namespaces</span>{selected === null && <Check size={13} className="text-[var(--accent)]" />}</button> : <button type="button" role="option" aria-selected={selected?.includes(name) ?? false} key={name} onClick={() => toggle(name)} className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)]">
         <span className={cx('w-3 h-3 rounded-sm border shrink-0 flex items-center justify-center', selected?.includes(name) ? 'border-[var(--accent)] bg-[var(--accent)] text-white' : 'border-[var(--border-strong)]')}>{selected?.includes(name) && <Check size={11} />}</span><span className="truncate" title={name}>{name}</span>
       </button>)}
     </div>

@@ -1,3 +1,4 @@
+import { Select } from './ui/Select';
 import { useEffect, useState } from 'react';
 import { useUiStore } from '../state/ui_store';
 import { loadTerminalFonts, terminalFontStack, TERMINAL_FONT_PRESETS } from '../core/terminal_appearance';
@@ -19,14 +20,14 @@ export function TerminalFontSettings() {
   }, [family, size]);
   const preset = TERMINAL_FONT_PRESETS.some(font => font.value === family) ? family : 'custom';
   return <section aria-label="Terminal typography" className="space-y-2 py-1 min-w-0">
-    <select id="terminal-font-preset" aria-label="Terminal font preset" className="ide-select w-full max-w-full" value={customMode ? 'custom' : preset} onChange={event => {
+    <Select id="terminal-font-preset" aria-label="Terminal font preset" className="ide-select w-full max-w-full" value={customMode ? 'custom' : preset} onChange={event => {
       setCustomMode(event.target.value === 'custom');
       if (event.target.value === 'custom') document.getElementById('terminal-font-family')?.focus();
       else useUiStore.getState().setTerminalFontFamily(event.target.value);
     }}>
       {TERMINAL_FONT_PRESETS.map(font => <option key={font.value} value={font.value}>{font.label}</option>)}
       <option value="custom">Custom font family</option>
-    </select>
+    </Select>
     <div className="flex flex-wrap items-end gap-2">
       <label className="flex-1 min-w-0 basis-52 text-xs">Font family / fallback list
         <input id="terminal-font-family" aria-label="Terminal font family" className="ide-select w-full mt-1" value={draft} placeholder="'MesloLGS NF', monospace" spellCheck={false} autoComplete="off" onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); useUiStore.getState().setTerminalFontFamily(draft); } }} />

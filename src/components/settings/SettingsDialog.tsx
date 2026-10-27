@@ -1,3 +1,4 @@
+import { Select } from '../ui/Select';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import { RotateCcw, Search, X } from 'lucide-react';
 import packageJson from '../../../package.json';
@@ -7,6 +8,7 @@ import { Input } from '../ui/Input';
 import { Checkbox } from '../ui/Checkbox';
 import { UpdateSettings } from '../updates/AppUpdates';
 import { TerminalFontSettings } from '../TerminalFontSettings';
+import { LogTimeZoneSelect } from '../k8s/LogTimeZoneSelect';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { k8s } from '../../providers/k8s_provider';
@@ -239,9 +241,9 @@ function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
         options={[{ value: 'namespace', label: 'Namespace' }, { value: 'flat', label: 'Flat' }]} />
     </Row>
     <Row entry={findEntry('topology.edges')}>
-      <select aria-label="Topology connection style" className="ide-select" disabled={fast} value={fast ? 'straight' : ui.topologyEdgeStyle} onChange={event => ui.setTopologyEdgeStyle(event.target.value as typeof ui.topologyEdgeStyle)}>
+      <Select aria-label="Topology connection style" className="ide-select" disabled={fast} value={fast ? 'straight' : ui.topologyEdgeStyle} onChange={event => ui.setTopologyEdgeStyle(event.target.value as typeof ui.topologyEdgeStyle)}>
         <option value="smooth">Editable routes</option><option value="bezier">Curved</option><option value="straight">Straight</option>
-      </select>
+      </Select>
     </Row>
     <Row entry={findEntry('topology.animations')}>
       <Checkbox aria-label="Animate topology connections" disabled={fast} checked={!fast && ui.topologyAnimations} onChange={event => ui.setTopologyAnimations(event.target.checked)} />
@@ -256,9 +258,9 @@ function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
       <Checkbox aria-label="Topology background grid" disabled={fast} checked={!fast && ui.topologyShowBackground} onChange={event => ui.setTopologyShowBackground(event.target.checked)} />
     </Row>
     <Row entry={findEntry('topology.updates')}>
-      <select aria-label="Topology live redraw interval" className="ide-select" value={ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
+      <Select aria-label="Topology live redraw interval" className="ide-select" value={ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
         {TOPOLOGY_UPDATE_INTERVALS.map(value => <option key={value} value={value}>{value < 1000 ? `${value} ms` : `${value / 1000} s`}{fast && value < 3000 ? ' (3 s in Performance)' : ''}</option>)}
-      </select>
+      </Select>
     </Row>
   </div>;
 }
@@ -315,7 +317,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
         <TerminalFontSettings />
       </Row>
       <Row entry={findEntry('terminal.scrollback')}>
-        <select
+        <Select
           aria-label="Terminal scrollback limit"
           className="ide-select w-32"
           value={terminalScrollback}
@@ -327,10 +329,10 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
           {scrollbackOptions.map((lines) => (
             <option key={lines} value={lines}>{lines.toLocaleString('en-US')} lines</option>
           ))}
-        </select>
+        </Select>
       </Row>
       <Row entry={findEntry('terminal.output-timeout')}>
-        <select
+        <Select
           aria-label="Session output timeout"
           className="ide-select w-40"
           value={terminalAckTimeoutSecs}
@@ -342,7 +344,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
           {TERMINAL_ACK_TIMEOUT_PRESETS.map((seconds) => (
             <option key={seconds} value={seconds}>{seconds === 0 ? 'Never (kill switch off)' : seconds === 60 ? '1 minute' : seconds === 300 ? '5 minutes' : `${seconds} seconds`}</option>
           ))}
-        </select>
+        </Select>
       </Row>
     </div>
   );
@@ -371,6 +373,9 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
       </Row>
       <Row entry={findEntry('logs.timestamps')}>
         <Checkbox aria-label="Show log timestamps by default" checked={logsTimestamps} onChange={(event) => setLogsTimestamps(event.target.checked)} />
+      </Row>
+      <Row entry={findEntry('logs.time-zone')}>
+        <LogTimeZoneSelect />
       </Row>
       <Row entry={findEntry('logs.color-levels')}>
         <Checkbox aria-label="Highlight log levels by default" checked={logsColorLevels} onChange={(event) => setLogsColorLevels(event.target.checked)} />
@@ -570,7 +575,7 @@ function AiPage({ sectionTitle }: { sectionTitle: string }) {
   const setPrompt = useUiStore(state => state.setAiAnalysisPrompt);
   const [draft, setDraft] = useState(prompt);
   return <div><SectionTitle>{sectionTitle}</SectionTitle>
-    <Row entry={findEntry('ai.agent')}><select aria-label="Analysis agent" className="ide-select w-40" value={agent} onChange={event => setAgent(event.target.value as AiAgent)}>{AI_AGENTS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select></Row>
+    <Row entry={findEntry('ai.agent')}><Select aria-label="Analysis agent" className="ide-select w-40" value={agent} onChange={event => setAgent(event.target.value as AiAgent)}>{AI_AGENTS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</Select></Row>
     <Row entry={findEntry('ai.starting-prompt')} wide>
       <label htmlFor="ai-starting-prompt" className="sr-only">Starting prompt</label>
       <textarea id="ai-starting-prompt" className="ide-textarea w-full font-mono" rows={12} maxLength={ANALYSIS_PROMPT_LIMIT} spellCheck={false} value={draft} aria-describedby="ai-prompt-hint" onChange={event => { setDraft(event.target.value); setPrompt(event.target.value); }} onBlur={() => setDraft(useUiStore.getState().aiAnalysisPrompt)} />
@@ -641,6 +646,7 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     ui.setLogsTimestamps(true);
     ui.setLogsColorLevels(false);
     ui.setLogsStructured(false);
+    ui.setLogsTimestampZone('utc');
     ui.setLogsDefaultTail(500);
     ui.setLogsMaxBufferLines(1000);
     ui.setLogsScrollStickiness(40);

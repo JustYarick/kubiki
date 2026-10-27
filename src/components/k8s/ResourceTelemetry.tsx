@@ -1,3 +1,4 @@
+import { Select } from '../ui/Select';
 import { OverviewSection } from './OverviewSection';
 import { Popover } from '../ui/Dropdown';
 import { IconButton, Button } from '../ui/Button';
@@ -32,7 +33,7 @@ export function ResourceTelemetry({ context, namespace, pods, nodes, children }:
   const errors = [state.error, state.data?.nodes.error?.message, state.data?.pods.error?.message].filter(Boolean);
   return <section aria-label="CPU and RAM telemetry" className="telemetry-section">
     <OverviewSection label="Compute and memory" title="Compute & memory" description={namespace ? `Pod usage · ${telemetry.coverage}` : `Node usage, including system processes · ${telemetry.coverage}`} actions={<>
-      <select aria-label="Metrics history range" className="ide-select" value={range} onChange={event => setRange(Number(event.target.value))}><option value={5}>Last 5 min</option><option value={15}>Last 15 min</option><option value={30}>Last 30 min</option></select>
+      <Select aria-label="Metrics history range" className="ide-select" value={range} onChange={event => setRange(Number(event.target.value))}><option value={5}>Last 5 min</option><option value={15}>Last 15 min</option><option value={30}>Last 30 min</option></Select>
       <Button size="sm" variant="ghost" aria-label="Refresh metrics" title="Refresh CPU/RAM metrics" disabled={state.loading || paused} onClick={state.refresh}><RefreshCw size={14} className={state.loading ? 'animate-spin' : undefined} /></Button>
       <Popover width={250} align="end" trigger={() => <IconButton icon={Settings2} aria-label="Metrics display options" aria-haspopup="dialog" />}>
         {() => <div role="dialog" aria-label="Metrics display options" className="telemetry-options">

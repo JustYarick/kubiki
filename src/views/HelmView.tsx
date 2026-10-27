@@ -1,3 +1,4 @@
+import { Select } from '../components/ui/Select';
 import { namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Anchor, Copy, RefreshCw, Search, GitBranch, ArrowUpCircle, RotateCcw, Trash2, MoreHorizontal, Package, Boxes, FileCode, SlidersHorizontal, Plus } from 'lucide-react';
@@ -151,8 +152,8 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
       <label className="helm-search"><Search size={13} aria-hidden="true" /><input aria-label="Search Helm releases by name or namespace" placeholder="Filter releases…" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <Popover align="end" width={240} trigger={() => <Button size="sm" aria-label="Helm release filters" className="resource-filter-trigger"><SlidersHorizontal size={13} aria-hidden="true" />Filters<span className="helm-filter-count">{Number(status !== 'all') + Number(order !== 'name') || ''}</span></Button>}>
         {close => <div role="dialog" aria-label="Helm release filters" className="p-2 space-y-2">
-          <label className="resource-filter-field"><span>Status</span><select aria-label="Helm release status" className={field} value={status} onChange={event => setStatus(event.target.value)}><option value="all">All statuses</option><option value="problems">Problems</option><option value="progressing">In progress</option><option value="deployed">Deployed</option><option value="failed">Failed</option><option value="uninstalled">Uninstalled</option><option value="superseded">Superseded</option></select></label>
-          <label className="resource-filter-field"><span>Order</span><select aria-label="Helm release order" className={field} value={order} onChange={event => setOrder(event.target.value)}><option value="name">Name A–Z</option><option value="problems">Problems first</option><option value="newest">Recently updated</option></select></label>
+          <label className="resource-filter-field"><span>Status</span><Select aria-label="Helm release status" className={field} value={status} onChange={event => setStatus(event.target.value)}><option value="all">All statuses</option><option value="problems">Problems</option><option value="progressing">In progress</option><option value="deployed">Deployed</option><option value="failed">Failed</option><option value="uninstalled">Uninstalled</option><option value="superseded">Superseded</option></Select></label>
+          <label className="resource-filter-field"><span>Order</span><Select aria-label="Helm release order" className={field} value={order} onChange={event => setOrder(event.target.value)}><option value="name">Name A–Z</option><option value="problems">Problems first</option><option value="newest">Recently updated</option></Select></label>
           <Button size="sm" onClick={close}>Done</Button>
         </div>}
       </Popover>

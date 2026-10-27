@@ -1,3 +1,4 @@
+import { Select } from '../ui/Select';
 import { defaultNamespace } from '../../core/resources/namespace_scope';
 import { useEffect, useRef, useState } from 'react';
 import { useClusterStore } from '../../state/cluster_store';
@@ -129,7 +130,7 @@ export function NodeShellPane({ session, visible }: { session: DockSession; visi
         <div className="flex flex-wrap items-end gap-2">
           <label className="min-w-0 flex-[1_1_140px]">Pod namespace<Input aria-label="Debug Pod namespace" value={namespace} onChange={(e) => { setNamespace(e.target.value);setOthers([]); }} disabled={busy} invalid={clamped} /></label>
           <label className="min-w-0 flex-[2_1_220px]">Debug image<Input aria-label="Debug image" value={image} onChange={(e) => setImage(e.target.value)} disabled={busy} /></label>
-          <label className="max-w-[140px]">Shell binary<select aria-label="Node shell binary" className="ide-select block max-w-full" value={shell} onChange={(e) => setShell(e.target.value)} disabled={busy}>{['/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh'].map((value) => <option key={value}>{value}</option>)}</select></label>
+          <label className="max-w-[140px]">Shell binary<Select aria-label="Node shell binary" className="ide-select block max-w-full" value={shell} onChange={(e) => setShell(e.target.value)} disabled={busy}>{['/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh'].map((value) => <option key={value}>{value}</option>)}</Select></label>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={!native || !nodeRef || busy || recreated || clamped || !image.trim()} onClick={() => void recreate()}>Apply (recreate helper Pod)</Button>

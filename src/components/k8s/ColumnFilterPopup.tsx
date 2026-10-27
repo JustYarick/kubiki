@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { selectedFirst } from '../../core/utils/selected_first';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Filter, X } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
@@ -39,14 +40,18 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
 
   const excludedSet = useMemo(() => new Set(selected.exclude), [selected.exclude]);
   const activeCount = columnFilterCount(selected);
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (focused instanceof HTMLInputElement && focused.type === 'checkbox' && panelRef.current?.contains(focused)) focused.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
 
   const entries = useMemo(() => {
     const q = query.trim().toLowerCase();
     const available = new Map(values);
     for (const value of [...selected.include, ...selected.exclude]) if (!available.has(value)) available.set(value, 0);
-    return [...available.entries()]
+    return selectedFirst([...available.entries()]
       .filter(([value]) => !q || value.toLowerCase().includes(q))
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])), ([value]) => selected.include.includes(value) || selected.exclude.includes(value));
   }, [values, query, selected]);
 
   useEffect(() => {
@@ -120,7 +125,7 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
 
       {quick && quick.length > 0 && (
         <div className="flex flex-wrap gap-1 px-2 pb-1.5 shrink-0">
-          {quick.map((value) => {
+          {selectedFirst([...new Set([...quick, ...selected.include, ...selected.exclude])], value => selectedSet.has(value) || excludedSet.has(value)).slice(0, 6).map((value) => {
             const active = selectedSet.has(value);
             const excluded = excludedSet.has(value);
             return (

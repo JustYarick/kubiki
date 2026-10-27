@@ -1,3 +1,4 @@
+import type { LogTimestampZone } from '../core/utils/log_timestamp';
 import { DEFAULT_TERMINAL_FONT, normalizeTerminalFont, normalizeTerminalLineHeight } from '../core/terminal_appearance';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -39,6 +40,7 @@ interface UIState extends TopologyRenderingPreferences {
   /* defaults for new log sessions */
   logsWrap: boolean;
   logsTimestamps: boolean;
+  logsTimestampZone: LogTimestampZone;
   logsStructured: boolean;
   logsColorLevels: boolean;
   /** Poll frequency for the log viewer, milliseconds. Lens-style reads. */
@@ -88,6 +90,7 @@ interface UIState extends TopologyRenderingPreferences {
   setTerminalAckTimeoutSecs: (value: number) => void;
   setLogsWrap: (value: boolean) => void;
   setLogsTimestamps: (value: boolean) => void;
+  setLogsTimestampZone: (value: LogTimestampZone) => void;
   setLogsStructured: (value: boolean) => void;
   setLogsColorLevels: (value: boolean) => void;
   setLogsPollMs: (value: number) => void;
@@ -174,6 +177,7 @@ export const useUiStore = create<UIState>()(
       terminalAckTimeoutSecs: 0,
       logsWrap: true,
       logsTimestamps: true,
+      logsTimestampZone: 'utc',
       logsStructured: false,
       logsColorLevels: false,
       logsPollMs: 2000,
@@ -215,6 +219,7 @@ export const useUiStore = create<UIState>()(
       setTerminalAckTimeoutSecs: (value) => set({ terminalAckTimeoutSecs: normalizeTimeoutSecs(value) }),
       setLogsWrap: (logsWrap) => set({ logsWrap }),
       setLogsTimestamps: (logsTimestamps) => set({ logsTimestamps }),
+      setLogsTimestampZone: (value) => set({ logsTimestampZone: value === 'local' ? 'local' : 'utc' }),
       setLogsStructured: (logsStructured) => set({ logsStructured }),
       setLogsColorLevels: (logsColorLevels) => set({ logsColorLevels }),
       setLogsPollMs: (value) => set({ logsPollMs: (LOG_POLL_PRESETS as readonly number[]).includes(value) ? value : 2000 }),
@@ -307,6 +312,7 @@ export const useUiStore = create<UIState>()(
           yamlHideManagedFields: normalizeBool(stored?.yamlHideManagedFields, true),
           logsWrap: normalizeBool(stored?.logsWrap, true),
           logsTimestamps: normalizeBool(stored?.logsTimestamps, true),
+          logsTimestampZone: stored?.logsTimestampZone === 'local' ? 'local' : 'utc',
           logsStructured: normalizeBool(stored?.logsStructured, false),
           logsColorLevels: normalizeBool(stored?.logsColorLevels, false),
           logsPollMs: normalizeNumber(stored?.logsPollMs, 500, 60000, 2000),
@@ -339,6 +345,7 @@ export const useUiStore = create<UIState>()(
         yamlHideManagedFields: s.yamlHideManagedFields,
         logsWrap: s.logsWrap,
         logsTimestamps: s.logsTimestamps,
+        logsTimestampZone: s.logsTimestampZone,
         logsStructured: s.logsStructured,
         logsColorLevels: s.logsColorLevels,
         logsPollMs: s.logsPollMs,

@@ -1,3 +1,5 @@
+import { logTimestampFormatter, systemTimeZone } from '../../core/utils/log_timestamp';
+import { Select } from '../ui/Select';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ContainerChoices } from './ContainerLaunchDialog';
 import { LogsToolbar } from './LogsToolbar';
@@ -8,7 +10,7 @@ import { fetchLogSlice, type LogSliceParams } from '../../providers/tauri_logs';
 import { resourceRef } from '../../core/resources/identity';
 import { k8s } from '../../providers/k8s_provider';
 import { useDockStore, type DockSession } from '../../state/dock_store';
-import { LOG_POLL_PRESETS, useUiStore } from '../../state/ui_store';
+import { LOG_POLL_PRESETS, LOG_TAIL_PRESETS, useUiStore } from '../../state/ui_store';
 import { Button } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
 
@@ -44,6 +46,9 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const [filter, setFilter] = useState('');
   const showTimestamps = useUiStore(s => s.logsTimestamps);
   const setShowTimestamps = useUiStore(s => s.setLogsTimestamps);
+  const timestampZone = useUiStore(s => s.logsTimestampZone);
+  const localZone = systemTimeZone();
+  const formatTimestamp = useMemo(() => logTimestampFormatter(timestampZone, localZone), [timestampZone, localZone]);
   const structured = useUiStore(s => s.logsStructured);
   const setStructured = useUiStore(s => s.setLogsStructured);
   const colorLevels = useUiStore(s => s.logsColorLevels);
@@ -97,7 +102,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
         if (k8s.demo) {
           const [level, template] = LOG_TEMPLATES[seqRef.current % LOG_TEMPLATES.length];
           const msg = `[demo ${session.resourceName}/${activeContainer}] ` + template.replace('{ms}', '42').replace(/\{n\}/g, '3');
-          const line = { t: new Date().toISOString().slice(11, 23), level, msg, seq: seqRef.current++ };
+          const line = { t: new Date().toISOString(), level, msg, seq: seqRef.current++ };
           setLines((current) => [...current, line].slice(-500));
         } else {
           if (recreated) throw new Error('The Pod was recreated. Open the current Pod to read its logs.');
@@ -191,9 +196,9 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
       <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? `Simulated logs · poll every ${Math.round(pollMs / 1000)}s` : native ? `${phase} · ${previous ? 'previous container snapshot' : `initial tail ${tail}`} · history up to 1000 lines` : `Browser snapshot · latest 500 lines · refresh every ${Math.round(pollMs / 1000)}s`}{truncated && ' · older or oversized output discarded'}</div>
       <LogsToolbar sourceControls={native ? <div className="border-t border-[var(--border-default)] p-2 space-y-2 text-xs">
         <label className="flex items-center gap-2"><input type="checkbox" checked={previous} onChange={(event) => setPrevious(event.target.checked)} />Previous container instance</label>
-        <label className="flex items-center justify-between gap-2">Initial tail<select aria-label="Initial log tail" value={tail} onChange={(event) => setTail(Number(event.target.value))} className="ide-select">{[100, 500, 1000].map((n) => <option key={n} value={n}>{n} lines</option>)}</select></label>
-        <label className="flex items-center justify-between gap-2">Since<select aria-label="Log time range" value={since} onChange={(event) => setSince(Number(event.target.value))} className="ide-select">{[[0, 'Any time'], [300, '5 minutes'], [3600, '1 hour'], [86400, '24 hours']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="flex items-center justify-between gap-2">Poll frequency<select aria-label="Log poll frequency" value={pollMs} onChange={(event) => { const value = Number(event.target.value); setPollMs(value); }} className="ide-select">{LOG_POLL_PRESETS.map((value) => <option key={value} value={value}>{value / 1000}s</option>)}</select></label>
+        <label className="flex items-center justify-between gap-2">Initial tail<Select aria-label="Initial log tail" value={tail} onChange={(event) => setTail(Number(event.target.value))} className="ide-select">{LOG_TAIL_PRESETS.map((n) => <option key={n} value={n}>{n} lines</option>)}</Select></label>
+        <label className="flex items-center justify-between gap-2">Since<Select aria-label="Log time range" value={since} onChange={(event) => setSince(Number(event.target.value))} className="ide-select">{[[0, 'Any time'], [300, '5 minutes'], [3600, '1 hour'], [86400, '24 hours']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>
+        <label className="flex items-center justify-between gap-2">Poll frequency<Select aria-label="Log poll frequency" value={pollMs} onChange={(event) => { const value = Number(event.target.value); setPollMs(value); }} className="ide-select">{LOG_POLL_PRESETS.map((value) => <option key={value} value={value}>{value / 1000}s</option>)}</Select></label>
         <Button size="sm" onClick={() => { setPaused(false); setGeneration((value) => value + 1); }}>Reconnect logs</Button>
         <p className="text-[var(--text-muted)]">Reads reload the recent tail, then poll only lines after the newest timestamp. Previous logs are a snapshot.</p>
       </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
@@ -263,9 +268,9 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                   )}
                 >
                   {showTimestamps && (
-                    <span className="text-[var(--text-muted)] select-none pr-2 font-mono text-[10px]">
-                      {l.t}
-                    </span>
+                    <time data-testid="log-timestamp" dateTime={l.t || undefined} title={l.t ? `Original: ${l.t}` : undefined} className="text-[var(--text-muted)] pr-2 font-mono text-[10px]">
+                      {formatTimestamp(l.t)}
+                    </time>
                   )}
                   <span className="sr-only">{level}: </span>
                   {message && <span>{message}</span>}

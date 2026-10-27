@@ -18,6 +18,7 @@ import { useDockStore, type DockSession } from '../../state/dock_store';
 import { k8s } from '../../providers/k8s_provider';
 import { IconButton } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
+import { selectedFirst } from '../../core/utils/selected_first';
 
 export function TerminalSessionPane({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
   const choice = useSessionContainers(session, true);
@@ -223,10 +224,12 @@ function DemoTerminalSessionPane({ session, visible, onContainerChange }: { sess
           )}
         >
           {(close) => (
-            <div className="py-1">
-              {(isLocal ? ['/bin/zsh', '/bin/bash', '/bin/sh'] : ['/bin/sh', '/bin/bash']).map((sh) => (
+            <div className="py-1" role="listbox" aria-label="Shell binaries">
+              {selectedFirst(isLocal ? ['/bin/zsh', '/bin/bash', '/bin/sh'] : ['/bin/sh', '/bin/bash'], sh => sh === shellBinary).map((sh) => (
                 <button
                   key={sh}
+                  role="option"
+                  aria-selected={sh === shellBinary}
                   onClick={() => {
                     setShellBinary(sh);
                     close();
