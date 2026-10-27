@@ -19,7 +19,7 @@ export interface KubernetesProvider extends ResourceWatchProvider {
   getCustomResources(context: string, name: string, uid: string, namespace: string | null, signal?: AbortSignal): Promise<import('./custom_resources').CustomResourceInstance[]>;
   getLogs(context: string, name: string, namespace: string, container?: string): Promise<string>;
   getOverviewMetrics(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./overview_metrics').OverviewMetrics>;
-  getHelmReleases(context: string, namespace: string | null, offset?: number, signal?: AbortSignal): Promise<import('./helm_types').HelmReleasePage>;
+  getHelmInventory(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./helm_types').HelmRelease[]>;
   getHelmHistory(context: string, namespace: string, name: string, signal?: AbortSignal): Promise<import('./helm_types').HelmHistory[]>;
   getHelmContent(context: string, namespace: string, name: string, revision: number, document: import('./helm_types').HelmDocument, signal?: AbortSignal): Promise<string>;
   getHelmRepositories(signal?: AbortSignal): Promise<import('./helm_types').HelmRepo[]>;

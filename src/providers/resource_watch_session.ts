@@ -4,7 +4,6 @@ import { apiVersionFor, resourceQuery, resourceType, SCOPE_INDEPENDENT_KINDS, na
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { normalizeK8sError, requestError, type K8sRequestError } from './errors';
 import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchPhase } from './watch_types';
-import { InitialSyncQueue } from './initial_sync_queue';
 
 export const WATCH_FLUSH_MS = 50;
 export const FIRST_SYNC_TIMEOUT_MS = 30000;
@@ -25,7 +24,6 @@ export class ResourceWatchSession {
   /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
   private scopedFallback = new Set<ResourceKind>();
   private kindScopes: ReadonlyMap<ResourceKind, string> = new Map();
-  private initialSync = new InitialSyncQueue();
   constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery) => ResourceItem[] | undefined) {}
 
   async start(kinds: ResourceKind[]): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled(kinds.map((kind) => this.refresh(kind))); }
@@ -71,9 +69,9 @@ export class ResourceWatchSession {
       settle: (error) => { if (settled) return; settled = true; clearTimeout(subscription.firstTimer); if (error) reject(error); else resolve(); } };
     this.subscriptions.set(kind, subscription);
     this.commit(kind, { ...(!sameScope ? { snapshot: cached ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
-    void this.initialSync.run(async () => {
+    void (async () => {
       if (!this.current(kind, subscription)) return;
-      subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
+      if (!this.provider.managesInitialSyncTimeout) subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
       void Promise.resolve().then(() => {
         if (!this.current(kind, subscription)) return;
         return this.provider.watchResources(query, (batch) => this.receive(kind, subscription, batch), subscription.abort.signal);
@@ -81,8 +79,7 @@ export class ResourceWatchSession {
         subscription.close = close;
         if (!this.current(kind, subscription)) close?.();
       }).catch((error) => { if (this.current(kind, subscription)) this.fail(kind, subscription, normalizeK8sError(error, { operation: 'watch', context: this.context, resource: query })); });
-      await ready.catch(() => {});
-    }, subscription.abort.signal);
+    })();
     try {
       await ready;
     } catch (error) {

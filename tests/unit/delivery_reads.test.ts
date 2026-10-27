@@ -40,25 +40,57 @@ describe('shared dashboard reads', () => {
     const stage: ReadSnapshot<number>[] = [];const stop = subscriptions.subscribe('stage', state => stage.push(state));await flush();
     const count = states.length;resolve(99);await flush();expect(states).toHaveLength(count);expect(stage.at(-1)?.data).toBe(1);stop();
   });
+  it('coalesces invalidations and discards a pre-mutation read before publishing its replacement', async () => {
+    vi.useFakeTimers();
+    const visibility = new Visibility();
+    let finish!: (value: number) => void;
+    let signal!: AbortSignal;
+    const read = vi.fn((_key: string, abort: AbortSignal) => {
+      signal = abort;
+      return new Promise<number>(resolve => { finish = resolve; });
+    });
+    const subscriptions = new ReadSubscriptions(read, 15000, () => visibility);
+    const states: ReadSnapshot<number>[] = [];
+    const stop = subscriptions.subscribe('prod', state => states.push(state));
+    await vi.advanceTimersByTimeAsync(0);
+    subscriptions.refresh('prod', true);
+    subscriptions.refresh('prod', true);
+    expect(signal.aborted).toBe(true);
+    read.mockResolvedValueOnce(2);
+    finish(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(states.filter(state => state.data !== undefined).map(state => state.data)).toEqual([2]);
+    stop();
+  });
 });
 describe('complete Helm inventory', () => {
-  it('collects all server pages before allowing global search and totals', async () => {
-    const reader = vi.fn(async (_context: string, namespace: string | null, offset: number) => ({ context: 'prod', namespace, offset, limit: 100, has_more: offset === 0, items: offset ? [release('last')] : Array.from({ length: 100 }, (_, i) => release(`app-${i}`)) }));
+  it('collects an entire large scope with one snapshot read', async () => {
+    const reader = vi.fn(async () => Array.from({ length: 1001 }, (_, i) => release(`app-${i}`)));
     const items = await loadHelmInventory(reader, 'prod', null, new AbortController().signal);
-    expect(items).toHaveLength(101);expect(items.some(item => item.name === 'last')).toBe(true);expect(reader.mock.calls.map(call => call[2])).toEqual([0, 100]);
+    expect(items).toHaveLength(1001);expect(items.some(item => item.name === 'app-1000')).toBe(true);
+    expect(reader).toHaveBeenCalledOnce();
   });
-  it('expands selected namespaces into independent page sequences', async () => {
-    const reader = vi.fn(async (_context: string, namespace: string | null, offset: number) => ({ context: 'prod', namespace, offset, limit: 100, has_more: offset === 0, items: [release(`app-${offset}`, namespace!)] }));
-    const items = await loadHelmInventory(reader, 'prod', '["frontend","backend"]', new AbortController().signal);
-    expect(items).toHaveLength(4);
-    expect(reader.mock.calls.map(call => [call[1], call[2]])).toEqual(expect.arrayContaining([['backend', 0], ['backend', 100], ['frontend', 0], ['frontend', 100]]));
+  it('reads only selected namespaces and bounds concurrent snapshots', async () => {
+    let running = 0;let maximum = 0;
+    const reader = vi.fn(async (_context: string, namespace: string | null) => {
+      running++;maximum = Math.max(maximum, running);
+      await new Promise(resolve => setTimeout(resolve, 0));running--;
+      return [release('web', namespace!)];
+    });
+    const namespaces = Array.from({ length: 20 }, (_, i) => `team-${i}`);
+    const items = await loadHelmInventory(reader, 'prod', JSON.stringify(namespaces), new AbortController().signal);
+    expect(items).toHaveLength(20);expect(maximum).toBe(3);
+    expect(reader.mock.calls.map(call => call[1]).sort()).toEqual(namespaces.sort());
   });
-  it('rejects incomplete or moving inventories instead of reporting partial totals', async () => {
+  it('rejects incomplete/duplicate snapshots and stops queued work on cancellation', async () => {
     const abort = new AbortController();
-    const reader = vi.fn(async (_context: string, namespace: string | null, offset: number) => { if (offset) throw new Error('second page denied');return { context: 'prod', namespace, offset, limit: 100, has_more: true, items: [release('app')] }; });
-    await expect(loadHelmInventory(reader, 'prod', null, abort.signal)).rejects.toThrow('second page denied');
-    reader.mockImplementation(async (_context, namespace, offset) => ({ context: 'prod', namespace, offset, limit: 100, has_more: offset === 0, items: [release('app')] }));
-    await expect(loadHelmInventory(reader, 'prod', null, abort.signal)).rejects.toMatchObject({ code: 'conflict' });
-    abort.abort();await expect(loadHelmInventory(reader, 'prod', null, abort.signal)).rejects.toMatchObject({ code: 'cancelled' });
+    const reader = vi.fn(async () => { throw new Error('snapshot denied'); });
+    await expect(loadHelmInventory(reader, 'prod', null, abort.signal)).rejects.toThrow('snapshot denied');
+    const duplicate = vi.fn(async () => [release('app'), release('app')]);
+    await expect(loadHelmInventory(duplicate, 'prod', null, abort.signal)).rejects.toMatchObject({ code: 'conflict' });
+    abort.abort();reader.mockClear();
+    await expect(loadHelmInventory(reader, 'prod', null, abort.signal)).rejects.toMatchObject({ code: 'cancelled' });
+    expect(reader).not.toHaveBeenCalled();
   });
 });

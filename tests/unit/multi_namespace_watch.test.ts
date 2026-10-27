@@ -17,6 +17,48 @@ function harness() {
 const restart = (namespace: string, uid: string): WatchMessage['event'] => ({ type: 'Delta', payload: { type: 'Restarted', payload: { items: [pod(namespace, uid)] } } });
 const live: WatchMessage['event'] = { type: 'Status', payload: { phase: 'live', error: null } };
 describe('Multi-namespace watch', () => {
+  it('starts the initial timeout after a queued namespace obtains its LIST permit', async () => {
+    vi.useFakeTimers();
+    const { provider, connections } = harness();
+    const abort = new AbortController();
+    let closeFirst: (() => void) | undefined;
+    let closeSecond: (() => void) | undefined;
+    const batches: WatchBatch[] = [];
+    try {
+      closeFirst = await watchNamespaceSelection(provider, { ...query, namespace: '["one","two","three","four"]' }, () => {}, abort.signal);
+      const pending = watchNamespaceSelection(provider, { ...query, namespace: 'later' }, batch => batches.push(batch), abort.signal);
+      await vi.advanceTimersByTimeAsync(29000);
+      expect(connections).toHaveLength(4);
+      connections[0].send(restart('one', 'one'), live);
+      await vi.advanceTimersByTimeAsync(0);
+      closeSecond = await pending;
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(connections[4].signal.aborted).toBe(false);
+      expect(batches).toEqual([]);
+    } finally { abort.abort(); closeFirst?.(); closeSecond?.(); vi.useRealTimers(); }
+  });
+  it('shares four initial LIST slots across selections and releases them on snapshots while watches stay open', async () => {
+    const { provider, connections } = harness();
+    const abort = new AbortController();
+    const namespaces = Array.from({ length: 12 }, (_, i) => `team-${i}`);
+    const pending = [0, 6].map(start => watchNamespaceSelection(provider, { ...query, namespace: JSON.stringify(namespaces.slice(start, start + 6)) }, () => {}, abort.signal));
+    const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+    try {
+      await flush();
+      expect(connections).toHaveLength(4);
+      for (const connection of connections.slice()) connection.send(restart(connection.query.namespace!, connection.query.namespace!));
+      await flush();
+      expect(connections).toHaveLength(8);
+      expect(connections.every(connection => !connection.signal.aborted)).toBe(true);
+      for (const connection of connections.slice(4)) connection.send(restart(connection.query.namespace!, connection.query.namespace!));
+      await flush();
+      expect(connections).toHaveLength(12);
+      for (const connection of connections.slice(8)) connection.send(restart(connection.query.namespace!, connection.query.namespace!));
+      const close = await Promise.all(pending);
+      close.forEach(stop => stop());
+      expect(connections.every(connection => connection.signal.aborted)).toBe(true);
+    } finally { abort.abort(); await Promise.allSettled(pending); }
+  });
   it('requests only selected namespaces, combines complete snapshots, merges updates and rejects late callbacks', async () => {
     const { provider, connections } = harness();
     const batches: WatchBatch[] = [];

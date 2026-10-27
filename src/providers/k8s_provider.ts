@@ -1,4 +1,5 @@
 import { environmentReadTransport, type KubernetesReadTransport } from './read_transport';
+import { queuedRead } from './read_queue';
 import { applyBatch as applyBatchRequest, changeResource, deleteObject, type BatchResult, type BatchStep } from './mutations';
 import { resourceRef } from '../core/resources/identity';
 import { namespaceNames, inNamespaceScope } from '../core/resources/namespace_scope';
@@ -17,20 +18,25 @@ import type { ResourceQuery, ResourceRef } from '../core/resources/resource_type
 import type { WatchBatch } from './watch_types';
 import { parseCustomResources, type CustomResourceInstance } from './custom_resources';
 import { resourceBucket } from '../core/resources/custom_resource_types';
-import { parseHelmPage, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmOffset, validateHelmDocument, type HelmDocument } from './helm_types';
+import { parseHelmReleases, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmDocument, type HelmDocument } from './helm_types';
 
 export const DEMO_CONTEXT = 'kubiki-demo';
 
 export class K8sProvider implements KubernetesProvider {
+  readonly managesInitialSyncTimeout = true;
   constructor(private readonly transport: KubernetesReadTransport = environmentReadTransport, private developerMode = false) {}
   private readonly forcedDemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
   private activeContext: string | null = null;
+  private contextReads = new AbortController();
   private demoListed = false;
   private realContexts: KubeContextInfo[] | null = null;
   get demo(): boolean { return this.forcedDemo || this.demoListed && this.activeContext === DEMO_CONTEXT; }
   // Only the explicit browser demo simulates the workstation's own shell.
   get simulateHostSessions(): boolean { return this.forcedDemo; }
-  activateContext(context: string) { this.activeContext = context; }
+  activateContext(context: string) {
+    if (context !== this.activeContext) { this.contextReads.abort(); this.contextReads = new AbortController(); }
+    this.activeContext = context;
+  }
   setDeveloperMode(enabled: boolean): KubeContextInfo[] | null {
     this.developerMode = enabled;
     return this.realContexts ? this.contextList(this.realContexts) : null;
@@ -65,10 +71,15 @@ export class K8sProvider implements KubernetesProvider {
     const info: RequestInfo = { operation: path, context: args.context as string | undefined,
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
+    const controller = new AbortController();
+    const sources = [signal, args.context && args.context === this.activeContext ? this.contextReads.signal : undefined].filter((source): source is AbortSignal => !!source);
+    const abort = () => controller.abort();
+    for (const source of sources) { source.addEventListener('abort', abort, { once: true }); if (source.aborted) abort(); }
     try {
       if (path !== 'contexts' && path !== 'kubeconfig_path' && path !== 'set_kubeconfig_path' && path !== 'helm/repositories' && path !== 'helm/charts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
-      return await this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, signal);
+      return await queuedRead(() => this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, controller.signal), controller.signal);
     } catch (error) { throw normalizeK8sError(error, info); }
+    finally { for (const source of sources) source.removeEventListener('abort', abort); }
   }
 
   async getContexts(): Promise<KubeContextInfo[]> {
@@ -145,14 +156,16 @@ export class K8sProvider implements KubernetesProvider {
     if (!builtinKinds.length) return {};
     const names = namespaceNames(namespace ?? 'all');
     if (names && names.length !== 1 && !this.isTauriEnv()) {
-      const slices = await Promise.all(names.map(name => this.getResourceCounts(context, builtinKinds, name, signal)));
-      const totals: Partial<Record<ResourceKind, number>> = {};
-      for (const slice of slices) {
-        for (const [kind, count] of Object.entries(slice)) {
-          if (typeof count === 'number') {
-            totals[kind as ResourceKind] = (totals[kind as ResourceKind] ?? 0) + (resourceType(kind as ResourceKind).namespaced ? count : (totals[kind as ResourceKind] === undefined ? count : 0));
-          }
-        }
+      const namespaced = builtinKinds.filter(kind => resourceType(kind).namespaced);
+      const clusterKinds = builtinKinds.filter(kind => !resourceType(kind).namespaced);
+      const [cluster, ...slices] = await Promise.all([
+        this.getResourceCounts(context, clusterKinds, undefined, signal),
+        ...names.map(name => this.getResourceCounts(context, namespaced, name, signal)),
+      ]);
+      const totals: Partial<Record<ResourceKind, number>> = { ...cluster };
+      for (const kind of namespaced) {
+        const counts = slices.map(slice => slice[kind]);
+        if (counts.every((count): count is number => typeof count === 'number')) totals[kind] = counts.reduce((sum, count) => sum + count, 0);
       }
       return totals;
     }
@@ -245,18 +258,15 @@ export class K8sProvider implements KubernetesProvider {
     return changeResource({ operation: 'secret', request });
   }
 
-  async getHelmReleases(context: string, namespace: string | null, offset = 0, signal?: AbortSignal): Promise<import('./helm_types').HelmReleasePage> {
-    const names = namespaceNames(namespace ?? 'all');
-    if (names && names.length !== 1) {
-      const pages = await Promise.all(names.map(namespace => this.getHelmReleases(context, namespace, offset, signal)));
-      return { context, namespace, offset, limit: 100, has_more: pages.some(page => page.has_more), items: pages.flatMap(page => page.items) };
-    }
-    validateHelmTarget(context, namespace); validateHelmOffset(offset);
+  async getHelmInventory(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./helm_types').HelmRelease[]> {
+    validateHelmTarget(context, namespace);
     if (this.demo) {
-      const { demoHelmPage } = await import('./mock/mock_helm');
-      return demoHelmPage(context, namespace, offset);
+      const { demoHelmInventory } = await import('./mock/mock_helm');
+      return demoHelmInventory(namespace);
     }
-    return parseHelmPage(await this.request('list_helm_releases', 'helm/releases', { context, namespace, offset }, undefined, undefined, signal), context, namespace, offset);
+    const items = parseHelmReleases(await this.request('get_helm_inventory', 'helm/inventory', { context, namespace }, undefined, undefined, signal));
+    if (namespace && items.some(item => item.namespace !== namespace)) throw requestError('internal', 'Helm returned releases outside the requested namespace', { operation: 'helm', context }, 500);
+    return items;
   }
 
   async getHelmHistory(context: string, namespace: string, name: string, signal?: AbortSignal) {

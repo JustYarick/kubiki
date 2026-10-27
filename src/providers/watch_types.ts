@@ -19,6 +19,8 @@ export interface WatchCommit {
   error?: K8sErrorPayload;
 }
 export interface ResourceWatchProvider {
+  /** The provider times actual initial reads after they acquire their queue slot. */
+  readonly managesInitialSyncTimeout?: boolean;
   watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void>;
 }
 

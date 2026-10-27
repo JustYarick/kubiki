@@ -1,8 +1,10 @@
+use crate::read_tasks::ReadTasks;
 use kubiki_core::cluster::client::ClusterClientPool;
 use kubiki_core::cluster::kubeconfig::KubeContextInfo;
 use kubiki_core::cluster::namespaces::NamespaceService;
 use kubiki_core::core::api::{ApiError, ApiErrorCode, ResourceQuery};
 use serde_json::Value;
+use std::time::Duration;
 
 fn require_context(context: &str, operation: &str) -> Result<(), ApiError> {
     if context.trim().is_empty() {
@@ -35,9 +37,7 @@ pub fn get_current_context(
 }
 
 #[tauri::command]
-pub fn get_kubeconfig_path(
-    pool: tauri::State<'_, ClusterClientPool>,
-) -> Result<String, ApiError> {
+pub fn get_kubeconfig_path(pool: tauri::State<'_, ClusterClientPool>) -> Result<String, ApiError> {
     pool.get_config_manager()
         .get_config_path()
         .map(|p| p.to_string_lossy().into_owned())
@@ -78,57 +78,87 @@ pub async fn set_kubeconfig_path(
 pub async fn ping_cluster(
     context: String,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<Value, ApiError> {
-    require_context(&context, "ping")?;
-    let version = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        pool.check_health(&context),
-    )
-    .await
-    .map_err(|_| {
-        ApiError::from_status(
-            504,
-            "Cluster health request timed out",
-            "ping",
-            Some(&context),
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "ping_cluster",
+            Duration::from_secs(30),
+            async {
+                require_context(&context, "ping")?;
+                let version = tokio::time::timeout(
+                    std::time::Duration::from_secs(15),
+                    pool.check_health(&context),
+                )
+                .await
+                .map_err(|_| {
+                    ApiError::from_status(
+                        504,
+                        "Cluster health request timed out",
+                        "ping",
+                        Some(&context),
+                    )
+                })?
+                .map_err(|error| ApiError::from_core(error, "ping", Some(&context)))?;
+                serde_json::to_value(version).map_err(|error| {
+                    ApiError::new(
+                        ApiErrorCode::Internal,
+                        error.to_string(),
+                        "ping",
+                        Some(&context),
+                        None,
+                    )
+                })
+            },
         )
-    })?
-    .map_err(|error| ApiError::from_core(error, "ping", Some(&context)))?;
-    serde_json::to_value(version).map_err(|error| {
-        ApiError::new(
-            ApiErrorCode::Internal,
-            error.to_string(),
-            "ping",
-            Some(&context),
-            None,
-        )
-    })
+        .await
 }
 
 #[tauri::command]
 pub async fn get_namespaces(
     context: String,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<Vec<String>, ApiError> {
-    require_context(&context, "namespaces")?;
-    let namespaces = tokio::time::timeout(std::time::Duration::from_secs(15), async {
-        let client = pool.get_client(&context).await?;
-        NamespaceService::list_namespaces(&client).await
-    })
-    .await
-    .map_err(|_| {
-        ApiError::from_status(
-            504,
-            "Namespace discovery timed out",
-            "namespaces",
-            Some(&context),
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "get_namespaces",
+            Duration::from_secs(30),
+            async {
+                require_context(&context, "namespaces")?;
+                let namespaces = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                    let client = pool.get_client(&context).await?;
+                    NamespaceService::list_namespaces(&client).await
+                })
+                .await
+                .map_err(|_| {
+                    ApiError::from_status(
+                        504,
+                        "Namespace discovery timed out",
+                        "namespaces",
+                        Some(&context),
+                    )
+                })?
+                .map_err(|error| ApiError::from_core(error, "namespaces", Some(&context)))?;
+                Ok(namespaces
+                    .into_iter()
+                    .map(|namespace| namespace.name)
+                    .collect())
+            },
         )
-    })?
-    .map_err(|error| ApiError::from_core(error, "namespaces", Some(&context)))?;
-    Ok(namespaces
-        .into_iter()
-        .map(|namespace| namespace.name)
-        .collect())
+        .await
 }
 
 async fn read_client(pool: &ClusterClientPool, context: &str) -> Result<kube::Client, ApiError> {
@@ -149,8 +179,24 @@ async fn read_client(pool: &ClusterClientPool, context: &str) -> Result<kube::Cl
 pub async fn get_api_resources(
     context: String,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<Vec<kubiki_core::core::reads::DiscoveredResourceType>, ApiError> {
-    kubiki_core::core::reads::discover(read_client(&pool, &context).await?, &context).await
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "get_api_resources",
+            Duration::from_secs(30),
+            async {
+                kubiki_core::core::reads::discover(read_client(&pool, &context).await?, &context)
+                    .await
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn get_resources(
@@ -160,24 +206,66 @@ pub async fn get_resources(
     kind: String,
     namespace: Option<String>,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<Value, ApiError> {
-    let query = ResourceQuery {
-        context,
-        group,
-        version,
-        kind,
-        namespace,
-    };
-    kubiki_core::core::reads::resources(read_client(&pool, &query.context).await?, query).await
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "get_resources",
+            Duration::from_secs(30),
+            async {
+                let query = ResourceQuery {
+                    context,
+                    group,
+                    version,
+                    kind,
+                    namespace,
+                };
+                kubiki_core::core::reads::resources(
+                    read_client(&pool, &query.context).await?,
+                    query,
+                )
+                .await
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn get_resource_counts(
     context: String,
     queries: Vec<ResourceQuery>,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<std::collections::HashMap<String, usize>, ApiError> {
-    let client = read_client(&pool, &context).await?;
-    Ok(kubiki_core::core::reads::resource_counts(client, queries).await)
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "get_resource_counts",
+            Duration::from_secs(30),
+            async {
+                if queries.len() > 4096 || queries.iter().any(|query| query.context != context) {
+                    return Err(ApiError::from_status(
+                        400,
+                        "Invalid resource count queries",
+                        "resource-counts",
+                        Some(&context),
+                    ));
+                }
+                let client = read_client(&pool, &context).await?;
+                Ok(kubiki_core::core::reads::resource_counts(client, queries).await)
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn get_custom_resources(
@@ -186,15 +274,30 @@ pub async fn get_custom_resources(
     uid: String,
     namespace: Option<String>,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<Value, ApiError> {
-    kubiki_core::core::reads::custom_resources(
-        read_client(&pool, &context).await?,
-        context,
-        name,
-        uid,
-        namespace,
-    )
-    .await
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "get_custom_resources",
+            Duration::from_secs(30),
+            async {
+                kubiki_core::core::reads::custom_resources(
+                    read_client(&pool, &context).await?,
+                    context,
+                    name,
+                    uid,
+                    namespace,
+                )
+                .await
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn get_pod_logs(
@@ -203,34 +306,50 @@ pub async fn get_pod_logs(
     namespace: String,
     container: Option<String>,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<String, ApiError> {
-    use k8s_openapi::api::core::v1::Pod;
-    use kube::{Api, api::LogParams};
-    require_context(&context, "logs")?;
-    if name.is_empty() || namespace.is_empty() {
-        return Err(ApiError::from_status(
-            400,
-            "Pod name and namespace are required",
-            "logs",
-            Some(&context),
-        ));
-    }
-    let api: Api<Pod> = Api::namespaced(read_client(&pool, &context).await?, &namespace);
-    kubiki_core::core::reads::bounded(
-        &context,
-        "logs",
-        api.logs(
-            &name,
-            &LogParams {
-                container,
-                tail_lines: Some(500),
-                timestamps: true,
-                limit_bytes: Some(4 * 1024 * 1024),
-                ..LogParams::default()
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "get_pod_logs",
+            Duration::from_secs(30),
+            async {
+                use k8s_openapi::api::core::v1::Pod;
+                use kube::{Api, api::LogParams};
+                require_context(&context, "logs")?;
+                if name.is_empty() || namespace.is_empty() {
+                    return Err(ApiError::from_status(
+                        400,
+                        "Pod name and namespace are required",
+                        "logs",
+                        Some(&context),
+                    ));
+                }
+                let api: Api<Pod> =
+                    Api::namespaced(read_client(&pool, &context).await?, &namespace);
+                kubiki_core::core::reads::bounded(
+                    &context,
+                    "logs",
+                    api.logs(
+                        &name,
+                        &LogParams {
+                            container,
+                            tail_lines: Some(500),
+                            timestamps: true,
+                            limit_bytes: Some(4 * 1024 * 1024),
+                            ..LogParams::default()
+                        },
+                    ),
+                )
+                .await
             },
-        ),
-    )
-    .await
+        )
+        .await
 }
 
 #[tauri::command]
@@ -238,18 +357,42 @@ pub async fn get_overview_metrics(
     context: String,
     namespace: Option<String>,
     pool: tauri::State<'_, ClusterClientPool>,
+    request_id: Option<String>,
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, ReadTasks>,
 ) -> Result<kubiki_core::metrics::overview::OverviewMetrics, ApiError> {
-    kubiki_core::metrics::overview::validate_scope(&context, namespace.as_deref())?;
-    tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        let client = pool
-            .get_client(&context)
-            .await
-            .map_err(|error| ApiError::from_core(error, "metrics", Some(&context)))?;
-        kubiki_core::metrics::overview::get_overview_metrics(client, context.clone(), namespace)
-            .await
-    })
-    .await
-    .map_err(|_| {
-        ApiError::from_status(504, "Metrics request timed out", "metrics", Some(&context))
-    })?
+    let task_context = context.clone();
+    reads
+        .run(
+            window.label(),
+            request_id,
+            Some(&task_context),
+            "get_overview_metrics",
+            Duration::from_secs(30),
+            async {
+                kubiki_core::metrics::overview::validate_scope(&context, namespace.as_deref())?;
+                tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                    let client = pool
+                        .get_client(&context)
+                        .await
+                        .map_err(|error| ApiError::from_core(error, "metrics", Some(&context)))?;
+                    kubiki_core::metrics::overview::get_overview_metrics(
+                        client,
+                        context.clone(),
+                        namespace,
+                    )
+                    .await
+                })
+                .await
+                .map_err(|_| {
+                    ApiError::from_status(
+                        504,
+                        "Metrics request timed out",
+                        "metrics",
+                        Some(&context),
+                    )
+                })?
+            },
+        )
+        .await
 }
