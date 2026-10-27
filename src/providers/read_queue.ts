@@ -1,5 +1,5 @@
-import { InitialSyncQueue } from './initial_sync_queue';
-import { requestError } from './errors';
+import { InitialSyncQueue } from './initial_sync_queue.ts';
+import { requestError } from './errors.ts';
 
 // One budget for actual reads, shared by all providers and namespace selections.
 const reads = new InitialSyncQueue(4);

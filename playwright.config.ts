@@ -5,7 +5,8 @@ import { defineConfig } from '@playwright/test';
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:1430';
 const webkit = process.env.PLAYWRIGHT_BROWSER === 'webkit';
 export default defineConfig({
-  testDir: './tests/e2e', timeout: 30000, workers: 2,
+  testDir: './tests/e2e', timeout: 30000,
+  workers: process.env.PLAYWRIGHT_WORKERS ? Number(process.env.PLAYWRIGHT_WORKERS) : (process.env.CI ? 2 : 4),
   metadata: { fullLayout: process.env.E2E_FULL_LAYOUT === '1', diagnosticScreenshots: process.env.E2E_SCREENSHOTS === '1' },
   // Each file remains sequential; independent files run in parallel.
   reporter: [['list'], ['json', { outputFile: 'test-results/report.json' }]],
