@@ -12,7 +12,7 @@ async function fixture(page: Page) {
     if (operation === 'contexts') return route.fulfill({ json: [{ name: 'production-long-context', is_current: true }] });
     if (operation === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (operation === 'namespaces') return route.fulfill({ json: ['backend', 'a-very-long-namespace-for-layout-testing'] });
-    if (operation === 'releases') return route.fulfill({ json: { context: 'production-long-context', namespace: url.searchParams.get('namespace'), offset: 0, limit: 100, has_more: false, items: [release] } });
+    if (operation === 'inventory') return route.fulfill({ json: [release] });
     if (operation === 'history') return route.fulfill({ json: [4, 3, 2, 1].map(revision => ({ ...release, revision, status: revision === 4 ? 'deployed' : 'superseded', description: 'Upgrade with a long description that stays inside its row' })) });
     if (operation === 'content') return route.fulfill({ json: 'replicas: 3\n' + 'key: long-value-for-horizontal-scrolling\n'.repeat(50) });
     const kind = url.searchParams.get('kind');
@@ -54,7 +54,7 @@ test('refresh retains panel and table geometry; changing resource kinds keeps on
   const list = page.getByTestId('helm-releases');
   const table = list.getByRole('table', { name: 'Helm release list' });
   const tableBefore = await box(table);
-  const resumeList = hold('releases');
+  const resumeList = hold('inventory');
   await list.getByRole('button', { name: 'Refresh Helm releases', exact: true }).click();
   await expect(list).toHaveAttribute('aria-busy', 'true');
   expect(await box(table)).toEqual(tableBefore);

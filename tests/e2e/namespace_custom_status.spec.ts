@@ -18,7 +18,7 @@ async function fixture(page: Page, manyStatuses = false) {
       const group = url.searchParams.get('name')!.slice('widgets.'.length);
       return route.fulfill({ json: { items: namespaces.map(namespace => ({ apiVersion: `${group}/v1`, kind: 'Widget', metadata: { uid: `${group}-${namespace}`, name: `${group}-${namespace}`, namespace }, spec: { endpoint: `https://${namespace}.${group}` }, status: { phase: 'Reconciling' } })) } });
     }
-    if (operation === 'releases') return route.fulfill({ json: { context: 'cluster', namespace, offset: Number(url.searchParams.get('offset')), limit: 100, has_more: false, items: namespaces.map(namespace => ({ name: `release-${namespace}`, namespace, revision: '1', status: 'deployed', chart: 'chart-1', app_version: '1', updated: '' })) } });
+    if (operation === 'inventory') return route.fulfill({ json: namespaces.map(namespace => ({ name: `release-${namespace}`, namespace, revision: '1', status: 'deployed', chart: 'chart-1', app_version: '1', updated: '' })) });
     if (operation === 'history') return route.fulfill({ json: [] });
     if (operation === 'metrics') return route.fulfill({ json: { context: 'cluster', namespace, pods: { items: [], error: null }, nodes: { items: [], error: null } } });
     const kind = url.searchParams.get('kind');
@@ -54,7 +54,7 @@ test('global multi-namespace selection filters tables, Overview and Helm and bui
   await expect(page.getByRole('row', { name: 'Inspect Helm release release-alpha in alpha', exact: true })).toBeVisible();
   await expect(page.getByRole('row', { name: 'Inspect Helm release release-beta in beta', exact: true })).toBeVisible();
   await expect(page.getByRole('row', { name: /Inspect Helm release release-gamma/ })).toHaveCount(0);
-  const releaseCalls = calls.filter(url => url.pathname.endsWith('/releases'));
+  const releaseCalls = calls.filter(url => url.pathname.endsWith('/helm/inventory'));
   expect(releaseCalls.map(url => url.searchParams.get('namespace'))).toEqual(expect.arrayContaining(['alpha', 'beta']));
   expect(releaseCalls.some(url => url.searchParams.get('namespace')?.startsWith('['))).toBe(false);
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();

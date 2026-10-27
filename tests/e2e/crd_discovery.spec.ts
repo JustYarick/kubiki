@@ -73,5 +73,29 @@ test.describe('CRD Discovery and Lens Parity', () => {
     await paletteInput.fill('buckets.source.toolkit.fluxcd.io');
     await expect(page.getByText('Bucket (source.toolkit.fluxcd.io)')).toBeVisible();
     await page.keyboard.press('Escape');
+
+    // A pinned custom editor reads its object's namespace and stays quiet when
+    // another view changes the global picker while the draft remains mounted.
+    await page.evaluate(async () => {
+      const { k8s } = await import(/* @vite-ignore */ '/src/providers/k8s_provider.ts' as string);
+      const read = k8s.getCustomResources.bind(k8s);
+      (window as any).__customScopes = [];
+      k8s.getCustomResources = async (...args: [string, string, string, string | null, AbortSignal?]) => {
+        (window as any).__customScopes.push(args[3]);
+        return read(...args);
+      };
+    });
+    await page.getByTestId('resource-table').locator('tbody tr', { hasText: 'media-assets' }).click({ button: 'right' });
+    await page.getByRole('button', { name: /Open YAML Editor Tab/ }).click();
+    await expect(page.getByTestId('yaml-editor')).toContainText('media-assets');
+    expect(await page.evaluate(() => (window as any).__customScopes)).toEqual(['default']);
+    await page.evaluate(async () => {
+      const { useWorkspaceStore } = await import(/* @vite-ignore */ '/src/state/workspace_store.ts' as string);
+      const { useClusterStore } = await import(/* @vite-ignore */ '/src/state/cluster_store.ts' as string);
+      useWorkspaceStore.getState().openOverview();
+      useClusterStore.getState().selectNamespace('infra');
+    });
+    await expect(page.getByTestId('yaml-editor')).toBeHidden();
+    expect(await page.evaluate(() => (window as any).__customScopes)).toEqual(['default']);
   });
 });

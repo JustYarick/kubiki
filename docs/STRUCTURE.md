@@ -77,7 +77,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 
 `src/providers/contract.ts` defines the common resource access interface. `k8s_provider.ts` selects the transport, and the desktop application calls native commands through Tauri. Dedicated transports handle watches, logs, exec sessions, and forwarding.
 
-`resource_watch_session.ts` manages frontend subscription state. `tauri_watch.ts` creates Tauri channels, checks subscription identity, and requests native cleanup when a watch closes. `errors.ts` normalizes backend failures for the interface.
+`resource_watch_session.ts` manages frontend subscription state. `multi_namespace_watch.ts` bounds actual initial namespace snapshots before releasing their long-lived watches. `tauri_watch.ts` creates Tauri channels, checks subscription identity, and requests native cleanup when a watch closes. `read_queue.ts` bounds ordinary reads, and `read_transport.ts` forwards cancellation to native read tasks or the HTTP bridge. `errors.ts` normalizes backend failures for the interface.
 
 `src/core/resources/` contains resource identity, namespace scoping, relationship inference, diagnostics, quantity parsing, topology preparation, and presentation logic. `shared/resource-types.json` supplies the resource registry used by frontend code and local tooling. API discovery supplements the registry with information from the selected cluster.
 
@@ -88,6 +88,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | Command module in `src-tauri/src/` | Responsibility |
 | --- | --- |
 | `k8s_commands.rs` | Contexts, namespaces, resource reads, discovery, and overview metrics. |
+| `read_tasks.rs` | Window-owned cancellation, read deadlines, and concurrency limits. |
 | `watch_commands.rs` | Native resource watch subscriptions and Tauri channel delivery. |
 | `mutation_commands.rs` | Preparation and execution of supported resource and Helm changes. |
 | `mutation_guard.rs` | Pending confirmation requests, desktop review events, and approval resolution. |
@@ -119,7 +120,7 @@ The desktop shell owns transport and application lifecycle concerns. Kubernetes 
 
 `src/cluster/kubeconfig.rs` reads the default kubeconfig or the files listed in `KUBECONFIG`. `src/cluster/client.rs` provides context-specific clients so requests can remain tied to the selected context.
 
-`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; operation preparation and execution live in `src/helm/mutations.rs`.
+`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation, including reviewed mutations. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`.
 
 The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reuses the library. The desktop application does not depend on that executable.
 

@@ -53,7 +53,7 @@ fn main() {
                 "get_kube_contexts" => json!([{"name":"test","is_current":true}]),
                 "ping_cluster" => json!({"git_version":"v1.34.0"}),
                 "get_namespaces" => json!(["perf"]),
-                "list_helm_releases" => json!({"context":"test","namespace":args["namespace"],"offset":0,"limit":100,"has_more":false,"items":[]}),
+                "get_helm_inventory" => json!([]),
                 "watch_resources" => {
                     let query = &args["query"];
                     let items = fixture[query["kind"].as_str().unwrap_or("")].as_array().cloned().unwrap_or_default();

@@ -32,7 +32,7 @@ async function fixture(page: Page, withCustom = true) {
     if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (op === 'namespaces') return route.fulfill({ json: [ns] });
     if (op === 'api-resources') return route.fulfill({ json: api.map(([kind, plural, group, namespaced]) => `${plural} ${group ? group + '/' : ''}v1 ${namespaced} ${kind} [get list watch]`).join('\n') });
-    if (op === 'releases') return route.fulfill({ json: { context: 'lens-catalog', namespace: null, items: [], limit: 100, offset: 0, has_more: false } });
+    if (op === 'inventory') return route.fulfill({ json: [] });
     if (op === 'custom-resources') {
       const type = custom.find(type => `${type.plural}.${type.group}` === url.searchParams.get('name'));
       if (!type) return route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Unknown custom API' } } });
@@ -123,7 +123,7 @@ test('slow Kubernetes responses show animated loading, retain rows on refresh, r
 
 
 test('custom resource and Helm requests use the shared animated loading surface', async ({ page }) => {
-  const state = await fixture(page); const releaseCustom = state.hold('custom-resources'); const releaseHelm = state.hold('releases');
+  const state = await fixture(page); const releaseCustom = state.hold('custom-resources'); const releaseHelm = state.hold('inventory');
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
   const table = await open(page, 'custom:autoscaling.k8s.io/VerticalPodAutoscaler');
   await expect(table.getByTestId('resource-loading')).toContainText('Loading VerticalPodAutoscaler resources');

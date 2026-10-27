@@ -3,7 +3,7 @@ import { parse } from 'yaml';
 import { buildMockResources, MOCK_NAMESPACES } from '../../src/providers/mock/mock_resources';
 import { PRODUCTION_WORKLOADS } from '../../src/providers/mock/mock_cluster_profile';
 import { buildMockMetrics } from '../../src/providers/mock/mock_metrics';
-import { demoHelmContent, demoHelmPage } from '../../src/providers/mock/mock_helm';
+import { demoHelmContent, demoHelmInventory } from '../../src/providers/mock/mock_helm';
 import { findWorkloadPods } from '../../src/core/resources/workload_pods';
 import type { ResourceItem } from '../../src/types/k8s';
 
@@ -87,16 +87,11 @@ describe('production-sized demo cluster', () => {
     expect(item.statusRaw).toBe(item.raw!.status);
   });
 
-  it('paginates Helm releases and links their manifests to the resource inventory', () => {
-    const releases = [];
-    for (let offset = 0; ; offset += 100) {
-      const page = demoHelmPage('kubiki-demo', null, offset);
-      releases.push(...page.items);
-      if (!page.has_more) break;
-    }
+  it('links the complete Helm snapshot and manifests to the resource inventory', () => {
+    const releases = demoHelmInventory(null);
     expect(releases).toHaveLength(728);
     const app = PRODUCTION_WORKLOADS[0];
-    expect(demoHelmPage('kubiki-demo', app.namespace, 0).items).toHaveLength(12);
+    expect(demoHelmInventory(app.namespace)).toHaveLength(12);
     const workload = resources.Deployment.find(item => item.namespace === app.namespace && item.name === app.name)!;
     expect(workload.raw!.metadata.annotations['meta.helm.sh/release-name']).toBe(app.release);
     expect(parse(demoHelmContent(app.release, app.namespace, 2, 'manifest'))).toMatchObject({ metadata: { name: workload.name, namespace: workload.namespace }, spec: { replicas: workload.replicas } });

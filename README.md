@@ -143,9 +143,9 @@ Use the explorer to navigate workloads, configuration, networking, storage, acce
 
 Filter and sort resource tables to narrow the current inventory. Select an object to inspect its metadata, status, conditions, events, and related resources. Follow resource references to move between owners, workloads, Services, and dependent objects.
 
-On connection, Kubiki collects a complete inventory of accessible built-in resources, with at most four collections loading in parallel. This initial snapshot provides resource counts and health diagnostics even before their views are opened. Failed or forbidden collections remain visibly incomplete.
+On connection, Kubiki discovers supported APIs and fetches lightweight resource counts using metadata queries with `limit=1`. Full resource collections load only when a visible view needs them. Initial reads are bounded across selected namespaces; unavailable counts remain unknown instead of triggering a full inventory scan.
 
-Afterward, native Kubernetes watches follow the visible workspace panes and their related resources. Unused collections retain their cached snapshot and stop watching; reopening a view refreshes its data. Pods follow the selected namespaces, except when a Node view needs cluster-wide Pod counts. The overview continuously updates its summary sources; its other inventory counts are marked as cached. Changing context or namespace scope updates subscriptions, and CPU/RAM panels share one metrics poll per context and namespace.
+Native Kubernetes watches follow the visible workspace panes and their related resources. Unused collections retain their cached snapshot and stop watching; reopening a view refreshes its data. Pods follow the selected namespaces, except when a Node view needs cluster-wide Pod counts. Topology waits for a diagram scope and requests resources for that scope; focused diagrams use the selected resource's dependencies. The overview continuously updates its summary sources; its other inventory counts are marked as cached. Changing context or namespace scope updates subscriptions, and CPU/RAM panels share one metrics poll per context and namespace.
 
 ### YAML editing
 
@@ -172,7 +172,7 @@ Select graph nodes to inspect the corresponding resources. The topology includes
 
 ### Helm releases
 
-Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters cover every page in the selected scope; failed releases and operations in progress are shown separately. The inventory refreshes every 30 seconds while the window is visible.
+Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters cover a complete snapshot of the selected scope; failed releases and operations in progress are shown separately. The table and topology share that snapshot, with one Helm list command per selected namespace on each refresh. The inventory refreshes every 30 seconds while the window is visible. Reads use the selected cluster's merged kubeconfig and have a cancellable 60-second command deadline.
 
 The release overview shows Helm's operation description, status of loaded rendered objects, and hook Jobs with their conditions and matching events. An unloaded object is marked as unchecked. Flux-managed releases link to their owning HelmRelease; change that resource to keep reconciliation in sync.
 
@@ -349,7 +349,7 @@ Run these commands from the repository root:
 
 Before direct desktop Cargo checks, run `pnpm desktop:prepare` and `pnpm extensions:build` to create the bundled resources. The Tauri CLI runs these steps automatically. Build the extension resources before standalone frontend type checks on a clean checkout as well.
 
-Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, or reuses an existing local server. Install the browser with `pnpm exec playwright install chromium` if needed (`--with-deps` on Linux installs system dependencies too). The default test URL is `http://127.0.0.1:1420`. When using `PLAYWRIGHT_BASE_URL` for a different port, start a server at that URL first; the override does not change Vite's configured port. Browser update tests mock native commands and do not validate OS installers.
+Run `pnpm test:e2e`; Playwright starts an isolated frontend test server at `http://127.0.0.1:1430` with an empty kubeconfig and does not reuse the development server. Install the browser with `pnpm exec playwright install chromium` if needed (`--with-deps` on Linux installs system dependencies too). When using `PLAYWRIGHT_BASE_URL`, start a server at that URL first; the override disables automatic server startup. Browser update tests mock native commands and do not validate OS installers.
 
 ## Publishing releases
 

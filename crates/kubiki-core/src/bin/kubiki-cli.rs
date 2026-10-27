@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }).unwrap_or_else(|| "default".into());
             let ns = args.get(3).map(|s| s.as_str());
             let reader = HelmReader::default();
-            let releases = reader.releases(&context, ns, 0).await.map_err(|e| format!("{e:?}"))?;
+            let releases = reader.inventory(&context, ns).await.map_err(|e| format!("{e:?}"))?;
             println!("{}", serde_json::to_string_pretty(&releases)?);
         }
         "helm-repos" => {

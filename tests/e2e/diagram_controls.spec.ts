@@ -10,7 +10,7 @@ test('settings stay in one island, both directions apply inside namespaces, and 
     if (operation === 'contexts') return route.fulfill({ json: [{ name: 'cluster', is_current: true }] });
     if (operation === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (operation === 'namespaces') return route.fulfill({ json: ['backend'] });
-    if (operation === 'releases') return route.fulfill({ json: { context: 'cluster', namespace: url.searchParams.get('namespace'), offset: 0, limit: 100, has_more: false, items: [] } });
+    if (operation === 'inventory') return route.fulfill({ json: [] });
     const kind = url.searchParams.get('kind');
     const metadata = { uid: 'owner', name: 'web-owner', namespace: 'backend' };
     return route.fulfill({ json: { items: kind === 'Deployment' ? [{ apiVersion: 'apps/v1', kind, metadata }]

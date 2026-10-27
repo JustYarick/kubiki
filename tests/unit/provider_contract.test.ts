@@ -98,7 +98,7 @@ describe.each(['HTTP', 'Tauri'] as const)('%s provider transport', (transport) =
   it('routes namespace metrics through HTTP/native and validates the response identity', async () => {
     const data = { context: 'production', namespace: 'backend', pods: { items: [], error: null }, nodes: { items: null, error: null } };
     respond(data);await expect(new K8sProvider().getOverviewMetrics('production', 'backend')).resolves.toEqual(data);
-    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('get_overview_metrics', { context: 'production', namespace: 'backend' });
+    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('get_overview_metrics', { context: 'production', namespace: 'backend', requestId: expect.any(String) });
     else expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('namespace=backend');
     respond({ ...data, context: 'wrong' });await expect(new K8sProvider().getOverviewMetrics('production', 'backend')).rejects.toThrow('invalid response');
   });
@@ -107,7 +107,7 @@ describe.each(['HTTP', 'Tauri'] as const)('%s provider transport', (transport) =
     const result = await new K8sProvider().getResources('production', 'Deployment', 'backend');
     expect(result[0]).toMatchObject({ name: 'web', apiVersion: 'apps/v1', replicas: 0 });
     const expected = resourceQuery('production', 'Deployment', 'backend');
-    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('get_resources', expected);
+    if (transport === 'Tauri') expect(invoke).toHaveBeenCalledWith('get_resources', { ...expected, requestId: expect.any(String) });
     else {
       const url = new URL(vi.mocked(fetch).mock.calls[0][0] as string, 'http://localhost');
       expect(Object.fromEntries(url.searchParams)).toEqual(expected);

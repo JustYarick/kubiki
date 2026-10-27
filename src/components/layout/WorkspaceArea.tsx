@@ -97,7 +97,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   const loadingKinds = useResourceStore(state => state.loadingKinds);
   const customKey = tab?.type === 'resource-list' ? tab.kind : tab?.kind ? resourceBucket({ kind: tab.kind, apiVersion: tab.apiVersion }) : '';
   const customDefinition = useMemo(() => [...resources.CustomResourceDefinition.values()].map(customResourceType).find(type => type?.key === customKey), [resources.CustomResourceDefinition, customKey]);
-  const custom = useCustomResources(tab?.type !== 'resource-list' && tab?.context === context ? customDefinition : undefined);
+  const custom = useCustomResources(visible && tab?.type !== 'resource-list' && tab?.context === context ? customDefinition : undefined, tab?.namespace);
 
   if (!tab) {
     return (

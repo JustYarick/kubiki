@@ -82,7 +82,7 @@ async function fixture(page: Page) {
     if (op === 'namespaces') return route.fulfill({ json: [ns] });
     if (op === 'api-resources') return route.fulfill({ json: discovery });
     if (op === 'metrics') return route.fulfill({ json: { context: 'parity', namespace: null, pods: { items: [], error: null }, nodes: { items: [], error: null } } });
-    if (op === 'releases') return route.fulfill({ json: { context: 'parity', namespace: null, items: [], offset: 0, limit: 100, has_more: false } });
+    if (op === 'inventory') return route.fulfill({ json: [] });
     const kind = url.searchParams.get('kind') ?? '';
     return route.fulfill({ json: { items: objects[kind] ?? [] } });
   });

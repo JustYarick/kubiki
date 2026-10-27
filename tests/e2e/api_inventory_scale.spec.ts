@@ -15,7 +15,7 @@ async function fixture(page: Page, count = 1) {
     if (op === 'namespaces') return route.fulfill({ json: [ns, 'frontend'] });
     if (op === 'api-resources') return route.fulfill({ json: discovery });
     if (op === 'metrics') return route.fulfill({ json: { context: 'inventory-test', namespace: null, pods: { items: [], error: null }, nodes: { items: [], error: null } } });
-    if (op === 'releases') return route.fulfill({ json: { context: 'inventory-test', namespace: null, items: [], offset: 0, limit: 100, has_more: false } });
+    if (op === 'inventory') return route.fulfill({ json: [] });
     if (op === 'custom-resources') {
       const name = url.searchParams.get('name');
       const items = name?.startsWith('widgets.') ? Array.from({ length: count }, (_, index) => object('Widget', `widget-${String(index).padStart(4, '0')}`, 'example.com/v1', { spec: { nested: { enabled: true } }, status: { phase: 'Ready' } })) : name?.startsWith('gitrepositories.') ? [object('GitRepository', 'repo', 'source.toolkit.fluxcd.io/v1', { spec: { url: 'https://example.com/infra.git', interval: '1m' }, status: { conditions: [{ type: 'Ready', status: 'True' }] } })]

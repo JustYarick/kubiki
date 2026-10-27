@@ -12,7 +12,7 @@ async function fixture(page: Page) {
     if (operation === 'contexts') return route.fulfill({ json: [{ name: 'cluster', is_current: true }] });
     if (operation === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (operation === 'namespaces') return route.fulfill({ json: ['alpha', 'beta'] });
-    if (operation === 'releases') return route.fulfill({ json: { context: 'cluster', namespace: url.searchParams.get('namespace'), offset: 0, limit: 100, has_more: false, items: [] } });
+    if (operation === 'inventory') return route.fulfill({ json: [] });
     const kind = url.searchParams.get('kind');
     const namespace = url.searchParams.get('namespace');
     const lists: Record<string, object[]> = {
@@ -51,7 +51,7 @@ test('All Namespaces draws the full graph from the namespace picker and the glob
   await menu.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
   await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', 'all');
   await expect(page.locator('[data-namespace-group="beta"]')).toBeVisible();
-  expect(calls.filter(url => url.pathname.endsWith('/releases')).some(url => url.searchParams.get('namespace') === 'all')).toBe(false);
+  expect(calls.filter(url => url.pathname.endsWith('/helm/inventory')).some(url => url.searchParams.get('namespace') === 'all')).toBe(false);
 
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();
   const globalMenu = page.getByRole('dialog', { name: 'Choose Namespace Scope', exact: true });

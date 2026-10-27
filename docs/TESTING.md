@@ -40,8 +40,9 @@ requires Vite; production-preview runs must select compatible scenarios.
 The standard matrix has desktop, tablet and narrow/high-scale cases for details,
 Overview and YAML/topology. The full matrix retains the additional original
 width/scale combinations. No stress or operation-safety tests are omitted from
-the standard suite. The current counts are **188 standard / 194 full**, including
-the optional Redis scenario that is skipped without its package.
+the standard suite. List the current scenarios with `pnpm exec playwright test
+--list`; set `E2E_FULL_LAYOUT=1` to list the full matrix. The optional Redis
+scenario is skipped without its package.
 
 CI selects the full matrix when publishing (`E2E_FULL_LAYOUT=1`), independently
 of test worker count. It does not skip required test jobs or change failure policy.
