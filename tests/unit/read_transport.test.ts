@@ -62,6 +62,45 @@ it('does not sum successful namespace counts when another namespace count is unk
   expect(await provider.getResourceCounts('prod', ['Pod', 'Node'], '["one","two"]')).toEqual({ Node: 3 });
 });
 
+it('computes resource counts from locally cached snapshots when scope covers request', async () => {
+  const { useResourceStore } = await import('../../src/state/resource_store');
+  useResourceStore.setState({
+    resources: {
+      ...useResourceStore.getState().resources,
+      Pod: new Map([
+        ['pod-1', { uid: 'pod-1', name: 'pod-1', namespace: 'default', kind: 'Pod', apiVersion: 'v1' }],
+        ['pod-2', { uid: 'pod-2', name: 'pod-2', namespace: 'kube-system', kind: 'Pod', apiVersion: 'v1' }],
+      ]),
+    },
+    watchStates: {
+      Pod: {
+        hasSnapshot: true,
+        phase: 'live',
+        query: { context: 'prod', group: '', version: 'v1', kind: 'Pod', namespace: null },
+      },
+    },
+  });
+
+  let networkCalled = false;
+  const provider = new K8sProvider({
+    native: false,
+    request: async <T>() => {
+      networkCalled = true;
+      return {} as T;
+    },
+  });
+
+  const allCounts = await provider.getResourceCounts('prod', ['Pod'], 'all');
+  expect(allCounts).toEqual({ Pod: 2 });
+  expect(networkCalled).toBe(false);
+
+  const nsCounts = await provider.getResourceCounts('prod', ['Pod'], 'default');
+  expect(nsCounts).toEqual({ Pod: 1 });
+  expect(networkCalled).toBe(false);
+
+  useResourceStore.getState().reset();
+});
+
 it('cancels context discovery reads when activating a different context', async () => {
   const provider = new K8sProvider({ native: false, request: <T>(_command: string, _path: string, _args: Record<string, unknown>, _info: unknown, _body?: unknown, signal?: AbortSignal) => new Promise<T>((_, reject) => {
     signal!.addEventListener('abort', () => reject({ code: 'cancelled', message: 'Read was cancelled', retryable: false }), { once: true });

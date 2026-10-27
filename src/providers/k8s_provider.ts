@@ -2,7 +2,8 @@ import { environmentReadTransport, type KubernetesReadTransport } from './read_t
 import { queuedRead } from './read_queue';
 import { applyBatch as applyBatchRequest, changeResource, deleteObject, type BatchResult, type BatchStep } from './mutations';
 import { resourceRef } from '../core/resources/identity';
-import { namespaceNames, inNamespaceScope } from '../core/resources/namespace_scope';
+import { namespaceNames, inNamespaceScope, namespaceScopeCovers } from '../core/resources/namespace_scope';
+import { useResourceStore } from '../state/resource_store';
 import { parseApiResources } from './api_discovery';
 import { RESOURCE_TYPES } from '../core/resources/resource_types';
 import { pollResourceSnapshots } from './snapshot_watch';
@@ -154,15 +155,45 @@ export class K8sProvider implements KubernetesProvider {
     }
     const builtinKinds = kinds.filter(kind => !kind.startsWith('custom:'));
     if (!builtinKinds.length) return {};
+    const requestedScope = namespace ?? 'all';
+    const store = useResourceStore.getState();
+    const cachedCounts: Partial<Record<ResourceKind, number>> = {};
+    const uncachedKinds: ResourceKind[] = [];
+
+    for (const kind of builtinKinds) {
+      const resourceMap = store.resources[kind];
+      const watchState = store.watchStates[kind];
+      const isNamespaced = resourceType(kind).namespaced;
+      const loadedScope = watchState?.query.namespace ?? 'all';
+      const covers = !isNamespaced || namespaceScopeCovers(loadedScope, requestedScope);
+      const isCurrentContext = !watchState || watchState.query.context === context;
+
+      if (resourceMap && watchState?.hasSnapshot && isCurrentContext && covers) {
+        let count = 0;
+        for (const item of resourceMap.values()) {
+          if (inNamespaceScope(requestedScope, item.namespace)) {
+            count++;
+          }
+        }
+        cachedCounts[kind] = count;
+      } else {
+        uncachedKinds.push(kind);
+      }
+    }
+
+    if (!uncachedKinds.length) {
+      return cachedCounts;
+    }
+
     const names = namespaceNames(namespace ?? 'all');
     if (names && names.length !== 1 && !this.isTauriEnv()) {
-      const namespaced = builtinKinds.filter(kind => resourceType(kind).namespaced);
-      const clusterKinds = builtinKinds.filter(kind => !resourceType(kind).namespaced);
+      const namespaced = uncachedKinds.filter(kind => resourceType(kind).namespaced);
+      const clusterKinds = uncachedKinds.filter(kind => !resourceType(kind).namespaced);
       const [cluster, ...slices] = await Promise.all([
         this.getResourceCounts(context, clusterKinds, undefined, signal),
         ...names.map(name => this.getResourceCounts(context, namespaced, name, signal)),
       ]);
-      const totals: Partial<Record<ResourceKind, number>> = { ...cluster };
+      const totals: Partial<Record<ResourceKind, number>> = { ...cachedCounts, ...cluster };
       for (const kind of namespaced) {
         const counts = slices.map(slice => slice[kind]);
         if (counts.every((count): count is number => typeof count === 'number')) totals[kind] = counts.reduce((sum, count) => sum + count, 0);
@@ -170,7 +201,7 @@ export class K8sProvider implements KubernetesProvider {
       return totals;
     }
     const queries: ResourceQuery[] = [];
-    for (const kind of builtinKinds) {
+    for (const kind of uncachedKinds) {
       const type = resourceType(kind);
       if (names && names.length !== 1 && type.namespaced) {
         for (const name of names) {
@@ -185,12 +216,12 @@ export class K8sProvider implements KubernetesProvider {
       const raw = await this.request<Record<string, unknown>>(
         'get_resource_counts',
         'resource-counts',
-        { context, ...(singleNamespace ? { namespace: singleNamespace } : {}), kinds: builtinKinds.join(',') },
+        { context, ...(singleNamespace ? { namespace: singleNamespace } : {}), kinds: uncachedKinds.join(',') },
         undefined,
         { context, queries },
         signal,
       );
-      const counts: Partial<Record<ResourceKind, number>> = {};
+      const counts: Partial<Record<ResourceKind, number>> = { ...cachedCounts };
       for (const [kind, count] of Object.entries(raw ?? {})) {
         if (typeof count === 'number' && Number.isFinite(count) && count >= 0) {
           counts[kind as ResourceKind] = count;
@@ -198,7 +229,7 @@ export class K8sProvider implements KubernetesProvider {
       }
       return counts;
     } catch {
-      return {};
+      return cachedCounts;
     }
   }
 
