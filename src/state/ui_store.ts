@@ -117,10 +117,12 @@ interface UIState extends TopologyRenderingPreferences {
   toggleInspector: () => void;
   toggleGroup: (title: string) => void;
   setHiddenColumns: (kind: string, hidden: string[]) => void;
+  resetHiddenColumns: (kind?: string) => void;
   setColumnWidth: (kind: string, colId: string, width: number) => void;
   resetColumnWidths: (kind?: string) => void;
   setColumnOrder: (kind: string, order: string[]) => void;
   resetColumnOrder: (kind?: string) => void;
+  resetAllTableLayouts: () => void;
   setRightTab: (t: RightTab) => void;
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -254,6 +256,13 @@ export const useUiStore = create<UIState>()(
       toggleGroup: (title) =>
         set((s) => ({ sidebarGroups: { ...s.sidebarGroups, [title]: !(s.sidebarGroups[title] ?? s.sidebarGroups['*'] ?? false) } })),
       setHiddenColumns: (kind, hidden) => set((s) => ({ hiddenColumns: { ...s.hiddenColumns, [kind]: hidden } })),
+      resetHiddenColumns: (kind) =>
+        set((s) => {
+          if (!kind) return { hiddenColumns: {} };
+          const next = { ...s.hiddenColumns };
+          delete next[kind];
+          return { hiddenColumns: next };
+        }),
       setColumnWidth: (kind, colId, width) =>
         set((s) => ({ columnWidths: { ...s.columnWidths, [`${kind}:${colId}`]: width } })),
       resetColumnWidths: (kind) =>
@@ -272,6 +281,12 @@ export const useUiStore = create<UIState>()(
           const next = { ...s.columnOrder };
           delete next[kind];
           return { columnOrder: next };
+        }),
+      resetAllTableLayouts: () =>
+        set({
+          hiddenColumns: {},
+          columnOrder: {},
+          columnWidths: {},
         }),
       setRightTab: (rightTab) => set({ rightTab }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),

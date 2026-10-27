@@ -1,4 +1,4 @@
-import { cycleColumnFilter, columnFilterCount, EMPTY_COLUMN_FILTER, type ColumnFilters } from '../core/resources/column_filters';
+import { cycleColumnFilter, columnFilterCount, EMPTY_COLUMN_FILTER } from '../core/resources/column_filters';
 import { useResourceActions } from '../components/k8s/useResourceActions';
 import { useResourceColumns } from '../components/k8s/table/useResourceColumns';
 import { useResourceTableModel } from '../components/k8s/table/useResourceTableModel';
@@ -68,7 +68,6 @@ import type { ResourceItem, ResourceKind } from '../types/k8s';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { uiFactor, uiPixels } from '../core/appearance';
 import { resourceTabId } from '../core/resources/identity';
-import type { SortKey } from '../core/resources/resource_sort';
 import { podContainers } from '../core/resources/containers';
 import { refreshResourceWatches } from '../state/resource_watch';
 import { cx } from '../core/utils/cx';
@@ -90,7 +89,7 @@ interface ResourceViewProps {
 
 const EMPTY_RESOURCE_MAP = new Map<string, ResourceItem>();
 
-export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind, customType }) => {
+export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, customType }) => {
   const activeKind = useResourceStore(s => s.activeKind);
   const effectiveKind = explicitKind || activeKind;
   const needsPods = effectiveKind === 'Pod' || effectiveKind === 'Node' || effectiveKind === 'Service';
@@ -112,7 +111,10 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   } = useUiStore();
   const { openYamlEditor, openResourceDetail, openLogsTab, openTerminalTab, toggleSplit } = useWorkspaceStore();
 
-  const { searchQuery, searchRegex, setSearchQuery, setSearchRegex } = useTableView(viewId ?? `resource:${effectiveKind}`);
+  const {
+    searchQuery, searchRegex, setSearchQuery, setSearchRegex,
+    sorts, setSorts, columnFilters, setColumnFilters,
+  } = useTableView(`kind:${effectiveKind}`);
   const displayKind = customType?.kind ?? effectiveKind;
   const listLabel = customType ? `${customResourcePlacement(customType)?.label ?? customType.kind} · ${customType.group}` : SIDEBAR_TREE.flatMap(category => category.groups.flatMap(group => group.kinds)).find(entry => entry.kind === effectiveKind)?.label ?? `${effectiveKind}s`;
   const custom = useCustomResources(customType);
@@ -137,8 +139,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   const kindLoading = useResourceStore(state => state.loadingKinds[effectiveKind]);
   const syncMode = useResourceStore(state => state.syncMode);
 
-  const [sorts, setSorts] = useState<SortKey[]>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFilters>({});
   const [menu, setMenu] = useState<{ item: ResourceItem; x: number; y: number } | null>(null);
   const [headerMenu, setHeaderMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
   const [filterMenu, setFilterMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
@@ -171,12 +171,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   }, [activePerspective, explicitKind]);
 
   useEffect(() => {
-    setSorts([]);
-    setColumnFilters({});
     setSelectedUids(new Set());
     setFocusedIndex(0);
-
-  }, [effectiveKind, currentContext, setSearchQuery]);
+  }, [effectiveKind, currentContext]);
 
   const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
   useEffect(() => {

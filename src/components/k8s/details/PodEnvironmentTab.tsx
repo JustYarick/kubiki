@@ -274,13 +274,12 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
                           <button
                             onClick={() => entry.sourceName && navigateToResource('ConfigMap', entry.sourceName)}
                             className="inline-flex items-center max-w-full whitespace-nowrap gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 text-left transition-colors cursor-pointer group/src"
-                            title={`ConfigMap: ${entry.sourceName}${entry.sourceKey ? ` [${entry.sourceKey}]` : ''}`}
+                            title={`ConfigMap: ${entry.sourceName}${entry.sourceKey ? ` > ${entry.sourceKey}` : ''}`}
                           >
                             <FileText size={11} className="shrink-0" />
                             <span className="truncate">
                               <span className="font-semibold text-blue-300">ConfigMap:</span> {entry.sourceName}
                             </span>
-                            {entry.sourceKey && <span className="opacity-75 shrink-0">[{entry.sourceKey}]</span>}
                             <ExternalLink size={10} className="shrink-0 opacity-60 group-hover/src:opacity-100" />
                           </button>
                         )}
@@ -288,13 +287,12 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
                           <button
                             onClick={() => entry.sourceName && navigateToResource('Secret', entry.sourceName)}
                             className="inline-flex items-center max-w-full whitespace-nowrap gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 text-left transition-colors cursor-pointer group/src"
-                            title={`Secret: ${entry.sourceName}${entry.sourceKey ? ` [${entry.sourceKey}]` : ''}`}
+                            title={`Secret: ${entry.sourceName}${entry.sourceKey ? ` > ${entry.sourceKey}` : ''}`}
                           >
                             <KeyRound size={11} className="shrink-0" />
                             <span className="truncate">
                               <span className="font-semibold text-amber-300">Secret:</span> {entry.sourceName}
                             </span>
-                            {entry.sourceKey && <span className="opacity-75 shrink-0">[{entry.sourceKey}]</span>}
                             <ExternalLink size={10} className="shrink-0 opacity-60 group-hover/src:opacity-100" />
                           </button>
                         )}

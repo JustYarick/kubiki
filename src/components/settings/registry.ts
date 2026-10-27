@@ -43,6 +43,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
       { id: 'appearance.ui-scale', label: 'Interface scale', description: 'Scales text, icons and controls. 100% uses a 13px base UI font.', keywords: 'zoom size factor resize' },
       { id: 'appearance.row-density', label: 'Row density', description: 'Affects table rows across all resource views.', keywords: 'table compact comfortable spacing' },
       { id: 'appearance.details-tab', label: 'Default details tab', description: 'Tab opened in the details panel when a resource is selected.', keywords: 'inspector right pane yaml overview' },
+      { id: 'appearance.reset-tables', label: 'Table columns and ordering', description: 'Restore default column order, widths, visibility, sorts and filters for all resource tables.', keywords: 'reset table columns order widths visibility sorts filters datagrip' },
     ],
   },
   {

@@ -11,6 +11,7 @@ import { TerminalFontSettings } from '../TerminalFontSettings';
 import { LogTimeZoneSelect } from '../k8s/LogTimeZoneSelect';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
+import { useTableViewStore } from '../../state/table_view_store';
 import { k8s } from '../../providers/k8s_provider';
 import {
   DEFAULT_SCROLLBACK,
@@ -222,6 +223,18 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
           onChange={setDefaultRightTab}
           options={[{ value: 'overview', label: 'Overview' }, { value: 'yaml', label: 'YAML' }]}
         />
+      </Row>
+      <Row entry={findEntry('appearance.reset-tables')}>
+        <Button
+          size="sm"
+          onClick={() => {
+            useUiStore.getState().resetAllTableLayouts();
+            useTableViewStore.getState().resetAll();
+            toast.success('All table columns and filters reset to defaults');
+          }}
+        >
+          <RotateCcw size="calc(12px * var(--ui-factor))" /> Reset table columns & filters
+        </Button>
       </Row>
     </div>
   );
@@ -622,7 +635,9 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
   },
   appearance: () => {
     useUiStore.getState().resetAppearance();
-    toast.success('Appearance defaults restored');
+    useUiStore.getState().resetAllTableLayouts();
+    useTableViewStore.getState().resetAll();
+    toast.success('Appearance and table defaults restored');
   },
   editor: () => {
     const ui = useUiStore.getState();
