@@ -91,6 +91,8 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     sectionTitle: 'Logs',
     resetLabel: 'Reset log defaults',
     entries: [
+      { id: 'logs.mode', label: 'Log ingestion mode', description: 'Choose between periodic polling (Lens-style) or continuous streaming watch for container logs.', keywords: 'poll watch stream streaming mode ingestion' },
+      { id: 'logs.poll-interval', label: 'Default log polling interval', description: 'Cadence for fetching new log lines in polling mode (in seconds).', keywords: 'poll interval frequency cadence seconds' },
       { id: 'logs.wrap', label: 'Wrap log lines by default', description: 'Wrap long log lines. Changes in settings or the toolbar are remembered across log panes.', keywords: 'soft lines overflow new sessions' },
       { id: 'logs.timestamps', label: 'Show timestamps by default', description: 'Show a timestamp column. Changes in settings or the toolbar are remembered across log panes.', keywords: 'time column new sessions' },
       { id: 'logs.time-zone', label: 'Timestamp time zone', description: 'Display log timestamps in UTC or convert them to the computer’s local time zone. The choice applies to all log panes and is remembered.', keywords: 'timezone time zone local computer UTC offset timestamp часы часовой пояс локальное время' },

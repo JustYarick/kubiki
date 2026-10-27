@@ -16,6 +16,7 @@ import { k8s } from '../../providers/k8s_provider';
 import {
   DEFAULT_SCROLLBACK,
   LOG_BUFFER_PRESETS,
+  LOG_POLL_PRESETS,
   LOG_TAIL_PRESETS,
   TERMINAL_ACK_TIMEOUT_PRESETS,
   TERMINAL_SCROLLBACK_PRESETS,
@@ -364,6 +365,10 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
 }
 
 function LogsPage({ sectionTitle }: { sectionTitle: string }) {
+  const logsMode = useUiStore((s) => s.logsMode);
+  const setLogsMode = useUiStore((s) => s.setLogsMode);
+  const logsPollMs = useUiStore((s) => s.logsPollMs);
+  const setLogsPollMs = useUiStore((s) => s.setLogsPollMs);
   const logsWrap = useUiStore((s) => s.logsWrap);
   const setLogsWrap = useUiStore((s) => s.setLogsWrap);
   const logsTimestamps = useUiStore((s) => s.logsTimestamps);
@@ -381,6 +386,25 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <Row entry={findEntry('logs.mode')}>
+        <Segmented
+          ariaLabel="Log ingestion mode"
+          value={logsMode}
+          onChange={(v) => setLogsMode(v as 'poll' | 'watch')}
+          options={[
+            { value: 'poll', label: 'Poll' },
+            { value: 'watch', label: 'Watch (stream)' },
+          ]}
+        />
+      </Row>
+      <Row entry={findEntry('logs.poll-interval')}>
+        <Segmented
+          ariaLabel="Default log polling interval"
+          value={String(Math.round(logsPollMs / 1000))}
+          onChange={(v) => setLogsPollMs(Number(v) * 1000)}
+          options={LOG_POLL_PRESETS.map((n) => ({ value: String(n / 1000), label: `${n / 1000}s` }))}
+        />
+      </Row>
       <Row entry={findEntry('logs.wrap')}>
         <Checkbox aria-label="Wrap log lines by default" checked={logsWrap} onChange={(event) => setLogsWrap(event.target.checked)} />
       </Row>
@@ -662,6 +686,8 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     ui.setLogsColorLevels(false);
     ui.setLogsStructured(false);
     ui.setLogsTimestampZone('utc');
+    ui.setLogsMode('poll');
+    ui.setLogsPollMs(2000);
     ui.setLogsDefaultTail(500);
     ui.setLogsMaxBufferLines(1000);
     ui.setLogsScrollStickiness(40);

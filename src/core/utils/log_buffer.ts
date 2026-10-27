@@ -18,8 +18,7 @@ export class LogBuffer {
     this.maxLines = maxLines;
   }
 
-  push(data: number[], final = false): void {
-    const text = this.decoder.decode(new Uint8Array(data), { stream: !final });
+  pushText(text: string, final = false): void {
     const parts = text.split('\n');
     for (let index = 0; index < parts.length; index++) {
       const part = parts[index];
@@ -31,6 +30,11 @@ export class LogBuffer {
       if (index < parts.length - 1) { this.append(this.pending); this.pending = ''; this.dropping = false; }
     }
     if (final && this.pending) { this.append(this.pending); this.pending = ''; this.dropping = false; }
+  }
+
+  push(data: number[], final = false): void {
+    const text = this.decoder.decode(new Uint8Array(data), { stream: !final });
+    this.pushText(text, final);
   }
   private append(text: string): void {
     const match = /^(\d{4}-\d\d-\d\dT\S+)\s(.*)$/.exec(text.replace(/\r$/, ''));

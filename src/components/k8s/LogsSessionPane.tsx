@@ -1,6 +1,7 @@
 import { logTimestampFormatter, systemTimeZone } from '../../core/utils/log_timestamp';
 import { Select } from '../ui/Select';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ContainerChoices } from './ContainerLaunchDialog';
 import { LogsToolbar } from './LogsToolbar';
 import { useSessionContainers } from './useSessionContainers';
@@ -55,6 +56,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const setColorLevels = useUiStore(s => s.setLogsColorLevels);
   const pollMs = useUiStore(s => s.logsPollMs);
   const setPollMs = useUiStore(s => s.setLogsPollMs);
+  const logsMode = useUiStore(s => s.logsMode);
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
@@ -98,6 +100,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     const run = async () => {
       if (cancelled) return;
       if (!visible) { timer = setTimeout(run, pollRef.current); return; }
+      let text = '';
       try {
         if (k8s.demo) {
           const [level, template] = LOG_TEMPLATES[seqRef.current % LOG_TEMPLATES.length];
@@ -108,7 +111,6 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           if (recreated) throw new Error('The Pod was recreated. Open the current Pod to read its logs.');
           if (!context || !session.resourceName || !session.namespace) throw new Error('Select a Pod and namespace to view logs.');
           if (!activeContainer) throw new Error('Select a container to view logs.');
-          let text: string;
           let replace = false;
           if (native) {
             if (!uid) throw new Error('A Pod with UID is required. Reopen logs from the current Pod.');
@@ -126,11 +128,11 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           if (replace) {
             /* Browser mode returns a whole snapshot; it always replaces history. */
             buffer.clear();
-            buffer.push([...new TextEncoder().encode(text)], true);
+            buffer.pushText(text, true);
           } else {
             /* The overlap from the last second is refetched; drop exact repeats. */
             const decoded = new LogBuffer();
-            decoded.push([...new TextEncoder().encode(text)], true);
+            decoded.pushText(text, true);
             const seen = new Set(buffer.lines.map((l) => `${l.t}\u0000${l.msg}`));
             for (const line of decoded.lines) {
               const signature = `${line.t}\u0000${line.msg}`;
@@ -143,7 +145,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           retries = 0;
           setError('');
           if (native && previous) { setPhase('Snapshot'); return; }
-          setPhase(`Polling every ${Math.round(pollRef.current / 1000)}s`);
+          setPhase(logsMode === 'watch' ? 'Streaming logs' : `Polling every ${Math.round(pollRef.current / 1000)}s`);
         }
       } catch (read) {
         if (cancelled) return;
@@ -155,18 +157,16 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
       }
       if (cancelled) return;
       /* Failures back off (1×, 2×, 4×) and stop after three consecutive misses. */
-      timer = setTimeout(run, pollRef.current * [1, 2, 4][Math.min(retries, 2)]);
+      const nextDelay = logsMode === 'watch'
+        ? (text && text.trim().length > 0 ? 500 : 1000)
+        : pollRef.current;
+      timer = setTimeout(run, nextDelay * [1, 2, 4][Math.min(retries, 2)]);
     };
     void run();
     const stop = () => { cancelled = true; if (timer) clearTimeout(timer); };
     window.addEventListener('pagehide', stop);
     return () => { window.removeEventListener('pagehide', stop); stop(); };
   }, [sourceKey, paused, recreated, visible]);
-
-  useEffect(() => {
-    const output = outputRef.current;
-    if (visible && pinned.current && output) output.scrollTop = output.scrollHeight;
-  }, [lines, visible, filter]);
 
   const [filterRegex, setFilterRegex] = useState(false);
   const shown = useMemo(() => {
@@ -189,6 +189,26 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     for (const line of shown) parsed.set(line.seq, parseStructuredLog(line.msg));
     return parsed;
   }, [shown, structured]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: shown.length,
+    getScrollElement: () => outputRef.current,
+    estimateSize: () => 24,
+    overscan: 20,
+    getItemKey: (index) => shown[index]?.seq ?? index,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+
+  useEffect(() => {
+    const output = outputRef.current;
+    if (visible && pinned.current && output) {
+      if (shown.length > 0) {
+        rowVirtualizer.scrollToIndex(shown.length - 1, { align: 'end' });
+      } else {
+        output.scrollTop = output.scrollHeight;
+      }
+    }
+  }, [lines, visible, filter, shown.length]);
 
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
@@ -221,7 +241,12 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           </div>
         ) : (
           <div className={cx('font-mono text-[length:calc(11px*var(--ui-factor))] leading-[1.6]', !wrap && 'w-max min-w-full')}>
-            {shown.map((l) => {
+            {virtualRows.length > 0 && virtualRows[0].start > 0 && (
+              <div aria-hidden="true" data-virtual-spacer style={{ height: `${virtualRows[0].start}px` }} />
+            )}
+            {virtualRows.map((virtualRow) => {
+              const l = shown[virtualRow.index];
+              if (!l) return null;
               const parsed = structured ? parsedLines.get(l.seq) ?? null : null;
               const level = parsed?.level ?? l.level;
               const message = parsed ? (parsed.message ?? (parsed.fields.length ? '' : l.msg)) : l.msg;
@@ -258,6 +283,8 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
               return (
                 <div
                   key={l.seq}
+                  data-index={virtualRow.index}
+                  ref={rowVirtualizer.measureElement}
                   data-testid="log-line"
                   data-level={level}
                   className={cx(
@@ -305,6 +332,9 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                 </div>
               );
             })}
+            {virtualRows.length > 0 && (
+              <div aria-hidden="true" data-virtual-spacer style={{ height: `${Math.max(0, rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end)}px` }} />
+            )}
           </div>
         )}
       </div>

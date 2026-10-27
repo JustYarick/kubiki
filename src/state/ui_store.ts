@@ -12,6 +12,7 @@ import { ANALYSIS_INSTRUCTIONS, normalizeAnalysisPrompt, normalizeAiAgent, type 
 
 export type Density = 'compact' | 'comfortable';
 export type RightTab = 'overview' | 'yaml' | 'related' | 'events' | 'env';
+export type LogMode = 'poll' | 'watch';
 
 interface UIState extends TopologyRenderingPreferences {
   developerMode: boolean;
@@ -43,6 +44,7 @@ interface UIState extends TopologyRenderingPreferences {
   logsTimestampZone: LogTimestampZone;
   logsStructured: boolean;
   logsColorLevels: boolean;
+  logsMode: LogMode;
   /** Poll frequency for the log viewer, milliseconds. Lens-style reads. */
   logsPollMs: number;
   logsDefaultTail: number;
@@ -93,6 +95,7 @@ interface UIState extends TopologyRenderingPreferences {
   setLogsTimestampZone: (value: LogTimestampZone) => void;
   setLogsStructured: (value: boolean) => void;
   setLogsColorLevels: (value: boolean) => void;
+  setLogsMode: (value: LogMode) => void;
   setLogsPollMs: (value: number) => void;
   setLogsDefaultTail: (value: number) => void;
   setLogsMaxBufferLines: (value: number) => void;
@@ -182,6 +185,7 @@ export const useUiStore = create<UIState>()(
       logsTimestampZone: 'utc',
       logsStructured: false,
       logsColorLevels: false,
+      logsMode: 'poll' as LogMode,
       logsPollMs: 2000,
       logsDefaultTail: 500,
       logsMaxBufferLines: 1000,
@@ -224,6 +228,7 @@ export const useUiStore = create<UIState>()(
       setLogsTimestampZone: (value) => set({ logsTimestampZone: value === 'local' ? 'local' : 'utc' }),
       setLogsStructured: (logsStructured) => set({ logsStructured }),
       setLogsColorLevels: (logsColorLevels) => set({ logsColorLevels }),
+      setLogsMode: (value) => set({ logsMode: value === 'watch' ? 'watch' : 'poll' }),
       setLogsPollMs: (value) => set({ logsPollMs: (LOG_POLL_PRESETS as readonly number[]).includes(value) ? value : 2000 }),
       setLogsDefaultTail: (value) => set({ logsDefaultTail: (LOG_TAIL_PRESETS as readonly number[]).includes(value as any) ? value : 500 }),
       setLogsMaxBufferLines: (value) => set({ logsMaxBufferLines: (LOG_BUFFER_PRESETS as readonly number[]).includes(value as any) ? value : 1000 }),
@@ -330,6 +335,7 @@ export const useUiStore = create<UIState>()(
           logsTimestampZone: stored?.logsTimestampZone === 'local' ? 'local' : 'utc',
           logsStructured: normalizeBool(stored?.logsStructured, false),
           logsColorLevels: normalizeBool(stored?.logsColorLevels, false),
+          logsMode: stored?.logsMode === 'watch' ? ('watch' as const) : ('poll' as const),
           logsPollMs: normalizeNumber(stored?.logsPollMs, 500, 60000, 2000),
           logsDefaultTail: normalizeNumber(stored?.logsDefaultTail, 100, 5000, 500),
           logsMaxBufferLines: normalizeNumber(stored?.logsMaxBufferLines, 1000, 25000, 1000),
@@ -363,6 +369,7 @@ export const useUiStore = create<UIState>()(
         logsTimestampZone: s.logsTimestampZone,
         logsStructured: s.logsStructured,
         logsColorLevels: s.logsColorLevels,
+        logsMode: s.logsMode,
         logsPollMs: s.logsPollMs,
         logsDefaultTail: s.logsDefaultTail,
         logsMaxBufferLines: s.logsMaxBufferLines,
