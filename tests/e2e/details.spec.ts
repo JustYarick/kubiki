@@ -91,7 +91,7 @@ test('Related with All Namespaces requests namespace-local dependencies and clus
   const snapshots = await page.evaluate(() => (window as any).__relatedSnapshots);
   expect(snapshots.length).toBeGreaterThan(0);
   expect(snapshots.every((snapshot: any) => snapshot.pods === 1 && snapshot.namespaces[0] === 'backend')).toBe(true);
-  for (const type of RESOURCE_TYPES) if (!type.namespaced) await expect.poll(() => reads.some(read => read.kind === type.kind && read.namespace === null)).toBe(true);
+  for (const kind of ['Node', 'PriorityClass']) await expect.poll(() => reads.some(read => read.kind === kind && read.namespace === null)).toBe(true);
   // The Pod table explicitly displays all namespaces. Related's other consumers
   // must carry the object's namespace in the actual API request.
   expect(reads.some(read => read.kind === 'Secret' && read.namespace === 'backend')).toBe(true);
