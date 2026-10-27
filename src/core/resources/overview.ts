@@ -25,7 +25,10 @@ export function buildOverview(input: OverviewInput) {
     const watch = watchStates[kind];
     const tracked = input.syncMode === 'watch' || input.onDemand;
     const covered = !tracked || !!watch && watch.query.context === context && (!type.namespaced || watch.query.namespace === null || watch.query.namespace === namespace);
-    const items = covered ? [...resources[kind].values()].filter(item => inNamespaceScope(namespace, item.namespace)) : [];
+    const isEvent = kind === 'Event';
+    const items = covered
+      ? [...resources[kind].values()].filter(item => inNamespaceScope(namespace, item.namespace) && (!isEvent || eventDetails(item).warning || item.raw?.type === 'Warning' || item.raw?.type === 'Critical'))
+      : [];
     const hasSnapshot = tracked ? covered && watch?.hasSnapshot === true : items.length > 0 || input.connected && !input.loading && !loadErrors[kind];
     const state = tracked && !watch ? 'not loaded' : watch?.phase === 'stopped' ? hasSnapshot ? 'cached' : 'not loaded' : !covered ? 'loading' : loadErrors[kind] ? hasSnapshot ? 'stale' : 'unavailable'
       : !hasSnapshot ? input.loading || input.syncMode === 'watch' && (!watch || ['connecting', 'syncing'].includes(watch.phase)) ? 'loading' : 'unavailable'

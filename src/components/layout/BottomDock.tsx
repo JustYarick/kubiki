@@ -513,11 +513,25 @@ function EventsPane() {
   }, [filter, typeFilter]);
 
   const filtered = useMemo(() => {
-    let list: ClusterEvent[] = k8s.demo ? MOCK_EVENTS : [...events.values()].map((event) => {
-      const raw = event.raw ?? {};
-      const ref = raw.involvedObject ?? raw.regarding ?? {};
-      return { id: event.uid, type: raw.type === 'Warning' ? 'Warning' : 'Normal', reason: raw.reason ?? '', object: `${ref.kind ?? ''}/${ref.name ?? ''}`, message: raw.message ?? raw.note ?? '', count: raw.count ?? raw.series?.count ?? 1, age: event.age ?? '—' };
-    });
+    let list: ClusterEvent[] = (k8s.demo ? MOCK_EVENTS : [...events.values()])
+      .filter((event) => {
+        const raw = (event as any).raw ?? event;
+        const type = raw.type ?? (event as any).type;
+        return type === 'Warning' || type === 'Critical' || (raw.type && raw.type !== 'Normal');
+      })
+      .map((event) => {
+        const raw = (event as any).raw ?? {};
+        const ref = raw.involvedObject ?? raw.regarding ?? {};
+        return {
+          id: (event as any).uid ?? (event as any).id,
+          type: ((event as any).type === 'Warning' || raw.type === 'Warning') ? 'Warning' : 'Normal',
+          reason: raw.reason ?? (event as any).reason ?? '',
+          object: (event as any).object ?? `${ref.kind ?? ''}/${ref.name ?? ''}`,
+          message: raw.message ?? raw.note ?? (event as any).message ?? '',
+          count: raw.count ?? raw.series?.count ?? (event as any).count ?? 1,
+          age: (event as any).age ?? '—',
+        };
+      });
     if (typeFilter !== 'All') list = list.filter((e) => e.type === typeFilter);
     if (filter) {
       const q = filter.toLowerCase();

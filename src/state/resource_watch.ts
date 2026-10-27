@@ -57,6 +57,34 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
   };
   const next = new ResourceWatchSession(context, provider, (kind, update) => {
     if (session !== next || useClusterStore.getState().currentContext !== context) return;
+    if (kind === 'Event') {
+      const isTargeted = Boolean(
+        useResourceStore.getState().selectedItem ||
+        useWorkspaceStore.getState().tabs.some(tab => tab.type !== 'overview') ||
+        useDockStore.getState().sessions.some(s => s.type === 'events')
+      );
+      if (!isTargeted) {
+        if (update.snapshot) {
+          update = {
+            ...update,
+            snapshot: update.snapshot.filter(item => {
+              const rawType = item.raw?.type ?? (item as any).type;
+              return rawType === 'Warning' || rawType === 'Critical' || (rawType && rawType !== 'Normal');
+            }),
+          };
+        }
+        if (update.changes.length) {
+          update = {
+            ...update,
+            changes: update.changes.filter(change => {
+              if (change.type === 'delete') return true;
+              const rawType = change.item.raw?.type ?? (change.item as any).type;
+              return rawType === 'Warning' || rawType === 'Critical' || (rawType && rawType !== 'Normal');
+            }),
+          };
+        }
+      }
+    }
     useResourceStore.getState().applyWatchCommit(kind, update);
     if (kind === 'Namespace' && update.state.hasSnapshot) {
       const watched = [...useResourceStore.getState().resources.Namespace.values()].map((item) => item.name);
