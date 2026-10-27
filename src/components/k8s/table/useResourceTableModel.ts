@@ -24,6 +24,10 @@ interface TableModelOptions {
 export function useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId }: TableModelOptions) {
   const kindResources = resources[effectiveKind];
   const allItems = useMemo(() => Array.from(kindResources?.values() ?? []), [kindResources]);
+  const namespaceScopedItems = useMemo(
+    () => (selectedNamespace === 'all' ? allItems : allItems.filter((item) => inNamespaceScope(selectedNamespace, item.namespace))),
+    [allItems, selectedNamespace]
+  );
   const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
   const podError = useResourceStore((state) => state.loadErrors.Pod);
   const issueRanks = useMemo(() => {
@@ -51,8 +55,7 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
     const map = new Map<string, Map<string, number>>();
     // Count values over the namespace + search scoped set so the popup only offers
     // values that are actually present in the current result set (not stale ones).
-    let list = allItems;
-    if (selectedNamespace !== 'all') list = list.filter((item) => inNamespaceScope(selectedNamespace, item.namespace));
+    let list = namespaceScopedItems;
     const q = searchQuery.trim();
     if (q) {
       if (searchRegex) {
@@ -92,7 +95,7 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
       map.set(column.id, counts);
     }
     return map;
-  }, [allItems, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, activeFilterColumnId]);
+  }, [namespaceScopedItems, tableColumns, searchQuery, searchRegex, columnFilters, activeFilterColumnId]);
 
   const statusValues = useMemo(() => {
     const column = tableColumns.find((c) => c.id === 'status');
@@ -101,8 +104,7 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
   }, [tableColumns, columnValues]);
 
   const rows = useMemo(() => {
-    let list = allItems;
-    if (selectedNamespace !== 'all') list = list.filter((i) => inNamespaceScope(selectedNamespace, i.namespace));
+    let list = namespaceScopedItems;
     const q = searchQuery.trim();
     if (q) {
       if (searchRegex) {
@@ -176,6 +178,6 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
       list = [...list].sort((a, b) => (a.namespace && b.namespace && a.namespace !== b.namespace ? fastCompare(a.namespace, b.namespace) : 0) || fastCompare(a.name, b.name) || fastCompare(a.uid, b.uid));
     }
     return { list, cols };
-  }, [allItems, selectedNamespace, searchQuery, searchRegex, effectiveKind, sorts, hiddenColumns, columnFilters, issueRanks, tableColumns, columnOrder]);
+  }, [namespaceScopedItems, searchQuery, searchRegex, effectiveKind, sorts, hiddenColumns, columnFilters, issueRanks, tableColumns, columnOrder]);
   return { allItems, rows, columnValues, statusValues };
 }

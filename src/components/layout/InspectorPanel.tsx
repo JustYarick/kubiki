@@ -97,7 +97,10 @@ function KubernetesResourceDetails({
     () => (item && rightTab === 'related' ? buildResourceGraph(resources, { adjacentTo: new Set([resourceKey(item)]) }) : undefined),
     [resources, item, rightTab]
   );
-  const childPods = useMemo(() => item ? findWorkloadPods(item, resources) : [], [item, resources]);
+  const childPods = useMemo(
+    () => (item ? findWorkloadPods(item, { Pod: resources.Pod, ReplicaSet: resources.ReplicaSet, Job: resources.Job }) : []),
+    [item, resources.Pod, resources.ReplicaSet, resources.Job]
+  );
   const currentContext = useClusterStore((s) => s.currentContext);
   useEffect(() => {
     if (!inspector && item && currentContext && rightTab === 'related') {

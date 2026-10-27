@@ -26,7 +26,7 @@ import { subscribeHelmChanges } from '../providers/use_helm_graph';
 import { useUiStore } from '../state/ui_store';
 import { useHelmInventory } from '../providers/use_helm_inventory';
 import { useFluxHelmOwners } from '../providers/use_flux_helm_owners';
-import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseHealth } from '../core/resources/helm_diagnostics';
+import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseHealth, releaseObjects } from '../core/resources/helm_diagnostics';
 import { resourceIssues } from '../core/resources/diagnostics';
 import { resourceEvents } from '../core/resources/resource_events';
 import './helm.css';
@@ -212,7 +212,7 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
   const chooseRevision = (revision: number) => { setSelection({ key: item.uid, tab: 'values', revision }); };
   const loadedResources = useMemo(() => Object.entries(resources).flatMap(([kind, map]) => kind === 'Event' ? [] : [...map.values()]), [resources]);
   const events = useMemo(() => [...resources.Event.values()], [resources.Event]);
-  const managed = useMemo(() => loadedResources.filter(resource => { const metadata = resource.raw?.metadata ?? resource.metadata ?? {}; const annotations = metadata.annotations ?? {}; return metadata.labels?.['app.kubernetes.io/managed-by'] === 'Helm' && annotations['meta.helm.sh/release-name'] === item.name && annotations['meta.helm.sh/release-namespace'] === item.namespace; }), [loadedResources, item.name, item.namespace]);
+  const managed = useMemo(() => releaseObjects({ name: item.name, namespace: item.namespace ?? '' }, loadedResources), [loadedResources, item.name, item.namespace]);
   const navigate = (next: ResourceItem) => { setTab('overview'); onNavigate(next); };
   const owners = useFluxHelmOwners(context, null);
   const owner = fluxReleaseOwner({ name: item.name, namespace: item.namespace! }, owners.items);

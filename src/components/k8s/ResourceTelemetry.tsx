@@ -7,6 +7,7 @@ import { Cpu, MemoryStick, RefreshCw, ChevronDown, ArrowUpRight, Settings2 } fro
 import type { ResourceItem } from '../../types/k8s';
 import { useOverviewMetrics } from '../../providers/use_overview_metrics';
 import { buildTelemetry, type Dimension, type HistoryPoint, type UsageRow } from '../../core/resources/telemetry';
+import { fastCompare } from '../../core/resources/resource_sort';
 import { cpuText, memoryText } from '../../core/resources/quantities';
 import { useWorkspaceStore } from '../../state/workspace_store';
 import { k8s } from '../../providers/k8s_provider';
@@ -25,7 +26,7 @@ export function ResourceTelemetry({ context, namespace, pods, nodes, children }:
   const [limit, setLimit] = useState(5);
   const [selected, setSelected] = useState<string>();
   const rankingMode = namespace ? 'pods' : mode;
-  const rows = useMemo(() => [...(rankingMode === 'pods' ? telemetry.podRows : telemetry.nodeRows)].sort((a, b) => b[sort] - a[sort] || a.name.localeCompare(b.name)), [rankingMode, telemetry, sort]);
+  const rows = useMemo(() => [...(rankingMode === 'pods' ? telemetry.podRows : telemetry.nodeRows)].sort((a, b) => b[sort] - a[sort] || fastCompare(a.name, b.name)), [rankingMode, telemetry, sort]);
   const maxima = useMemo(() => rows.reduce((max, row) => ({ cpu: Math.max(max.cpu, row.cpu), memory: Math.max(max.memory, row.memory) }), { cpu: 0, memory: 0 }), [rows]);
   const selection = rows.find(row => `${row.namespace ?? ''}/${row.name}` === selected);
   const errors = [state.error, state.data?.nodes.error?.message, state.data?.pods.error?.message].filter(Boolean);

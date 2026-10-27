@@ -40,7 +40,7 @@ requires Vite; production-preview runs must select compatible scenarios.
 The standard matrix has desktop, tablet and narrow/high-scale cases for details,
 Overview and YAML/topology. The full matrix retains the additional original
 width/scale combinations. No stress or operation-safety tests are omitted from
-the standard suite. The current counts are **178 standard / 184 full**, including
+the standard suite. The current counts are **188 standard / 194 full**, including
 the optional Redis scenario that is skipped without its package.
 
 CI selects the full matrix when publishing (`E2E_FULL_LAYOUT=1`), independently

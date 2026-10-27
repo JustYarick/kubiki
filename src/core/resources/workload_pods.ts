@@ -2,6 +2,7 @@ import type { ResourceItem } from '../../types/k8s';
 import { ownerMatches, type OwnerReference } from './owner_references';
 
 const DIRECT_WORKLOAD_KINDS = new Set(['ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController']);
+const ALL_WORKLOAD_KINDS = new Set(['ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController', 'Deployment', 'Job', 'CronJob']);
 
 function ownersOf(item: ResourceItem): OwnerReference[] {
   return (item.raw?.metadata?.ownerReferences ?? []) as OwnerReference[];
@@ -37,11 +38,12 @@ export function findWorkloadPods(
   resources: { Pod?: Map<string, ResourceItem>; ReplicaSet?: Map<string, ResourceItem>; Job?: Map<string, ResourceItem> }
 ): ResourceItem[] {
   if (workload.kind === 'Pod') return [workload];
-  const pods = [...(resources.Pod?.values() ?? [])];
+  if (!ALL_WORKLOAD_KINDS.has(workload.kind)) return [];
   const targetNs = workload.namespace;
-
-  // Filter pods in the same namespace (unless cluster-scoped workload, which is unusual)
-  const scopedPods = targetNs ? pods.filter((p) => p.namespace === targetNs) : pods;
+  const scopedPods: ResourceItem[] = [];
+  for (const pod of resources.Pod?.values() ?? []) {
+    if (!targetNs || pod.namespace === targetNs) scopedPods.push(pod);
+  }
 
   if (DIRECT_WORKLOAD_KINDS.has(workload.kind)) {
     return scopedPods.filter((pod) => {

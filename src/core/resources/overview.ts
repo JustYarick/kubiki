@@ -4,6 +4,7 @@ import type { WatchState } from '../../providers/watch_types';
 import { RESOURCE_TYPES } from './resource_types';
 import { resourceIssues } from './diagnostics';
 import { eventDetails } from './resource_events';
+import { fastCompare } from './resource_sort';
 
 export interface OverviewInput {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
@@ -42,7 +43,7 @@ export function buildOverview(input: OverviewInput) {
   const issues = inventory.filter(entry => entry.kind !== 'Event').flatMap(entry => entry.items.flatMap(item => {
     const found = resourceIssues(item);
     return found.length ? [{ item, issues: found, severity: found.some(issue => issue.severity === 'error') ? 'error' : 'warning' }] : [];
-  })).sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error') || a.item.name.localeCompare(b.item.name));
+  })).sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error') || fastCompare(a.item.name, b.item.name));
   const workloadKinds: ResourceKind[] = ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob'];
   const workloads = workloadKinds.map(row);
   return {

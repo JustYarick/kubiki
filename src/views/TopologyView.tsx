@@ -25,6 +25,7 @@ import { TopologyCanvas } from './TopologyCanvas';
 import { TopologyEvents } from './TopologyEvents';
 import { useHelmGraph } from '../providers/use_helm_graph';
 import { topologyRendering } from '../core/resources/topology_rendering';
+import { fastCompare } from '../core/resources/resource_sort';
 
 const NO_EVENTS = new Map<string, ResourceItem>();
 
@@ -67,7 +68,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
       for (const graphItem of graph.items.values()) {
         if (graphItem.namespace && !counts.has(graphItem.namespace)) counts.set(graphItem.namespace, { name: graphItem.namespace, resources: 0, pods: 0 });
       }
-      return [...counts.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      return [...counts.values()].sort((a, b) => fastCompare(a.name, b.name));
     }
     for (const map of Object.values(resources)) for (const entry of map.values()) {
       const name = entry.namespace ?? (entry.kind === 'Namespace' ? entry.name : undefined);
@@ -76,7 +77,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
       if (entry.namespace) counts.get(name)!.resources++;
       if (entry.kind === 'Pod') counts.get(name)!.pods++;
     }
-    return [...counts.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return [...counts.values()].sort((a, b) => fastCompare(a.name, b.name));
   }, [chooseScope, chooseScope ? resources : resources.Namespace, graph.items, namespaces, selectedNamespace]);
   const typeCounts = useMemo(() => topologyTypeCounts(graph), [graph]);
   const chooseNamespaces = (selection: string) => setScope(selection === 'all' ? 'all' : `namespaces:${selection}`);
