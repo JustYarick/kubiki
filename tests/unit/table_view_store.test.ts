@@ -11,15 +11,15 @@ describe('useTableViewStore', () => {
     const store = useTableViewStore.getState();
     store.update('kind:Pod', {
       searchQuery: 'nginx',
-      sorts: [{ colId: 'name', desc: true }],
-      columnFilters: { status: { include: new Set(['Running']), exclude: new Set() } },
+      sorts: [{ columnId: 'name', direction: 'desc' }],
+      columnFilters: { status: { include: ['Running'], exclude: [] } },
     });
 
     const podView = useTableViewStore.getState().views['kind:Pod'];
     expect(podView).toBeDefined();
     expect(podView?.searchQuery).toBe('nginx');
-    expect(podView?.sorts).toEqual([{ colId: 'name', desc: true }]);
-    expect(podView?.columnFilters.status?.include?.has('Running')).toBe(true);
+    expect(podView?.sorts).toEqual([{ columnId: 'name', direction: 'desc' }]);
+    expect(podView?.columnFilters.status?.include).toEqual(['Running']);
 
     // Other kinds remain unconfigured
     expect(useTableViewStore.getState().views['kind:Service']).toBeUndefined();

@@ -82,7 +82,6 @@ import { cx } from '../core/utils/cx';
 /* ------------------------------------------------------------------ */
 
 interface ResourceViewProps {
-  viewId?: string;
   explicitKind?: ResourceKind;
   customType?: CustomResourceType;
 }

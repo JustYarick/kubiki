@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { ResourceItem } from '../../../types/k8s';
 import { podContainers } from '../../../core/resources/containers';
-import { resolveContainerEnv } from '../../../core/resources/pod_env';
+import { resolveContainerEnv, findResourceInMap } from '../../../core/resources/pod_env';
 import { useResourceStore } from '../../../state/resource_store';
 import { IconButton, Button } from '../../ui/Button';
 import { toast } from '../../../state/notifications_store';
@@ -110,10 +110,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
   };
 
   const navigateToResource = (kind: 'ConfigMap' | 'Secret', name: string) => {
-    const targetMap = resources[kind];
-    const target = targetMap
-      ? [...targetMap.values()].find((r) => r.name === name && (!item.namespace || r.namespace === item.namespace))
-      : undefined;
+    const target = findResourceInMap(resources[kind], name, item.namespace);
     if (target && onNavigate) {
       onNavigate(target);
     } else {
@@ -182,7 +179,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
         <div className="px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-300 flex items-start gap-2 text-[11px]">
           <AlertTriangle size={15} className="shrink-0 mt-0.5 text-amber-400" />
           <div className="flex-1">
-            <span className="font-semibold">Configuration drift detected:</span> One or more ConfigMaps referenced by this pod were modified after container start. The values displayed below represent the active Pod environment. Restart or rollout the workload to apply new ConfigMap values.
+            <span className="font-semibold">Configuration drift detected:</span> One or more ConfigMaps or Secrets referenced by this pod were modified after container start. The values displayed below represent the active Pod environment. Restart or rollout the workload to apply updated values.
           </div>
         </div>
       )}
@@ -240,9 +237,12 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
                         ) : entry.value !== undefined ? (
                           <div>
                             <span className="text-emerald-400 select-all">{entry.value}</span>
-                            {entry.drift?.clusterValue !== undefined && entry.drift.clusterValue !== entry.value && (
+                            {entry.drift && (
                               <div className="mt-1 text-[10px] text-amber-300 font-sans">
-                                ↳ Cluster ConfigMap has: <span className="font-mono text-amber-200">"{entry.drift.clusterValue}"</span>
+                                ↳ {entry.drift.reason}
+                                {entry.drift.clusterValue !== undefined && entry.drift.clusterValue !== entry.value && (
+                                  <span> · Cluster has: <span className="font-mono text-amber-200">"{entry.drift.clusterValue}"</span></span>
+                                )}
                               </div>
                             )}
                           </div>

@@ -273,5 +273,5 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
 
   // Default: Resource List Table
   if (tab.kind?.startsWith('custom:') && !customDefinition) return <p className="p-3 text-xs text-[var(--text-secondary)]">This custom resource definition is not loaded in the current cluster.</p>;
-  return <ResourceView viewId={tab.id} key={tab.id} explicitKind={tab.kind} customType={customDefinition} />;
+  return <ResourceView key={tab.id} explicitKind={tab.kind} customType={customDefinition} />;
 }

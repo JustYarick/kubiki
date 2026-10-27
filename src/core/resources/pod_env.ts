@@ -23,6 +23,37 @@ export interface ContainerEnvResult {
   driftCount: number;
 }
 
+export function findResourceInMap(
+  resourceMap: Map<string, ResourceItem> | undefined,
+  name: string,
+  namespace?: string
+): ResourceItem | undefined {
+  if (!resourceMap) return undefined;
+  for (const item of resourceMap.values()) {
+    if (item.name === name && (!namespace || !item.namespace || item.namespace === namespace)) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
+function getResourceTimestamp(raw: any): number | undefined {
+  if (!raw?.metadata) return undefined;
+  const annotations = raw.metadata.annotations ?? {};
+  for (const key of ['kubectl.kubernetes.io/restartedAt', 'kubiki.io/updatedAt', 'helm.sh/hook-timestamp']) {
+    if (annotations[key]) {
+      const t = new Date(annotations[key]).getTime();
+      if (!isNaN(t)) return t;
+    }
+  }
+  const created = raw.metadata.creationTimestamp;
+  if (created) {
+    const t = new Date(created).getTime();
+    if (!isNaN(t)) return t;
+  }
+  return undefined;
+}
+
 function resolveSecretValue(data: Record<string, string> | undefined, key: string): string | undefined {
   if (!data || !(key in data)) return undefined;
   const raw = data[key];
@@ -86,15 +117,13 @@ export function resolveContainerEnv(
 
     if (ef.configMapRef) {
       const cmName = ef.configMapRef.name;
-      const cm = configMaps ? [...configMaps.values()].find((c) => c.name === cmName && (!namespace || c.namespace === namespace)) : undefined;
+      const cm = findResourceInMap(configMaps, cmName, namespace);
       const cmRaw = cm?.raw ?? {};
       const cmData: Record<string, string> = cmRaw.data ?? {};
       const cmBinaryData: Record<string, string> = cmRaw.binaryData ?? {};
       const mergedData = { ...cmData, ...cmBinaryData };
 
-      const cmUpdatedStr = cmRaw.metadata?.creationTimestamp; // In k8s ConfigMap updates don't change creationTimestamp, but metadata.resourceVersion changes
-      const cmUpdated = cmUpdatedStr ? new Date(cmUpdatedStr).getTime() : undefined;
-
+      const cmUpdated = getResourceTimestamp(cmRaw);
       const isDrift = startedAt && cmUpdated && cmUpdated > startedAt;
 
       for (const [key, val] of Object.entries(mergedData)) {
@@ -106,15 +135,18 @@ export function resolveContainerEnv(
           sourceName: cmName,
           sourceKey: key,
           isSecret: false,
-          drift: isDrift ? { reason: `ConfigMap ${cmName} updated after container start` } : undefined,
+          drift: isDrift ? { reason: `ConfigMap/${cmName} updated after container start` } : undefined,
         });
         if (isDrift) driftCount++;
       }
     } else if (ef.secretRef) {
       const secName = ef.secretRef.name;
-      const sec = secrets ? [...secrets.values()].find((s) => s.name === secName && (!namespace || s.namespace === namespace)) : undefined;
+      const sec = findResourceInMap(secrets, secName, namespace);
       const secRaw = sec?.raw ?? {};
       const secData: Record<string, string> = secRaw.data ?? {};
+
+      const secUpdated = getResourceTimestamp(secRaw);
+      const isDrift = startedAt && secUpdated && secUpdated > startedAt;
 
       for (const key of Object.keys(secData)) {
         const resolved = resolveSecretValue(secData, key);
@@ -126,7 +158,9 @@ export function resolveContainerEnv(
           sourceName: secName,
           sourceKey: key,
           isSecret: true,
+          drift: isDrift ? { reason: `Secret/${secName} updated after container start` } : undefined,
         });
+        if (isDrift) driftCount++;
       }
     }
   }
@@ -149,14 +183,13 @@ export function resolveContainerEnv(
       const ref = env.valueFrom.configMapKeyRef;
       const cmName = ref.name;
       const cmKey = ref.key;
-      const cm = configMaps ? [...configMaps.values()].find((c) => c.name === cmName && (!namespace || c.namespace === namespace)) : undefined;
+      const cm = findResourceInMap(configMaps, cmName, namespace);
       const cmRaw = cm?.raw ?? {};
       const cmData: Record<string, string> = cmRaw.data ?? {};
       const clusterVal = cmData[cmKey];
 
       // Check if ConfigMap modified after pod started
-      const cmUpdatedStr = cmRaw.metadata?.creationTimestamp;
-      const cmUpdated = cmUpdatedStr ? new Date(cmUpdatedStr).getTime() : undefined;
+      const cmUpdated = getResourceTimestamp(cmRaw);
       const isStale = startedAt && cmUpdated && cmUpdated > startedAt;
 
       entries.push({
@@ -176,10 +209,14 @@ export function resolveContainerEnv(
       const ref = env.valueFrom.secretKeyRef;
       const secName = ref.name;
       const secKey = ref.key;
-      const sec = secrets ? [...secrets.values()].find((s) => s.name === secName && (!namespace || s.namespace === namespace)) : undefined;
+      const sec = findResourceInMap(secrets, secName, namespace);
       const secRaw = sec?.raw ?? {};
       const secData: Record<string, string> = secRaw.data ?? {};
       const clusterVal = resolveSecretValue(secData, secKey);
+
+      // Check if Secret modified after pod started
+      const secUpdated = getResourceTimestamp(secRaw);
+      const isStale = startedAt && secUpdated && secUpdated > startedAt;
 
       entries.push({
         name,
@@ -188,7 +225,12 @@ export function resolveContainerEnv(
         sourceName: secName,
         sourceKey: secKey,
         isSecret: true,
+        drift: isStale ? {
+          clusterValue: clusterVal,
+          reason: `Secret/${secName} updated after Pod started`,
+        } : undefined,
       });
+      if (isStale) driftCount++;
     } else if (env.valueFrom?.fieldRef) {
       const fieldPath = env.valueFrom.fieldRef.fieldPath;
       let val: string | undefined;

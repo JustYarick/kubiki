@@ -142,6 +142,74 @@ describe('resolveContainerEnv', () => {
     });
   });
 
+  it('detects Secret drift when Secret updated after pod start', () => {
+    const podStarted = '2026-10-27T10:00:00Z';
+    const secretUpdated = '2026-10-27T11:00:00Z';
+
+    const pod: ResourceItem = {
+      uid: 'pod-sec',
+      name: 'auth-pod',
+      namespace: 'prod',
+      kind: 'Pod',
+      apiVersion: 'v1',
+      raw: {
+        metadata: { name: 'auth-pod', namespace: 'prod' },
+        spec: {
+          containers: [
+            {
+              name: 'auth',
+              env: [
+                {
+                  name: 'API_KEY',
+                  valueFrom: {
+                    secretKeyRef: { name: 'api-secret', key: 'KEY' },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        status: {
+          containerStatuses: [
+            {
+              name: 'auth',
+              state: { running: { startedAt: podStarted } },
+            },
+          ],
+        },
+      },
+    };
+
+    const secret: ResourceItem = {
+      uid: 'sec-2',
+      name: 'api-secret',
+      namespace: 'prod',
+      kind: 'Secret',
+      apiVersion: 'v1',
+      raw: {
+        metadata: {
+          name: 'api-secret',
+          namespace: 'prod',
+          creationTimestamp: secretUpdated,
+        },
+        data: {
+          KEY: btoa('new-key-value'),
+        },
+      },
+    };
+
+    const result = resolveContainerEnv(pod, 'auth', {
+      Secret: new Map([['sec-2', secret]]),
+    });
+
+    expect(result.hasDrift).toBe(true);
+    expect(result.driftCount).toBe(1);
+    expect(result.entries[0].drift).toEqual({
+      clusterValue: 'new-key-value',
+      reason: 'Secret/api-secret updated after Pod started',
+    });
+  });
+
   it('handles non-existent container gracefully', () => {
     const pod: ResourceItem = {
       uid: 'pod-3',

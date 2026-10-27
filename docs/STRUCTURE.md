@@ -129,7 +129,7 @@ The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reus
 
 The frontend starts resource subscriptions for the active context and namespace scope. Each subscription identifies its query and receives batches through a Tauri channel.
 
-The Rust informer layer maintains resource snapshots and processes Kubernetes watch changes. The frontend watch session applies the resulting batches to the resource store. Table searches belong to workspace tabs in `table_view_store.ts`, separate from the shared resource cache. Components subscribe to that store to render the current resource state.
+The Rust informer layer maintains resource snapshots and processes Kubernetes watch changes. The frontend watch session applies the resulting batches to the resource store. Table view preferences (search query, regex toggle, column sorting, and column filters) are persisted per resource kind in `table_view_store.ts`, separate from the shared resource cache. Components subscribe to that store to render the current resource state.
 
 Changing the context stops the old frontend session before starting another. Namespace selection updates subscription scope. The transport checks subscription and query identity before delivering a batch, preventing a closed subscription from updating an unrelated view.
 
