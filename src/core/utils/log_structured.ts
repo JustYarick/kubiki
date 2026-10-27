@@ -9,12 +9,13 @@ export type StructuredLogLevel = 'error' | 'warn' | 'info' | 'debug';
 export interface ParsedStructuredLog {
   level?: StructuredLogLevel;
   message?: string;
+  prefix?: string;
+  suffix?: string;
   fields: Array<[string, string]>;
 }
 
 const LEVEL_KEYS = ['level', 'lvl', 'severity', 'sev', 'loglevel', 'log_level', 'priority', 'levelname'];
-const MESSAGE_KEYS = ['msg', 'message', 'log', 'event', 'messageText', 'text', 'description', 'payload', 'body', 'action'];
-const IGNORED_KEYS = new Set([...LEVEL_KEYS, ...MESSAGE_KEYS]);
+const MESSAGE_KEYS = ['msg', 'message', 'log', 'event', 'messagetext', 'text', 'description', 'payload', 'body', 'action'];
 
 const LEVEL_MAP: Record<string, StructuredLogLevel> = {
   error: 'error', err: 'error', fatal: 'error', critical: 'error', crit: 'error', alert: 'error', emergency: 'error', emerg: 'error',
@@ -78,26 +79,28 @@ export function parseStructuredLog(line: string): ParsedStructuredLog | null {
   if (!entries.length) return null;
   let level: StructuredLogLevel | undefined;
   let message: string | undefined;
+  let levelKey: string | undefined;
+  let messageKey: string | undefined;
   const fields: Array<[string, string]> = [];
   for (const key of LEVEL_KEYS) {
     const entry = entries.find(([name]) => name.toLowerCase() === key);
     if (!entry) continue;
     const candidate = normalizeLogLevel(entry[1]);
-    if (candidate) { level = candidate; break; }
+    if (candidate) { level = candidate; levelKey = entry[0]; break; }
   }
   for (const key of MESSAGE_KEYS) {
     const entry = entries.find(([name]) => name.toLowerCase() === key);
     if (!entry) continue;
     const text = formatFieldValue(entry[1]);
-    if (text) { message = text; break; }
+    if (text) { message = text; messageKey = entry[0]; break; }
   }
   for (const [key, val] of entries) {
-    const lower = key.toLowerCase();
-    if (message !== undefined && MESSAGE_KEYS.includes(lower)) continue;
-    if (IGNORED_KEYS.has(lower) && level && message) continue;
+    if (key === messageKey || key === levelKey) continue;
     fields.push([key, formatFieldValue(val)]);
   }
-  return { level, message, fields };
+  const prefix = trimmed.slice(0, firstBrace).trim();
+  const suffix = trimmed.slice(lastBrace + 1).trim();
+  return { level, message, fields, ...(prefix ? { prefix } : {}), ...(suffix ? { suffix } : {}) };
 }
 
 /** Serialises parsed fields for the muted `k=v` trail after the message. */

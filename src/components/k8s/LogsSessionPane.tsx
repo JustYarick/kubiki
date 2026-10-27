@@ -273,6 +273,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                     </time>
                   )}
                   <span className="sr-only">{level}: </span>
+                  {parsed?.prefix && <span>{parsed.prefix} </span>}
                   {message && <span>{message}</span>}
                   {parsed?.fields.length ? (
                     <span className="inline-flex flex-wrap items-center gap-1.5 ml-2 align-middle">
@@ -300,6 +301,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                       })}
                     </span>
                   ) : null}
+                  {parsed?.suffix && <span> {parsed.suffix}</span>}
                 </div>
               );
             })}

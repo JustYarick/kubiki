@@ -70,18 +70,23 @@ test('log levels have no visible badges and backgrounds span horizontally scroll
     const { useUiStore } = await import(/* @vite-ignore */ '/src/state/ui_store.ts' as string);
     useUiStore.setState({ logsColorLevels: true, logsStructured: true, logsWrap: true });
     const messages = [
-      { level: 'error', message: 'long error payload '.repeat(180) + 'end of error' },
+      { level: 'error', message: 'long error payload '.repeat(180) + 'end of error', body: { error: 'access denied' }, action: 'create' },
       { level: 'warn', message: 'short warning' },
       { level: 'info', message: 'short info' },
     ];
-    (window as any).__execHarness.setLogText(messages.map((line, index) => `2026-10-20T00:00:0${index + 1}Z ${JSON.stringify(line)}\n`).join(''));
+    (window as any).__execHarness.setLogText(messages.map((line, index) => `2026-10-20T00:00:0${index + 1}Z ${JSON.stringify(line)}\n`).join('') + '2026-10-20T00:00:04Z fatal: admission rejected {"code":403} for resource widgets/team-a\n');
   });
   await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
   const output = page.getByTestId('log-output');
-  const error = output.locator('[data-level="error"]');
+  const error = output.locator('[data-level="error"]').filter({ hasText: 'end of error' });
   await expect(error).toContainText('end of error');
+  await expect(error).toContainText('access denied');
+  await expect(error).toContainText('create');
+  const mixed = output.getByTestId('log-line').filter({ hasText: 'widgets/team-a' });
+  await expect(mixed).toContainText('fatal: admission rejected');
+  await expect(mixed).toContainText('403');
   for (const level of ['error', 'warn', 'info']) {
     await expect(output.getByTestId('log-line').locator('span').filter({ hasText: new RegExp(`^${level}$`) })).toHaveCount(0);
   }
