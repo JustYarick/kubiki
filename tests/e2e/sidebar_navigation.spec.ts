@@ -53,6 +53,24 @@ test('search temporarily reveals matching resource ancestors and clearing it res
   await expect(explorer.getByRole('button', { name: /^Pods(?: \d+)?$/ })).toHaveCount(0);
 });
 
+test('switching resource tabs reveals and highlights the current type in the tree', async ({ page }) => {
+  await page.goto('/?demo=1');
+  const explorer = page.getByTestId('explorer-panel');
+  await explorer.getByRole('button', { name: 'Expand All', exact: true }).click();
+  await explorer.locator('[data-resource-type="Pod"]').click();
+  await explorer.locator('[data-resource-type="ConfigMap"]').click();
+  await expect(explorer.locator('[data-resource-type="ConfigMap"]')).toHaveAttribute('aria-current', 'page');
+  await explorer.getByRole('button', { name: 'Collapse All', exact: true }).click();
+  const tabs = page.getByRole('tablist', { name: 'Workspace tabs' });
+  await tabs.getByRole('tab').filter({ hasText: 'Pods' }).click();
+  await expect(explorer.locator('[data-resource-type="Pod"]')).toBeVisible();
+  await expect(explorer.locator('[data-resource-type="Pod"]')).toHaveAttribute('aria-current', 'page');
+  await tabs.getByRole('tab').filter({ hasText: 'ConfigMaps' }).click();
+  await expect(explorer.locator('[data-resource-type="ConfigMap"]')).toBeVisible();
+  await expect(explorer.locator('[data-resource-type="ConfigMap"]')).toHaveAttribute('aria-current', 'page');
+  await expect(explorer.locator('[data-resource-type="Pod"]')).not.toHaveAttribute('aria-current', 'page');
+});
+
 test('custom resources nest by API group, groups start collapsed, and legacy expansion settings migrate once', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { uiScale: 120, sidebarGroups: { '*': true, workloads: true, crd: true } }, version: 0 })));
   await customApi(page);

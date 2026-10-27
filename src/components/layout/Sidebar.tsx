@@ -1,8 +1,8 @@
 import { gitOpsFamily, gitOpsGroup } from '../../core/resources/gitops';
-import { customResourcePlacement, customResourceType } from '../../core/resources/custom_resource_types';
+import { customResourcePlacement, customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
 import { resourceIcon } from '../../core/resource_icons';
 import { inNamespaceScope } from '../../core/resources/namespace_scope';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -30,7 +30,6 @@ import type { ResourceKind } from '../../types/k8s';
 const key = (cat: string, group?: string) => (group ? `${cat}/${group}` : cat);
 
 export const Sidebar: React.FC = () => {
-  const activeKind = useResourceStore((s) => s.activeKind);
   const setActiveKind = useResourceStore((s) => s.setActiveKind);
   const resources = useResourceStore((s) => s.resources);
   const resourceCounts = useResourceStore((s) => s.resourceCounts);
@@ -42,8 +41,8 @@ export const Sidebar: React.FC = () => {
   const { openResourceList, toggleSplit, openOverview, openHelm, openGitOpsDashboard, tabs, activeTabId } = useWorkspaceStore();
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const overviewActive = activeTab?.type === 'overview';
-  const dashboardActive = activeTab?.type.endsWith('-dashboard');
-  const helmActive = activeTab?.type === 'helm-releases' || activeTab?.type === 'helm-repositories' || activeTab?.kind === 'HelmRelease' && !activeTab?.resource?.group?.endsWith('.toolkit.fluxcd.io');
+  const activeKind = activeTab?.kind ? resourceBucket({ kind: activeTab.kind, apiVersion: activeTab.apiVersion }) : undefined;
+  const activeHelmSection = activeTab?.type === 'helm-repositories' ? 'repositories' : activeTab?.type === 'helm-releases' || activeKind === 'HelmRelease' ? 'releases' : undefined;
 
   const [filter, setFilter] = useState('');
   const [contextMenu, setContextMenu] = useState<{ kind: ResourceKind; x: number; y: number } | null>(null);
@@ -118,6 +117,17 @@ export const Sidebar: React.FC = () => {
     assignCategoryTones(tree);
     return tree;
   }, [resources.CustomResourceDefinition, availableKinds]);
+
+  // Reveal the active tab's ancestors when tabs change, while still allowing
+  // manual collapsing between navigation events.
+  useEffect(() => {
+    const category = tree.find(cat => (activeKind && cat.directKind === activeKind)
+      || cat.groups.some(group => group.kinds.some(entry => entry.kind === activeKind) || group.helmViews?.includes(activeHelmSection!))
+      || activeTab?.type === `${cat.id}-dashboard`);
+    if (!category || category.directKind) return;
+    const group = category.groups.find(group => group.kinds.some(entry => entry.kind === activeKind));
+    useUiStore.setState(state => ({ sidebarGroups: { ...state.sidebarGroups, [category.id]: true, ...(group?.label ? { [key(category.id, group.id)]: true } : {}) } }));
+  }, [activeTabId, activeKind, activeHelmSection, activeTab?.type, tree]);
 
   const matchKind = (e: KindEntry) => {
     const label = e.label.toLowerCase();
@@ -262,8 +272,8 @@ export const Sidebar: React.FC = () => {
 
           if (cat.directKind) {
             const kind = cat.directKind;
-            const selected = activeTab?.type === 'resource-list' && activeTab.kind === kind;
-            return <button key={cat.id} aria-current={selected ? 'page' : undefined} onClick={() => handleSelectKind(kind)} onContextMenu={event => handleContextMenu(event, kind)}
+            const selected = activeKind === kind;
+            return <button key={cat.id} data-resource-type={kind} aria-current={selected ? 'page' : undefined} onClick={() => handleSelectKind(kind)} onContextMenu={event => handleContextMenu(event, kind)}
               className={cx('w-full flex items-center gap-2 pl-[calc(22px*var(--ui-factor))] pr-2 h-[calc(26px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] text-left hover:bg-[var(--bg-hover)]', selected ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)]')}>
               <CatIcon size="calc(13px * var(--ui-factor))" className="shrink-0" /><span className="flex-1 truncate">{cat.label}</span>{catCount > 0 && <span className="text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)]">{catCount}</span>}
             </button>;
@@ -324,7 +334,7 @@ export const Sidebar: React.FC = () => {
                     {gOpen && (
                       <div id={`sidebar-group-${encodeURIComponent(key(cat.id, g.id))}`} className="py-0.5">
                         {g.kinds.map((entry) => {
-                          const selected = !overviewActive && !dashboardActive && !helmActive && activeKind === entry.kind;
+                          const selected = activeKind === entry.kind;
                           const total = countFor(entry.kind);
                           const Icon = entry.icon;
 
@@ -332,6 +342,7 @@ export const Sidebar: React.FC = () => {
                             <button
                               key={entry.kind}
                               data-resource-type={entry.kind}
+                              aria-current={selected ? 'page' : undefined}
                               onClick={() => handleSelectKind(entry.kind)}
                               onContextMenu={(e) => handleContextMenu(e, entry.kind)}
                               className={cx(
@@ -358,7 +369,7 @@ export const Sidebar: React.FC = () => {
                             </button>
                           );
                         })}
-                        {g.helmViews?.map(section => <button key={section} aria-label={`Open Helm ${HELM_VIEWS[section]}`} aria-current={activeTab?.type === `helm-${section}` ? 'page' : undefined} onClick={() => openHelm(section)} className={cx('relative w-full flex items-center gap-2 pl-[calc(34px*var(--ui-factor))] pr-2 py-1 text-xs hover:bg-[var(--bg-hover)]', activeTab?.type === `helm-${section}` ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}><Anchor size={14} aria-hidden="true" /><span>{HELM_VIEWS[section]}</span></button>)}
+                        {g.helmViews?.map(section => <button key={section} aria-label={`Open Helm ${HELM_VIEWS[section]}`} aria-current={activeHelmSection === section ? 'page' : undefined} onClick={() => openHelm(section)} className={cx('relative w-full flex items-center gap-2 pl-[calc(34px*var(--ui-factor))] pr-2 py-1 text-xs hover:bg-[var(--bg-hover)]', activeHelmSection === section ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}><Anchor size={14} aria-hidden="true" /><span>{HELM_VIEWS[section]}</span></button>)}
                       </div>
                     )}
                   </div>
