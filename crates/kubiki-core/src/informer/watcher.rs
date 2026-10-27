@@ -218,6 +218,19 @@ fn watch_error(error: watcher::Error, query: &ResourceQuery) -> ApiError {
     result.with_resource(query)
 }
 
+fn strip_crd_schemas(obj: &mut DynamicObject) {
+    if let Some(spec) = obj.data.get_mut("spec").and_then(|s| s.as_object_mut()) {
+        spec.remove("validation");
+        if let Some(versions) = spec.get_mut("versions").and_then(|v| v.as_array_mut()) {
+            for version in versions {
+                if let Some(version_obj) = version.as_object_mut() {
+                    version_obj.remove("schema");
+                }
+            }
+        }
+    }
+}
+
 async fn run_watch<F>(
     store: ResourceStore,
     scope: WatchScope,
@@ -285,7 +298,9 @@ async fn run_watch<F>(
     };
     let stream = watcher::watcher(
         api,
-        watcher::Config::default().timeout(WATCH_TIMEOUT_SECONDS),
+        watcher::Config::default()
+            .timeout(WATCH_TIMEOUT_SECONDS)
+            .page_size(500),
     )
     .default_backoff();
     tokio::pin!(stream);
@@ -316,10 +331,16 @@ async fn run_watch<F>(
                     Event::InitDone => Event::InitDone,
                     Event::Apply(mut value) => {
                         value.metadata.managed_fields = None;
+                        if scope.query.kind == "CustomResourceDefinition" {
+                            strip_crd_schemas(&mut value);
+                        }
                         Event::Apply(serde_json::to_value(value).expect("DynamicObject is JSON"))
                     }
                     Event::InitApply(mut value) => {
                         value.metadata.managed_fields = None;
+                        if scope.query.kind == "CustomResourceDefinition" {
+                            strip_crd_schemas(&mut value);
+                        }
                         Event::InitApply(
                             serde_json::to_value(value).expect("DynamicObject is JSON"),
                         )
@@ -378,5 +399,63 @@ async fn run_watch<F>(
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_crd_schemas() {
+        let mut obj: DynamicObject = serde_json::from_value(serde_json::json!({
+            "apiVersion": "apiextensions.k8s.io/v1",
+            "kind": "CustomResourceDefinition",
+            "metadata": { "name": "tests.example.com" },
+            "spec": {
+                "group": "example.com",
+                "validation": {
+                    "openAPIV3Schema": {
+                        "type": "object",
+                        "properties": { "foo": { "type": "string" } }
+                    }
+                },
+                "versions": [
+                    {
+                        "name": "v1",
+                        "served": true,
+                        "storage": true,
+                        "schema": {
+                            "openAPIV3Schema": {
+                                "type": "object",
+                                "properties": { "bar": { "type": "integer" } }
+                            }
+                        }
+                    },
+                    {
+                        "name": "v2",
+                        "served": true,
+                        "storage": false,
+                        "schema": {
+                            "openAPIV3Schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        strip_crd_schemas(&mut obj);
+
+        assert!(obj.data["spec"].get("validation").is_none());
+        assert_eq!(obj.data["spec"]["group"], "example.com");
+        let versions = obj.data["spec"]["versions"].as_array().unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0]["name"], "v1");
+        assert!(versions[0].get("schema").is_none());
+        assert_eq!(versions[1]["name"], "v2");
+        assert!(versions[1].get("schema").is_none());
     }
 }

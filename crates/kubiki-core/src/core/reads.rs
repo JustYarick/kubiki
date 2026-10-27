@@ -166,7 +166,7 @@ pub async fn resource_counts(
             let kind = query.kind.clone();
             async move { (kind, resource_count(client, query).await) }
         })
-        .buffer_unordered(4)
+        .buffer_unordered(12)
         .collect()
         .await;
     let mut counts = std::collections::HashMap::new();

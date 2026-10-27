@@ -423,3 +423,88 @@ async fn a_paginated_initial_list_of_3500_pods_is_published_as_one_complete_snap
     assert!(manager.store().snapshot(&scope).await.is_none());
     server.abort();
 }
+
+#[tokio::test]
+async fn crd_watch_strips_schema_and_validation() {
+    let crd_query = ResourceQuery {
+        context: "test".into(),
+        group: "apiextensions.k8s.io".into(),
+        version: "v1".into(),
+        kind: "CustomResourceDefinition".into(),
+        namespace: None,
+    };
+    let crd_item = json!({
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {
+            "name": "crontabs.stable.example.com",
+            "uid": "crd-uid-1",
+            "resourceVersion": "100"
+        },
+        "spec": {
+            "group": "stable.example.com",
+            "validation": { "openAPIV3Schema": { "type": "object" } },
+            "versions": [
+                {
+                    "name": "v1",
+                    "served": true,
+                    "storage": true,
+                    "schema": {
+                        "openAPIV3Schema": { "type": "object", "properties": { "cron": { "type": "string" } } }
+                    }
+                }
+            ],
+            "names": { "plural": "crontabs", "singular": "crontab", "kind": "CronTab" }
+        }
+    });
+    let list = json!({
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinitionList",
+        "metadata": { "resourceVersion": "100" },
+        "items": [crd_item]
+    })
+    .to_string();
+
+    let (client, requests, server) = api(vec![
+        (200, list),
+        (200, "HOLD".into()),
+    ])
+    .await;
+
+    let manager = InformerManager::new(ResourceStore::new());
+    let mut rx = manager
+        .start_watch("main", "crd-watch", crd_query.clone(), async move { Ok(client) })
+        .await
+        .unwrap();
+
+    let mut item_received = None;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = rx.recv().await {
+            if let WatchEvent::Delta(ResourceDelta::Restarted { items }) = message.event {
+                item_received = Some(items[0].clone());
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let item = item_received.expect("should receive restarted delta");
+    assert_eq!(item["metadata"]["name"], "crontabs.stable.example.com");
+    assert_eq!(item["spec"]["group"], "stable.example.com");
+    assert!(item["spec"].get("validation").is_none(), "spec.validation should be stripped");
+    assert!(item["spec"]["versions"][0].get("schema").is_none(), "spec.versions[0].schema should be stripped");
+    assert_eq!(item["spec"]["versions"][0]["name"], "v1");
+
+    assert!(
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|r| r.contains("limit=500")),
+        "Initial list request must include limit=500"
+    );
+
+    manager.stop_owner("main").await;
+    server.abort();
+}
