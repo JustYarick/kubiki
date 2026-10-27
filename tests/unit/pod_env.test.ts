@@ -141,4 +141,69 @@ describe('resolveContainerEnv', () => {
       isSecret: true,
     });
   });
+
+  it('handles non-existent container gracefully', () => {
+    const pod: ResourceItem = {
+      uid: 'pod-3',
+      name: 'simple-pod',
+      namespace: 'default',
+      kind: 'Pod',
+      apiVersion: 'v1',
+      raw: {
+        metadata: { name: 'simple-pod' },
+        spec: { containers: [{ name: 'main' }] },
+      },
+    };
+
+    const result = resolveContainerEnv(pod, 'non-existent', {});
+    expect(result.entries).toEqual([]);
+    expect(result.hasDrift).toBe(false);
+  });
+
+  it('resolves downward API fieldRef and resourceFieldRef', () => {
+    const pod: ResourceItem = {
+      uid: 'pod-4',
+      name: 'downward-pod',
+      namespace: 'kube-system',
+      kind: 'Pod',
+      apiVersion: 'v1',
+      raw: {
+        metadata: { name: 'downward-pod', namespace: 'kube-system' },
+        spec: {
+          containers: [
+            {
+              name: 'agent',
+              env: [
+                {
+                  name: 'MY_POD_NAME',
+                  valueFrom: { fieldRef: { fieldPath: 'metadata.name' } },
+                },
+                {
+                  name: 'MY_POD_NAMESPACE',
+                  valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    const result = resolveContainerEnv(pod, 'agent', {});
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[0]).toEqual({
+      name: 'MY_POD_NAME',
+      value: 'downward-pod',
+      sourceType: 'field',
+      sourceName: 'metadata.name',
+      isSecret: false,
+    });
+    expect(result.entries[1]).toEqual({
+      name: 'MY_POD_NAMESPACE',
+      value: 'kube-system',
+      sourceType: 'field',
+      sourceName: 'metadata.namespace',
+      isSecret: false,
+    });
+  });
 });
