@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { startResourceWatches, stopResourceWatches, refreshResourceWatches } from '../../src/state/resource_watch';
+import { startResourceWatches, stopResourceWatches, refreshResourceWatches, syncResourceCounts } from '../../src/state/resource_watch';
 import { useClusterStore } from '../../src/state/cluster_store';
 import { useResourceStore } from '../../src/state/resource_store';
-import { isValidNamespaceName, namespaceIsOutsideScope, resourceType, type ResourceQuery } from '../../src/core/resources/resource_types';
+import { isValidNamespaceName, namespaceIsOutsideScope, resourceType, resourceQuery, type ResourceQuery } from '../../src/core/resources/resource_types';
 import type { WatchBatch } from '../../src/providers/watch_types';
 import { useWorkspaceStore } from '../../src/state/workspace_store';
 import { useUiStore } from '../../src/state/ui_store';
 import { retainResourceKinds, useResourceRequirements } from '../../src/state/resource_requirements';
 
-const mock = vi.hoisted(() => ({ supportsResourceWatch: true, watchResources: vi.fn() }));
+const mock = vi.hoisted(() => ({ supportsResourceWatch: true, watchResources: vi.fn(), getResourceCounts: vi.fn(async () => ({})) }));
 vi.mock('../../src/providers/k8s_provider', () => ({ k8s: mock }));
 beforeEach(() => { vi.useFakeTimers(); useResourceStore.getState().reset(); useResourceRequirements.setState({ entries: new Map() }); useWorkspaceStore.setState({ tabs: [{ id: 'pods', type: 'resource-list', kind: 'Pod', title: 'Pods' }], activeTabId: 'pods', splitTabId: null }); useUiStore.setState({ inspectorCollapsed: true }); useClusterStore.setState({ currentContext: 'test', selectedNamespace: 'backend', availableNamespaces: [], availableResourceKinds: null }); mock.watchResources.mockReset(); });
 afterEach(() => { stopResourceWatches(); vi.useRealTimers(); });
@@ -55,7 +55,7 @@ it('issues Related watches only for the object namespace plus cluster resources 
   useUiStore.setState({ inspectorCollapsed: false, rightTab: 'related' });
   await vi.advanceTimersByTimeAsync(1000);
   expect(queries.some(query => query.kind === 'Secret' && query.namespace === 'backend')).toBe(true);
-  expect(queries.some(query => query.kind === 'StorageClass' && query.namespace === null)).toBe(true);
+  expect(queries.some(query => query.kind === 'Node' && query.namespace === null)).toBe(true);
   for (const query of queries) {
     expect(query.namespace).toBe(query.kind === 'Pod' || !resourceType(query.kind).namespaced ? null : 'backend');
   }
@@ -96,4 +96,38 @@ it('distinguishes an unloaded namespace from absence, without restricting browse
   for (const [namespace, scope, mode] of [['backend','backend','watch'], ['other','all','watch'], [undefined,'backend','watch'], ['other','backend','demo'], ['other','backend','snapshot']] as const) {
     expect(namespaceIsOutsideScope(namespace, scope, mode)).toBe(false);
   }
+});
+
+it('applies local topology namespace requirements, releases them, and never sends an empty namespace selection', async () => {
+  useClusterStore.setState({ selectedNamespace: 'all' });
+  useWorkspaceStore.setState({ tabs: [{ id: 'diagram', type: 'topology', title: 'Topology', context: 'test' }], activeTabId: 'diagram' });
+  const queries: ResourceQuery[] = []; const stops = new Map<string, ReturnType<typeof vi.fn>>();
+  mock.watchResources.mockImplementation(async (query: ResourceQuery, emit: (batch: WatchBatch) => void) => {
+    queries.push(query); const stop = vi.fn(); stops.set(`${query.kind}/${query.namespace}`, stop);
+    emit({ query, subscription_id: 'test', messages: [{ sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: [] } } } }, { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } }] });
+    return stop;
+  });
+  const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(1000); await ready;
+  expect(queries.map(query => query.kind)).toEqual(['Namespace', 'CustomResourceDefinition']);
+  const release = retainResourceKinds('test', ['Pod', 'Service', 'Node'], 'backend');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(queries.filter(query => ['Pod', 'Service'].includes(query.kind)).map(query => query.namespace)).toEqual(['backend', 'backend']);
+  const empty = retainResourceKinds('test', ['Secret', 'StorageClass'], '[]');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(queries.some(query => query.kind === 'Secret' || query.namespace === '[]')).toBe(false);
+  release(); await vi.advanceTimersByTimeAsync(1000);
+  expect(stops.get('Pod/backend')).toHaveBeenCalledOnce(); expect(stops.get('Service/backend')).toHaveBeenCalledOnce();
+  empty();
+});
+
+it('refreshes counts outside a cached snapshot scope and clears unavailable counts from the old selection', async () => {
+  useClusterStore.setState({ selectedNamespace: 'other', availableResourceKinds: ['Secret'] });
+  useResourceStore.setState({
+    watchStates: { Secret: { query: resourceQuery('test', 'Secret', 'backend'), phase: 'stopped', hasSnapshot: true } },
+    resourceCounts: { Secret: 90 },
+  });
+  mock.getResourceCounts.mockClear();
+  await syncResourceCounts('test', 'other');
+  expect(mock.getResourceCounts).toHaveBeenCalledWith('test', ['Secret'], 'other', expect.any(AbortSignal));
+  expect(useResourceStore.getState().resourceCounts).toEqual({});
 });

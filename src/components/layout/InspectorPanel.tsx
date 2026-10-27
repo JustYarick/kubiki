@@ -98,11 +98,12 @@ function KubernetesResourceDetails({
     [item, resources.Pod, resources.ReplicaSet, resources.Job]
   );
   const currentContext = useClusterStore((s) => s.currentContext);
+  const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   useEffect(() => {
     if (!inspector && item && currentContext && rightTab === 'related') {
-      return retainResourceKinds(currentContext, relatedResourceKinds(item), item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? '[]');
+      return retainResourceKinds(currentContext, relatedResourceKinds(item), item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? selectedNamespace);
     }
-  }, [inspector, item, currentContext, rightTab]);
+  }, [inspector, item, currentContext, rightTab, selectedNamespace]);
 
   if (!item) {
     return (

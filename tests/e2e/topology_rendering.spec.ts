@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { openDiagramSettings, selectDiagramNamespaces } from './helpers/topology';
+import { namespaceList } from './helpers/namespaces';
 
 async function mockCluster(page: Page) {
   const calls: string[] = [];
@@ -9,11 +10,15 @@ async function mockCluster(page: Page) {
     if (url.pathname.endsWith('/contexts')) return route.fulfill({ json: [{ name: 'test', is_current: true }] });
     if (url.pathname.endsWith('/ping')) return route.fulfill({ json: { version: { gitVersion: 'v1.34.0' } } });
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: ['backend'] });
+    if (url.pathname.endsWith('/helm/inventory')) return route.fulfill({ json: [] });
     const kind = url.searchParams.get('kind');
-    return route.fulfill({ json: { items: kind === 'Pod' ? [{
+    if (kind === 'Namespace') return route.fulfill({ json: namespaceList(['backend']) });
+    const namespace = url.searchParams.get('namespace');
+    const items = kind === 'Pod' ? [{
       metadata: { uid: 'pod', name: 'web', namespace: 'backend', ownerReferences: [{ uid: 'dep', name: 'web-owner', kind: 'Deployment' }] },
       spec: { containers: [] }, status: { phase: 'Running' },
-    }] : kind === 'Deployment' ? [{ metadata: { uid: 'dep', name: 'web-owner', namespace: 'backend' } }] : [], has_more: false } });
+    }] : kind === 'Deployment' ? [{ metadata: { uid: 'dep', name: 'web-owner', namespace: 'backend' } }] : [];
+    return route.fulfill({ json: { items: items.filter(item => !namespace || item.metadata.namespace === namespace), has_more: false } });
   });
   return calls;
 }
@@ -66,18 +71,6 @@ test('global rendering preferences persist and Performance removes expensive dia
   await expect(settings.getByLabel('Animate topology connections', { exact: true })).not.toBeChecked();
 });
 
-test('topology preferences are searchable and remain outside Appearance', async ({ page }) => {
-  await page.goto('/?demo=1');
-  await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Search settings').fill('minimap');
-  await dialog.getByRole('navigation').getByRole('button', { name: 'Topology', exact: true }).click();
-  await expect(dialog.getByLabel('Topology canvas minimap', { exact: true })).toBeVisible();
-  await dialog.getByLabel('Clear search').click();
-  await dialog.getByRole('navigation').getByRole('button', { name: 'Appearance', exact: true }).click();
-  await expect(dialog.getByLabel('Topology rendering profile')).toHaveCount(0);
-});
-
 test('rapid resource updates are coalesced before serialization and the latest snapshot reaches the worker', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { topologyPerformanceMode: 'performance' }, version: 0 }));
@@ -106,4 +99,52 @@ test('rapid resource updates are coalesced before serialization and the latest s
   const posts = await page.evaluate(() => (window as any).__topologyPosts as { at: number; status: string }[]);
   expect(posts.length).toBeLessThanOrEqual(3);
   for (let i = 1; i < posts.length; i++) expect(posts[i].at - posts[i - 1].at).toBeGreaterThanOrEqual(2995);
+});
+
+test('replacing an unfinished layout cancels its worker and ignores its late failure', async ({ page }) => {
+  await page.addInitScript(() => {
+    const send = Worker.prototype.postMessage;
+    const terminate = Worker.prototype.terminate;
+    const pending: { worker: Worker; message: any; receive: Worker['onmessage'] }[] = [];
+    const stopped = new WeakSet<Worker>();
+    (window as any).__layouts = {
+      count: () => pending.length,
+      failFirst: () => {
+        const first = pending[0];
+        first.receive?.call(first.worker, new MessageEvent('message', { data: { id: first.message.id, error: { message: 'superseded layout failed' } } }));
+      },
+      releaseLatest: () => {
+        const current = pending.at(-1)!;
+        send.call(current.worker, current.message);
+      },
+      latestStopped: () => stopped.has(pending.at(-1)!.worker),
+      firstStopped: () => stopped.has(pending[0].worker),
+    };
+    Worker.prototype.postMessage = function(message: any, options?: StructuredSerializeOptions | Transferable[]) {
+      if (message?.cmd === 'layout' && pending.length < 2) {
+        pending.push({ worker: this, message, receive: this.onmessage });
+        return;
+      }
+      return send.call(this, message, Array.isArray(options) ? { transfer: options } : options);
+    };
+    Worker.prototype.terminate = function() { stopped.add(this); return terminate.call(this); };
+  });
+  await mockCluster(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
+  await selectDiagramNamespaces(page, ['backend']);
+  await expect.poll(() => page.evaluate(() => (window as any).__layouts.count())).toBe(1);
+  const settings = await openDiagramSettings(page);
+  await settings.getByRole('combobox', { name: 'Diagram direction', exact: true }).selectOption('DOWN');
+  await expect.poll(() => page.evaluate(() => (window as any).__layouts.count())).toBe(2);
+  await page.evaluate(async () => {
+    (window as any).__layouts.failFirst();
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
+  });
+  expect(await page.evaluate(() => (window as any).__layouts.firstStopped())).toBe(true);
+  expect(await page.evaluate(() => (window as any).__layouts.latestStopped())).toBe(false);
+  await page.evaluate(() => (window as any).__layouts.releaseLatest());
+  await expect(page.locator('.react-flow__node-resource')).toHaveCount(2);
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });

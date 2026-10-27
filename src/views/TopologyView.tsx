@@ -3,7 +3,7 @@ import './topology.css';
 import { namespaceNames, namespaceScope } from '../core/resources/namespace_scope';
 import { topologyNamespaces } from '../core/resources/topology';
 import { NamespaceSelect } from '../components/ui/NamespaceSelect';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import '@xyflow/react/dist/style.css';
 import { TriangleAlert } from 'lucide-react';
@@ -26,6 +26,8 @@ import { TopologyEvents } from './TopologyEvents';
 import { useHelmGraph } from '../providers/use_helm_graph';
 import { topologyRendering } from '../core/resources/topology_rendering';
 import { fastCompare } from '../core/resources/resource_sort';
+import { topologyResourceKinds } from '../core/resources/resource_demand';
+import { retainResourceKinds } from '../state/resource_requirements';
 
 const NO_EVENTS = new Map<string, ResourceItem>();
 
@@ -37,9 +39,10 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const errors = useResourceStore((s) => s.loadErrors);
   const namespaces = useClusterStore((s) => s.availableNamespaces);
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
+  const context = useClusterStore((s) => s.currentContext);
   const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
   const snapshotsReady = useClusterStore((s) => s.isConnected && !s.isLoading);
-  const [scope, setScope] = useState(() => item?.kind === 'Event' ? item.namespace ? `namespace:${item.namespace}` : '' : item ? 'resource' : namespace ? namespace.startsWith('[') ? `namespaces:${namespace}` : `namespace:${namespace}` : '');
+  const [scope, setScope] = useState(() => item?.kind === 'Event' ? item.namespace ? `namespace:${item.namespace}` : '' : item ? 'resource' : namespace === 'all' ? 'all' : namespace ? namespace.startsWith('[') ? `namespaces:${namespace}` : `namespace:${namespace}` : '');
   const [depth, setDepth] = useState(2);
   const [direction, setDirection] = useState<'RIGHT' | 'DOWN'>('RIGHT');
   const [revision, setRevision] = useState(0);
@@ -54,10 +57,17 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const diagramNamespace = scope === 'resource' ? item?.namespace ?? (item?.kind === 'Namespace' ? item.name : undefined)
     : graphScope === 'all' ? 'all' : diagramNamespaces.length ? namespaceScope(diagramNamespaces) : undefined;
   const outsideScope = graphScope === 'all' ? selectedNamespace !== 'all' : (diagramNamespaces.length ? diagramNamespaces : diagramNamespace ? [diagramNamespace] : []).some(name => namespaceIsOutsideScope(name, selectedNamespace, syncMode));
+  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope && !!graphScope && scope !== 'overview', updateInterval);
+  const requiredKinds = useMemo(() => outsideScope ? [] : topologyResourceKinds(graphScope, item, depth, graph), [graph, graphScope, item, depth, outsideScope]);
+  const requirementKey = JSON.stringify(requiredKinds);
+  const requestNamespace = diagramNamespace ?? selectedNamespace;
+  useEffect(() => {
+    if (!context || !requiredKinds.length) return;
+    return retainResourceKinds(context, JSON.parse(requirementKey) as ResourceKind[], requestNamespace);
+  }, [context, requirementKey, requestNamespace]);
   const helm = useHelmGraph(diagramNamespace, !outsideScope && !!graphScope && scope !== 'overview');
   const namespaceLoaded = (name: string) => !namespaceIsOutsideScope(name, selectedNamespace, syncMode);
   const synchronizing = syncMode === 'watch' && Object.values(watchStates).some((state) => state?.phase === 'connecting' || state?.phase === 'syncing');
-  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope, updateInterval);
   const chooseScope = !graphScope || scope === 'overview';
   const summaries = useMemo(() => {
     const counts = new Map([...new Set([...namespaces, ...(namespaceNames(selectedNamespace) ?? [])])].map((name) => [name, { name, resources: 0, pods: 0 }]));

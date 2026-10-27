@@ -111,6 +111,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     setEdges([]);
     if (!graph.items.size) { setBusy(false); return; }
     let cancelled = false;
+    let settled = false;
     if (!workerRef.current) {
       try {
         const worker = new Worker(new URL('./layout_worker.ts', import.meta.url), { type: 'module' });
@@ -127,6 +128,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     }, 10000);
     const layout = topologyLayout(graph, direction, grouping);
     void elk.layout(layout.root).then((result) => {
+      settled = true;
       clearTimeout(timeout);
       if (cancelled || runId !== layoutRunRef.current) return;
       const positioned: GraphNode[] = [];
@@ -155,9 +157,10 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       setBusy(false);
       requestAnimationFrame(() => { void flow.current?.fitView({ padding: 0.2, duration: 0 }); });
     }).catch((error) => {
+      settled = true;
       clearTimeout(timeout);
-      terminateWorker();
       if (!cancelled && runId === layoutRunRef.current) {
+        terminateWorker();
         const msg = String(error?.message || error || 'Automatic layout failed');
         const formatted = msg.includes('call stack') || msg.includes('stack')
           ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
@@ -167,9 +170,10 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       }
     });
     worker.onerror = (event) => {
+      settled = true;
       clearTimeout(timeout);
-      terminateWorker();
       if (!cancelled && runId === layoutRunRef.current) {
+        terminateWorker();
         const msg = String(event.message || 'Automatic layout failed');
         const formatted = msg.includes('call stack') || msg.includes('stack')
           ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
@@ -178,7 +182,12 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
         setBusy(false);
       }
     };
-    return () => { cancelled = true; clearTimeout(timeout); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      // An obsolete heavy layout must not block the next graph in the worker queue.
+      if (!settled && workerRef.current?.worker === worker) terminateWorker();
+    };
   }, [structureKey, direction, revision, setNodes, setEdges, terminateWorker]);
 
   useEffect(() => { setEdges(edges => edges.map(edge => ({ ...edge, data: { ...edge.data!, bend: undefined } }))); }, [routeRevision, setEdges]);

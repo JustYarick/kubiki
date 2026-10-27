@@ -1,6 +1,7 @@
 import { captureScreenshot } from './helpers/screenshots';
 import { selectDiagramNamespaces } from './helpers/topology';
 import { test, expect } from '@playwright/test';
+import { namespaceList } from './helpers/namespaces';
 
 const pod = { apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'pod', name: 'web', namespace: 'backend' }, spec: { containers: [] } };
 const events = Array.from({ length: 500 }, (_, index) => ({
@@ -11,19 +12,31 @@ const events = Array.from({ length: 500 }, (_, index) => ({
 }));
 
 test('Events stay in a bounded collapsible island and never consume the namespace graph budget', async ({ page }) => {
+  const reads: Array<{ kind: string | null; namespace: string | null }> = [];
   await page.route('**/api/k8s/**', (route) => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/contexts')) return route.fulfill({ json: [{ name: 'test', is_current: true }] });
     if (url.pathname.endsWith('/ping')) return route.fulfill({ json: { version: { gitVersion: 'v1.34.0' } } });
     if (url.pathname.endsWith('/namespaces')) return route.fulfill({ json: ['backend', 'other'] });
     const kind = url.searchParams.get('kind');
-    return route.fulfill({ json: { items: kind === 'Pod' ? [pod] : kind === 'Event' ? [...events, { ...events[499], metadata: { uid: 'other-event', name: 'other', namespace: 'other' }, message: 'Wrong namespace message' }] : [] } });
+    if (kind === 'Namespace') return route.fulfill({ json: namespaceList(['backend', 'other']) });
+    const namespace = url.searchParams.get('namespace');
+    if (url.pathname.endsWith('/resources')) reads.push({ kind, namespace });
+    const items = kind === 'Pod' ? [pod] : kind === 'Event' ? [...events, { ...events[499], metadata: { uid: 'other-event', name: 'other', namespace: 'other' }, message: 'Wrong namespace message' }] : [];
+    return route.fulfill({ json: { items: items.filter(item => !namespace || item.metadata.namespace === namespace) } });
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
+  await expect(page.getByTestId('resource-table').getByText('web', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Choose a diagram scope' })).toBeVisible();
+  expect(reads.some(read => read.kind === 'Secret')).toBe(false);
+  const beforeSelection = reads.length;
   await selectDiagramNamespaces(page, ['backend']);
   await expect(page.locator('.react-flow__node-resource')).toHaveCount(1);
   await expect(page.locator('[data-namespace-group="backend"]')).toBeVisible();
+  await expect.poll(() => reads.slice(beforeSelection).some(read => read.kind === 'Secret')).toBe(true);
+  const namespacedKinds = new Set(['Pod', 'Service', 'Secret', 'Event', 'Deployment']);
+  expect(reads.slice(beforeSelection).filter(read => namespacedKinds.has(read.kind ?? '')).every(read => read.namespace === 'backend')).toBe(true);
   const frame = (await page.locator('[data-namespace-group="backend"]').boundingBox())!;
   const member = (await page.locator('.react-flow__node-resource').boundingBox())!;
   expect(member.x).toBeGreaterThan(frame.x);
