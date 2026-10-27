@@ -13,6 +13,16 @@ export const EMPTY_GRAPH: ResourceGraph = { items: new Map(), relations: [] };
 const NON_EXPANDING_NEIGHBORS = new Set(['Node', 'Namespace', 'ConfigMap', 'Secret', 'StorageClass', 'HelmRelease']);
 const NO_EVENTS = new Map<string, ResourceItem>();
 
+/** In diagrams, point namespace-to-cluster edges towards the shared dependency. */
+function dependencyDirections(graph: ResourceGraph): ResourceGraph {
+  return { ...graph, relations: graph.relations.map(edge => {
+    const source = graph.items.get(edge.source); const target = graph.items.get(edge.target);
+    if (!source || source.namespace || !target?.namespace) return edge;
+    const label = edge.type === 'schedules' ? 'scheduled on' : edge.type === 'owns' ? 'owned by' : edge.type === 'manages' ? 'managed by' : edge.label;
+    return { ...edge, source: edge.target, target: edge.source, id: JSON.stringify([edge.target, edge.source, edge.type]), label };
+  }) };
+}
+
 /** Explicit scopes include every resource without artificial relationship count limits. */
 export function buildTopology(input: Record<ResourceKind, Map<string, ResourceItem>>, scope: string, focus?: ResourceItem, depth = 2): ResourceGraph {
   if (!scope || scope === 'overview') return EMPTY_GRAPH;
@@ -20,7 +30,7 @@ export function buildTopology(input: Record<ResourceKind, Map<string, ResourceIt
   // Events belong to the timeline island, never to the layout or its resource budget.
   const resources: Record<ResourceKind, Map<string, ResourceItem>> = { ...input, Event: NO_EVENTS };
   if (scope === 'all') {
-    return buildResourceGraph(resources, { includeContains: false, includeMissing: false });
+    return dependencyDirections(buildResourceGraph(resources, { includeContains: false, includeMissing: false }));
   }
   if (scope === 'resource' && focus) {
     const items = new Map([[resourceKey(focus), focus]]);
@@ -31,12 +41,14 @@ export function buildTopology(input: Record<ResourceKind, Map<string, ResourceIt
       const next = new Set<string>();
       for (const [key, item] of adjacent.items) if (!items.has(key)) {
         items.set(key, item);
-        if (!NON_EXPANDING_NEIGHBORS.has(item.kind) || item.kind === focus.kind) next.add(key);
+        // A shared cluster object is a boundary, regardless of its kind. Reaching
+        // it from a namespace must never fan out to its other consumers.
+        if (item.namespace && (!NON_EXPANDING_NEIGHBORS.has(item.kind) || item.kind === focus.kind)) next.add(key);
       }
       for (const edge of adjacent.relations) if (!edge.missing) relations.set(edge.id, edge);
       frontier = next;
     }
-    return { items, relations: [...relations.values()] };
+    return dependencyDirections({ items, relations: [...relations.values()] });
   }
   const namespaces = new Set(topologyNamespaces(scope));
   if (!namespaces.size) return EMPTY_GRAPH;
@@ -99,5 +111,5 @@ export function buildTopology(input: Record<ResourceKind, Map<string, ResourceIt
     if (!scoped[kind].has(item.uid)) { scoped[kind].set(item.uid, item); }
     if (kind === 'PersistentVolume') need('StorageClass', item.spec?.storageClassName ?? item.storageClass);
   }
-  return buildResourceGraph(scoped, { includeContains: false, includeMissing: false });
+  return dependencyDirections(buildResourceGraph(scoped, { includeContains: false, includeMissing: false }));
 }

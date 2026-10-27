@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { resourceDemand, OVERVIEW_KINDS } from '../../src/core/resources/resource_demand';
+import { resourceDemand, relatedResourceKinds, OVERVIEW_KINDS } from '../../src/core/resources/resource_demand';
 import type { WorkspaceTab } from '../../src/state/workspace_store';
 
 function demand(tabs: WorkspaceTab[], activeTabId = tabs[0]?.id ?? '', splitTabId: string | null = null) {
@@ -34,4 +34,13 @@ it('ignores tabs pinned to another cluster', () => {
 it('does not trigger cluster-wide Pod or workload watches when opening Helm Releases', () => {
   const result = demand([{ id: 'helm-releases', title: 'Helm Releases', type: 'helm-releases' }]);
   expect(result.kinds).toEqual(['Namespace', 'CustomResourceDefinition']);
+});
+it('Related requests potential neighbours instead of every resource collection', () => {
+  const pod = { uid: 'pod', name: 'pod', namespace: 'test', kind: 'Pod', apiVersion: 'v1' };
+  const result = resourceDemand({ context: 'test', tabs: [], activeTabId: '', splitTabId: null, selectedItem: pod, inspectorCollapsed: false, rightTab: 'related' });
+  expect(result.kinds).toEqual(expect.arrayContaining(['Pod', 'Node', 'ReplicaSet', 'Deployment', 'PriorityClass', 'Service', 'EndpointSlice', 'ResourceClaim']));
+  expect(result.kinds).not.toContain('MutatingAdmissionPolicy');
+  expect(result.kinds).not.toContain('StorageClass');
+  expect(relatedResourceKinds({ ...pod, kind: 'Deployment', apiVersion: 'apps/v1' })).toContain('ReplicaSet');
+  expect(relatedResourceKinds({ ...pod, kind: 'PriorityClass', apiVersion: 'scheduling.k8s.io/v1' })).toEqual(expect.arrayContaining(['Pod', 'Deployment', 'StatefulSet']));
 });

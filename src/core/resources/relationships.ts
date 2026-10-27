@@ -47,6 +47,26 @@ const SINGLE_NAMESPACE_KINDS = new Set([
   'Role', 'Lease', 'ResourceQuota', 'LimitRange',
 ]);
 
+const namespaceCache = new WeakMap<Map<string, ResourceItem>, Map<string, Map<string, ResourceItem>>>();
+/** Reuse namespace slices of unchanged watch buckets before worker serialization. */
+export function relatedResourceScope(resources: Record<ResourceKind, Map<string, ResourceItem>>, focus: ResourceItem) {
+  const namespace = focus.namespace ?? (focus.kind === 'Namespace' ? focus.name : undefined);
+  if (!namespace) return resources;
+  return Object.fromEntries(Object.entries(resources).map(([kind, map]) => {
+    // Keep kinds that may carry explicit cross-namespace references intact.
+    if (!SINGLE_NAMESPACE_KINDS.has(kind)) return [kind, map];
+    let cached = namespaceCache.get(map);
+    if (!cached) { cached = new Map(); namespaceCache.set(map, cached); }
+    let scoped = cached.get(namespace);
+    if (!scoped) {
+      scoped = new Map([...map].filter(([, item]) => !item.namespace || item.namespace === namespace));
+      if (cached.size >= 8) cached.delete(cached.keys().next().value!);
+      cached.set(namespace, scoped);
+    }
+    return [kind, scoped];
+  })) as typeof resources;
+}
+
 /** Resolve API references, never infer ownership from a resource's name. */
 export function buildResourceGraph(resources: Record<ResourceKind, Map<string, ResourceItem>>, options: GraphBuildOptions = {}): ResourceGraph {
   // Events describe notifications about objects, not structural relationships.

@@ -55,6 +55,45 @@ test('Related displays distinct kind badges and preserves resource navigation', 
   await captureScreenshot(page, { path: 'test-results/details-kind-badges.png' });
 });
 
+test('Related in all namespaces sends only local Pods to its worker and avoids unrelated collections', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = Worker.prototype.postMessage;
+    (window as any).__relatedSnapshots = [];
+    Worker.prototype.postMessage = function(message: any, options?: StructuredSerializeOptions | Transferable[]) {
+      if (message?.scope === 'related') (window as any).__relatedSnapshots.push({
+        pods: message.resources.Pod.size,
+        namespaces: [...message.resources.Pod.values()].map((pod: any) => pod.namespace),
+      });
+      original.call(this, message, options as StructuredSerializeOptions);
+    };
+  });
+  const reads: string[] = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/resources')) reads.push(url.searchParams.get('kind') ?? '');
+  });
+  await mockResourceLists(page, {
+    Pod: ['backend', 'outside'].flatMap(namespace => Array.from({ length: namespace === 'backend' ? 1 : 3000 }, (_, index) => ({
+      metadata: { uid: `${namespace}-${index}`, name: `${namespace}-pod-${index}`, namespace },
+      spec: { nodeName: 'worker', containers: [] },
+    }))),
+    Node: [{ metadata: { uid: 'worker', name: 'worker' } }],
+  });
+  await page.goto('/');
+  const explorer = page.getByTestId('explorer-panel');
+  await explorer.getByRole('button', { name: 'Expand All', exact: true }).click();
+  await explorer.locator('[data-resource-type="Pod"]').click();
+  await page.getByTestId('resource-table').getByText('backend-pod-0', { exact: true }).click();
+  const details = page.getByTestId('resource-details');
+  await details.getByRole('tab', { name: /^Related/ }).click();
+  await expect(details.locator('[data-resource-kind="Node"]')).toBeVisible();
+  const snapshots = await page.evaluate(() => (window as any).__relatedSnapshots);
+  expect(snapshots.length).toBeGreaterThan(0);
+  expect(snapshots.every((snapshot: any) => snapshot.pods === 1 && snapshot.namespaces[0] === 'backend')).toBe(true);
+  expect(reads).not.toContain('MutatingAdmissionPolicy');
+  expect(reads).not.toContain('StorageClass');
+});
+
 test('annotations render readable fields, a last-applied summary and expandable exact source', async ({ page }) => {
   const applied = { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'web', namespace: 'backend' }, spec: { replicas: 0, template: { spec: { containers: [{ name: 'app', image: 'nginx:1.27' }] } } } };
   const annotations = {

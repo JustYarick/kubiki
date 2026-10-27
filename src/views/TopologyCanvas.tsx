@@ -23,7 +23,7 @@ const ResourceGraphNode = memo(function ResourceGraphNode({ data }: NodeProps<Re
   const compact = useContext(CompactNodes);
   return <div className="topology-node">
     <Handle type="target" position={data.direction === 'RIGHT' ? Position.Left : Position.Top} isConnectable={false} />
-    <div className="flex items-center gap-1.5 text-[var(--text-secondary)] text-[length:calc(10px*var(--ui-factor))]"><ResourceKindBadge kind={data.item.kind} apiVersion={data.item.apiVersion} />{!compact && <><ResourceWarnings item={data.item} /><span className="ml-auto truncate">{data.item.namespace || 'cluster'}</span></>}</div>
+    <div className="flex items-center gap-1.5 text-[var(--text-secondary)] text-[length:calc(10px*var(--ui-factor))]"><ResourceKindBadge kind={data.item.kind} apiVersion={data.item.apiVersion} />{!compact && <><ResourceWarnings item={data.item} /><span className="ml-auto truncate" title={!data.item.namespace ? 'Shared cluster resource. Other resources may also reference it. Open its topology to explore its connections.' : undefined}>{data.item.namespace || 'Shared · cluster'}</span></>}</div>
     <div className="font-mono text-xs truncate mt-1" title={data.item.name}>{data.item.name}</div>
     {!compact && data.item.status && <div className="topology-node-details mt-1"><StatusBadge status={data.item.status} size="sm" /></div>}
     <Handle type="source" position={data.direction === 'RIGHT' ? Position.Right : Position.Bottom} isConnectable={false} />
