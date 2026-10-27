@@ -38,19 +38,25 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const { containers, container: activeContainer, context, recreated, uid } = useSessionContainers(session);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
-  /* Session toggles initialized from the Logs page defaults in settings. */
-  const [wrap, setWrap] = useState(() => useUiStore.getState().logsWrap);
+  /* Display preferences are shared by log panes and persisted across launches. */
+  const wrap = useUiStore(s => s.logsWrap);
+  const setWrap = useUiStore(s => s.setLogsWrap);
   const [filter, setFilter] = useState('');
-  const [showTimestamps, setShowTimestamps] = useState(() => useUiStore.getState().logsTimestamps);
-  const [structured, setStructured] = useState(() => useUiStore.getState().logsStructured);
-  const [colorLevels, setColorLevels] = useState(() => useUiStore.getState().logsColorLevels);
-  const [pollMs, setPollMs] = useState(() => useUiStore.getState().logsPollMs);
+  const showTimestamps = useUiStore(s => s.logsTimestamps);
+  const setShowTimestamps = useUiStore(s => s.setLogsTimestamps);
+  const structured = useUiStore(s => s.logsStructured);
+  const setStructured = useUiStore(s => s.setLogsStructured);
+  const colorLevels = useUiStore(s => s.logsColorLevels);
+  const setColorLevels = useUiStore(s => s.setLogsColorLevels);
+  const pollMs = useUiStore(s => s.logsPollMs);
+  const setPollMs = useUiStore(s => s.setLogsPollMs);
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
   const native = !k8s.demo && '__TAURI_INTERNALS__' in window;
   const [previous, setPrevious] = useState(false);
-  const [tail, setTail] = useState(() => useUiStore.getState().logsDefaultTail);
+  const tail = useUiStore(s => s.logsDefaultTail);
+  const setTail = useUiStore(s => s.setLogsDefaultTail);
   const [since, setSince] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [phase, setPhase] = useState('Connecting');
@@ -187,7 +193,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
         <label className="flex items-center gap-2"><input type="checkbox" checked={previous} onChange={(event) => setPrevious(event.target.checked)} />Previous container instance</label>
         <label className="flex items-center justify-between gap-2">Initial tail<select aria-label="Initial log tail" value={tail} onChange={(event) => setTail(Number(event.target.value))} className="ide-select">{[100, 500, 1000].map((n) => <option key={n} value={n}>{n} lines</option>)}</select></label>
         <label className="flex items-center justify-between gap-2">Since<select aria-label="Log time range" value={since} onChange={(event) => setSince(Number(event.target.value))} className="ide-select">{[[0, 'Any time'], [300, '5 minutes'], [3600, '1 hour'], [86400, '24 hours']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="flex items-center justify-between gap-2">Poll frequency<select aria-label="Log poll frequency" value={pollMs} onChange={(event) => { const value = Number(event.target.value); setPollMs(value); useUiStore.getState().setLogsPollMs(value); }} className="ide-select">{LOG_POLL_PRESETS.map((value) => <option key={value} value={value}>{value / 1000}s</option>)}</select></label>
+        <label className="flex items-center justify-between gap-2">Poll frequency<select aria-label="Log poll frequency" value={pollMs} onChange={(event) => { const value = Number(event.target.value); setPollMs(value); }} className="ide-select">{LOG_POLL_PRESETS.map((value) => <option key={value} value={value}>{value / 1000}s</option>)}</select></label>
         <Button size="sm" onClick={() => { setPaused(false); setGeneration((value) => value + 1); }}>Reconnect logs</Button>
         <p className="text-[var(--text-muted)]">Reads reload the recent tail, then poll only lines after the newest timestamp. Previous logs are a snapshot.</p>
       </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}

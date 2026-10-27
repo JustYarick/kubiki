@@ -109,6 +109,33 @@ test('log levels have no visible badges and backgrounds span horizontally scroll
   await expect.poll(() => output.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
+test('log display switches persist when reopening the pane and reloading the app', async ({ page }) => {
+  await setup(page);
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
+  const toolbar = page.getByTestId('logs-toolbar');
+  for (const label of ['Structured JSON', 'Highlight levels', 'Wrap', 'Timestamps']) await toolbar.getByRole('button', { name: label, exact: true }).click();
+  const preferences = { logsStructured: true, logsColorLevels: true, logsWrap: false, logsTimestamps: false };
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kubiki.settings.v3')!).state)).toMatchObject(preferences);
+  await page.evaluate(async () => {
+    const { useDockStore } = await import(/* @vite-ignore */ '/src/state/dock_store.ts' as string);
+    const dock = useDockStore.getState();
+    dock.closeSession(dock.activeSessionId);
+    dock.openLogs('pod-with-init-container-and-a-long-name-for-responsive-toolbar', 'backend', 'app');
+  });
+  for (const label of ['Structured JSON', 'Highlight levels']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  for (const label of ['Wrap', 'Timestamps']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await page.reload();
+  // A newly mounted pane must hydrate the saved display switches.
+  await page.evaluate(async () => {
+    const { useDockStore } = await import(/* @vite-ignore */ '/src/state/dock_store.ts' as string);
+    useDockStore.getState().openLogs('pod-with-init-container-and-a-long-name-for-responsive-toolbar', 'backend', 'app');
+  });
+  for (const label of ['Structured JSON', 'Highlight levels']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  for (const label of ['Wrap', 'Timestamps']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'false');
+});
+
 test('Pod shell carries real adapter input, resize, UTF-8 and exit; container switch closes the old connection', async ({ page }) => {
   await setup(page); await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open shell for app', exact: true }).click();
   const pane = page.getByTestId('live-terminal'); const terminal = pane.locator('.xterm');
