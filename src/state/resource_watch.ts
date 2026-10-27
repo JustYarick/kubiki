@@ -22,9 +22,10 @@ export function syncResourceCounts(context: string, namespace: string): Promise<
   const controller = new AbortController();
   countsController = controller;
   const available = useClusterStore.getState().availableResourceKinds;
+  const watchStates = useResourceStore.getState().watchStates;
   const kinds = RESOURCE_TYPES
     .map(type => type.kind as ResourceKind)
-    .filter(kind => !available || available.includes(kind));
+    .filter(kind => (!available || available.includes(kind)) && !watchStates[kind]?.hasSnapshot);
   return k8s.getResourceCounts(context, kinds, namespace, controller.signal).then((counts) => {
     if (controller.signal.aborted || useClusterStore.getState().currentContext !== context || useClusterStore.getState().selectedNamespace !== namespace) return;
     if (Object.keys(counts).length > 0) {

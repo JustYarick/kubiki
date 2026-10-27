@@ -48,9 +48,19 @@ export default function App() {
     return () => { window.removeEventListener('pagehide', close); close(); };
   }, []);
   useEffect(() => {
-    const resize = () => setViewportWidth(window.innerWidth);
+    let raf = 0;
+    const resize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setViewportWidth(window.innerWidth);
+      });
+    };
     window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+    };
   }, []);
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth,
@@ -102,29 +112,31 @@ export default function App() {
     useUiStore.setState({ inspectorCollapsed: true });
     setLoading(true);
     try {
-      await k8s.resetResourceWatches();
-      await resetExecSessions();
-      await resetPortForwards();
+      await Promise.all([
+        k8s.resetResourceWatches(),
+        resetExecSessions(),
+        resetPortForwards(),
+      ]);
       if (!current()) return;
       const ping = await k8s.pingCluster(contextName);
       if (!current()) return;
       if (ping.status === 'error') throw new Error('Cluster is unavailable');
-      // Namespace listing can be forbidden while individual namespace reads are allowed.
-      try {
-        const namespaces = await k8s.getNamespaces(contextName);
-        if (current()) setAvailableNamespaces(namespaces);
-      } catch (error) {
-        if (current()) toast.warn('Namespace discovery unavailable', String(error));
-      }
-      if (!current()) return;
       let available = RESOURCE_TYPES;
-      try {
-        const discovered = await k8s.getApiResources(contextName);
-        if (!current()) return;
-        available = discovered;
-        setDiscoveredResourceTypes(discovered);
-        useClusterStore.setState({ availableResourceKinds: discovered.map(type => type.kind) });
-      } catch { /* Discovery can be denied independently; keep explicit per-resource reads available. */ }
+      const [nsResult, apiResult] = await Promise.allSettled([
+        k8s.getNamespaces(contextName),
+        k8s.getApiResources(contextName),
+      ]);
+      if (!current()) return;
+      if (nsResult.status === 'fulfilled') {
+        setAvailableNamespaces(nsResult.value);
+      } else {
+        toast.warn('Namespace discovery unavailable', String(nsResult.reason));
+      }
+      if (apiResult.status === 'fulfilled') {
+        available = apiResult.value;
+        setDiscoveredResourceTypes(apiResult.value);
+        useClusterStore.setState({ availableResourceKinds: apiResult.value.map(type => type.kind) });
+      }
       if (!current()) return;
       setConnected(true, ping.version);
       const kinds = available.map(type => type.kind) as ResourceKind[];
