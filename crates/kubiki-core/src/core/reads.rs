@@ -63,11 +63,35 @@ pub async fn discover(
     Ok(result)
 }
 
-async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result<Value, ApiError> {
-    let api: Api<DynamicObject> = match &query.namespace {
+fn api_for(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Api<DynamicObject> {
+    match &query.namespace {
         Some(ns) => Api::namespaced_with(client, ns, ar),
         None => Api::all_with(client, ar),
+    }
+}
+
+fn build_api(
+    client: Client,
+    query: &ResourceQuery,
+) -> Result<(Api<DynamicObject>, ApiResource), ApiError> {
+    let known = validate_query(query)?;
+    let ar = ApiResource {
+        group: query.group.clone(),
+        version: query.version.clone(),
+        api_version: if query.group.is_empty() {
+            query.version.clone()
+        } else {
+            format!("{}/{}", query.group, query.version)
+        },
+        kind: query.kind.clone(),
+        plural: known.plural.clone(),
     };
+    let api = api_for(client, query, &ar);
+    Ok((api, ar))
+}
+
+async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result<Value, ApiError> {
+    let api = api_for(client, query, ar);
     let mut params = ListParams::default().limit(500);
     let mut items = Vec::new();
     loop {
@@ -90,38 +114,12 @@ async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result
     Ok(json!({"items": items}))
 }
 pub async fn resources(client: Client, query: ResourceQuery) -> Result<Value, ApiError> {
-    let known = validate_query(&query)?;
-    let ar = ApiResource {
-        group: query.group.clone(),
-        version: query.version.clone(),
-        api_version: if query.group.is_empty() {
-            query.version.clone()
-        } else {
-            format!("{}/{}", query.group, query.version)
-        },
-        kind: query.kind.clone(),
-        plural: known.plural.clone(),
-    };
+    let (_, ar) = build_api(client.clone(), &query)?;
     list(client, &query, &ar).await
 }
 
 pub async fn resource_count(client: Client, query: ResourceQuery) -> Result<usize, ApiError> {
-    let known = validate_query(&query)?;
-    let ar = ApiResource {
-        group: query.group.clone(),
-        version: query.version.clone(),
-        api_version: if query.group.is_empty() {
-            query.version.clone()
-        } else {
-            format!("{}/{}", query.group, query.version)
-        },
-        kind: query.kind.clone(),
-        plural: known.plural.clone(),
-    };
-    let api: Api<DynamicObject> = match &query.namespace {
-        Some(ns) => Api::namespaced_with(client, ns, &ar),
-        None => Api::all_with(client, &ar),
-    };
+    let (api, _) = build_api(client, &query)?;
     let params = ListParams::default().limit(1);
     let page = bounded(&query.context, "resource-counts", api.list_metadata(&params))
         .await

@@ -6,9 +6,19 @@ use tokio::sync::RwLock;
 
 type Snapshot = HashMap<String, Value>;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ResourceStore {
+    enabled: bool,
     data: Arc<RwLock<HashMap<WatchScope, Snapshot>>>,
+}
+
+impl Default for ResourceStore {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            data: Arc::default(),
+        }
+    }
 }
 
 impl ResourceStore {
@@ -16,8 +26,18 @@ impl ResourceStore {
         Self::default()
     }
 
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            data: Arc::default(),
+        }
+    }
+
     /// Replace only this subscription, atomically; other contexts/GVK/scopes are untouched.
     pub async fn apply_delta(&self, scope: &WatchScope, delta: &ResourceDelta) {
+        if !self.enabled {
+            return;
+        }
         let mut store = self.data.write().await;
         match delta {
             ResourceDelta::Applied { data } => {

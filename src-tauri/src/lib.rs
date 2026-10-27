@@ -68,7 +68,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(ClusterClientPool::new(KubeConfigManager::new()))
-        .manage(InformerManager::new(ResourceStore::new()))
+        .manage(InformerManager::new(ResourceStore::disabled()))
         .manage(PodTerminalManager::default())
         .manage(NodeDebugManager::default())
         .manage(HostTerminalManager::default())
