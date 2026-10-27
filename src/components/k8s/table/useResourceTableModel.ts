@@ -4,6 +4,7 @@ import { useResourceStore } from '../../../state/resource_store';
 import { inNamespaceScope } from '../../../core/resources/namespace_scope';
 import { resourceIssues } from '../../../core/resources/diagnostics';
 import { compareCreation, compareRows, fastCompare, issuePriority, statusChoices, type SortKey } from '../../../core/resources/resource_sort';
+import { matchesColumnFilter, columnFilterCount, type ColumnFilters } from '../../../core/resources/column_filters';
 import type { ColumnDef } from './columns';
 
 interface TableModelOptions {
@@ -13,7 +14,7 @@ interface TableModelOptions {
   selectedNamespace: string;
   searchQuery: string;
   searchRegex: boolean;
-  columnFilters: Record<string, string[]>;
+  columnFilters: ColumnFilters;
   sorts: SortKey[];
   hiddenColumns: Record<string, string[]>;
   columnOrder: Record<string, string[]>;
@@ -70,10 +71,10 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
         list = list.filter((item) => item.name.toLowerCase().includes(qLower) || (item.namespace ?? '').toLowerCase().includes(qLower));
       }
     }
-    const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.length > 0);
+    const activeFilters = Object.entries(columnFilters).filter(([, filter]) => columnFilterCount(filter) > 0);
     const columnsToCount = activeFilterColumnId === undefined
       ? tableColumns
-      : tableColumns.filter((c) => c.id === 'status' || c.id === activeFilterColumnId);
+      : tableColumns.filter((c) => c.id === activeFilterColumnId);
     for (const column of columnsToCount) {
       const counts = new Map<string, number>();
       // Apply every other column's filter so the offered values match the rows the
@@ -84,24 +85,17 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
         if (colId === column.id) continue;
         const filterColumn = tableColumns.find((c) => c.id === colId);
         if (!filterColumn) continue;
-        const allowed = new Set(values);
-        candidates = candidates.filter((item) => allowed.has(filterColumn.get(item) ?? '—'));
+        candidates = candidates.filter((item) => matchesColumnFilter(filterColumn.get(item), values));
       }
       for (const item of candidates) {
         const value = column.get(item);
-        if (value === undefined || value === '') continue;
-        counts.set(value, (counts.get(value) ?? 0) + 1);
+        const normalized = value == null || value === '' ? '—' : value;
+        counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
       }
       map.set(column.id, counts);
     }
     return map;
   }, [namespaceScopedItems, tableColumns, searchQuery, searchRegex, columnFilters, activeFilterColumnId]);
-
-  const statusValues = useMemo(() => {
-    const column = tableColumns.find((c) => c.id === 'status');
-    if (!column) return [];
-    return statusChoices([...(columnValues.get('status')?.keys() ?? [])]);
-  }, [tableColumns, columnValues]);
 
   const rows = useMemo(() => {
     let list = namespaceScopedItems;
@@ -131,12 +125,11 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
       }
     }
     // Column filters: OR inside one column, AND across columns.
-    const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.length > 0);
+    const activeFilters = Object.entries(columnFilters).filter(([, filter]) => columnFilterCount(filter) > 0);
     for (const [columnId, values] of activeFilters) {
       const column = tableColumns.find((c) => c.id === columnId);
       if (!column) continue;
-      const allowed = new Set(values);
-      list = list.filter((item) => allowed.has(column.get(item) ?? '—'));
+      list = list.filter((item) => matchesColumnFilter(column.get(item), values));
     }
 
     const hidden = new Set(hiddenColumns[effectiveKind] ?? []);
@@ -179,5 +172,11 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
     }
     return { list, cols };
   }, [namespaceScopedItems, searchQuery, searchRegex, effectiveKind, sorts, hiddenColumns, columnFilters, issueRanks, tableColumns, columnOrder]);
+  // Sort choices follow the actual filtered rows; the filter popup intentionally
+  // ignores its own column's filter to keep other choices reachable.
+  const statusValues = useMemo(() => {
+    const column = tableColumns.find(c => c.id === 'status');
+    return column ? statusChoices(rows.list.map(item => column.get(item))) : [];
+  }, [rows.list, tableColumns]);
   return { allItems, rows, columnValues, statusValues };
 }

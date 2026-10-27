@@ -1,3 +1,4 @@
+import { cycleColumnFilter, columnFilterCount, EMPTY_COLUMN_FILTER, type ColumnFilters } from '../core/resources/column_filters';
 import { useResourceActions } from '../components/k8s/useResourceActions';
 import { useResourceColumns } from '../components/k8s/table/useResourceColumns';
 import { useResourceTableModel } from '../components/k8s/table/useResourceTableModel';
@@ -137,7 +138,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   const syncMode = useResourceStore(state => state.syncMode);
 
   const [sorts, setSorts] = useState<SortKey[]>([]);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const [columnFilters, setColumnFilters] = useState<ColumnFilters>({});
   const [menu, setMenu] = useState<{ item: ResourceItem; x: number; y: number } | null>(null);
   const [headerMenu, setHeaderMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
   const [filterMenu, setFilterMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
@@ -178,6 +179,14 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   }, [effectiveKind, currentContext, setSearchQuery]);
 
   const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
+  useEffect(() => {
+    if (!statusValues.length) return;
+    setSorts(previous => {
+      const current = previous.find(key => key.columnId === 'status');
+      if (!current?.statusFirst || statusValues.includes(current.statusFirst)) return previous;
+      return previous.map(key => key === current ? { ...key, statusFirst: statusValues[0] } : key);
+    });
+  }, [statusValues]);
   const pending = !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, columnFilters, sorts]);
@@ -303,10 +312,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
 
   const toggleFilterValue = (colId: string, value: string) => {
     setColumnFilters((previous) => {
-      const current = previous[colId] ?? [];
-      const next = current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value];
+      const next = cycleColumnFilter(previous[colId] ?? EMPTY_COLUMN_FILTER, value);
       const updated = { ...previous };
-      if (next.length) updated[colId] = next;
+      if (columnFilterCount(next)) updated[colId] = next;
       else delete updated[colId];
       return updated;
     });
@@ -326,7 +334,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
     setSearchQuery('');
   };
 
-  const activeFilterCount = Object.values(columnFilters).reduce((sum, values) => sum + values.length, 0);
+  const activeFilterCount = Object.values(columnFilters).reduce((sum, values) => sum + columnFilterCount(values), 0);
 
   const buildHeaderMenu = (colId: string): MenuItem[] => {
     const col = tableColumns.find((c) => c.id === colId);
@@ -760,8 +768,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                 {rows.cols.map((c) => {
                   const priority = sortPriority(c.id);
                   const key = priority >= 0 ? sorts[priority] : undefined;
-                  const filterValues = columnFilters[c.id] ?? [];
-                  const filtered = filterValues.length > 0;
+                  const filterValues = columnFilters[c.id] ?? EMPTY_COLUMN_FILTER;
+                  const filtered = columnFilterCount(filterValues) > 0;
                   return (
                     <th
                       key={c.id}
@@ -832,9 +840,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                           </span>
                         )}
                         {filtered && (
-                          <span className="shrink-0 inline-flex items-center gap-0.5 text-[var(--accent)]" title={`Filtered: ${filterValues.join(', ')}`}>
+                          <span className="shrink-0 inline-flex items-center gap-0.5 text-[var(--accent)]" title={`Include: ${filterValues.include.join(', ') || 'any'}; exclude: ${filterValues.exclude.join(', ') || 'none'}`}>
                             <Filter size="calc(10px * var(--ui-factor))" />
-                            <span className="font-mono text-[length:calc(9px*var(--ui-factor))] tabular-nums">{filterValues.length}</span>
+                            <span className="font-mono text-[length:calc(9px*var(--ui-factor))] tabular-nums">{columnFilterCount(filterValues)}</span>
                           </span>
                         )}
                       </span>
@@ -964,8 +972,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
           rect={{ x: filterMenu.x, y: filterMenu.y }}
           columnLabel={tableColumns.find((column) => column.id === filterMenu.colId)?.label ?? filterMenu.colId}
           values={columnValues.get(filterMenu.colId) ?? new Map()}
-          selected={columnFilters[filterMenu.colId] ?? []}
-          quick={filterMenu.colId === 'status' ? statusValues.filter((status) => status !== '—').slice(0, 6) : undefined}
+          selected={columnFilters[filterMenu.colId] ?? EMPTY_COLUMN_FILTER}
+          quick={filterMenu.colId === 'status' ? [...(columnValues.get('status')?.keys() ?? [])].filter((status) => status !== '—').slice(0, 6) : undefined}
           onToggle={(value) => toggleFilterValue(filterMenu.colId, value)}
           onClear={() => clearFilterColumn(filterMenu.colId)}
           onClose={() => setFilterMenu(null)}
