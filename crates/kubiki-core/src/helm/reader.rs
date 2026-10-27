@@ -308,7 +308,6 @@ impl HelmReader {
                 "--failed",
                 "--pending",
                 "--uninstalled",
-                "--superseded",
                 "--uninstalling",
             ]
             .map(str::to_owned),

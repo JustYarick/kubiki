@@ -48,7 +48,7 @@ assert a[0] == '--kube-context=prod $(literal); spaces'
 assert 'list' in a and '--max=0' in a and not any(x.startswith('--offset') for x in a)
 with open(__file__+'.calls','a') as f:f.write('storage snapshot\n')
 assert '--namespace=backend' in a and '--all-namespaces' not in a
-assert all(x in a for x in ['--deployed','--failed','--pending','--uninstalled','--superseded','--uninstalling'])
+assert all(x in a for x in ['--deployed','--failed','--pending','--uninstalled','--uninstalling']) and '--superseded' not in a
 print(json.dumps([dict(name='web-'+str(i), namespace='backend', revision='2', updated='now', status='failed', chart='web-1.0', app_version='1') for i in range(401)]))
 "#,
     );

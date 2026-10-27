@@ -7,7 +7,7 @@ import { k8s } from './k8s_provider';
 const subscriptions = new ReadSubscriptions<ResourceItem[]>(async (key, signal) => {
   const { context, namespace, type } = JSON.parse(key) as { context: string; namespace: string | null; type: CustomResourceType };
   // Storage and target namespaces can differ; owners may live outside the release's namespace.
-  const items = await k8s.getCustomResources(context, type.name, type.uid, null, signal);
+  const items = await k8s.getCustomResources(context, type.name, type.uid, namespace ?? null, signal);
   return namespace ? items.filter(item => item.raw?.spec?.storageNamespace === namespace || item.raw?.spec?.targetNamespace === namespace || item.namespace === namespace) : items;
 }, 30000);
 export function useFluxHelmOwners(context: string, namespace: string | null) {
