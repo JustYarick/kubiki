@@ -2,36 +2,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createHelmMiddleware } from '../../server/helm_bridge';
 import { K8sProvider } from '../../src/providers/k8s_provider';
-import { helmUpdatedAt, parseHelmPage, validateHelmDocument, validateHelmTarget } from '../../src/providers/helm_types';
+import { helmUpdatedAt, parseHelmReleases, validateHelmDocument, validateHelmTarget } from '../../src/providers/helm_types';
 import { useWorkspaceStore } from '../../src/state/workspace_store';
 
 const release = { name: 'web', namespace: 'backend', revision: '2', updated: '2026-10-20 12:00:00.123456 +0000 UTC', status: 'deployed', chart: 'web-1', app_version: '1' };
-const page = { context: 'prod', namespace: 'backend', offset: 0, limit: 100, has_more: false, items: [release] };
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Helm transport contract', () => {
-  it('requires explicit targets and positive revisions, and rejects cross-scope responses', () => {
+  it('requires explicit targets, positive revisions and valid inventory summaries', () => {
     for (const name of ['--help', '../name', '', 'x..y', 'x.-y']) expect(() => validateHelmTarget('prod', 'backend', name)).toThrow();
     expect(() => validateHelmTarget('', 'backend', 'web')).toThrow();
     expect(() => validateHelmTarget('prod', '-all', 'web')).toThrow();
     for (const document of ['upgrade', 'delete', 'repo']) expect(() => validateHelmDocument(document, 1)).toThrow();
     expect(() => validateHelmDocument('values', 0)).toThrow();
-    expect(() => parseHelmPage(page, 'other', 'backend', 0)).toThrow();
-    expect(() => parseHelmPage({ ...page, items: [{ ...release, namespace: 'other' }] }, 'prod', 'backend', 0)).toThrow();
-    expect(parseHelmPage(page, 'prod', 'backend', 0)).toEqual(page);
+    expect(() => parseHelmReleases([{ ...release, revision: 'invalid' }])).toThrow();
+    expect(parseHelmReleases([release])).toEqual([release]);
   });
   it('uses native read commands with the selected context and revision', async () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {}, location: { search: '' } });
-    invoke.mockReset().mockResolvedValueOnce(page).mockResolvedValueOnce('key: value').mockResolvedValueOnce([]);
+    invoke.mockReset().mockResolvedValueOnce([release]).mockResolvedValueOnce('key: value').mockResolvedValueOnce([]);
     const provider = new K8sProvider();
-    await provider.getHelmReleases('prod', 'backend');
-    expect(invoke).toHaveBeenNthCalledWith(1, 'list_helm_releases', { context: 'prod', namespace: 'backend', offset: 0 });
+    await provider.getHelmInventory('prod', 'backend');
+    expect(invoke).toHaveBeenNthCalledWith(1, 'get_helm_inventory', expect.objectContaining({ context: 'prod', namespace: 'backend' }));
     expect(await provider.getHelmContent('prod', 'backend', 'web', 2, 'values')).toBe('key: value');
-    expect(invoke).toHaveBeenNthCalledWith(2, 'get_helm_content', { context: 'prod', namespace: 'backend', name: 'web', revision: 2, document: 'values' });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'get_helm_content', expect.objectContaining({ context: 'prod', namespace: 'backend', name: 'web', revision: 2, document: 'values' }));
     await provider.getHelmRepositories();
-    expect(invoke).toHaveBeenNthCalledWith(3, 'list_helm_repositories', {});
+    expect(invoke).toHaveBeenNthCalledWith(3, 'list_helm_repositories', expect.any(Object));
+    invoke.mockResolvedValueOnce([{ ...release, namespace: 'other' }]);
+    await expect(provider.getHelmInventory('prod', 'backend')).rejects.toMatchObject({ code: 'internal' });
   });
   it('keeps Helm tabs distinct, reuses each tab and parses Go timestamps chronologically', () => {
     const previous = useWorkspaceStore.getState();
@@ -47,7 +47,7 @@ describe('Helm transport contract', () => {
 });
 
 describe('Helm HTTP bridge', () => {
-  const run = vi.fn<(args: string[]) => Promise<string>>();
+  const run = vi.fn<(args: string[], signal?: AbortSignal) => Promise<string>>();
   let server: Server; let base: string;
   beforeEach(async () => {
     run.mockReset().mockResolvedValue('[]');
@@ -57,28 +57,28 @@ describe('Helm HTTP bridge', () => {
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/k8s/helm/`;
   });
   afterEach(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  it('pages all statuses and passes context as one literal flag value', async () => {
-    run.mockResolvedValue(JSON.stringify(Array.from({ length: 101 }, (_, i) => ({ ...release, name: `web-${i}` }))));
-    const response = await fetch(`${base}releases?${new URLSearchParams({ context: 'prod $(literal)', namespace: 'backend', offset: '100' })}`);
+  it('returns the complete snapshot with one Helm call and a literal context flag', async () => {
+    run.mockResolvedValue(JSON.stringify(Array.from({ length: 401 }, (_, i) => ({ ...release, name: `web-${i}` }))));
+    const response = await fetch(`${base}inventory?${new URLSearchParams({ context: 'prod $(literal)', namespace: 'backend' })}`);
     expect(response.status).toBe(200);
-    const data = await response.json(); expect(data.items).toHaveLength(100); expect(data.has_more).toBe(true);
-    expect(run.mock.calls[0][0]).toEqual(['--kube-context=prod $(literal)', 'list', '--output=json', '--max=101', '--offset=100', '--namespace=backend', '--deployed', '--failed', '--pending', '--uninstalled', '--superseded', '--uninstalling']);
+    const data = await response.json(); expect(data).toHaveLength(401);expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][0]).toEqual(['--kube-context=prod $(literal)', 'list', '--output=json', '--max=0', '--namespace=backend', '--deployed', '--failed', '--pending', '--uninstalled', '--superseded', '--uninstalling']);
   });
   it('keeps history/content pinned and repository reads local', async () => {
     run.mockResolvedValue('key: value');
     const response = await fetch(`${base}content?context=prod&namespace=backend&name=web&revision=2&document=values`);
     expect(await response.json()).toBe('key: value');
-    expect(run).toHaveBeenLastCalledWith(['--kube-context=prod', '--namespace=backend', 'get', 'values', 'web', '--revision=2', '--output=yaml']);
+    expect(run.mock.calls.at(-1)?.[0]).toEqual(['--kube-context=prod', '--namespace=backend', 'get', 'values', 'web', '--revision=2', '--output=yaml']);
     run.mockResolvedValue('[]');
     await fetch(`${base}history?context=prod&namespace=backend&name=web`);
-    expect(run).toHaveBeenLastCalledWith(['--kube-context=prod', '--namespace=backend', 'history', 'web', '--output=json', '--max=256']);
+    expect(run.mock.calls.at(-1)?.[0]).toEqual(['--kube-context=prod', '--namespace=backend', 'history', 'web', '--output=json', '--max=256']);
     await fetch(`${base}repositories`);
-    expect(run).toHaveBeenLastCalledWith(['repo', 'list', '--output=json']);
+    expect(run.mock.calls.at(-1)?.[0]).toEqual(['repo', 'list', '--output=json']);
   });
-  it.each(['releases?namespace=backend', 'content?context=prod&namespace=backend&name=--help&revision=1&document=values', 'content?context=prod&namespace=backend&name=web&revision=0&document=values', 'content?context=prod&namespace=backend&name=web&revision=1&document=uninstall', 'releases?context=prod&offset=-1'])('rejects %s before running Helm', async query => {
+  it.each(['inventory?namespace=backend', 'content?context=prod&namespace=backend&name=--help&revision=1&document=values', 'content?context=prod&namespace=backend&name=web&revision=0&document=values', 'content?context=prod&namespace=backend&name=web&revision=1&document=uninstall'])('rejects %s before running Helm', async query => {
     expect((await fetch(base + query)).status).toBe(400); expect(run).not.toHaveBeenCalled();
   });
-  it.each(['releases', 'content', 'history', 'repositories'])('rejects POST to %s', async operation => {
+  it.each(['inventory', 'content', 'history', 'repositories'])('rejects POST to %s', async operation => {
     expect((await fetch(base + operation, { method: 'POST' })).status).toBe(405); expect(run).not.toHaveBeenCalled();
   });
   it.each(['GET', 'POST', 'PUT', 'DELETE'])('blocks %s mutations before executing any Helm command', async method => {
@@ -96,7 +96,7 @@ describe('Helm HTTP bridge', () => {
   });
   it.each([[{ code: 'ENOENT' }, 503, 'bridge_unavailable'], [{ killed: true }, 504, 'timeout'], [{ stderr: 'Error: secrets is forbidden' }, 403, 'forbidden']])('surfaces process/cluster errors %j', async (error, status, code) => {
     run.mockRejectedValue(error);
-    const response = await fetch(base + 'releases?context=prod');
+    const response = await fetch(base + 'inventory?context=prod');
     expect(response.status).toBe(status); expect((await response.json()).error.code).toBe(code);
   });
 });

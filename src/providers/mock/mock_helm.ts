@@ -1,4 +1,4 @@
-import type { HelmDocument, HelmHistory, HelmReleasePage } from '../helm_types';
+import type { HelmDocument, HelmHistory, HelmRelease } from '../helm_types';
 import { stringify } from 'yaml';
 import { PRODUCTION_WORKLOADS } from './mock_cluster_profile';
 
@@ -16,9 +16,8 @@ const charts = [
     revision: String(2 + app.index % 12), status: 'deployed', chart: `${app.component}-2.4.0`,
     app_version: app.image.split(':')[1], minutes: 60 + app.index * 7, object: app.name, kind: app.kind })),
 ];
-export function demoHelmPage(context: string, namespace: string | null, offset: number): HelmReleasePage {
-  const all = charts.filter(item => !namespace || item.namespace === namespace);
-  return { context, namespace, offset, limit: 100, has_more: offset + 100 < all.length, items: all.slice(offset, offset + 100).map(({ minutes, object: _object, kind: _kind, ...item }) => ({ ...item, updated: at(minutes) })) };
+export function demoHelmInventory(namespace: string | null): HelmRelease[] {
+  return charts.filter(item => !namespace || item.namespace === namespace).map(({ minutes, object: _object, kind: _kind, ...item }) => ({ ...item, updated: at(minutes) }));
 }
 export function demoHelmHistory(name: string): HelmHistory[] {
   const chart = charts.find(chart => chart.name === name);

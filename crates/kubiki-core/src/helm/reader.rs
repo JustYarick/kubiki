@@ -1,5 +1,7 @@
 //! Bounded, context-pinned Helm reads. No command accepts arbitrary CLI arguments.
+use super::kubeconfig::HelmKubeconfig;
 use super::model::{HelmRelease, HelmReleaseHistory, HelmRepo};
+use crate::cluster::kubeconfig::KubeConfigManager;
 use crate::core::api::{ApiError, ApiErrorCode};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, process::Stdio, time::Duration};
@@ -8,18 +10,7 @@ use tokio::{
     process::Command,
 };
 
-pub const RELEASE_PAGE_SIZE: usize = 100;
 const OUTPUT_LIMIT: u64 = 8 * 1024 * 1024;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct HelmReleasePage {
-    pub context: String,
-    pub namespace: Option<String>,
-    pub offset: usize,
-    pub limit: usize,
-    pub has_more: bool,
-    pub items: Vec<HelmRelease>,
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +35,7 @@ impl HelmDocument {
 pub struct HelmReader {
     program: PathBuf,
     timeout: Duration,
+    kubeconfig: Option<HelmKubeconfig>,
 }
 
 impl Default for HelmReader {
@@ -57,8 +49,20 @@ impl HelmReader {
     pub fn new(program: PathBuf) -> Self {
         Self {
             program,
-            timeout: Duration::from_secs(15),
+            timeout: Duration::from_secs(60),
+            kubeconfig: None,
         }
+    }
+
+    pub fn with_config_manager(mut self, manager: &KubeConfigManager) -> Result<Self, ApiError> {
+        self.kubeconfig = Some(HelmKubeconfig::new(manager)?);
+        Ok(self)
+    }
+
+    /// Explicit deadline injection for headless callers and process lifecycle tests.
+    pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     pub(crate) async fn run(
@@ -91,6 +95,9 @@ impl HelmReader {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(config) = &self.kubeconfig {
+            command.arg("--kubeconfig").arg(&config.path);
+        }
         #[cfg(unix)]
         let mut attempts = 0;
         let mut child = loop {
@@ -275,27 +282,19 @@ impl HelmReader {
         Ok(vec![ctx, format!("--namespace={namespace}")])
     }
 
-    pub async fn releases(
+    pub async fn inventory(
         &self,
         context: &str,
         namespace: Option<&str>,
-        offset: usize,
-    ) -> Result<HelmReleasePage, ApiError> {
+    ) -> Result<Vec<HelmRelease>, ApiError> {
         let mut args = vec![
             Self::context(context)?,
             "list".into(),
             "--output=json".into(),
-            format!("--max={}", RELEASE_PAGE_SIZE + 1),
-            format!("--offset={offset}"),
+            // Helm 3/4 fetch their full storage snapshot before applying max/offset.
+            // A zero limit returns that snapshot without client-side truncation.
+            "--max=0".into(),
         ];
-        if offset > 1_000_000 {
-            return Err(ApiError::from_status(
-                400,
-                "Invalid release offset",
-                "helm",
-                Some(context),
-            ));
-        }
         if let Some(ns) = namespace {
             Self::namespace(ns, context)?;
             args.push(format!("--namespace={ns}"));
@@ -315,7 +314,7 @@ impl HelmReader {
             .map(str::to_owned),
         );
         let text = self.run(&args, Some(context), false).await?;
-        let mut items: Vec<HelmRelease> = parse_list(&text, Some(context))?;
+        let items: Vec<HelmRelease> = parse_list(&text, Some(context))?;
         if namespace.is_some_and(|ns| items.iter().any(|item| item.namespace != ns)) {
             return Err(ApiError::from_status(
                 500,
@@ -324,16 +323,7 @@ impl HelmReader {
                 Some(context),
             ));
         }
-        let has_more = items.len() > RELEASE_PAGE_SIZE;
-        items.truncate(RELEASE_PAGE_SIZE);
-        Ok(HelmReleasePage {
-            context: context.into(),
-            namespace: namespace.map(str::to_owned),
-            offset,
-            limit: RELEASE_PAGE_SIZE,
-            has_more,
-            items,
-        })
+        Ok(items)
     }
 
     pub async fn history(

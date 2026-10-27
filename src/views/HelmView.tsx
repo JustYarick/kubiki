@@ -181,7 +181,6 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
         if (store.selectedItem?.uid === uid) useUiStore.setState({ inspectorCollapsed: true });
         store.deleteItem('HelmRelease', uid);
       }
-      result.refresh();
     }} />}
   </section>;
 }
@@ -234,7 +233,6 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
     </>}
     footer={action && release && <HelmActionDialog key={`${item.uid}/${action.kind}/${action.revision ?? ''}`} action={action.kind} initialRevision={action.revision} release={release} onClose={() => setAction(null)} onCompleted={() => {
       if (action.kind === 'uninstall') { useResourceStore.getState().deleteItem('HelmRelease', item.uid); onClose?.(); }
-      else history.refresh();
     }} />}>
     <div className={`details-scroll kubiki-scrollbar helm-detail-content ${tab !== 'overview' && tab !== 'history' ? 'helm-document-scroll' : ''}`}>
       {history.error && tab !== 'history' && <RequestErrorNotice error={history.error} onRetry={history.refresh} retainedData={!!release} />}

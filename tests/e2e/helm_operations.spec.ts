@@ -14,7 +14,7 @@ test('desktop Helm edit/install/rollback/uninstall and repository CRUD use backe
       if (command === 'get_namespaces') return ['backend'];
       if (command === 'get_resources') return { items: [] };
       if (command.startsWith('stop_') || command === 'watch_resources') return;
-      if (command === 'list_helm_releases') return { ...args, limit: 100, has_more: false, items: [...releases] };
+      if (command === 'get_helm_inventory') return [...releases];
       if (command === 'list_helm_repositories') return [...repos];
       if (command === 'get_helm_history') return Array.from({ length: Number(releases[0].revision) }, (_, index) => ({ revision: index + 1, updated: '', status: index + 1 === Number(releases[0].revision) ? 'deployed' : 'superseded', chart: 'web-1', app_version: '1', description: 'Fixture revision' }));
       if (command === 'get_helm_content') return 'replicaCount: 2\n';
@@ -91,7 +91,7 @@ test('RBAC diagrams show declared chains; Helm nodes connect to owned objects an
     if (op === 'contexts') return route.fulfill({ json: [{ name: 'prod', is_current: true }] });
     if (op === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
     if (op === 'namespaces') return route.fulfill({ json: ['backend'] });
-    if (url.pathname.includes('/helm/') && op === 'releases') return route.fulfill({ json: { context: 'prod', namespace: url.searchParams.get('namespace'), offset: 0, limit: 100, has_more: false, items: [release] } });
+    if (url.pathname.includes('/helm/') && op === 'inventory') return route.fulfill({ json: [release] });
     if (url.pathname.includes('/helm/') && op === 'history') return route.fulfill({ json: [{ revision: 2, status: 'deployed', chart: 'web-1', app_version: '1', updated: '', description: '' }] });
     return route.fulfill({ json: { items: objects[url.searchParams.get('kind') ?? ''] ?? [] } });
   });

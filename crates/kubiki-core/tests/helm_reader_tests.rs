@@ -41,39 +41,44 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
-async fn pages_all_statuses_with_literal_context_and_namespace() {
+async fn one_complete_snapshot_preserves_all_releases_and_scope() {
     let fixture = Fixture::new(
         r#"
 assert a[0] == '--kube-context=prod $(literal); spaces'
-assert 'list' in a and '--offset=100' in a and '--max=101' in a
+assert 'list' in a and '--max=0' in a and not any(x.startswith('--offset') for x in a)
+with open(__file__+'.calls','a') as f:f.write('storage snapshot\n')
 assert '--namespace=backend' in a and '--all-namespaces' not in a
 assert all(x in a for x in ['--deployed','--failed','--pending','--uninstalled','--superseded','--uninstalling'])
-print(json.dumps([dict(name='web-'+str(i), namespace='backend', revision='2', updated='now', status='failed', chart='web-1.0', app_version='1') for i in range(101)]))
+print(json.dumps([dict(name='web-'+str(i), namespace='backend', revision='2', updated='now', status='failed', chart='web-1.0', app_version='1') for i in range(401)]))
 "#,
     );
     let page = fixture
         .reader()
-        .releases("prod $(literal); spaces", Some("backend"), 100)
+        .inventory("prod $(literal); spaces", Some("backend"))
         .await
         .unwrap();
-    assert_eq!(page.context, "prod $(literal); spaces");
-    assert_eq!(page.offset, 100);
-    assert_eq!(page.items.len(), 100);
-    assert!(page.has_more);
+    assert_eq!(page.len(), 401);
+    assert_eq!(
+        fs::read_to_string(fixture.program.with_extension("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
 async fn empty_cluster_and_wrong_namespace_are_distinct() {
     let empty = Fixture::new("assert '--all-namespaces' in a\nprint('null')");
-    let page = empty.reader().releases("prod", None, 0).await.unwrap();
-    assert!(page.items.is_empty() && !page.has_more);
+    let page = empty.reader().inventory("prod", None).await.unwrap();
+    assert!(page.is_empty());
     let wrong = Fixture::new(
         r#"print(json.dumps([dict(name='web', namespace='other', revision='1', updated='', status='deployed', chart='web', app_version='1')]))"#,
     );
     assert_eq!(
         wrong
             .reader()
-            .releases("prod", Some("backend"), 0)
+            .inventory("prod", Some("backend"))
             .await
             .unwrap_err()
             .status,
@@ -138,7 +143,7 @@ async fn repository_errors_never_look_like_an_empty_configuration() {
 async fn missing_binary_bad_requests_and_rbac_are_visible() {
     let absent = HelmReader::new(PathBuf::from("/nonexistent/kubiki-test-helm"));
     assert_eq!(
-        absent.releases("prod", None, 0).await.unwrap_err().status,
+        absent.inventory("prod", None).await.unwrap_err().status,
         Some(503)
     );
     assert_eq!(
@@ -163,7 +168,7 @@ async fn missing_binary_bad_requests_and_rbac_are_visible() {
     assert_eq!(
         forbidden
             .reader()
-            .releases("prod", None, 0)
+            .inventory("prod", None)
             .await
             .unwrap_err()
             .status,
@@ -195,7 +200,8 @@ async fn stalled_process_times_out_and_is_killed() {
     assert_eq!(
         fixture
             .reader()
-            .releases("prod", None, 0)
+            .with_read_timeout(Duration::from_millis(150))
+            .inventory("prod", None)
             .await
             .unwrap_err()
             .status,
@@ -229,4 +235,41 @@ print('apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate')
         .await
         .unwrap();
     assert!(output.contains("kind: Job"));
+}
+
+#[tokio::test]
+async fn selected_kubeconfig_is_private_pinned_and_removed_with_reader() {
+    use kubiki_core::cluster::kubeconfig::KubeConfigManager;
+    let fixture = Fixture::new(
+        r#"
+path=a[a.index('--kubeconfig')+1]
+config=open(path).read()
+assert 'https://selected.example' in config and 'changed.example' not in config
+assert os.path.join(os.path.dirname(__file__), 'ca.crt') in config
+open(__file__+'.config-path','w').write(path)
+print('[]')
+"#,
+    );
+    let source = fixture.dir.join("selected.yaml");
+    fs::write(&source, "apiVersion: v1\nkind: Config\nclusters:\n- name: selected\n  cluster:\n    server: https://selected.example\n    certificate-authority: ca.crt\ncontexts:\n- name: prod\n  context:\n    cluster: selected\nusers: []\n").unwrap();
+    let manager = KubeConfigManager::with_custom_path(source.clone());
+    let reader = fixture.reader().with_config_manager(&manager).unwrap();
+    fs::write(source, "changed.example").unwrap();
+    reader.inventory("prod", None).await.unwrap();
+    let path =
+        PathBuf::from(fs::read_to_string(fixture.program.with_extension("config-path")).unwrap());
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    drop(reader);
+    assert!(!path.exists());
 }

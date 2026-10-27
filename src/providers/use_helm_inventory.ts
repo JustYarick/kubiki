@@ -1,21 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { k8s } from './k8s_provider';
-import { loadHelmInventory } from './helm_inventory';
-import { ReadSubscriptions, type ReadSnapshot } from './read_subscriptions';
+import type { ReadSnapshot } from './read_subscriptions';
 import type { HelmRelease } from './helm_types';
-import { primeHelmGraphCache, subscribeHelmChanges } from './use_helm_graph';
+import { helmInventoryKey, refreshHelmInventory, subscribeHelmInventory } from './helm_inventory_subscriptions';
 
-const subscriptions = new ReadSubscriptions<HelmRelease[]>(async (key, signal) => {
-  const [context, namespace] = JSON.parse(key) as [string, string | null];
-  const items = await loadHelmInventory((...args) => k8s.getHelmReleases(...args), context, namespace, signal);
-  primeHelmGraphCache(context, namespace, items);
-  return items;
-}, 30000);
-export function useHelmInventory(context: string, namespace: string | null) {
-  const key = JSON.stringify([context, namespace]);
-  const [state, setState] = useState<ReadSnapshot<HelmRelease[]> & { key: string }>({ key, loading: true });
-  useEffect(() => subscriptions.subscribe(key, snapshot => setState({ ...snapshot, key })), [key]);
-  const refresh = useCallback(() => subscriptions.refresh(key), [key]);
-  useEffect(() => subscribeHelmChanges(refresh), [refresh]);
-  return { ...(state.key === key ? state : { loading: true, data: undefined, updated: undefined, error: undefined }), refresh };
+export function useHelmInventory(context: string, namespace: string | null, enabled = true) {
+  const key = enabled ? helmInventoryKey(context, namespace) : '';
+  const [state, setState] = useState<ReadSnapshot<HelmRelease[]> & { key: string }>({ key, loading: enabled });
+  useEffect(() => key ? subscribeHelmInventory(context, namespace, snapshot => setState({ ...snapshot, key })) : undefined, [key, context, namespace]);
+  const refresh = useCallback(() => { if (key) refreshHelmInventory(context, namespace); }, [key, context, namespace]);
+  return { ...(state.key === key ? state : { loading: !!key, data: undefined, updated: undefined, error: undefined }), refresh };
 }
