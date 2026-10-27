@@ -141,7 +141,9 @@ Authentication follows the selected kubeconfig context. Kubernetes RBAC and admi
 
 Use the explorer to navigate workloads, configuration, networking, storage, access control, nodes, namespaces, and events. Additional categories expose supported extension APIs and custom resources.
 
-Filter and sort resource tables to narrow the current inventory. Select an object to inspect its metadata, status, conditions, events, and related resources. Follow resource references to move between owners, workloads, Services, and dependent objects.
+Filter and sort resource tables to narrow the current inventory. Column order, widths, visibility, sorts, and column filters persist per resource kind across sessions and can be reset from **Settings → Appearance**. Select an object to inspect its metadata, status, conditions, events, and related resources. Follow resource references to move between owners, workloads, Services, and dependent objects.
+
+When inspecting a Pod, the **Environment** tab resolves effective environment variables across containers and sidecars without requiring container exec privileges. It maps direct values, Downward API fields, ConfigMaps, and Secrets (`valueFrom` and `envFrom`), keeps Secret values masked with a 60-second auto-masking timer, detects configuration drift when referenced ConfigMaps or Secrets have been updated after the Pod started, and allows exporting container variables to `.env` format.
 
 On connection, Kubiki discovers supported APIs and fetches lightweight resource counts using metadata queries with `limit=1`. Full resource collections load only when a visible view needs them. Initial reads are bounded across selected namespaces; unavailable counts remain unknown instead of triggering a full inventory scan.
 

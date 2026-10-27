@@ -71,6 +71,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/yaml_draft_store.ts` | In-memory editor drafts keyed by context and resource identity. |
 | `src/state/mutation_confirm_store.ts` | Pending native mutation confirmation requests. |
 | `src/state/pf_store.ts` | Port-forward session state. |
+| `src/state/table_view_store.ts` | Resource table search query, regex toggle, column sorting, and column filters persisted per resource kind. |
 | `src/state/update_store.ts` | Update service composition and unsaved-editor installation preflight. |
 
 ### Providers and resource logic
@@ -79,7 +80,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 
 `resource_watch_session.ts` manages frontend subscription state. `multi_namespace_watch.ts` bounds actual initial namespace snapshots before releasing their long-lived watches. `tauri_watch.ts` creates Tauri channels, checks subscription identity, and requests native cleanup when a watch closes. `read_queue.ts` bounds ordinary reads, and `read_transport.ts` forwards cancellation to native read tasks or the HTTP bridge. `errors.ts` normalizes backend failures for the interface.
 
-`src/core/resources/` contains resource identity, namespace scoping, relationship inference, diagnostics, quantity parsing, topology preparation, and presentation logic. `shared/resource-types.json` supplies the resource registry used by frontend code and local tooling. API discovery supplements the registry with information from the selected cluster.
+`src/core/resources/` contains resource identity, namespace scoping, relationship inference, pod environment resolution and drift detection, diagnostics, quantity parsing, topology preparation, and presentation logic. `shared/resource-types.json` supplies the resource registry used by frontend code and local tooling. API discovery supplements the registry with information from the selected cluster.
 
 ## Desktop shell
 
