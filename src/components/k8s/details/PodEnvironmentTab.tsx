@@ -209,13 +209,13 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
             </p>
           </div>
         ) : (
-          <div className="border border-[var(--border-subtle)] rounded overflow-hidden shadow-xs">
-            <table className="w-full border-collapse text-left text-xs font-mono">
+          <div className="border border-[var(--border-subtle)] rounded overflow-x-auto kubiki-scrollbar shadow-xs">
+            <table className="w-full min-w-[650px] border-collapse text-left text-xs font-mono">
               <thead>
                 <tr className="bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] text-[10.5px] uppercase tracking-wider text-[var(--text-muted)]">
-                  <th className="py-2 px-3 w-1/4">Name</th>
-                  <th className="py-2 px-3 w-1/2">Active Pod Value</th>
-                  <th className="py-2 px-3 w-1/4">Source</th>
+                  <th className="py-2 px-3 w-[28%]">Name</th>
+                  <th className="py-2 px-3 w-[38%]">Active Pod Value</th>
+                  <th className="py-2 px-3 w-[26%]">Source</th>
                   <th className="py-2 px-2 text-right w-16">Actions</th>
                 </tr>
               </thead>
@@ -266,46 +266,56 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
                       {/* Source Badge */}
                       <td className="py-2 px-3 align-top font-sans text-[11px]">
                         {entry.sourceType === 'direct' && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)]">
+                          <span className="inline-flex items-center whitespace-nowrap px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)]">
                             Direct (spec)
                           </span>
                         )}
                         {entry.sourceType === 'configMap' && (
                           <button
                             onClick={() => entry.sourceName && navigateToResource('ConfigMap', entry.sourceName)}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 text-left transition-colors cursor-pointer"
-                            title="Click to view ConfigMap"
+                            className="inline-flex items-center max-w-full whitespace-nowrap gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 text-left transition-colors cursor-pointer group/src"
+                            title={`ConfigMap: ${entry.sourceName}${entry.sourceKey ? ` [${entry.sourceKey}]` : ''}`}
                           >
-                            <FileText size={11} />
-                            <span>ConfigMap: {entry.sourceName}</span>
-                            {entry.sourceKey && <span className="opacity-75">[{entry.sourceKey}]</span>}
-                            <ExternalLink size={10} className="ml-0.5 opacity-60" />
+                            <FileText size={11} className="shrink-0" />
+                            <span className="truncate">
+                              <span className="font-semibold text-blue-300">ConfigMap:</span> {entry.sourceName}
+                            </span>
+                            {entry.sourceKey && <span className="opacity-75 shrink-0">[{entry.sourceKey}]</span>}
+                            <ExternalLink size={10} className="shrink-0 opacity-60 group-hover/src:opacity-100" />
                           </button>
                         )}
                         {entry.sourceType === 'secret' && (
                           <button
                             onClick={() => entry.sourceName && navigateToResource('Secret', entry.sourceName)}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 text-left transition-colors cursor-pointer"
-                            title="Click to view Secret"
+                            className="inline-flex items-center max-w-full whitespace-nowrap gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 text-left transition-colors cursor-pointer group/src"
+                            title={`Secret: ${entry.sourceName}${entry.sourceKey ? ` [${entry.sourceKey}]` : ''}`}
                           >
-                            <KeyRound size={11} />
-                            <span>Secret: {entry.sourceName}</span>
-                            {entry.sourceKey && <span className="opacity-75">[{entry.sourceKey}]</span>}
-                            <ExternalLink size={10} className="ml-0.5 opacity-60" />
+                            <KeyRound size={11} className="shrink-0" />
+                            <span className="truncate">
+                              <span className="font-semibold text-amber-300">Secret:</span> {entry.sourceName}
+                            </span>
+                            {entry.sourceKey && <span className="opacity-75 shrink-0">[{entry.sourceKey}]</span>}
+                            <ExternalLink size={10} className="shrink-0 opacity-60 group-hover/src:opacity-100" />
                           </button>
                         )}
                         {entry.sourceType === 'field' && (
-                          <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                            FieldRef: {entry.sourceName}
+                          <span
+                            className="inline-flex items-center max-w-full whitespace-nowrap px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                            title={`FieldRef: ${entry.sourceName}`}
+                          >
+                            <span className="truncate">FieldRef: {entry.sourceName}</span>
                           </span>
                         )}
                         {entry.sourceType === 'resourceField' && (
-                          <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                            Resource: {entry.sourceName}
+                          <span
+                            className="inline-flex items-center max-w-full whitespace-nowrap px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                            title={`Resource: ${entry.sourceName}`}
+                          >
+                            <span className="truncate">Resource: {entry.sourceName}</span>
                           </span>
                         )}
                         {entry.sourceType === 'unknown' && (
-                          <span className="text-[var(--text-muted)] text-[10px]">
+                          <span className="text-[var(--text-muted)] text-[10px] truncate max-w-full block">
                             {JSON.stringify(entry.rawSource)}
                           </span>
                         )}
