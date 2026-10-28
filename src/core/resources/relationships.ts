@@ -47,11 +47,16 @@ const SINGLE_NAMESPACE_KINDS = new Set([
   'Role', 'Lease', 'ResourceQuota', 'LimitRange',
 ]);
 
+/** Only these objects reference peers exclusively inside their own namespace; others (GitOps, Helm, RBAC, custom resources) may point across namespaces. */
+function referencesStayInNamespace(item: ResourceItem): boolean {
+  return !!item.namespace && item.kind !== 'HelmRelease' && !gitOpsFamily(item) && SINGLE_NAMESPACE_KINDS.has(item.kind);
+}
+
 const namespaceCache = new WeakMap<Map<string, ResourceItem>, Map<string, Map<string, ResourceItem>>>();
 /** Reuse namespace slices of unchanged watch buckets before worker serialization. */
 export function relatedResourceScope(resources: Record<ResourceKind, Map<string, ResourceItem>>, focus: ResourceItem) {
   const namespace = focus.namespace ?? (focus.kind === 'Namespace' ? focus.name : undefined);
-  if (!namespace) return resources;
+  if (!namespace || focus.namespace && !referencesStayInNamespace(focus)) return resources;
   return Object.fromEntries(Object.entries(resources).map(([kind, map]) => {
     let cached = namespaceCache.get(map);
     if (!cached) { cached = new Map(); namespaceCache.set(map, cached); }
@@ -71,7 +76,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
   const all = Object.values(resources).flatMap((map) => [...map.values()].filter((item) => item.kind !== 'Event'));
   const items = new Map(all.map((item) => [resourceKey(item), item]));
   const adjacentItems = options.adjacentTo ? [...options.adjacentTo].map((key) => items.get(key)).filter((item): item is ResourceItem => !!item) : undefined;
-  const adjacentNamespaces = adjacentItems && adjacentItems.length > 0 && adjacentItems.every((item) => !!item.namespace && item.kind !== 'HelmRelease' && !gitOpsFamily(item))
+  const adjacentNamespaces = adjacentItems && adjacentItems.length > 0 && adjacentItems.every(referencesStayInNamespace)
     ? new Set(adjacentItems.map((item) => item.namespace!))
     : undefined;
   const byGroupKind = new Map<string, ResourceItem[]>();

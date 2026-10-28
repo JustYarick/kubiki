@@ -514,11 +514,6 @@ function EventsPane() {
 
   const filtered = useMemo(() => {
     let list: ClusterEvent[] = (k8s.demo ? MOCK_EVENTS : [...events.values()])
-      .filter((event) => {
-        const raw = (event as any).raw ?? event;
-        const type = raw.type ?? (event as any).type;
-        return type === 'Warning' || type === 'Critical' || (raw.type && raw.type !== 'Normal');
-      })
       .map((event) => {
         const raw = (event as any).raw ?? {};
         const ref = raw.involvedObject ?? raw.regarding ?? {};

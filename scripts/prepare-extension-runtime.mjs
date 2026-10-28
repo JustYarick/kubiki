@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, chmod, rm } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
-import { finished } from 'node:stream/promises';
+import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { unzipSync } from 'fflate';
@@ -134,7 +134,7 @@ async function downloadWithFetch(url, destPath, timeoutMs = 300000, maxRetries =
       const res = await fetch(url, { signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       const fileStream = createWriteStream(destPath);
-      await finished(Readable.fromWeb(res.body).pipe(fileStream));
+      await pipeline(Readable.fromWeb(res.body), fileStream, { signal: controller.signal });
       return;
     } catch (err) {
       lastError = err;

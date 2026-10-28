@@ -16,6 +16,14 @@ let session: ResourceWatchSession | undefined;
 let unsubscribers: (() => void)[] = [];
 let countsController: AbortController | undefined;
 
+function eventsAreTargeted(): boolean {
+  return Boolean(
+    useResourceStore.getState().selectedItem ||
+    useWorkspaceStore.getState().tabs.some(tab => tab.type !== 'overview') ||
+    useDockStore.getState().sessions.some(s => s.type === 'events')
+  );
+}
+
 export function syncResourceCounts(context: string, namespace: string): Promise<void> {
   countsController?.abort();
   if (!k8s.getResourceCounts) return Promise.resolve();
@@ -55,16 +63,13 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
       return () => {};
     },
   };
+  let eventsTrimmed = false;
   const next = new ResourceWatchSession(context, provider, (kind, update) => {
     if (session !== next || useClusterStore.getState().currentContext !== context) return;
     if (kind === 'Event') {
-      const isTargeted = Boolean(
-        useResourceStore.getState().selectedItem ||
-        useWorkspaceStore.getState().tabs.some(tab => tab.type !== 'overview') ||
-        useDockStore.getState().sessions.some(s => s.type === 'events')
-      );
-      if (!isTargeted) {
+      if (!eventsAreTargeted()) {
         if (update.snapshot) {
+          eventsTrimmed = true;
           update = {
             ...update,
             snapshot: update.snapshot.filter(item => {
@@ -74,6 +79,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
           };
         }
         if (update.changes.length) {
+          if (update.changes.some(change => change.type !== 'delete')) eventsTrimmed = true;
           update = {
             ...update,
             changes: update.changes.filter(change => {
@@ -118,6 +124,11 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
       const type = RESOURCE_TYPES.find(type => type.kind === kind);
       return type && (!type.namespaced || namespaceNames(demand.scopes.get(kind) ?? useClusterStore.getState().selectedNamespace)?.length !== 0) && (!available || available.includes(kind));
     });
+    // Overview trims Normal events from the shared cache; inspection needs them back.
+    if (eventsTrimmed && eventsAreTargeted() && kinds.includes('Event')) {
+      eventsTrimmed = false;
+      void next.refresh('Event');
+    }
     const key = JSON.stringify([kinds, [...demand.clusterKinds], [...demand.scopes]]);
     if (key === demandKey) return Promise.resolve([]);
     demandKey = key;

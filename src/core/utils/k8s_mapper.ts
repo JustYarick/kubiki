@@ -350,6 +350,12 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
 /** Serialize YAML only when an editor or copy action requests it. */
 export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
   const item = mapResource(raw, kind);
+  if ((kind === 'ConfigMap' || kind === 'Secret') && Array.isArray(raw?.metadata?.managedFields)) {
+    // The bridge keeps only payload writers' timestamps; they are not part of the editable manifest.
+    const times = raw.metadata.managedFields.map((entry: any) => Date.parse(entry?.time)).filter(Number.isFinite);
+    if (times.length) item.dataUpdatedAt = new Date(Math.max(...times)).toISOString();
+    delete raw.metadata.managedFields;
+  }
   let yaml: string | undefined;
   Object.defineProperty(item, 'rawYaml', { enumerable: true, configurable: true, get: () => yaml ??= stringify(raw) });
   return item;

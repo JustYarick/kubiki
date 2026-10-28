@@ -15,6 +15,7 @@ import { useUiStore } from '../../state/ui_store';
 import { uiFactor } from '../../core/appearance';
 import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
+import { FullManifest } from '../../views/FullManifest';
 import { k8s } from '../../providers/k8s_provider';
 import { AnalysisView } from '../../views/AnalysisView';
 import { IconButton } from '../ui/Button';
@@ -240,6 +241,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
             </div>
           }
         >
+          <FullManifest item={item}>{(item) => (
           <YamlEditor
             item={item}
             onApply={async (yaml) => {
@@ -266,6 +268,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
               }
             }}
           />
+          )}</FullManifest>
         </Suspense>
       </div>
     );

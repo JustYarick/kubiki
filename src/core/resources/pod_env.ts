@@ -37,8 +37,11 @@ export function findResourceInMap(
   return undefined;
 }
 
-function getResourceTimestamp(raw: any): number | undefined {
+function getResourceTimestamp(raw: any, item?: ResourceItem): number | undefined {
   if (!raw?.metadata) return undefined;
+  // A payload edit keeps creationTimestamp; the last data writer's time is the reliable signal.
+  const written = item?.dataUpdatedAt ? new Date(item.dataUpdatedAt).getTime() : NaN;
+  if (!isNaN(written)) return written;
   const annotations = raw.metadata.annotations ?? {};
   for (const key of ['kubectl.kubernetes.io/restartedAt', 'kubiki.io/updatedAt', 'helm.sh/hook-timestamp']) {
     if (annotations[key]) {
@@ -123,7 +126,7 @@ export function resolveContainerEnv(
       const cmBinaryData: Record<string, string> = cmRaw.binaryData ?? {};
       const mergedData = { ...cmData, ...cmBinaryData };
 
-      const cmUpdated = getResourceTimestamp(cmRaw);
+      const cmUpdated = getResourceTimestamp(cmRaw, cm);
       const isDrift = startedAt && cmUpdated && cmUpdated > startedAt;
 
       for (const [key, val] of Object.entries(mergedData)) {
@@ -145,7 +148,7 @@ export function resolveContainerEnv(
       const secRaw = sec?.raw ?? {};
       const secData: Record<string, string> = secRaw.data ?? {};
 
-      const secUpdated = getResourceTimestamp(secRaw);
+      const secUpdated = getResourceTimestamp(secRaw, sec);
       const isDrift = startedAt && secUpdated && secUpdated > startedAt;
 
       for (const key of Object.keys(secData)) {
@@ -189,7 +192,7 @@ export function resolveContainerEnv(
       const clusterVal = cmData[cmKey];
 
       // Check if ConfigMap modified after pod started
-      const cmUpdated = getResourceTimestamp(cmRaw);
+      const cmUpdated = getResourceTimestamp(cmRaw, cm);
       const isStale = startedAt && cmUpdated && cmUpdated > startedAt;
 
       entries.push({
@@ -215,7 +218,7 @@ export function resolveContainerEnv(
       const clusterVal = resolveSecretValue(secData, secKey);
 
       // Check if Secret modified after pod started
-      const secUpdated = getResourceTimestamp(secRaw);
+      const secUpdated = getResourceTimestamp(secRaw, sec);
       const isStale = startedAt && secUpdated && secUpdated > startedAt;
 
       entries.push({

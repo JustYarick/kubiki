@@ -18,7 +18,8 @@ import { useWorkspaceStore } from '../state/workspace_store';
 import { usePfStore } from '../state/pf_store';
 import { toast } from '../state/notifications_store';
 import { fuzzyScore, fuzzyRanges } from '../core/utils/fuzzy';
-import { k8s } from '../providers/k8s_provider';
+import { refreshResourceWatches } from '../state/resource_watch';
+import { syncResourceSnapshot } from '../providers/snapshot_sync';
 import { cx } from '../core/utils/cx';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 import { DEFAULT_APPEARANCE } from '../core/appearance';
@@ -178,10 +179,10 @@ export const CommandPalette: React.FC = () => {
       { id: 'term', label: 'Focus terminal', section: 'Panel', icon: Terminal, run: () => useDockStore.getState().focusTool('terminal') },
       { id: 'pf', label: `Port-forwards (${pfCount})`, section: 'Panel', icon: ArrowRightLeft, run: () => useDockStore.getState().openPorts() },
       { id: 'events', label: 'Cluster events snapshot', section: 'Panel', icon: FileText, run: () => useDockStore.getState().openEvents() },
-      { id: 'refresh', label: 'Refresh current list', section: 'Data', icon: RefreshCw, run: () => { if (!currentContext) return; const context = currentContext; void k8s.getResources(context, activeKind, selectedNamespace).then((items) => { if (useClusterStore.getState().currentContext === context) st.setResourcesForKind(activeKind, items); }).catch((error) => toast.error('Refresh failed', String(error))); } },
+      { id: 'refresh', label: 'Refresh current list', section: 'Data', icon: RefreshCw, run: () => { if (!currentContext) return; const context = currentContext; const scope = selectedNamespace; void (async () => { if (await refreshResourceWatches(activeKind)) return; await syncResourceSnapshot(context, activeKind, scope); })().catch((error) => { const cluster = useClusterStore.getState(); if (cluster.currentContext === context && cluster.selectedNamespace === scope) toast.error('Refresh failed', String(error)); }); } },
       { id: 'ns', label: `Namespaces: ${namespaceScopeLabel(selectedNamespace)}`, section: 'Data', icon: Boxes, keywords: 'namespace filter scope select multiple', run: () => { document.querySelector<HTMLButtonElement>('[aria-label="Namespace Scope"]')?.click(); } },
       { id: 'settings', label: 'Open settings', section: 'System', icon: Settings, run: () => ui.setSettingsOpen(true) },
-      { id: 'clear', label: 'Clear all filters', section: 'Data', icon: Trash2, run: () => { useTableViewStore.getState().clear(useWorkspaceStore.getState().activeTabId); cluster.selectNamespace('all'); toast.success('Filters cleared'); } },
+      { id: 'clear', label: 'Clear all filters', section: 'Data', icon: Trash2, run: () => { { const views = useTableViewStore.getState(); const tab = useWorkspaceStore.getState().tabs.find(entry => entry.id === useWorkspaceStore.getState().activeTabId); views.clear(`kind:${tab?.type === 'resource-list' && tab.kind ? tab.kind : activeKind}`); } cluster.selectNamespace('all'); toast.success('Filters cleared'); } },
     );
 
     const scored: Array<{ c: Command; s: number }> = [];

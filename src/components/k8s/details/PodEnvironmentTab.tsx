@@ -201,7 +201,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
               <thead>
                 <tr className="bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] text-[10.5px] uppercase tracking-wider text-[var(--text-muted)]">
                   <th className="py-2 px-3 w-[28%]">Name</th>
-                  <th className="py-2 px-3 w-[38%]">Active Pod Value</th>
+                  <th className="py-2 px-3 w-[38%]">Resolved Value (current source)</th>
                   <th className="py-2 px-3 w-[26%]">Source</th>
                   <th className="py-2 px-2 text-right w-16">Actions</th>
                 </tr>

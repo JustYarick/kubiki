@@ -23,6 +23,7 @@ import { PFDialog } from '../dialogs/PFDialog';
 import { toast } from '../../state/notifications_store';
 import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
+import { FullManifest } from '../../views/FullManifest';
 import { k8s } from '../../providers/k8s_provider';
 import type { ResourceItem } from '../../types/k8s';
 import { DetailsPanel } from '../k8s/details/DetailsPanel';
@@ -338,6 +339,7 @@ function KubernetesResourceDetails({
       >
         {rightTab === 'yaml' ? (
           <Suspense fallback={<div className="p-4 text-[var(--text-muted)] flex gap-2"><Loader2 size="calc(13px * var(--ui-factor))" /> Loading editor…</div>}>
+            <FullManifest item={item}>{(item) => (
             <YamlEditor
               key={item.uid}
               item={item}
@@ -365,6 +367,7 @@ function KubernetesResourceDetails({
                 }
               }}
             />
+            )}</FullManifest>
           </Suspense>
         ) : rightTab === 'related' ? (
           <div className="details-scroll details-body">

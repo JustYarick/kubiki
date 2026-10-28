@@ -66,6 +66,8 @@ export interface ResourceItem extends ResourceIdentity {
   node?: string;
   age?: string;
   rawYaml?: string;
+  /** ConfigMap/Secret: when a writer last changed its payload (from managedFields). */
+  dataUpdatedAt?: string;
   metadata?: Record<string, unknown>;
   spec?: Record<string, unknown>;
   statusRaw?: Record<string, unknown>;
