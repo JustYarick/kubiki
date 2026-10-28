@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "docs:media": "node scripts/capture-readme.mjs",
     "dev": "vite",
     "build": "pnpm extensions:build && pnpm typecheck && vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",

@@ -5,6 +5,7 @@ import { Check, ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
 import { uiPixels } from '../../core/appearance';
+import { selectedFirst } from '../../core/utils/selected_first';
 
 /* ============================================================= */
 /* Floating layer rendered into document.body, anchored to the    */
@@ -147,12 +148,27 @@ export interface MenuItem {
   onSelect?: () => void;
 }
 
+function menuSelectionOrder(items: MenuItem[]): MenuItem[] {
+  const ordered: MenuItem[] = []; let choices: MenuItem[] = [];
+  const flush = () => { ordered.push(...selectedFirst(choices, item => item.checked === true)); choices = []; };
+  for (const item of items) {
+    if (item.checked !== undefined && !item.header && !item.separator) choices.push(item);
+    else { flush(); ordered.push(item); }
+  }
+  flush();
+  return ordered;
+}
+
 export function MenuList({ items, onSelect, autoFocus = false, onBack }: { items: MenuItem[]; onSelect: (item: MenuItem) => void; autoFocus?: boolean; onBack?: () => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLButtonElement | null>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const [submenu, setSubmenu] = useState<{ id: string; x: number; y: number; keyboard: boolean } | null>(null);
   const subItems = items.find((item) => item.id === submenu?.id)?.items;
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && rootRef.current?.contains(focused)) focused.scrollIntoView({ block: 'nearest' });
+  }, [items]);
   useEffect(() => {
     if (autoFocus) (rootRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? rootRef.current)?.focus();
   }, [autoFocus]);
@@ -180,7 +196,7 @@ export function MenuList({ items, onSelect, autoFocus = false, onBack }: { items
       if (next) { event.preventDefault(); event.stopPropagation(); next.focus(); }
       if (onBack && (event.key === 'ArrowLeft' || event.key === 'Escape')) { event.preventDefault(); event.stopPropagation(); onBack(); }
     }}>
-      {items.map((item) => item.separator ? <div key={item.id} className="my-1 h-px bg-[var(--border-subtle)]" /> : item.header ? (
+      {menuSelectionOrder(items).map((item) => item.separator ? <div key={item.id} className="my-1 h-px bg-[var(--border-subtle)]" /> : item.header ? (
         <div key={item.id} className="px-2.5 pt-1.5 pb-0.5 text-[length:calc(9.5px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)] select-none">
           {item.label}
         </div>

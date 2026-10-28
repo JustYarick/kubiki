@@ -1,3 +1,4 @@
+import { cycleColumnFilter, columnFilterCount, EMPTY_COLUMN_FILTER } from '../core/resources/column_filters';
 import { useResourceActions } from '../components/k8s/useResourceActions';
 import { useResourceColumns } from '../components/k8s/table/useResourceColumns';
 import { useResourceTableModel } from '../components/k8s/table/useResourceTableModel';
@@ -47,6 +48,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { findWorkloadPods, preferredWorkloadPod } from '../core/resources/workload_pods';
+import { hasWorkloadPodColumn, workloadPodActivity } from '../core/resources/workload_pod_activity';
 import { gitOpsFamily } from '../core/resources/gitops';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
@@ -67,7 +69,6 @@ import type { ResourceItem, ResourceKind } from '../types/k8s';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { uiFactor, uiPixels } from '../core/appearance';
 import { resourceTabId } from '../core/resources/identity';
-import type { SortKey } from '../core/resources/resource_sort';
 import { podContainers } from '../core/resources/containers';
 import { refreshResourceWatches } from '../state/resource_watch';
 import { cx } from '../core/utils/cx';
@@ -82,15 +83,25 @@ import { cx } from '../core/utils/cx';
 /* ------------------------------------------------------------------ */
 
 interface ResourceViewProps {
-  viewId?: string;
   explicitKind?: ResourceKind;
   customType?: CustomResourceType;
 }
 
-export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind, customType }) => {
+const EMPTY_RESOURCE_MAP = new Map<string, ResourceItem>();
+
+export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, customType }) => {
   const activeKind = useResourceStore(s => s.activeKind);
   const effectiveKind = explicitKind || activeKind;
-  const resources = useResourceStore(useShallow(s => ({ [effectiveKind]: s.resources[effectiveKind], Pod: s.resources.Pod, StorageClass: s.resources.StorageClass })));
+  const needsWorkloadPods = !customType && hasWorkloadPodColumn(effectiveKind);
+  const needsPods = needsWorkloadPods || effectiveKind === 'Pod' || effectiveKind === 'Node' || effectiveKind === 'Service';
+  const needsStorageClass = effectiveKind === 'StorageClass' || effectiveKind === 'PersistentVolumeClaim';
+  const resources = useResourceStore(useShallow(s => ({
+    [effectiveKind]: s.resources[effectiveKind],
+    Pod: needsPods ? s.resources.Pod : EMPTY_RESOURCE_MAP,
+    ReplicaSet: effectiveKind === 'Deployment' || effectiveKind === 'ReplicaSet' ? s.resources.ReplicaSet : EMPTY_RESOURCE_MAP,
+    StorageClass: needsStorageClass ? s.resources.StorageClass : EMPTY_RESOURCE_MAP,
+  })));
+  const podSnapshotsReady = useResourceStore(s => s.syncMode !== 'watch' || s.watchStates.Pod?.hasSnapshot === true && (effectiveKind !== 'Deployment' || s.watchStates.ReplicaSet?.hasSnapshot === true));
   const {
     setActiveKind, selectItem, selectedItem,
     applyDelta,
@@ -103,12 +114,16 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   } = useUiStore();
   const { openYamlEditor, openResourceDetail, openLogsTab, openTerminalTab, toggleSplit } = useWorkspaceStore();
 
-  const { searchQuery, searchRegex, setSearchQuery, setSearchRegex } = useTableView(viewId ?? `resource:${effectiveKind}`);
+  const {
+    searchQuery, searchRegex, setSearchQuery, setSearchRegex,
+    sorts, setSorts, columnFilters, setColumnFilters,
+  } = useTableView(`kind:${effectiveKind}`);
   const displayKind = customType?.kind ?? effectiveKind;
   const listLabel = customType ? `${customResourcePlacement(customType)?.label ?? customType.kind} · ${customType.group}` : SIDEBAR_TREE.flatMap(category => category.groups.flatMap(group => group.kinds)).find(entry => entry.kind === effectiveKind)?.label ?? `${effectiveKind}s`;
   const custom = useCustomResources(customType);
   const podsByNode = useMemo(() => {
     const map = new Map<string, number>();
+    if (effectiveKind !== 'Node') return map;
     const podMap = resources.Pod;
     if (!podMap) return map;
     for (const pod of podMap.values()) {
@@ -116,9 +131,12 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
       if (nodeName) map.set(nodeName, (map.get(nodeName) ?? 0) + 1);
     }
     return map;
-  }, [resources.Pod]);
+  }, [effectiveKind, resources.Pod]);
 
-  const tableColumns = useResourceColumns(effectiveKind, customType, podsByNode);
+  const podActivity = useMemo(() => needsWorkloadPods && podSnapshotsReady ? workloadPodActivity(
+    resources[effectiveKind]?.values() ?? [], resources.Pod?.values() ?? [], resources.ReplicaSet?.values() ?? [],
+  ) : undefined, [needsWorkloadPods, podSnapshotsReady, effectiveKind, resources[effectiveKind], resources.Pod, resources.ReplicaSet]);
+  const tableColumns = useResourceColumns(effectiveKind, customType, podsByNode, podActivity);
   const tableRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const currentContext = useClusterStore((s) => s.currentContext);
@@ -127,8 +145,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   const kindLoading = useResourceStore(state => state.loadingKinds[effectiveKind]);
   const syncMode = useResourceStore(state => state.syncMode);
 
-  const [sorts, setSorts] = useState<SortKey[]>([]);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [menu, setMenu] = useState<{ item: ResourceItem; x: number; y: number } | null>(null);
   const [headerMenu, setHeaderMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
   const [filterMenu, setFilterMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
@@ -161,14 +177,19 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
   }, [activePerspective, explicitKind]);
 
   useEffect(() => {
-    setSorts([]);
-    setColumnFilters({});
     setSelectedUids(new Set());
     setFocusedIndex(0);
+  }, [effectiveKind, currentContext]);
 
-  }, [effectiveKind, currentContext, setSearchQuery]);
-
-  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading });
+  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
+  useEffect(() => {
+    if (!statusValues.length) return;
+    setSorts(previous => {
+      const current = previous.find(key => key.columnId === 'status');
+      if (!current?.statusFirst || statusValues.includes(current.statusFirst)) return previous;
+      return previous.map(key => key === current ? { ...key, statusFirst: statusValues[0] } : key);
+    });
+  }, [statusValues]);
   const pending = !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, columnFilters, sorts]);
@@ -294,10 +315,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
 
   const toggleFilterValue = (colId: string, value: string) => {
     setColumnFilters((previous) => {
-      const current = previous[colId] ?? [];
-      const next = current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value];
+      const next = cycleColumnFilter(previous[colId] ?? EMPTY_COLUMN_FILTER, value);
       const updated = { ...previous };
-      if (next.length) updated[colId] = next;
+      if (columnFilterCount(next)) updated[colId] = next;
       else delete updated[colId];
       return updated;
     });
@@ -317,7 +337,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
     setSearchQuery('');
   };
 
-  const activeFilterCount = Object.values(columnFilters).reduce((sum, values) => sum + values.length, 0);
+  const activeFilterCount = Object.values(columnFilters).reduce((sum, values) => sum + columnFilterCount(values), 0);
 
   const buildHeaderMenu = (colId: string): MenuItem[] => {
     const col = tableColumns.find((c) => c.id === colId);
@@ -751,8 +771,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                 {rows.cols.map((c) => {
                   const priority = sortPriority(c.id);
                   const key = priority >= 0 ? sorts[priority] : undefined;
-                  const filterValues = columnFilters[c.id] ?? [];
-                  const filtered = filterValues.length > 0;
+                  const filterValues = columnFilters[c.id] ?? EMPTY_COLUMN_FILTER;
+                  const filtered = columnFilterCount(filterValues) > 0;
                   return (
                     <th
                       key={c.id}
@@ -761,6 +781,11 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                       tabIndex={0}
                       draggable
                       onDragStart={(event) => {
+                        const target = event.target as HTMLElement;
+                        if (target.closest('[role="separator"]') || target.closest('[data-column-caret]')) {
+                          event.preventDefault();
+                          return;
+                        }
                         event.dataTransfer.effectAllowed = 'move';
                         event.dataTransfer.setData('text/plain', c.id);
                         setDraggingColumn(c.id);
@@ -823,9 +848,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                           </span>
                         )}
                         {filtered && (
-                          <span className="shrink-0 inline-flex items-center gap-0.5 text-[var(--accent)]" title={`Filtered: ${filterValues.join(', ')}`}>
+                          <span className="shrink-0 inline-flex items-center gap-0.5 text-[var(--accent)]" title={`Include: ${filterValues.include.join(', ') || 'any'}; exclude: ${filterValues.exclude.join(', ') || 'none'}`}>
                             <Filter size="calc(10px * var(--ui-factor))" />
-                            <span className="font-mono text-[length:calc(9px*var(--ui-factor))] tabular-nums">{filterValues.length}</span>
+                            <span className="font-mono text-[length:calc(9px*var(--ui-factor))] tabular-nums">{columnFilterCount(filterValues)}</span>
                           </span>
                         )}
                       </span>
@@ -855,13 +880,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
                       <span
                         role="separator" aria-label={`Resize ${c.label} column`} tabIndex={0} aria-valuenow={widthFor(c.id)} onKeyDown={(e) => resizeColumnWithKeyboard(e, c.id)} aria-orientation="vertical"
                         title="Drag or use arrow keys to resize · Home to reset"
+                        draggable={false}
+                        onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
                         onPointerDown={(e) => startColResize(e, c.id)}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
                           resetColumn(c.id);
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors"
+                        className="absolute right-0 top-0 h-full w-[calc(6px*var(--ui-factor))] cursor-col-resize touch-none hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] transition-colors z-10"
                       />
                     </th>
                   );
@@ -955,8 +982,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ viewId, explicitKind
           rect={{ x: filterMenu.x, y: filterMenu.y }}
           columnLabel={tableColumns.find((column) => column.id === filterMenu.colId)?.label ?? filterMenu.colId}
           values={columnValues.get(filterMenu.colId) ?? new Map()}
-          selected={columnFilters[filterMenu.colId] ?? []}
-          quick={filterMenu.colId === 'status' ? statusValues.filter((status) => status !== '—').slice(0, 6) : undefined}
+          selected={columnFilters[filterMenu.colId] ?? EMPTY_COLUMN_FILTER}
+          quick={filterMenu.colId === 'status' ? [...(columnValues.get('status')?.keys() ?? [])].filter((status) => status !== '—').slice(0, 6) : undefined}
           onToggle={(value) => toggleFilterValue(filterMenu.colId, value)}
           onClear={() => clearFilterColumn(filterMenu.colId)}
           onClose={() => setFilterMenu(null)}

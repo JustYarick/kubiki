@@ -1,4 +1,5 @@
 #![cfg(unix)]
+use kubiki_core::cluster::kubeconfig::KubeConfigManager;
 use kubiki_core::helm::{
     mutations::{HelmMutation, PreparedHelmMutation},
     reader::HelmReader,
@@ -25,6 +26,7 @@ impl Fixture {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("chart.tgz"), "frozen chart").unwrap();
         fs::write(dir.join("repos.yaml"), "original configuration").unwrap();
+        fs::write(dir.join("selected.yaml"), "apiVersion: v1\nkind: Config\nclusters:\n- name: selected\n  cluster:\n    server: https://selected.example\ncontexts:\n- name: prod\n  context:\n    cluster: selected\nusers: []\n").unwrap();
         let manifest = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: backend\ndata:\n  key: old\n";
         fs::write(dir.join("state.json"),serde_json::to_vec(&json!({"name":"web","namespace":"backend","version":2,"info":{"status":"deployed"},"manifest":manifest,"config":{"key":"old"},"hooks":[]})).unwrap()).unwrap();
         let program = dir.join("helm");
@@ -32,6 +34,8 @@ impl Fixture {
 import sys,json,os
 from pathlib import Path
 d=Path(__file__).parent;a=sys.argv[1:]
+assert '--kubeconfig' in a
+assert 'https://selected.example' in Path(a[a.index('--kubeconfig')+1]).read_text()
 with open(d/'calls','a') as f:f.write(json.dumps(a)+'\n')
 state=json.loads((d/'state.json').read_text())
 if 'status' in a:
@@ -113,7 +117,11 @@ else:sys.stderr.write('Unexpected command');sys.exit(1)
         .unwrap()
     }
     async fn prepare(&self, request: HelmMutation) -> PreparedHelmMutation {
-        PreparedHelmMutation::prepare(HelmReader::new(self.program.clone()), request)
+        let manager = KubeConfigManager::with_custom_path(self.dir.join("selected.yaml"));
+        let reader = HelmReader::new(self.program.clone())
+            .with_config_manager(&manager)
+            .unwrap();
+        PreparedHelmMutation::prepare(reader, request)
             .await
             .unwrap()
     }
@@ -162,6 +170,9 @@ async fn preview_cancel_and_upgrade_consent_own_the_exact_payload() {
     prepared
         .confirm_and_commit(|_| async {
             assert!(!fixture.wrote());
+            // Changing the application's source file while consent is open must not
+            // redirect post-consent verification or execution to another cluster.
+            fs::write(fixture.dir.join("selected.yaml"), "changed.example").unwrap();
             Ok(true)
         })
         .await

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildResourceGraph } from '../../src/core/resources/relationships';
+import { buildResourceGraph, relatedResourceScope } from '../../src/core/resources/relationships';
 import { resourceKey } from '../../src/core/resources/identity';
 import { buildTopology, EMPTY_GRAPH } from '../../src/core/resources/topology';
 import { useResourceStore } from '../../src/state/resource_store';
@@ -92,6 +92,36 @@ describe('Bounded topology construction', () => {
     const node: ResourceItem = { uid: 'node', name: 'worker', kind: 'Node', apiVersion: 'v1' };
     resources.Node.set(node.uid, node);
     expect(buildTopology(resources, 'resource', node).items.size).toBe(401);
+  });
+  it('treats every cluster-scoped dependency as a boundary and points links towards it', () => {
+    const resources = emptyResources();
+    const focus = pod(0); const other = pod(1);
+    for (const item of [focus, other]) {
+      item.raw!.spec.priorityClassName = 'shared';
+      resources.Pod.set(item.uid, item);
+    }
+    const priority: ResourceItem = { uid: 'priority', name: 'shared', kind: 'PriorityClass', apiVersion: 'scheduling.k8s.io/v1' };
+    const node: ResourceItem = { uid: 'node', name: 'worker', kind: 'Node', apiVersion: 'v1' };
+    resources.PriorityClass.set(priority.uid, priority); resources.Node.set(node.uid, node);
+    const graph = buildTopology(resources, 'resource', focus, 5);
+    expect([...graph.items.values()].map(item => item.uid).sort()).toEqual([node.uid, focus.uid, priority.uid].sort());
+    expect(graph.relations.every(edge => edge.source === resourceKey(focus))).toBe(true);
+    expect(graph.relations.find(edge => edge.type === 'schedules')?.target).toBe(resourceKey(node));
+    // Explicitly opening the shared resource still reveals its consumers.
+    expect(buildTopology(resources, 'resource', priority, 1).items.has(resourceKey(other))).toBe(true);
+  });
+  it('slices every namespaced kind in Related before serialization', () => {
+    const resources = emptyResources(); const focus = pod(0, 'small'); const other = pod(1, 'other');
+    resources.Pod.set(focus.uid, focus); resources.Pod.set(other.uid, other);
+    const binding: ResourceItem = { uid: 'binding', name: 'binding', namespace: 'other', kind: 'RoleBinding', apiVersion: 'rbac.authorization.k8s.io/v1' };
+    resources.RoleBinding.set(binding.uid, binding);
+    const scoped = relatedResourceScope(resources, focus);
+    expect([...scoped.Pod.values()]).toEqual([focus]);
+    expect(scoped.RoleBinding.size).toBe(0);
+    expect(relatedResourceScope(resources, focus).Pod).toBe(scoped.Pod);
+    expect(resources.Pod.size).toBe(2);
+    const updated = { ...resources, Pod: new Map(resources.Pod).set('new', { ...focus, uid: 'new', name: 'new' }) };
+    expect(relatedResourceScope(updated, focus).Pod.size).toBe(2);
   });
   it('excludes unrelated namespaces before building a small namespace graph', () => {
     const resources = emptyResources();

@@ -355,7 +355,12 @@ pub async fn mutate_resource(
             });
     }
     if let ChangeRequest::Helm { request } = request {
-        return PreparedHelmMutation::prepare(HelmReader::default(), request)
+        let reader = if resource.query.namespace.is_some() {
+            crate::helm_commands::cluster_reader(&pool).await?
+        } else {
+            HelmReader::default()
+        };
+        return PreparedHelmMutation::prepare(reader, request)
             .await?
             .confirm_and_commit(|review| crate::mutation_guard::confirm(window, &resource, review))
             .await;

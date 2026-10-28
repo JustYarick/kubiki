@@ -8,10 +8,12 @@
 
 Kubiki is a desktop application for inspecting and managing Kubernetes clusters. It combines resource browsing, workload diagnostics, YAML editing, resource topology, Helm management, logs, terminals, and port forwarding in a single workspace.
 
+[Download for Linux, macOS or Windows](https://github.com/JustYarick/kubiki/releases) · [See it in action](#see-it-in-action) · [Run from source](#running-from-source)
+
 ## Contents
 
 - [Purpose and capabilities](#purpose-and-capabilities)
-- [Screenshots](#screenshots)
+- [See it in action](#see-it-in-action)
 - [Installation](#installation)
 - [Connecting to a cluster](#connecting-to-a-cluster)
 - [Working with Kubiki](#working-with-kubiki)
@@ -62,39 +64,49 @@ The application supports switching between kubeconfig contexts and selecting one
 
 Kubiki also discovers resources from installed extensions, including Gateway API, Flux, and Argo CD. The available resource types depend on the APIs installed in the selected cluster and the permissions of the active Kubernetes identity.
 
-## Screenshots
+## See it in action
 
-The screenshots below use the built-in demo cluster.
+These looping GIFs show the current interface using the built-in demo cluster. Each recording has a static PNG alternative. [How to regenerate the recordings](docs/MEDIA.md).
 
 ### Cluster overview
 
-The overview brings together key resource counts, visible CPU and memory history charts, Pod phase distribution, detected problems, and the highest resource consumers. Charts support keyboard inspection, time ranges, fixed or automatic scales, and pause/resume. Live history is collected while the overview is open; missing metrics stay visibly unavailable instead of appearing as zero.
+Inspect CPU and memory history, Pod phases, and resource consumers. Filter detected problems by severity to narrow an investigation.
 
-![Cluster overview with health indicators, resource metrics, and events](docs/media/overview.png)
+![Cluster overview: inspect metrics and filter critical and warning problems](docs/media/overview.gif)
+
+[Static PNG](docs/media/overview.png)
 
 ### Resource inspection
 
-Resource tables and detail panels expose workload state, container information, conditions, and related objects.
+Filter the resource inventory, open a Pod with `CrashLoopBackOff`, and inspect its diagnostics, events, and resource relationships.
 
-![Resource inventory and the details of a selected workload](docs/media/resources.png)
+![Pod investigation: search the inventory, inspect a failure, and switch between events and related resources](docs/media/resources.gif)
+
+[Static PNG](docs/media/resources.png)
 
 ### YAML workspace
 
-The manifest editor can be opened alongside resource views to inspect and modify the selected object.
+Search a manifest, toggle server-managed fields, and arrange the editor alongside the resource list in a split workspace.
 
-![YAML editor displayed alongside the resource workspace](docs/media/yaml.png)
+![YAML workspace: search a document, toggle server fields, and split the editor](docs/media/yaml.gif)
+
+[Static PNG](docs/media/yaml.png)
 
 ### Topology graph
 
-The topology view displays relationships between workloads, networking resources, and their dependencies.
+Open a focused resource graph, zoom into its relationships, and select a node to inspect the underlying Kubernetes object.
 
-![Interactive topology of Kubernetes resources and their relationships](docs/media/topology.png)
+![Resource topology: zoom, fit the graph, and inspect a Service and its relationships](docs/media/topology.gif)
+
+[Static PNG](docs/media/topology.png)
 
 ### Helm workspace
 
-The Helm workspace provides release inspection, revision history, values, and manifests.
+Search releases, inspect their history, select an earlier revision, and read its values and manifest.
 
-![Helm release workspace with release details and revision information](docs/media/helm.png)
+![Helm workspace: find a release, inspect its revisions, and view a revision manifest](docs/media/helm.gif)
+
+[Static PNG](docs/media/helm.png)
 
 ## Installation
 
@@ -141,11 +153,15 @@ Authentication follows the selected kubeconfig context. Kubernetes RBAC and admi
 
 Use the explorer to navigate workloads, configuration, networking, storage, access control, nodes, namespaces, and events. Additional categories expose supported extension APIs and custom resources.
 
-Filter and sort resource tables to narrow the current inventory. Select an object to inspect its metadata, status, conditions, events, and related resources. Follow resource references to move between owners, workloads, Services, and dependent objects.
+Filter and sort resource tables to narrow the current inventory. Column order, widths, visibility, sorts, and column filters persist per resource kind across sessions and can be reset from **Settings → Appearance**. Select an object to inspect its metadata, status, conditions, events, and related resources. Follow resource references to move between owners, workloads, Services, and dependent objects.
 
-On connection, Kubiki collects a complete inventory of accessible built-in resources, with at most four collections loading in parallel. This initial snapshot provides resource counts and health diagnostics even before their views are opened. Failed or forbidden collections remain visibly incomplete.
+In workload tables, **Pods** shows ready Pods divided by all currently existing Pods belonging to that workload. Pending and terminating Pods remain in the total until deletion; terminating Pods are excluded from ready. During a rollout, the total can temporarily exceed the desired replica count. Hover over the cell to see pending and terminating counts.
 
-Afterward, native Kubernetes watches follow the visible workspace panes and their related resources. Unused collections retain their cached snapshot and stop watching; reopening a view refreshes its data. Pods follow the selected namespaces, except when a Node view needs cluster-wide Pod counts. The overview continuously updates its summary sources; its other inventory counts are marked as cached. Changing context or namespace scope updates subscriptions, and CPU/RAM panels share one metrics poll per context and namespace.
+When inspecting a Pod, the **Environment** tab resolves effective environment variables across containers and sidecars without requiring container exec privileges. It maps direct values, Downward API fields, ConfigMaps, and Secrets (`valueFrom` and `envFrom`), keeps Secret values masked with a 60-second auto-masking timer, detects configuration drift when referenced ConfigMaps or Secrets have been updated after the Pod started, and allows exporting container variables to `.env` format.
+
+On connection, Kubiki discovers supported APIs and fetches lightweight resource counts using metadata queries with `limit=1`. Full resource collections load only when a visible view needs them. Initial reads are bounded across selected namespaces; unavailable counts remain unknown instead of triggering a full inventory scan.
+
+Native Kubernetes watches follow the visible workspace panes and their related resources. Unused collections retain their cached snapshot and stop watching; reopening a view refreshes its data. Pods follow the selected namespaces, except when a Node view needs cluster-wide Pod counts. Topology waits for a diagram scope and requests resources for that scope; focused diagrams use the selected resource's dependencies. The overview continuously updates its summary sources; its other inventory counts are marked as cached. Changing context or namespace scope updates subscriptions, and CPU/RAM panels share one metrics poll per context and namespace.
 
 ### YAML editing
 
@@ -172,7 +188,7 @@ Select graph nodes to inspect the corresponding resources. The topology includes
 
 ### Helm releases
 
-Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters cover every page in the selected scope; failed releases and operations in progress are shown separately. The inventory refreshes every 30 seconds while the window is visible.
+Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters cover a complete snapshot of the selected scope; failed releases and operations in progress are shown separately. The table and topology share that snapshot, with one Helm list command per selected namespace on each refresh. The inventory refreshes every 30 seconds while the window is visible. Reads use the selected cluster's merged kubeconfig and have a cancellable 60-second command deadline.
 
 The release overview shows Helm's operation description, status of loaded rendered objects, and hook Jobs with their conditions and matching events. An unloaded object is marked as unchecked. Flux-managed releases link to their owning HelmRelease; change that resource to keep reconciliation in sync.
 
@@ -316,7 +332,7 @@ pnpm tauri dev
 
 The Tauri hooks also prepare the pinned Node runtime and build the extension SDK, tools, controller and bundled diagnostics. The first preparation downloads Node and verifies its official archive checksum. For a browser-only demo, run `pnpm dev` and open `http://localhost:1420/?demo=1`; native operations and extension processes require the desktop application.
 
-If kubeconfig is absent or contains no contexts, Kubiki starts `kubiki-demo` automatically, including in installed builds. Enable **Settings → Developer → Developer mode** to also show the demo alongside real kubeconfig contexts. The list updates immediately; disabling Developer mode hides the extra demo and reconnects to a real context if needed. The demo includes workloads, Flux sources and reconciliations, Argo CD applications with separate health/sync states, Helm releases, and a failed hook Job.
+If kubeconfig is absent or contains no contexts, Kubiki starts `kubiki-demo` automatically, including in installed builds. Enable **Settings → Developer → Developer mode** to also show the demo alongside real kubeconfig contexts. The list updates immediately; disabling Developer mode hides the extra demo and reconnects to a real context if needed. The demo simulates a large production cluster: 8,476 pods, 184 nodes across three availability zones, 70 namespaces, 600 additional Deployments and 120 StatefulSets, plus Services, EndpointSlices, autoscalers, disruption budgets, network policies, configuration, storage, RBAC, scheduled jobs, events and 728 Helm releases. Pod owners, service selectors, storage claims and Helm ownership connect these resources. Healthy workloads coexist with scheduling failures, image pull errors, crash loops and unavailable nodes. The demo also includes Flux sources and reconciliations, Argo CD applications with separate health/sync states, and a failed Helm hook Job.
 
 ### Building desktop packages
 
@@ -349,7 +365,7 @@ Run these commands from the repository root:
 
 Before direct desktop Cargo checks, run `pnpm desktop:prepare` and `pnpm extensions:build` to create the bundled resources. The Tauri CLI runs these steps automatically. Build the extension resources before standalone frontend type checks on a clean checkout as well.
 
-Run `pnpm test:e2e`; Playwright starts the frontend test server automatically, or reuses an existing local server. Install the browser with `pnpm exec playwright install chromium` if needed (`--with-deps` on Linux installs system dependencies too). The default test URL is `http://127.0.0.1:1420`. When using `PLAYWRIGHT_BASE_URL` for a different port, start a server at that URL first; the override does not change Vite's configured port. Browser update tests mock native commands and do not validate OS installers.
+Run `pnpm test:e2e`; Playwright starts an isolated frontend test server at `http://127.0.0.1:1430` with an empty kubeconfig and does not reuse the development server. Install the browser with `pnpm exec playwright install chromium` if needed (`--with-deps` on Linux installs system dependencies too). When using `PLAYWRIGHT_BASE_URL`, start a server at that URL first; the override disables automatic server startup. Browser update tests mock native commands and do not validate OS installers.
 
 ## Publishing releases
 
@@ -358,6 +374,7 @@ Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validatio
 ## Documentation
 
 - [Test suites, browser coverage and timing reports](docs/TESTING.md)
+- [README GIFs and screenshots](docs/MEDIA.md)
 - [Local state persistence and topology rendering settings](docs/LOCAL_STATE.md)
 - [Publishing desktop releases](docs/RELEASING.md)
 - [Application updates and signing](docs/APP_UPDATES.md)
@@ -387,7 +404,7 @@ kubiki/
 ├── shared/                     Resource type registry shared by frontend and tooling
 ├── server/                     Local bridges for frontend development and tests
 ├── tests/                      Frontend, native integration, desktop, browser and performance checks
-├── docs/                       Architecture reference and screenshots
+├── docs/                       Architecture reference, GIF demos and screenshots
 ├── public/licenses/            Bundled font and extension icon license notices
 └── .github/workflows/          Verification and desktop release builds
 ```

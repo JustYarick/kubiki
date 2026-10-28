@@ -8,9 +8,9 @@ import { useUiStore } from '../state/ui_store';
 
 /** Separate from the canvas: snapshot/timeline updates do not restart ELK or reset positions. */
 export const TopologyEvents = memo(function TopologyEvents({ scope, graph }: { scope: string; graph: ResourceGraph }) {
-  const resources = useResourceStore((state) => state.resources);
+  const events = useResourceStore((state) => state.resources.Event);
   const error = useResourceStore((state) => state.loadErrors.Event);
-  const { entries, total, warnings } = useMemo(() => topologyEvents(resources.Event.values(), scope, graph, resources), [resources, scope, graph]);
+  const { entries, total, warnings } = useMemo(() => topologyEvents(events.values(), scope, graph, useResourceStore.getState().resources), [events, scope, graph]);
   return <FloatingIsland label="Topology events" testId="topology-events" className="topology-events" icon={Clock3} defaultExpanded title={<span className="flex items-center gap-2"><span className="flex-1 truncate">Recent events ({total})</span>{warnings > 0 && <span className="text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size="calc(11px * var(--ui-factor))" />{warnings}</span>}</span>}>
       {error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Events unavailable: {error.message}</p>}
       {!entries.length && !error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No events in the loaded snapshot for this scope.</p>}

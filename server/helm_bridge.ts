@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { HELM_PAGE_SIZE, parseHelmHistory, parseHelmReleases, parseHelmRepositories, validateHelmDocument, validateHelmOffset, validateHelmTarget } from '../src/providers/helm_types.ts';
+import { parseHelmHistory, parseHelmReleases, parseHelmRepositories, validateHelmDocument, validateHelmTarget } from '../src/providers/helm_types.ts';
 import { normalizeK8sError, requestError } from '../src/providers/errors.ts';
+import { queuedRead } from '../src/providers/read_queue.ts';
 
-export type HelmExecutor = (args: string[]) => Promise<string>;
-const execute: HelmExecutor = args => new Promise((resolve, reject) => {
-  const child = execFile('helm', args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
+export type HelmExecutor = (args: string[], signal?: AbortSignal) => Promise<string>;
+const execute: HelmExecutor = (args, signal) => new Promise((resolve, reject) => {
+  const child = execFile('helm', args, { signal, timeout: 60000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
     if (error) reject(Object.assign(error, { stderr })); else resolve(stdout);
   });
   child.stdin?.end();
@@ -19,11 +20,14 @@ export function createHelmMiddleware(run: HelmExecutor = execute) {
     const operation = url.pathname.slice('/api/k8s/helm/'.length);
     const context = url.searchParams.get('context') ?? undefined;
     const info = { operation: 'helm', context };
+    const controller = new AbortController();
+    req.once('aborted', () => controller.abort());
+    res.once('close', () => { if (!res.writableEnded) controller.abort(); });
     const invalid = (message: string) => requestError('invalid_request', message, info, 400);
     res.setHeader('Content-Type', 'application/json');
     const send = (data: unknown) => res.end(JSON.stringify(data));
     const helm = async (args: string[], emptyRepos = false) => {
-      try { return await run(args); }
+      try { return await queuedRead(() => run(args, controller.signal), controller.signal); }
       catch (error) {
         const e = error as { code?: string; killed?: boolean; stderr?: string; message?: string };
         if (e.code === 'ENOENT') throw requestError('bridge_unavailable', 'Helm is not installed or is not available in PATH. Install Helm and restart Kubiki.', info, 503);
@@ -42,7 +46,7 @@ export function createHelmMiddleware(run: HelmExecutor = execute) {
     const list = (text: string): unknown => text.trim() ? JSON.parse(text) ?? [] : [];
     try {
       if (operation === 'mutate') throw requestError('forbidden', 'Helm changes require desktop backend system confirmation. HTTP bridge is read-only.', info, 403);
-      if (!['releases', 'repositories', 'history', 'content', 'charts'].includes(operation)) throw requestError('not_found', 'Endpoint not found', info, 404);
+      if (!['inventory', 'repositories', 'history', 'content', 'charts'].includes(operation)) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== 'GET') throw requestError('invalid_request', 'Method not allowed', info, 405);
       if (operation === 'repositories') return send(parseHelmRepositories(list(await helm(['repo', 'list', '--output=json'], true))));
       if (operation === 'charts') {
@@ -53,14 +57,11 @@ export function createHelmMiddleware(run: HelmExecutor = execute) {
       const namespace = url.searchParams.get('namespace');
       validateHelmTarget(context ?? '', namespace);
       const args = [`--kube-context=${context}`];
-      if (operation === 'releases') {
-        const offsetText = url.searchParams.get('offset') ?? '0';
-        if (!/^\d+$/.test(offsetText)) throw invalid('Invalid release offset');
-        const offset = Number(offsetText); validateHelmOffset(offset);
-        args.push('list', '--output=json', `--max=${HELM_PAGE_SIZE + 1}`, `--offset=${offset}`, namespace ? `--namespace=${namespace}` : '--all-namespaces', '--deployed', '--failed', '--pending', '--uninstalled', '--superseded', '--uninstalling');
+      if (operation === 'inventory') {
+        args.push('list', '--output=json', '--max=0', namespace ? `--namespace=${namespace}` : '--all-namespaces', '--deployed', '--failed', '--pending', '--uninstalled', '--superseded', '--uninstalling');
         const items = parseHelmReleases(list(await helm(args)));
         if (namespace && items.some(item => item.namespace !== namespace)) throw requestError('internal', 'Helm returned releases outside the requested namespace', info, 500);
-        return send({ context, namespace, offset, limit: HELM_PAGE_SIZE, has_more: items.length > HELM_PAGE_SIZE, items: items.slice(0, HELM_PAGE_SIZE) });
+        return send(items);
       }
       const name = url.searchParams.get('name') ?? '';
       validateHelmTarget(context!, namespace, name);

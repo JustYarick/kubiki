@@ -25,13 +25,13 @@ async function open(page: Page, section = 'Releases') {
   await page.getByRole('button', { name: `Open Helm ${section}`, exact: true }).click();
 }
 
-test('Helm supports inspection, revision documents, name/namespace filters, pagination and one tab per section', async ({ page }) => {
+test('Helm supports inspection, revision documents, name/namespace filters, incremental rendering and one tab per section', async ({ page }) => {
   await baseApi(page);
   const calls: URL[] = [];
   await page.route('**/api/k8s/helm/**', route => {
     const url = new URL(route.request().url()); calls.push(url);
     const op = url.pathname.split('/').pop();
-    if (op === 'releases') return route.fulfill({ json: { context: url.searchParams.get('context'), namespace: url.searchParams.get('namespace'), offset: Number(url.searchParams.get('offset')), limit: 100, has_more: url.searchParams.get('offset') === '0', items: url.searchParams.get('offset') === '0' ? [release(), release('broken', 'other', 'failed'), ...Array.from({ length: 98 }, (_, i) => release(`a-filler-${i}`, 'backend'))] : [release('zz-next-page')] } });
+    if (op === 'inventory') return route.fulfill({ json: [release(), release('broken', 'other', 'failed'), ...Array.from({ length: 98 }, (_, i) => release(`a-filler-${i}`, 'backend')), release('zz-next-page')] });
     if (op === 'history') return route.fulfill({ json: [1, 2].map(revision => ({ revision, updated: 'today', status: revision === 2 ? 'deployed' : 'superseded', chart: 'web-chart-1.0', app_version: '1', description: 'Upgrade complete' })) });
     if (op === 'content') return route.fulfill({ json: `${url.searchParams.get('document')}: revision-${url.searchParams.get('revision')}\n` });
     return route.fulfill({ json: [{ name: 'stable', url: 'https://example.com/charts' }] });
@@ -67,9 +67,10 @@ test('Helm supports inspection, revision documents, name/namespace filters, pagi
   await search.fill('zz-next-page');
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
   await expect(view).toContainText('1 of 1 matching · 101 total');
-  await search.fill(''); await view.getByRole('button', { name: 'Next page', exact: true }).click();
+  await search.fill('');
+  await view.locator('.helm-table-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
-  await expect(view.getByRole('button', { name: 'Next page', exact: true })).toBeDisabled();
+  await expect(view).toContainText('1–101 of 101 matching · 101 total');
   await open(page, 'Repositories'); await expect(page.getByTestId('helm-repositories')).toContainText('https://example.com/charts');
   await open(page); await expect(page.getByRole('tab', { name: /^Helm Releases/ })).toHaveCount(1);
   expect(calls.filter(url => ['history', 'content'].includes(url.pathname.split('/').pop()!)).every(url => url.searchParams.get('context') === 'prod' && url.searchParams.get('namespace') === 'backend' && url.searchParams.get('name') === 'web')).toBe(true);
@@ -80,11 +81,11 @@ test('Helm cancels late scope responses, isolates contexts and retains same-scop
   let fail = false; let releaseOld!: () => void;
   const oldResponse = new Promise<void>(resolve => { releaseOld = resolve; });
   let held = false;
-  await page.route('**/api/k8s/helm/releases**', async route => {
+  await page.route('**/api/k8s/helm/inventory**', async route => {
     const url = new URL(route.request().url()); const ns = url.searchParams.get('namespace'); const context = url.searchParams.get('context');
     if (ns === 'backend') { held = true; await oldResponse; }
     if (fail) return route.fulfill({ status: 403, json: { error: { code: 'forbidden', status: 403, message: 'Helm release secrets are forbidden', retryable: false } } });
-    return route.fulfill({ json: { context, namespace: ns, offset: 0, limit: 100, has_more: false, items: [release(`${context}-${ns ?? 'all'}`, ns ?? 'backend')] } });
+    return route.fulfill({ json: [release(`${context}-${ns ?? 'all'}`, ns ?? 'backend')] });
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await open(page);
   const view = page.getByTestId('helm-releases');
@@ -110,7 +111,7 @@ test('Helm missing binary offers retry, repositories have a real empty state, an
     if (url.pathname.endsWith('/repositories')) return route.fulfill({ json: [] });
     if (url.pathname.endsWith('/content')) return route.fulfill({ json: 'key: ' + 'x'.repeat(10000) + '\n' + 'line\n'.repeat(2000) });
     if (missing) return route.fulfill({ status: 503, json: { error: { code: 'bridge_unavailable', status: 503, message: 'Helm is not installed or is not available in PATH.', retryable: true } } });
-    return route.fulfill({ json: { context: 'prod', namespace: null, offset: 0, limit: 100, has_more: false, items: [release('wide-release-name-for-responsive-details')] } });
+    return route.fulfill({ json: [release('wide-release-name-for-responsive-details')] });
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await open(page); const view = page.getByTestId('helm-releases');
   await expect(view.getByRole('alert')).toContainText('Helm is not installed');
@@ -138,7 +139,7 @@ test('desktop Helm goes through explicit read IPC commands', async ({ page }) =>
         if (command === 'ping_cluster') return { git_version: 'v1.35.0' };
         if (command === 'get_namespaces') return ['backend'];
         if (command === 'get_resources') return { items: [] };
-        if (command === 'list_helm_releases') return { ...args, limit: 100, has_more: false, items: [{ name: 'native-web', namespace: 'backend', revision: '3', updated: '', status: 'deployed', chart: 'web-1', app_version: '1' }] };
+        if (command === 'get_helm_inventory') return [{ name: 'native-web', namespace: 'backend', revision: '3', updated: '', status: 'deployed', chart: 'web-1', app_version: '1' }];
         if (command === 'get_helm_content') return `native revision ${args.revision}`;
         if (command === 'list_helm_repositories' || command === 'get_helm_history') return [];
         if (command.startsWith('stop_') || command === 'watch_resources' || command === 'ack_resources') return;
@@ -152,8 +153,8 @@ test('desktop Helm goes through explicit read IPC commands', async ({ page }) =>
   await page.getByTestId('inspector-panel').getByRole('tab', { name: 'Values', exact: true }).click();
   await expect(page.getByTestId('inspector-panel').getByLabel('Helm values revision 3')).toContainText('native revision 3');
   const calls = await page.evaluate(() => (window as any).__helmCalls.filter((call: any) => call.command.includes('helm')));
-  expect(calls).toEqual(expect.arrayContaining([{ command: 'list_helm_releases', args: { context: 'native-prod', namespace: null, offset: 0 } }, { command: 'get_helm_content', args: { context: 'native-prod', namespace: 'backend', name: 'native-web', revision: 3, document: 'values' } }]));
-  expect(calls.every((call: any) => ['list_helm_releases', 'get_helm_content', 'get_helm_history', 'list_helm_repositories'].includes(call.command))).toBe(true);
+  expect(calls).toEqual(expect.arrayContaining([expect.objectContaining({ command: 'get_helm_inventory', args: expect.objectContaining({ context: 'native-prod', namespace: null }) }), expect.objectContaining({ command: 'get_helm_content', args: expect.objectContaining({ context: 'native-prod', namespace: 'backend', name: 'native-web', revision: 3, document: 'values' }) })]));
+  expect(calls.every((call: any) => ['get_helm_inventory', 'get_helm_content', 'get_helm_history', 'list_helm_repositories'].includes(call.command))).toBe(true);
 });
 
 test('Helm reuses the resource inspector, navigation, resizing, tabs and split details', async ({ page }) => {
@@ -167,7 +168,7 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/history')) return route.fulfill({ json: [{ revision: 2, updated: '', status: 'deployed', chart: 'web-chart-1.0', app_version: '1', description: '' }] });
     if (url.pathname.endsWith('/content')) return route.fulfill({ json: 'replicas: 0\n' });
-    return route.fulfill({ json: { context: 'prod', namespace: null, offset: 0, limit: 100, has_more: false, items: [release()] } });
+    return route.fulfill({ json: [release()] });
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await open(page);
   const list = page.getByTestId('helm-releases');

@@ -27,7 +27,7 @@ export function CellValue({
 }) {
   const v = col.get(item);
   if (v === undefined || v === '') return <span className="text-[var(--text-disabled)]">—</span>;
-  if (col.hint && col.id !== 'name') return <span title={col.hint} className="block truncate">{v}</span>;
+  if (col.hint && col.id !== 'name' && !col.podActivity) return <span title={col.hint} className="block truncate">{v}</span>;
   if (col.id === 'name') {
     if (item.kind === 'CustomResourceDefinition') {
       const crdType = customResourceType(item);
@@ -59,14 +59,16 @@ export function CellValue({
     const m = /^(\d+)\/(\d+)$/.exec(v);
     if (m) {
       const readyNum = Number(m[1]);
-      const desiredNum = Number(m[2]) || 1;
-      const pct = Math.min(100, Math.round((readyNum / desiredNum) * 100));
-      const isOk = readyNum === desiredNum && readyNum > 0;
-      const isZero = readyNum === 0;
+      const totalNum = Number(m[2]);
+      const pct = totalNum > 0 ? Math.min(100, Math.round((readyNum / totalNum) * 100)) : 0;
+      const isOk = readyNum === totalNum && totalNum > 0;
+      const isZero = readyNum === 0 && totalNum > 0;
+      const activity = col.podActivity?.(item);
+      const hint = `${readyNum} ready / ${totalNum} total${activity ? ` · ${activity.pending} pending · ${activity.terminating} terminating` : ''}`;
 
       return (
-        <div className="flex items-center gap-2">
-          <div className="w-14 h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden border border-[var(--border-subtle)] flex">
+        <div role="img" className="flex items-center gap-2 whitespace-nowrap" title={hint} aria-label={hint}>
+          <div className="w-14 shrink-0 h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden border border-[var(--border-subtle)] flex" aria-hidden="true">
             <div
               style={{ width: `${pct}%` }}
               className={cx(
@@ -78,7 +80,7 @@ export function CellValue({
           <span
             className={cx(
               'font-mono text-[length:calc(11px*var(--ui-factor))] font-semibold tabular-nums',
-              isOk ? 'text-[var(--status-ok)]' : isZero ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'
+              isOk ? 'text-[var(--status-ok)]' : isZero ? 'text-[var(--status-danger)]' : totalNum === 0 ? 'text-[var(--text-secondary)]' : 'text-[var(--status-warn)]'
             )}
           >
             {v}

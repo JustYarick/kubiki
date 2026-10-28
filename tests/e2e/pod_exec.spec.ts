@@ -70,18 +70,23 @@ test('log levels have no visible badges and backgrounds span horizontally scroll
     const { useUiStore } = await import(/* @vite-ignore */ '/src/state/ui_store.ts' as string);
     useUiStore.setState({ logsColorLevels: true, logsStructured: true, logsWrap: true });
     const messages = [
-      { level: 'error', message: 'long error payload '.repeat(180) + 'end of error' },
+      { level: 'error', message: 'long error payload '.repeat(180) + 'end of error', body: { error: 'access denied' }, action: 'create' },
       { level: 'warn', message: 'short warning' },
       { level: 'info', message: 'short info' },
     ];
-    (window as any).__execHarness.setLogText(messages.map((line, index) => `2026-10-20T00:00:0${index + 1}Z ${JSON.stringify(line)}\n`).join(''));
+    (window as any).__execHarness.setLogText(messages.map((line, index) => `2026-10-20T00:00:0${index + 1}Z ${JSON.stringify(line)}\n`).join('') + '2026-10-20T00:00:04Z fatal: admission rejected {"code":403} for resource widgets/team-a\n');
   });
   await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
   await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
   const output = page.getByTestId('log-output');
-  const error = output.locator('[data-level="error"]');
+  const error = output.locator('[data-level="error"]').filter({ hasText: 'end of error' });
   await expect(error).toContainText('end of error');
+  await expect(error).toContainText('access denied');
+  await expect(error).toContainText('create');
+  const mixed = output.getByTestId('log-line').filter({ hasText: 'widgets/team-a' });
+  await expect(mixed).toContainText('fatal: admission rejected');
+  await expect(mixed).toContainText('403');
   for (const level of ['error', 'warn', 'info']) {
     await expect(output.getByTestId('log-line').locator('span').filter({ hasText: new RegExp(`^${level}$`) })).toHaveCount(0);
   }
@@ -107,6 +112,76 @@ test('log levels have no visible badges and backgrounds span horizontally scroll
   await expect(error).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await toolbar.getByRole('button', { name: 'Wrap', exact: true }).click();
   await expect.poll(() => output.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test('log display switches persist when reopening the pane and reloading the app', async ({ page }) => {
+  await setup(page);
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
+  const toolbar = page.getByTestId('logs-toolbar');
+  for (const label of ['Structured JSON', 'Highlight levels', 'Wrap', 'Timestamps']) await toolbar.getByRole('button', { name: label, exact: true }).click();
+  const preferences = { logsStructured: true, logsColorLevels: true, logsWrap: false, logsTimestamps: false };
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kubiki.settings.v3')!).state)).toMatchObject(preferences);
+  await page.evaluate(async () => {
+    const { useDockStore } = await import(/* @vite-ignore */ '/src/state/dock_store.ts' as string);
+    const dock = useDockStore.getState();
+    dock.closeSession(dock.activeSessionId);
+    dock.openLogs('pod-with-init-container-and-a-long-name-for-responsive-toolbar', 'backend', 'app');
+  });
+  for (const label of ['Structured JSON', 'Highlight levels']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  for (const label of ['Wrap', 'Timestamps']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await page.reload();
+  // A newly mounted pane must hydrate the saved display switches.
+  await page.evaluate(async () => {
+    const { useDockStore } = await import(/* @vite-ignore */ '/src/state/dock_store.ts' as string);
+    useDockStore.getState().openLogs('pod-with-init-container-and-a-long-name-for-responsive-toolbar', 'backend', 'app');
+  });
+  for (const label of ['Structured JSON', 'Highlight levels']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  for (const label of ['Wrap', 'Timestamps']) await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'false');
+});
+
+test.describe('system time zone for logs', () => {
+  test.use({ timezoneId: 'America/New_York' });
+  test('UTC/local changes existing log lines, respects DST, persists, and leaves polling timestamps intact', async ({ page }) => {
+    await setup(page);
+    const logText = '2026-03-08T06:59:59.123456789Z before DST\n2026-03-08T07:00:00.123456789Z after DST\n';
+    await page.evaluate(text => (window as any).__execHarness.setLogText(text), logText);
+    await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
+    await page.getByTestId('resource-details').getByRole('button', { name: 'Close details', exact: true }).click();
+    const toolbar = page.getByTestId('logs-toolbar');
+    const before = page.getByTestId('log-line').filter({ hasText: 'before DST' }).getByTestId('log-timestamp');
+    const after = page.getByTestId('log-line').filter({ hasText: 'after DST' }).getByTestId('log-timestamp');
+    await expect(before).toHaveText('2026-03-08T06:59:59.123456789Z');
+    await toolbar.getByRole('button', { name: 'Pause', exact: true }).click();
+    const reads = await page.evaluate(() => (window as any).__execHarness.logRequests.length);
+    await toolbar.getByRole('button', { name: 'Log options', exact: true }).click();
+    const zone = page.getByRole('combobox', { name: 'Log timestamp time zone' });
+    await expect(zone.getByRole('option', { name: 'Local time (America/New_York)', exact: true })).toBeAttached();
+    await zone.selectOption('local');
+    await expect(zone.locator('option').first()).toHaveValue('local');
+    await expect(before).toHaveText('2026-03-08T01:59:59.123456789-05:00');
+    await expect(after).toHaveText('2026-03-08T03:00:00.123456789-04:00');
+    await expect(after).toHaveAttribute('datetime', '2026-03-08T07:00:00.123456789Z');
+    expect(await page.evaluate(() => (window as any).__execHarness.logRequests.length)).toBe(reads);
+    await page.keyboard.press('Escape');
+    await toolbar.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__execHarness.logRequests.at(-1)?.since_time)).toBe('2026-03-08T07:00:00.123456789Z');
+    await page.reload();
+    await page.evaluate(async text => {
+      (window as any).__execHarness.setLogText(text);
+      const { useDockStore } = await import(/* @vite-ignore */ '/src/state/dock_store.ts' as string);
+      useDockStore.getState().openLogs('pod-with-init-container-and-a-long-name-for-responsive-toolbar', 'backend', 'app');
+    }, logText);
+    await expect(before).toHaveText('2026-03-08T01:59:59.123456789-05:00');
+    await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: /Settings/ });
+    await settings.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Logs', exact: true }).click();
+    await settings.getByRole('combobox', { name: 'Log timestamp time zone' }).selectOption('utc');
+    await page.keyboard.press('Escape');
+    await expect(before).toHaveText('2026-03-08T06:59:59.123456789Z');
+  });
 });
 
 test('Pod shell carries real adapter input, resize, UTF-8 and exit; container switch closes the old connection', async ({ page }) => {

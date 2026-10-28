@@ -13,8 +13,10 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
   const sectionRef = useRef<HTMLElement>(null);
   const fieldPrefix = useId();
   const [validate, setValidate] = useState(false);
-  const focusField = (id: number, field: 'key' | 'value' = 'key') => requestAnimationFrame(() => {
-    sectionRef.current?.querySelector<HTMLElement>(`[data-secret-field="${id}-${field}"]`)?.focus();
+  const focusField = (id: number, field: 'key' | 'value' = 'key', onlyIfOutside = false) => requestAnimationFrame(() => {
+    const root = sectionRef.current;
+    if (onlyIfOutside && root?.contains(document.activeElement) && document.activeElement?.tagName !== 'BUTTON') return;
+    root?.querySelector<HTMLElement>(`[data-secret-field="${id}-${field}"]`)?.focus();
   });
   const context = useClusterStore(s => s.currentContext);
   const [draft, setDraft] = useState<{ rows: SecretRow[]; version: string; context: string; resource: ReturnType<typeof resourceRef> }>();
@@ -33,7 +35,7 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
   const changed = !!draft && (draft.version !== item.raw?.metadata?.resourceVersion || draft.context !== context);
   const immutable = item.raw?.immutable === true;
   const update = (id: number, patch: Partial<SecretRow>) => setDraft(d => d && ({ ...d, rows: d.rows.map(row => row.id === id ? { ...row, ...patch } : row) }));
-  const edit = () => { setDraft({ rows: formatRows(secretRows(item.raw?.data ?? {}), encoding), version: item.raw?.metadata?.resourceVersion ?? '', context: context ?? '', resource: resourceRef(context ?? '', item) }); setReveal(false); setError(''); setSaved(''); setValidate(false); if (rows[0]) focusField(rows[0].id); };
+  const edit = () => { setDraft({ rows: formatRows(secretRows(item.raw?.data ?? {}), encoding), version: item.raw?.metadata?.resourceVersion ?? '', context: context ?? '', resource: resourceRef(context ?? '', item) }); setReveal(false); setError(''); setSaved(''); setValidate(false); if (rows[0]) focusField(rows[0].id, 'key', true); };
   async function save() {
     if (!draft || !context || draft.context !== context || changed || saving) return;
     setError(''); setSaved(''); setValidate(true);

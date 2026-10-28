@@ -9,6 +9,18 @@ export interface HistoryPoint { at: number; cpu: number | null; memory: number |
 const dimensions: Dimension[] = ['cpu', 'memory'];
 const active = (pod: ResourceItem) => !['Succeeded', 'Completed', 'Complete', 'Failed'].includes(pod.raw?.status?.phase ?? pod.status ?? '');
 const add = (a: number | null, b: number | null) => a === null || b === null ? null : a + b;
+const podBudgetCache = new WeakMap<ResourceItem, Partial<Record<Dimension, Budget>>>();
+function cachedPodBudget(pod: ResourceItem, dimension: Dimension): Budget {
+  let entry = podBudgetCache.get(pod);
+  if (entry?.[dimension]) return entry[dimension]!;
+  const result = podBudget(pod, dimension);
+  if (!entry) {
+    entry = {};
+    podBudgetCache.set(pod, entry);
+  }
+  entry[dimension] = result;
+  return result;
+}
 /** Configured effective Pod budget, including ordered restartable init containers and overhead. */
 export function podBudget(pod: ResourceItem, dimension: Dimension): Budget {
   const spec = pod.raw?.spec ?? pod.spec ?? {};
@@ -61,7 +73,7 @@ export function buildTelemetry(data: OverviewMetrics | undefined, pods: Resource
   const sum = (dimension: Dimension) => measured ? rows.reduce((total, row) => total + row[dimension], 0) : null;
   const complete = expected !== null && rows.length === expected && measured;
   const budgets = Object.fromEntries(dimensions.map(dimension => {
-    const entries = activePods?.map(pod => podBudget(pod, dimension));
+    const entries = activePods?.map(pod => cachedPodBudget(pod, dimension));
     const capacities = nodes?.map(node => quantity(node.raw?.status?.capacity?.[dimension]));
     const allocatable = nodes?.map(node => quantity(node.raw?.status?.allocatable?.[dimension]));
     return [dimension, {

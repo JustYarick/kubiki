@@ -112,6 +112,53 @@ test('the sort hierarchy groups by the first clicked column and orders inside ea
   expect(running.length).toBeGreaterThan(1);
 });
 
+test('filter values cycle include, exclude, reset and status sorting uses only filtered values', async ({ page }) => {
+  await fixture(page);
+  const table = await openPods(page);
+  const header = table.getByRole('columnheader', { name: 'Status', exact: true });
+  await expect(table.locator('tbody tr')).toHaveCount(6);
+  await header.click();
+  await expect(header).toHaveAttribute('title', 'Running first');
+  await header.click({ button: 'right' });
+  const popup = page.getByTestId('column-filter-popup');
+  const running = popup.getByRole('checkbox', { name: 'Running', exact: true });
+  await running.click();
+  await expect(table.locator('tbody tr')).toHaveCount(2);
+  await expect(running).toHaveAttribute('aria-checked', 'true');
+  await running.click();
+  await expect(running).toHaveAttribute('aria-checked', 'mixed');
+  await expect(popup.getByText('Excluded', { exact: true })).toBeVisible();
+  await expect(table.locator('tbody tr')).toHaveCount(4);
+  await running.click();
+  await expect(running).toHaveAttribute('aria-checked', 'false');
+  await expect(table.locator('tbody tr')).toHaveCount(6);
+
+  // Exclusions also apply when another value of this column is included.
+  await popup.getByRole('checkbox', { name: 'Pending', exact: true }).click();
+  await expect(popup.getByRole('checkbox').first()).toHaveAttribute('aria-label', 'Pending');
+  await running.click();
+  await expect(table.locator('tbody tr')).toHaveCount(3);
+  await running.click();
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+  await expect(header).toHaveAttribute('title', 'Pending first');
+  await page.keyboard.press('Escape');
+  await header.click();
+  await expect(header).toHaveAttribute('title', 'Pending first');
+  await header.click();
+  await expect(header).toHaveAttribute('title', 'Pending first');
+
+  // The popup still offers other values; the sort cycle must not use those.
+  await header.click({ button: 'right' });
+  await popup.getByRole('checkbox', { name: 'CrashLoopBackOff', exact: true }).click();
+  await expect(table.locator('tbody tr')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await header.click();
+  await expect(header).toHaveAttribute('title', 'CrashLoopBackOff first');
+  await expect(table.locator('tbody tr').first()).toContainText('a-error');
+  await header.click();
+  await expect(header).toHaveAttribute('title', 'Pending first');
+});
+
 test('a namespace selection never changes the metrics of global objects such as nodes', async ({ page }) => {
   await fixture(page);
   await page.goto('/');
@@ -127,6 +174,7 @@ test('columns can be reordered by drag and by the keyboard alternative', async (
   await fixture(page);
   const table = await openPods(page);
   const headers = table.getByRole('columnheader');
+  await expect(headers.first()).toBeVisible();
   const before = await headers.evaluateAll((cells) => cells.map((cell) => cell.getAttribute('aria-label')));
   expect(before).toContain('Namespace');
   expect(before).toContain('Status');

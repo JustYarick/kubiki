@@ -40,11 +40,45 @@ export function matchesSelector(labels: Record<string, string>, selector: any): 
   });
 }
 
+const SINGLE_NAMESPACE_KINDS = new Set([
+  'Pod', 'ReplicaSet', 'Deployment', 'StatefulSet', 'DaemonSet', 'ReplicationController',
+  'Job', 'CronJob', 'ConfigMap', 'Secret', 'ServiceAccount', 'PersistentVolumeClaim',
+  'Service', 'Ingress', 'NetworkPolicy', 'PodDisruptionBudget', 'HorizontalPodAutoscaler',
+  'Role', 'Lease', 'ResourceQuota', 'LimitRange',
+]);
+
+/** Only these objects reference peers exclusively inside their own namespace; others (GitOps, Helm, RBAC, custom resources) may point across namespaces. */
+function referencesStayInNamespace(item: ResourceItem): boolean {
+  return !!item.namespace && item.kind !== 'HelmRelease' && !gitOpsFamily(item) && SINGLE_NAMESPACE_KINDS.has(item.kind);
+}
+
+const namespaceCache = new WeakMap<Map<string, ResourceItem>, Map<string, Map<string, ResourceItem>>>();
+/** Reuse namespace slices of unchanged watch buckets before worker serialization. */
+export function relatedResourceScope(resources: Record<ResourceKind, Map<string, ResourceItem>>, focus: ResourceItem) {
+  const namespace = focus.namespace ?? (focus.kind === 'Namespace' ? focus.name : undefined);
+  if (!namespace || focus.namespace && !referencesStayInNamespace(focus)) return resources;
+  return Object.fromEntries(Object.entries(resources).map(([kind, map]) => {
+    let cached = namespaceCache.get(map);
+    if (!cached) { cached = new Map(); namespaceCache.set(map, cached); }
+    let scoped = cached.get(namespace);
+    if (!scoped) {
+      scoped = new Map([...map].filter(([, item]) => !item.namespace || item.namespace === namespace));
+      if (cached.size >= 8) cached.delete(cached.keys().next().value!);
+      cached.set(namespace, scoped);
+    }
+    return [kind, scoped];
+  })) as typeof resources;
+}
+
 /** Resolve API references, never infer ownership from a resource's name. */
 export function buildResourceGraph(resources: Record<ResourceKind, Map<string, ResourceItem>>, options: GraphBuildOptions = {}): ResourceGraph {
   // Events describe notifications about objects, not structural relationships.
   const all = Object.values(resources).flatMap((map) => [...map.values()].filter((item) => item.kind !== 'Event'));
   const items = new Map(all.map((item) => [resourceKey(item), item]));
+  const adjacentItems = options.adjacentTo ? [...options.adjacentTo].map((key) => items.get(key)).filter((item): item is ResourceItem => !!item) : undefined;
+  const adjacentNamespaces = adjacentItems && adjacentItems.length > 0 && adjacentItems.every(referencesStayInNamespace)
+    ? new Set(adjacentItems.map((item) => item.namespace!))
+    : undefined;
   const byGroupKind = new Map<string, ResourceItem[]>();
   for (const item of all) {
     const key = JSON.stringify([parseApiVersion(item.apiVersion).group, item.kind]);
@@ -102,6 +136,9 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
   };
 
   for (const item of all) {
+    if (adjacentNamespaces && item.namespace && !adjacentNamespaces.has(item.namespace) && SINGLE_NAMESPACE_KINDS.has(item.kind)) {
+      continue;
+    }
     const raw = item.raw ?? { metadata: item.metadata, spec: item.spec, status: item.statusRaw };
     const spec: any = raw.spec ?? {};
     const metadata: any = raw.metadata ?? {};

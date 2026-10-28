@@ -5,10 +5,12 @@ import { create } from 'zustand';
 import { ResourceDeltaPayload, ResourceItem, ResourceKind } from '../types/k8s';
 import { useClusterStore } from './cluster_store';
 import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
-import type { WatchCommit, WatchState } from '../providers/watch_types';
+import { sameQuery, type WatchCommit, type WatchState } from '../providers/watch_types';
 
 interface ResourceState {
   resources: Record<ResourceKind, Map<string, ResourceItem>>;
+  resourceCounts: Partial<Record<ResourceKind, number>>;
+  setResourceCounts: (counts: Partial<Record<ResourceKind, number>>) => void;
   loadErrors: Partial<Record<ResourceKind, K8sRequestError>>;
   loadingKinds: Partial<Record<ResourceKind, boolean>>;
   setKindLoading: (kind: ResourceKind, loading: boolean) => void;
@@ -37,22 +39,36 @@ const initialResources = (): Record<ResourceKind, Map<string, ResourceItem>> => 
 
 export const useResourceStore = create<ResourceState>((set, get) => ({
   resources: initialResources(),
+  resourceCounts: {},
+  setResourceCounts: (resourceCounts) => set({ resourceCounts }),
   loadErrors: {},
   loadingKinds: {},
   setKindLoading: (kind, loading) => set(state => ({ loadingKinds: { ...state.loadingKinds, [kind]: loading } })),
   syncMode: 'snapshot', watchStates: {},
   setSyncMode: (syncMode) => set({ syncMode }),
   applyWatchCommit: (kind, update) => set((state) => {
-    const map = update.snapshot ? new Map(update.snapshot.map((item) => [item.uid, item])) : update.changes.length ? new Map(state.resources[kind]) : state.resources[kind];
+    let map = state.resources[kind] ?? new Map<string, ResourceItem>();
+    if (update.snapshot) {
+      const same = map.size === update.snapshot.length && update.snapshot.every((item) => map.get(item.uid) === item);
+      if (!same) map = new Map(update.snapshot.map((item) => [item.uid, item]));
+    } else if (update.changes.length) {
+      map = new Map(map);
+    }
     for (const change of update.changes) { if (change.type === 'apply') map.set(change.item.uid, change.item); else map.delete(change.uid); }
+    const prevWatch = state.watchStates[kind];
+    const sameWatch = prevWatch && prevWatch.phase === update.state.phase && prevWatch.hasSnapshot === update.state.hasSnapshot && sameQuery(prevWatch.query, update.state.query);
+    const isLoading = update.state.phase === 'connecting' || update.state.phase === 'syncing';
+    const sameLoading = state.loadingKinds[kind] === isLoading;
+    const nextError = update.error ? normalizeK8sError(update.error, { operation: 'watch', context: useClusterStore.getState().currentContext ?? undefined }) : undefined;
+    const sameError = (state.loadErrors[kind] === undefined && nextError === undefined) || (state.loadErrors[kind]?.message === nextError?.message && state.loadErrors[kind]?.status === nextError?.status);
     return {
       resources: map === state.resources[kind] ? state.resources : { ...state.resources, [kind]: map },
       selectedItem: state.selectedItem && resourceBucket(state.selectedItem) === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
       // Scope changes must not leave navigation history pointing to stale, unloaded objects.
       selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => resourceBucket(item) !== kind) : state.selectionHistory,
-      watchStates: { ...state.watchStates, [kind]: update.state },
-      loadingKinds: { ...state.loadingKinds, [kind]: update.state.phase === 'connecting' || update.state.phase === 'syncing' },
-      loadErrors: { ...state.loadErrors, [kind]: update.error ? normalizeK8sError(update.error, { operation: 'watch', context: useClusterStore.getState().currentContext ?? undefined }) : undefined },
+      watchStates: sameWatch ? state.watchStates : { ...state.watchStates, [kind]: update.state },
+      loadingKinds: sameLoading ? state.loadingKinds : { ...state.loadingKinds, [kind]: isLoading },
+      loadErrors: sameError ? state.loadErrors : { ...state.loadErrors, [kind]: nextError },
     };
   }),
   activeKind: 'Pod',
@@ -67,7 +83,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     }
     return { selectionHistory: [] };
   }),
-  reset: () => set({ resources: initialResources(), selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, watchStates: {}, syncMode: 'snapshot' }),
+  reset: () => set({ resources: initialResources(), resourceCounts: {}, selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, watchStates: {}, syncMode: 'snapshot' }),
   setLoadError: (kind, error) => set((state) => ({ loadingKinds: error == null ? state.loadingKinds : { ...state.loadingKinds, [kind]: false }, loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
 
   setActiveKind: (activeKind) => set({ activeKind }),

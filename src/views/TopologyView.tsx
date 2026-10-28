@@ -3,7 +3,7 @@ import './topology.css';
 import { namespaceNames, namespaceScope } from '../core/resources/namespace_scope';
 import { topologyNamespaces } from '../core/resources/topology';
 import { NamespaceSelect } from '../components/ui/NamespaceSelect';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import '@xyflow/react/dist/style.css';
 import { TriangleAlert } from 'lucide-react';
@@ -25,6 +25,9 @@ import { TopologyCanvas } from './TopologyCanvas';
 import { TopologyEvents } from './TopologyEvents';
 import { useHelmGraph } from '../providers/use_helm_graph';
 import { topologyRendering } from '../core/resources/topology_rendering';
+import { fastCompare } from '../core/resources/resource_sort';
+import { topologyResourceKinds } from '../core/resources/resource_demand';
+import { retainResourceKinds } from '../state/resource_requirements';
 
 const NO_EVENTS = new Map<string, ResourceItem>();
 
@@ -36,9 +39,10 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const errors = useResourceStore((s) => s.loadErrors);
   const namespaces = useClusterStore((s) => s.availableNamespaces);
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
+  const context = useClusterStore((s) => s.currentContext);
   const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
   const snapshotsReady = useClusterStore((s) => s.isConnected && !s.isLoading);
-  const [scope, setScope] = useState(() => item?.kind === 'Event' ? item.namespace ? `namespace:${item.namespace}` : '' : item ? 'resource' : namespace ? namespace.startsWith('[') ? `namespaces:${namespace}` : `namespace:${namespace}` : '');
+  const [scope, setScope] = useState(() => item?.kind === 'Event' ? item.namespace ? `namespace:${item.namespace}` : '' : item ? 'resource' : namespace === 'all' ? 'all' : namespace ? namespace.startsWith('[') ? `namespaces:${namespace}` : `namespace:${namespace}` : '');
   const [depth, setDepth] = useState(2);
   const [direction, setDirection] = useState<'RIGHT' | 'DOWN'>('RIGHT');
   const [revision, setRevision] = useState(0);
@@ -53,34 +57,69 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const diagramNamespace = scope === 'resource' ? item?.namespace ?? (item?.kind === 'Namespace' ? item.name : undefined)
     : graphScope === 'all' ? 'all' : diagramNamespaces.length ? namespaceScope(diagramNamespaces) : undefined;
   const outsideScope = graphScope === 'all' ? selectedNamespace !== 'all' : (diagramNamespaces.length ? diagramNamespaces : diagramNamespace ? [diagramNamespace] : []).some(name => namespaceIsOutsideScope(name, selectedNamespace, syncMode));
+  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope && !!graphScope && scope !== 'overview', updateInterval);
+  const requiredKinds = useMemo(() => outsideScope ? [] : topologyResourceKinds(graphScope, item, depth, graph), [graph, graphScope, item, depth, outsideScope]);
+  const requirementKey = JSON.stringify(requiredKinds);
+  const requestNamespace = diagramNamespace ?? selectedNamespace;
+  useEffect(() => {
+    if (!context || !requiredKinds.length) return;
+    return retainResourceKinds(context, JSON.parse(requirementKey) as ResourceKind[], requestNamespace);
+  }, [context, requirementKey, requestNamespace]);
   const helm = useHelmGraph(diagramNamespace, !outsideScope && !!graphScope && scope !== 'overview');
   const namespaceLoaded = (name: string) => !namespaceIsOutsideScope(name, selectedNamespace, syncMode);
   const synchronizing = syncMode === 'watch' && Object.values(watchStates).some((state) => state?.phase === 'connecting' || state?.phase === 'syncing');
+  const chooseScope = !graphScope || scope === 'overview';
   const summaries = useMemo(() => {
     const counts = new Map([...new Set([...namespaces, ...(namespaceNames(selectedNamespace) ?? [])])].map((name) => [name, { name, resources: 0, pods: 0 }]));
-    for (const map of Object.values(resources)) for (const item of map.values()) {
-      const name = item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined);
+    for (const ns of resources.Namespace.values()) {
+      if (!counts.has(ns.name)) counts.set(ns.name, { name: ns.name, resources: 0, pods: 0 });
+    }
+    if (!chooseScope) {
+      for (const graphItem of graph.items.values()) {
+        if (graphItem.namespace && !counts.has(graphItem.namespace)) counts.set(graphItem.namespace, { name: graphItem.namespace, resources: 0, pods: 0 });
+      }
+      return [...counts.values()].sort((a, b) => fastCompare(a.name, b.name));
+    }
+    for (const map of Object.values(resources)) for (const entry of map.values()) {
+      const name = entry.namespace ?? (entry.kind === 'Namespace' ? entry.name : undefined);
       if (!name) continue;
       if (!counts.has(name)) counts.set(name, { name, resources: 0, pods: 0 });
-      if (item.namespace) counts.get(name)!.resources++;
-      if (item.kind === 'Pod') counts.get(name)!.pods++;
+      if (entry.namespace) counts.get(name)!.resources++;
+      if (entry.kind === 'Pod') counts.get(name)!.pods++;
     }
-    return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [resources, namespaces, selectedNamespace]);
-  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope, updateInterval);
-  const chooseScope = !graphScope || scope === 'overview';
+    return [...counts.values()].sort((a, b) => fastCompare(a.name, b.name));
+  }, [chooseScope, chooseScope ? resources : resources.Namespace, graph.items, namespaces, selectedNamespace]);
   const typeCounts = useMemo(() => topologyTypeCounts(graph), [graph]);
   const chooseNamespaces = (selection: string) => setScope(selection === 'all' ? 'all' : `namespaces:${selection}`);
   const warningCount = useMemo(() => {
-    const pods = [...resources.Pod.values()];
-    const storageClasses = new Map([...resources.StorageClass.values()].map((entry) => [entry.name, entry]));
+    let podsByNamespace: Map<string | undefined, ResourceItem[]> | undefined;
+    let storageClasses: Map<string, ResourceItem> | undefined;
+    const podsLoaded = snapshotsReady && podsCurrent && !errors.Pod;
     return [...graph.items.values()].filter((resource) => {
-      const storageClassName = resource.spec?.storageClassName ?? resource.storageClass;
-      return resourceIssues(resource, {
-        pods,
-        podsLoaded: snapshotsReady && podsCurrent && !errors.Pod,
-        storageClass: typeof storageClassName === 'string' ? storageClasses.get(storageClassName) : undefined,
-      }).length > 0;
+      if (resource.kind === 'Service') {
+        if (!podsByNamespace) {
+          podsByNamespace = new Map();
+          for (const pod of resources.Pod.values()) {
+            const list = podsByNamespace.get(pod.namespace);
+            if (list) list.push(pod);
+            else podsByNamespace.set(pod.namespace, [pod]);
+          }
+        }
+        return resourceIssues(resource, {
+          pods: podsByNamespace.get(resource.namespace) ?? [],
+          podsLoaded,
+        }).length > 0;
+      }
+      if (resource.kind === 'PersistentVolumeClaim') {
+        if (!storageClasses) {
+          storageClasses = new Map([...resources.StorageClass.values()].map((entry) => [entry.name, entry]));
+        }
+        const storageClassName = resource.spec?.storageClassName ?? resource.storageClass;
+        return resourceIssues(resource, {
+          storageClass: typeof storageClassName === 'string' ? storageClasses.get(storageClassName) : undefined,
+        }).length > 0;
+      }
+      return resourceIssues(resource).length > 0;
     }).length;
   }, [graph, resources.Pod, resources.StorageClass, snapshotsReady, podsCurrent, errors.Pod]);
 
@@ -104,7 +143,7 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
           <Button onClick={() => setScope('overview')}>Cluster summary</Button>
         </div>
         <SearchInput value={scopeQuery} onChange={setScopeQuery} placeholder="Find namespace…" className="mt-4 max-w-sm" />
-        <div className="grid gap-2 mt-3 max-w-2xl">{summaries.filter((summary) => summary.name.toLowerCase().includes(scopeQuery.toLowerCase())).slice(0, 50).map((summary) => <button key={summary.name} onClick={() => setScope(`namespace:${summary.name}`)} className="flex items-center gap-3 text-left px-3 py-2 rounded border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:border-[var(--accent)]">
+        <div className="grid gap-2 mt-3 max-w-2xl">{summaries.filter((summary) => summary.name.toLowerCase().includes(scopeQuery.toLowerCase())).map((summary) => <button key={summary.name} onClick={() => setScope(`namespace:${summary.name}`)} className="flex items-center gap-3 text-left px-3 py-2 rounded border border-[var(--border-default)] bg-[var(--bg-secondary)] hover:border-[var(--accent)]">
           <span className="font-mono text-xs flex-1 truncate">{summary.name}</span><span className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)]">{namespaceLoaded(summary.name) ? `${summary.resources} resources · ${summary.pods} Pods` : 'Not loaded'}</span>
         </button>)}</div>
         {!summaries.length && <p className="text-xs text-[var(--text-muted)] mt-4">No namespaces have been loaded. Open a resource topology from its details.</p>}

@@ -1,3 +1,4 @@
+import { Select } from '../ui/Select';
 import { loadTerminalFonts, terminalFontStack } from '../../core/terminal_appearance';
 import { useTerminalAppearance } from './useTerminalAppearance';
 import { useEffect, useRef, useState } from 'react';
@@ -84,7 +85,7 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
     <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-secondary)]">
       <span className="flex-[1_1_160px] min-w-0 truncate font-mono text-xs" title={local ? hostInfo?.cwd : `${context} / ${session.namespace} / ${session.resourceName}`}>{session.analysis ? `AI agent: ${session.analysis.agent}` : nodeDebug ? `Node: ${nodeDebug.node}` : local ? 'Local host' : session.resourceName}<span className="text-[var(--text-muted)] ml-2">{local ? hostInfo?.cwd : session.namespace}</span></span>
       {!local && !nodeDebug && <div className="min-w-0 max-w-full"><ContainerSelect shell containers={containers} value={container} onChange={onContainerChange ?? ((name) => useDockStore.getState().updateSessionContainer(session.id, name))} /></div>}
-      {!session.analysis && <select aria-label="Shell binary" className="ide-select max-w-full" value={selectedShell} onChange={(e) => nodeDebug ? setNodeShell(e.target.value) : setShell(e.target.value)}>{(local ? hostInfo?.shells ?? [] : ['/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh']).map((value) => <option key={value}>{value}</option>)}</select>}
+      {!session.analysis && <Select aria-label="Shell binary" className="ide-select max-w-full" value={selectedShell} onChange={(e) => nodeDebug ? setNodeShell(e.target.value) : setShell(e.target.value)}>{(local ? hostInfo?.shells ?? [] : ['/bin/sh', '/bin/bash', '/bin/ash', '/bin/zsh']).map((value) => <option key={value}>{value}</option>)}</Select>}
       <span role="status" className="text-xs text-[var(--text-secondary)]">{phase}</span>
       <div className="flex gap-1 ml-auto"><IconButton icon={RotateCw} size="sm" aria-label="Reconnect shell" tooltip="Reconnect shell" onClick={() => setAttempt((n) => n + 1)} /><IconButton icon={Unplug} size="sm" aria-label="Disconnect shell" tooltip="Disconnect shell" onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} /><IconButton icon={Eraser} size="sm" aria-label="Clear terminal" tooltip="Clear terminal" onClick={() => terminal.current?.clear()} /></div>
     </div>

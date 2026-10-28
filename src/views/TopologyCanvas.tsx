@@ -23,7 +23,7 @@ const ResourceGraphNode = memo(function ResourceGraphNode({ data }: NodeProps<Re
   const compact = useContext(CompactNodes);
   return <div className="topology-node">
     <Handle type="target" position={data.direction === 'RIGHT' ? Position.Left : Position.Top} isConnectable={false} />
-    <div className="flex items-center gap-1.5 text-[var(--text-secondary)] text-[length:calc(10px*var(--ui-factor))]"><ResourceKindBadge kind={data.item.kind} apiVersion={data.item.apiVersion} />{!compact && <><ResourceWarnings item={data.item} /><span className="ml-auto truncate">{data.item.namespace || 'cluster'}</span></>}</div>
+    <div className="flex items-center gap-1.5 text-[var(--text-secondary)] text-[length:calc(10px*var(--ui-factor))]"><ResourceKindBadge kind={data.item.kind} apiVersion={data.item.apiVersion} />{!compact && <><ResourceWarnings item={data.item} /><span className="ml-auto truncate" title={!data.item.namespace ? 'Shared cluster resource. Other resources may also reference it. Open its topology to explore its connections.' : undefined}>{data.item.namespace || 'Shared · cluster'}</span></>}</div>
     <div className="font-mono text-xs truncate mt-1" title={data.item.name}>{data.item.name}</div>
     {!compact && data.item.status && <div className="topology-node-details mt-1"><StatusBadge status={data.item.status} size="sm" /></div>}
     <Handle type="source" position={data.direction === 'RIGHT' ? Position.Right : Position.Bottom} isConnectable={false} />
@@ -88,6 +88,13 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
 
   const latestGraph = useRef(graph);
   latestGraph.current = graph;
+  const workerRef = useRef<{ worker: Worker; elk: InstanceType<typeof ELK> } | null>(null);
+  const layoutRunRef = useRef(0);
+  const terminateWorker = useCallback(() => {
+    workerRef.current?.worker.terminate();
+    workerRef.current = null;
+  }, []);
+  useEffect(() => () => terminateWorker(), [terminateWorker]);
   const structureKey = useMemo(() => topologyStructureKey(graph, grouping), [graph, grouping]);
   useEffect(() => {
     setNodes((nodes) => nodes.map((node) => {
@@ -98,26 +105,32 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
 
   useEffect(() => {
     const graph = latestGraph.current;
+    const runId = ++layoutRunRef.current;
     setError('');
     setNodes([]);
     setEdges([]);
     if (!graph.items.size) { setBusy(false); return; }
     let cancelled = false;
-    let worker: Worker | undefined;
-    let elk: InstanceType<typeof ELK>;
-    try {
-      worker = new Worker(new URL('./layout_worker.ts', import.meta.url), { type: 'module' });
-      elk = new ELK({ workerFactory: () => worker!, algorithms: ['layered'] });
-    } catch (error) { worker?.terminate(); setError(String(error)); setBusy(false); return; }
+    let settled = false;
+    if (!workerRef.current) {
+      try {
+        const worker = new Worker(new URL('./layout_worker.ts', import.meta.url), { type: 'module' });
+        const elk = new ELK({ workerFactory: () => worker, algorithms: ['layered'] });
+        workerRef.current = { worker, elk };
+      } catch (error) { terminateWorker(); setError(String(error)); setBusy(false); return; }
+    }
+    const { worker, elk } = workerRef.current;
     setBusy(true);
     const timeout = setTimeout(() => {
-      cancelled = true; worker?.terminate(); setBusy(false);
+      if (cancelled || runId !== layoutRunRef.current) return;
+      cancelled = true; terminateWorker(); setBusy(false);
       setError('Automatic layout failed: layout took longer than 10 seconds and was cancelled. Reduce the scope or relationship depth.');
     }, 10000);
     const layout = topologyLayout(graph, direction, grouping);
     void elk.layout(layout.root).then((result) => {
-      clearTimeout(timeout); worker?.terminate();
-      if (cancelled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (cancelled || runId !== layoutRunRef.current) return;
       const positioned: GraphNode[] = [];
       for (const node of result.children ?? []) {
         const position = { x: node.x ?? 0, y: node.y ?? 0 };
@@ -144,9 +157,10 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       setBusy(false);
       requestAnimationFrame(() => { void flow.current?.fitView({ padding: 0.2, duration: 0 }); });
     }).catch((error) => {
+      settled = true;
       clearTimeout(timeout);
-      worker?.terminate();
-      if (!cancelled) {
+      if (!cancelled && runId === layoutRunRef.current) {
+        terminateWorker();
         const msg = String(error?.message || error || 'Automatic layout failed');
         const formatted = msg.includes('call stack') || msg.includes('stack')
           ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
@@ -156,9 +170,10 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       }
     });
     worker.onerror = (event) => {
+      settled = true;
       clearTimeout(timeout);
-      worker?.terminate();
-      if (!cancelled) {
+      if (!cancelled && runId === layoutRunRef.current) {
+        terminateWorker();
         const msg = String(event.message || 'Automatic layout failed');
         const formatted = msg.includes('call stack') || msg.includes('stack')
           ? 'Automatic layout failed: graph exceeds layout engine capacity. Reduce the scope or relationship depth.'
@@ -167,8 +182,13 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
         setBusy(false);
       }
     };
-    return () => { cancelled = true; clearTimeout(timeout); worker?.terminate(); };
-  }, [structureKey, direction, revision, setNodes, setEdges]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      // An obsolete heavy layout must not block the next graph in the worker queue.
+      if (!settled && workerRef.current?.worker === worker) terminateWorker();
+    };
+  }, [structureKey, direction, revision, setNodes, setEdges, terminateWorker]);
 
   useEffect(() => { setEdges(edges => edges.map(edge => ({ ...edge, data: { ...edge.data!, bend: undefined } }))); }, [routeRevision, setEdges]);
 

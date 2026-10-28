@@ -31,3 +31,14 @@ it('bumps nanosecond timestamps so polls resume strictly past a cleared watermar
   expect(bumpLogTimestamp('2026-10-20T08:00:00.999999999Z')).toBe('2026-10-20T08:00:00.999999999Z');
   expect(bumpLogTimestamp('plain text')).toBe('plain text');
 });
+it('pushes direct string text without needing byte arrays and preserves chunking', () => {
+  const buffer = new LogBuffer();
+  buffer.pushText('2026-10-20T08:00:00Z line 1\nline 2');
+  expect(buffer.lines.map((line) => line.msg)).toEqual(['line 1']);
+  buffer.pushText(' continued\n2026-10-20T08:00:02Z error occurred');
+  expect(buffer.lines.map((line) => line.msg)).toEqual(['line 1', 'line 2 continued']);
+  buffer.pushText('', true);
+  expect(buffer.lines.map((line) => line.msg)).toEqual(['line 1', 'line 2 continued', 'error occurred']);
+  expect(buffer.lines[2].level).toBe('error');
+});
+

@@ -1,7 +1,9 @@
 import { environmentReadTransport, type KubernetesReadTransport } from './read_transport';
+import { queuedRead } from './read_queue';
 import { applyBatch as applyBatchRequest, changeResource, deleteObject, type BatchResult, type BatchStep } from './mutations';
 import { resourceRef } from '../core/resources/identity';
-import { namespaceNames, inNamespaceScope } from '../core/resources/namespace_scope';
+import { namespaceNames, inNamespaceScope, namespaceScopeCovers } from '../core/resources/namespace_scope';
+import { useResourceStore } from '../state/resource_store';
 import { parseApiResources } from './api_discovery';
 import { RESOURCE_TYPES } from '../core/resources/resource_types';
 import { pollResourceSnapshots } from './snapshot_watch';
@@ -9,6 +11,7 @@ import { watchNamespaceSelection } from './multi_namespace_watch';
 import type { KubeContextInfo, ResourceItem, ResourceKind } from '../types/k8s';
 import { mapK8sResourceList } from '../core/utils/k8s_mapper';
 import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
+import { buildMockMetrics } from './mock/mock_metrics';
 import { parseApiVersion, resourceQuery, resourceType } from '../core/resources/resource_types';
 import type { KubernetesProvider } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
@@ -16,20 +19,25 @@ import type { ResourceQuery, ResourceRef } from '../core/resources/resource_type
 import type { WatchBatch } from './watch_types';
 import { parseCustomResources, type CustomResourceInstance } from './custom_resources';
 import { resourceBucket } from '../core/resources/custom_resource_types';
-import { parseHelmPage, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmOffset, validateHelmDocument, type HelmDocument } from './helm_types';
+import { parseHelmReleases, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmDocument, type HelmDocument } from './helm_types';
 
 export const DEMO_CONTEXT = 'kubiki-demo';
 
 export class K8sProvider implements KubernetesProvider {
+  readonly managesInitialSyncTimeout = true;
   constructor(private readonly transport: KubernetesReadTransport = environmentReadTransport, private developerMode = false) {}
   private readonly forcedDemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
   private activeContext: string | null = null;
+  private contextReads = new AbortController();
   private demoListed = false;
   private realContexts: KubeContextInfo[] | null = null;
   get demo(): boolean { return this.forcedDemo || this.demoListed && this.activeContext === DEMO_CONTEXT; }
   // Only the explicit browser demo simulates the workstation's own shell.
   get simulateHostSessions(): boolean { return this.forcedDemo; }
-  activateContext(context: string) { this.activeContext = context; }
+  activateContext(context: string) {
+    if (context !== this.activeContext) { this.contextReads.abort(); this.contextReads = new AbortController(); }
+    this.activeContext = context;
+  }
   setDeveloperMode(enabled: boolean): KubeContextInfo[] | null {
     this.developerMode = enabled;
     return this.realContexts ? this.contextList(this.realContexts) : null;
@@ -64,10 +72,15 @@ export class K8sProvider implements KubernetesProvider {
     const info: RequestInfo = { operation: path, context: args.context as string | undefined,
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
+    const controller = new AbortController();
+    const sources = [signal, args.context && args.context === this.activeContext ? this.contextReads.signal : undefined].filter((source): source is AbortSignal => !!source);
+    const abort = () => controller.abort();
+    for (const source of sources) { source.addEventListener('abort', abort, { once: true }); if (source.aborted) abort(); }
     try {
       if (path !== 'contexts' && path !== 'kubeconfig_path' && path !== 'set_kubeconfig_path' && path !== 'helm/repositories' && path !== 'helm/charts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
-      return await this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, signal);
+      return await queuedRead(() => this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, controller.signal), controller.signal);
     } catch (error) { throw normalizeK8sError(error, info); }
+    finally { for (const source of sources) source.removeEventListener('abort', abort); }
   }
 
   async getContexts(): Promise<KubeContextInfo[]> {
@@ -129,6 +142,97 @@ export class K8sProvider implements KubernetesProvider {
     return mapK8sResourceList(raw, kind);
   }
 
+  async getResourceCounts(context: string, kinds: ResourceKind[], namespace?: string, signal?: AbortSignal): Promise<Partial<Record<ResourceKind, number>>> {
+    if (this.demo) {
+      this.mock ??= buildMockResources();
+      const counts: Partial<Record<ResourceKind, number>> = {};
+      for (const kind of kinds) {
+        const items = this.mock[kind];
+        if (!items) continue;
+        counts[kind] = items.filter((item) => inNamespaceScope(namespace ?? 'all', item.namespace)).length;
+      }
+      return counts;
+    }
+    const builtinKinds = kinds.filter(kind => !kind.startsWith('custom:'));
+    if (!builtinKinds.length) return {};
+    const requestedScope = namespace ?? 'all';
+    const store = useResourceStore.getState();
+    const cachedCounts: Partial<Record<ResourceKind, number>> = {};
+    const uncachedKinds: ResourceKind[] = [];
+
+    for (const kind of builtinKinds) {
+      const resourceMap = store.resources[kind];
+      const watchState = store.watchStates[kind];
+      const isNamespaced = resourceType(kind).namespaced;
+      const loadedScope = watchState?.query.namespace ?? 'all';
+      const covers = !isNamespaced || namespaceScopeCovers(loadedScope, requestedScope);
+      const isCurrentContext = !watchState || watchState.query.context === context;
+
+      if (resourceMap && watchState?.hasSnapshot && isCurrentContext && covers) {
+        let count = 0;
+        for (const item of resourceMap.values()) {
+          if (inNamespaceScope(requestedScope, item.namespace)) {
+            count++;
+          }
+        }
+        cachedCounts[kind] = count;
+      } else {
+        uncachedKinds.push(kind);
+      }
+    }
+
+    if (!uncachedKinds.length) {
+      return cachedCounts;
+    }
+
+    const names = namespaceNames(namespace ?? 'all');
+    if (names && names.length !== 1 && !this.isTauriEnv()) {
+      const namespaced = uncachedKinds.filter(kind => resourceType(kind).namespaced);
+      const clusterKinds = uncachedKinds.filter(kind => !resourceType(kind).namespaced);
+      const [cluster, ...slices] = await Promise.all([
+        this.getResourceCounts(context, clusterKinds, undefined, signal),
+        ...names.map(name => this.getResourceCounts(context, namespaced, name, signal)),
+      ]);
+      const totals: Partial<Record<ResourceKind, number>> = { ...cachedCounts, ...cluster };
+      for (const kind of namespaced) {
+        const counts = slices.map(slice => slice[kind]);
+        if (counts.every((count): count is number => typeof count === 'number')) totals[kind] = counts.reduce((sum, count) => sum + count, 0);
+      }
+      return totals;
+    }
+    const queries: ResourceQuery[] = [];
+    for (const kind of uncachedKinds) {
+      const type = resourceType(kind);
+      if (names && names.length !== 1 && type.namespaced) {
+        for (const name of names) {
+          queries.push(resourceQuery(context, kind, name));
+        }
+      } else {
+        queries.push(resourceQuery(context, kind, names ? names[0] : namespace));
+      }
+    }
+    const singleNamespace = names ? names[0] : namespace && namespace !== 'all' ? namespace : undefined;
+    try {
+      const raw = await this.request<Record<string, unknown>>(
+        'get_resource_counts',
+        'resource-counts',
+        { context, ...(singleNamespace ? { namespace: singleNamespace } : {}), kinds: uncachedKinds.join(',') },
+        undefined,
+        { context, queries },
+        signal,
+      );
+      const counts: Partial<Record<ResourceKind, number>> = { ...cachedCounts };
+      for (const [kind, count] of Object.entries(raw ?? {})) {
+        if (typeof count === 'number' && Number.isFinite(count) && count >= 0) {
+          counts[kind as ResourceKind] = count;
+        }
+      }
+      return counts;
+    } catch {
+      return cachedCounts;
+    }
+  }
+
   async getLogs(context: string, name: string, namespace: string, container?: string): Promise<string> {
     if (this.demo) return '';
     return this.request('get_pod_logs', 'logs', { ...resourceQuery(context, 'Pod', namespace), name, container });
@@ -175,10 +279,7 @@ export class K8sProvider implements KubernetesProvider {
     }
     if (this.demo) {
       this.mock ??= buildMockResources();
-      const timestamp = new Date().toISOString();
-      const pods = (this.mock.Pod ?? []).filter(pod => (!namespace || pod.namespace === namespace) && !['Completed', 'Succeeded', 'Failed'].includes(pod.status ?? '')).map((pod, index) => ({ name: pod.name, namespace: pod.namespace!, timestamp, window: '15s', containers: (pod.containers?.length ? pod.containers : [{ name: 'app' }]).map((container, i) => ({ name: container.name, cpu: `${70 + ((index * 47 + i * 19 + Math.floor(Date.now() / 15000) % 17) % 700)}m`, memory: `${40 + (index * 37 + i * 17) % 600}Mi` })) }));
-      const nodes = namespace ? null : (this.mock.Node ?? []).map((node, i) => ({ name: node.name, timestamp, window: '15s', cpu: `${1200 + i * 730}m`, memory: `${1600 + i * 800}Mi` }));
-      return { context, namespace, pods: { items: pods, error: null }, nodes: { items: nodes, error: null } };
+      return buildMockMetrics(this.mock, context, namespace);
     }
     return validateMetrics(await this.request('get_overview_metrics', 'metrics', { context, namespace }, undefined, undefined, signal), context, namespace);
   }
@@ -188,18 +289,15 @@ export class K8sProvider implements KubernetesProvider {
     return changeResource({ operation: 'secret', request });
   }
 
-  async getHelmReleases(context: string, namespace: string | null, offset = 0, signal?: AbortSignal): Promise<import('./helm_types').HelmReleasePage> {
-    const names = namespaceNames(namespace ?? 'all');
-    if (names && names.length !== 1) {
-      const pages = await Promise.all(names.map(namespace => this.getHelmReleases(context, namespace, offset, signal)));
-      return { context, namespace, offset, limit: 100, has_more: pages.some(page => page.has_more), items: pages.flatMap(page => page.items) };
-    }
-    validateHelmTarget(context, namespace); validateHelmOffset(offset);
+  async getHelmInventory(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./helm_types').HelmRelease[]> {
+    validateHelmTarget(context, namespace);
     if (this.demo) {
-      const { demoHelmPage } = await import('./mock/mock_helm');
-      return demoHelmPage(context, namespace, offset);
+      const { demoHelmInventory } = await import('./mock/mock_helm');
+      return demoHelmInventory(namespace);
     }
-    return parseHelmPage(await this.request('list_helm_releases', 'helm/releases', { context, namespace, offset }, undefined, undefined, signal), context, namespace, offset);
+    const items = parseHelmReleases(await this.request('get_helm_inventory', 'helm/inventory', { context, namespace }, undefined, undefined, signal));
+    if (namespace && items.some(item => item.namespace !== namespace)) throw requestError('internal', 'Helm returned releases outside the requested namespace', { operation: 'helm', context }, 500);
+    return items;
   }
 
   async getHelmHistory(context: string, namespace: string, name: string, signal?: AbortSignal) {

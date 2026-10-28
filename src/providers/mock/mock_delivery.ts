@@ -59,7 +59,7 @@ export function buildMockDelivery() {
     if (!condition && !operation) continue;
     const warning = condition?.status === 'False' || ['Failed', 'Error'].includes(operation?.phase);
     const time = condition?.lastTransitionTime ?? operation?.finishedAt ?? operation?.startedAt ?? at(3);
-    events.push(mapK8sResource({ apiVersion: 'v1', kind: 'Event', metadata: { name: `${item.name}-reconcile`, namespace: item.namespace, uid: `demo-event-${item.uid}`, creationTimestamp: time }, involvedObject: { apiVersion: item.apiVersion, kind: item.kind, name: item.name, namespace: item.namespace, uid: item.uid }, type: warning ? 'Warning' : 'Normal', reason: condition?.reason ?? operation?.phase, message: condition?.message ?? operation?.message, lastTimestamp: time, count: warning ? 3 : 1 }, 'Event'));
+    events.push(mapK8sResource({ apiVersion: 'v1', kind: 'Event', metadata: { name: `${item.name}-${item.kind.toLowerCase()}-reconcile`, namespace: item.namespace, uid: `demo-event-${item.uid}`, creationTimestamp: time }, involvedObject: { apiVersion: item.apiVersion, kind: item.kind, name: item.name, namespace: item.namespace, uid: item.uid }, type: warning ? 'Warning' : 'Normal', reason: condition?.reason ?? operation?.phase, message: condition?.message ?? operation?.message, lastTimestamp: time, count: warning ? 3 : 1 }, 'Event'));
   }
   return { definitions, custom, events };
 }

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { selectedFirst } from '../../core/utils/selected_first';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Filter, X } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
+import { columnFilterCount, type ColumnFilter } from '../../core/resources/column_filters';
 import { uiPixels } from '../../core/appearance';
 
 export interface ColumnFilterProps {
@@ -10,8 +12,8 @@ export interface ColumnFilterProps {
   columnLabel: string;
   /** Distinct values of the column with their occurrence counts. */
   values: Map<string, number>;
-  /** Currently selected values — an empty selection means "no filter". */
-  selected: string[];
+  /** Included and excluded values; empty lists mean no filter. */
+  selected: ColumnFilter;
   /** One-click values offered above the list, e.g. the common statuses. */
   quick?: string[];
   onToggle: (value: string) => void;
@@ -34,14 +36,23 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
   const [position, setPosition] = useState({ top: rect.y, left: rect.x });
   const panelRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const selectedSet = useMemo(() => new Set(selected.include), [selected.include]);
+
+  const excludedSet = useMemo(() => new Set(selected.exclude), [selected.exclude]);
+  const activeCount = columnFilterCount(selected);
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (focused instanceof HTMLInputElement && focused.type === 'checkbox' && panelRef.current?.contains(focused)) focused.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
 
   const entries = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return [...values.entries()]
+    const available = new Map(values);
+    for (const value of [...selected.include, ...selected.exclude]) if (!available.has(value)) available.set(value, 0);
+    return selectedFirst([...available.entries()]
       .filter(([value]) => !q || value.toLowerCase().includes(q))
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [values, query]);
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])), ([value]) => selected.include.includes(value) || selected.exclude.includes(value));
+  }, [values, query, selected]);
 
   useEffect(() => {
     const panel = panelRef.current;
@@ -81,7 +92,7 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
         <span className="flex-1 min-w-0 truncate text-[length:calc(11px*var(--ui-factor))] font-semibold text-[var(--text-primary)]" title={columnLabel}>
           {columnLabel}
         </span>
-        {selected.length > 0 && (
+        {activeCount > 0 && (
           <button
             type="button"
             onClick={onClear}
@@ -114,22 +125,24 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
 
       {quick && quick.length > 0 && (
         <div className="flex flex-wrap gap-1 px-2 pb-1.5 shrink-0">
-          {quick.map((value) => {
+          {selectedFirst([...new Set([...quick, ...selected.include, ...selected.exclude])], value => selectedSet.has(value) || excludedSet.has(value)).slice(0, 6).map((value) => {
             const active = selectedSet.has(value);
+            const excluded = excludedSet.has(value);
             return (
               <button
                 key={value}
                 type="button"
-                aria-pressed={active}
+                aria-pressed={active || excluded}
+                title={`${value}: ${excluded ? 'excluded' : active ? 'included' : 'any'}. Click to ${excluded ? 'reset' : active ? 'exclude' : 'include'}.`}
                 onClick={() => onToggle(value)}
                 className={cx(
                   'rounded-[calc(4px*var(--ui-factor))] px-1.5 h-[calc(20px*var(--ui-factor))] text-[length:calc(10.5px*var(--ui-factor))] border transition-colors',
-                  active
+                  excluded ? 'border-[var(--status-danger)] text-[var(--status-danger)]' : active
                     ? 'border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent-text)]'
                     : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]',
                 )}
               >
-                {value}
+                {excluded ? `− ${value}` : value}
               </button>
             );
           })}
@@ -144,6 +157,7 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
         ) : (
           entries.map(([value, count]) => {
             const checked = selectedSet.has(value);
+            const excluded = excludedSet.has(value);
             return (
               <label
                 key={value}
@@ -155,11 +169,15 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
                 <input
                   type="checkbox"
                   checked={checked}
+                  ref={element => { if (element) element.indeterminate = excluded; }}
+                  aria-checked={excluded ? 'mixed' : checked}
+                  aria-describedby="column-filter-cycle-hint"
                   onChange={() => onToggle(value)}
                   aria-label={value}
                   className="shrink-0 w-[calc(13px*var(--ui-factor))] h-[calc(13px*var(--ui-factor))] accent-[var(--accent)] cursor-pointer"
                 />
                 <span className="flex-1 min-w-0 truncate" title={value}>{value}</span>
+                <span className="shrink-0 text-[var(--status-danger)]">{excluded ? 'Excluded' : ''}</span>
                 <span className="shrink-0 font-mono text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] tabular-nums">{count}</span>
               </label>
             );
@@ -168,7 +186,8 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
       </div>
 
       <div className="px-2 py-1.5 border-t border-[var(--border-subtle)] text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] shrink-0">
-        {selected.length > 0 ? `${selected.length} selected · ${entries.length} values` : `${entries.length} values · click to filter`}
+        {activeCount > 0 ? `${selected.include.length} included · ${selected.exclude.length} excluded` : `${entries.length} values · click to filter`}
+        <div id="column-filter-cycle-hint">Click: include → exclude → reset</div>
       </div>
     </div>,
     document.body,

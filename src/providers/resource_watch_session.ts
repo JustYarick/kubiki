@@ -4,7 +4,6 @@ import { apiVersionFor, resourceQuery, resourceType, SCOPE_INDEPENDENT_KINDS, na
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { normalizeK8sError, requestError, type K8sRequestError } from './errors';
 import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchPhase } from './watch_types';
-import { InitialSyncQueue } from './initial_sync_queue';
 
 export const WATCH_FLUSH_MS = 50;
 export const FIRST_SYNC_TIMEOUT_MS = 30000;
@@ -24,19 +23,20 @@ export class ResourceWatchSession {
   private subscriptions = new Map<ResourceKind, Subscription>();
   /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
   private scopedFallback = new Set<ResourceKind>();
-  private initialSync = new InitialSyncQueue();
+  private kindScopes: ReadonlyMap<ResourceKind, string> = new Map();
   constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery) => ResourceItem[] | undefined) {}
 
   async start(kinds: ResourceKind[]): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled(kinds.map((kind) => this.refresh(kind))); }
 
   private scope(kind: ResourceKind): string {
-    return this.clusterKinds.has(kind) && !this.scopedFallback.has(kind) ? 'all' : this.namespace;
+    return this.clusterKinds.has(kind) && !this.scopedFallback.has(kind) ? 'all' : this.kindScopes.get(kind) ?? this.namespace;
   }
 
   /** Stop unused streams and keep exactly one subscription for each demanded kind. */
-  async setKinds(kinds: readonly ResourceKind[], clusterKinds: ReadonlySet<ResourceKind> = this.clusterKinds): Promise<PromiseSettledResult<void>[]> {
+  async setKinds(kinds: readonly ResourceKind[], clusterKinds: ReadonlySet<ResourceKind> = this.clusterKinds, scopes: ReadonlyMap<ResourceKind, string> = this.kindScopes): Promise<PromiseSettledResult<void>[]> {
     if (!this.active) return [];
     this.clusterKinds = clusterKinds;
+    this.kindScopes = scopes;
     const wanted = new Set(kinds);
     for (const [kind, subscription] of this.subscriptions) if (!wanted.has(kind)) {
       this.closeSubscription(subscription);
@@ -69,9 +69,9 @@ export class ResourceWatchSession {
       settle: (error) => { if (settled) return; settled = true; clearTimeout(subscription.firstTimer); if (error) reject(error); else resolve(); } };
     this.subscriptions.set(kind, subscription);
     this.commit(kind, { ...(!sameScope ? { snapshot: cached ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
-    void this.initialSync.run(async () => {
+    void (async () => {
       if (!this.current(kind, subscription)) return;
-      subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
+      if (!this.provider.managesInitialSyncTimeout) subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
       void Promise.resolve().then(() => {
         if (!this.current(kind, subscription)) return;
         return this.provider.watchResources(query, (batch) => this.receive(kind, subscription, batch), subscription.abort.signal);
@@ -79,8 +79,7 @@ export class ResourceWatchSession {
         subscription.close = close;
         if (!this.current(kind, subscription)) close?.();
       }).catch((error) => { if (this.current(kind, subscription)) this.fail(kind, subscription, normalizeK8sError(error, { operation: 'watch', context: this.context, resource: query })); });
-      await ready.catch(() => {});
-    }, subscription.abort.signal);
+    })();
     try {
       await ready;
     } catch (error) {
@@ -181,7 +180,7 @@ export class ResourceWatchSession {
     this.namespace = namespace;
     // Scope-independent kinds keep their cluster-wide watch — unless RBAC denied it,
     // in which case they follow the selected namespace like every other namespaced kind.
-    const scoped = [...this.subscriptions.keys()].filter((kind) => resourceType(kind).namespaced && (this.scopedFallback.has(kind) || !this.clusterKinds.has(kind)));
+    const scoped = [...this.subscriptions].filter(([kind, subscription]) => !sameQuery(subscription.query, resourceQuery(this.context, kind, this.scope(kind)))).map(([kind]) => kind);
     return Promise.allSettled(scoped.map((kind) => this.refresh(kind)));
   }
 

@@ -11,10 +11,10 @@ There is no cloud synchronization. Clearing application/web storage removes them
 | Namespace scope | Yes, independently for each context, unless remembering namespaces is disabled. |
 | Custom kubeconfig location | Session-only: the backend keeps the override in memory. After restart it uses the default kubeconfig location or `KUBECONFIG`. |
 | Workspace | Tab identities/order and active tab. Resource snapshots and running terminal processes are not restored from disk. Split layout is session-only. |
-| Interface | Scale, fonts, density, sidebar/inspector widths, sidebar expansion and table column visibility/order/widths. Inspector opens on demand; the bottom dock closes on connection. |
+| Interface | Scale, fonts, density, sidebar/inspector widths, sidebar expansion and table column visibility/order/widths. Inspector opens on demand; the bottom dock closes on connection. Reset layout via **Settings → Appearance → Reset table columns & filters**. |
 | Topology | Rendering preferences and hidden resource kinds. Diagram scope/direction, zoom, dragged positions and arrow bends are session-only. |
 | Logs, terminal, YAML editor | Their default preferences. Log contents, terminal output/processes and unsaved YAML text stay in memory and are lost when the app exits. |
-| Table search and selection | Session-only; search belongs to its open tab. |
+| Table search, filters and sorts | Persisted per resource kind (search query, regex toggle, column sorting, and column filters). Row selection is session-only. Reset controls via **Settings → Appearance → Reset table columns & filters**. |
 | Port forwards | Default port range/browser preference persists; active tunnels close on exit or cluster change. |
 | AI and updates | Selected analysis agent, starting prompt and update preferences persist locally. |
 

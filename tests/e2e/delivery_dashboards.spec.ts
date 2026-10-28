@@ -23,7 +23,7 @@ async function fixture(page: Page) {
       if (url.searchParams.get('namespace')) items = items.filter(item => item.metadata.namespace === url.searchParams.get('namespace'));
       return route.fulfill({ json: { items } });
     }
-    if (op === 'releases') return route.fulfill({ json: { context: 'prod', namespace: null, offset: 0, limit: 100, has_more: false, items: ['deployed', 'failed', 'pending-upgrade'].map((status, i) => ({ name: `release-${i}`, namespace: 'backend', revision: '2', chart: 'web-1.0', updated: '', app_version: '1', status })) } });
+    if (op === 'inventory') return route.fulfill({ json: ['deployed', 'failed', 'pending-upgrade'].map((status, i) => ({ name: `release-${i}`, namespace: 'backend', revision: '2', chart: 'web-1.0', updated: '', app_version: '1', status })) });
     return route.fulfill({ json: { items: [] } });
   });
   await page.goto('/');

@@ -50,6 +50,7 @@ export function parseReleaseManifest(manifest: string, namespace: string): Resou
   return output;
 }
 export function releaseHealth(expected: ResourceItem[], loaded: Iterable<ResourceItem>) {
+  if (!expected.length) return [];
   const byKey = new Map([...loaded].map(item => [resourceKey(item), item]));
   return expected.map(reference => {
     const item = byKey.get(resourceKey(reference));

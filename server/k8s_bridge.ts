@@ -3,10 +3,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
 import { RESOURCE_TYPES, isValidNamespaceName, type ResourceQuery } from '../src/core/resources/resource_types.ts';
 import { kubectlError, normalizeK8sError, requestError, type RequestInfo } from '../src/providers/errors.ts';
+import { queuedRead } from '../src/providers/read_queue.ts';
 
-export type KubectlExecutor = (args: string[], input?: string) => Promise<string>;
-const execute: KubectlExecutor = (args, input) => new Promise((resolve, reject) => {
-  const child = execFile('kubectl', [...args, '--request-timeout=10s'], { timeout: 15000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+export type KubectlExecutor = (args: string[], input?: string, signal?: AbortSignal) => Promise<string>;
+const execute: KubectlExecutor = (args, input, signal) => new Promise((resolve, reject) => {
+  const child = execFile('kubectl', [...args, '--request-timeout=10s'], { signal, timeout: 15000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
     if (error) { Object.assign(error, { stderr }); reject(error); } else resolve(stdout);
   });
   child.stdin?.on('error', () => {});
@@ -17,6 +18,11 @@ const execute: KubectlExecutor = (args, input) => new Promise((resolve, reject) 
 export function createK8sMiddleware(run: KubectlExecutor = execute) {
   return async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url?.startsWith('/api/k8s/')) return next();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const disconnected = () => { if (!res.writableEnded) abort(); };
+    req.once('aborted', abort);
+    res.once('close', disconnected);
     const url = new URL(req.url, 'http://localhost');
     const context = url.searchParams.get('context') ?? undefined;
     const operation = url.pathname.slice('/api/k8s/'.length);
@@ -25,11 +31,15 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
     const send = (data: unknown) => res.end(JSON.stringify(data));
     // Literal argv only; never interpolate resource names or context into a shell.
     const kubectl = async (args: string[]) => {
-      try { return await run(args); } catch (error) { throw kubectlError(error, info); }
+      try { return await queuedRead(() => run(args, undefined, controller.signal), controller.signal); }
+      catch (error) {
+        if (controller.signal.aborted) throw requestError('cancelled', 'Read was cancelled', info);
+        throw kubectlError(error, info);
+      }
     };
     const invalid = (message: string) => requestError('invalid_request', message, info, 400);
     try {
-      const methods: Record<string, string> = { 'api-resources': 'GET', contexts: 'GET', kubeconfig_path: 'GET', set_kubeconfig_path: 'POST', ping: 'GET', namespaces: 'GET', resources: 'GET', 'custom-resources': 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET', apply: 'POST', delete: 'POST', mutate: 'POST' };
+      const methods: Record<string, string> = { 'api-resources': 'GET', contexts: 'GET', kubeconfig_path: 'GET', set_kubeconfig_path: 'POST', ping: 'GET', namespaces: 'GET', resources: 'GET', 'resource-counts': 'GET', 'custom-resources': 'GET', logs: 'GET', scale: 'POST', secrets: 'POST', metrics: 'GET', apply: 'POST', delete: 'POST', mutate: 'POST' };
       if (!methods[operation]) throw requestError('not_found', 'Endpoint not found', info, 404);
       if (req.method !== methods[operation]) throw requestError('invalid_request', 'Method not allowed', info, 405);
       if (operation === 'scale' || operation === 'secrets' || operation === 'apply' || operation === 'delete' || operation === 'mutate') throw requestError('forbidden', 'Kubernetes changes require the desktop application and backend system confirmation. HTTP bridge is read-only', info, 403);
@@ -79,6 +89,35 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
         const data = JSON.parse(await kubectl([...contextArgs, 'get', plural, ...namespaceArgs, '-o', 'json']));
         return send(data);
       }
+      if (operation === 'resource-counts') {
+        const namespace = url.searchParams.get('namespace');
+        if (namespace !== null && (!isValidNamespaceName(namespace) || namespace === 'all')) throw invalid('Invalid namespace');
+        const requested = new Set((url.searchParams.get('kinds') ?? '').split(',').filter(Boolean));
+        const types = RESOURCE_TYPES.filter(type => requested.size === 0 || requested.has(type.kind));
+        const counts: Record<string, number> = {};
+        for (let i = 0; i < types.length; i += 8) {
+          if (controller.signal.aborted) break;
+          await Promise.all(types.slice(i, i + 8).map(async (type) => {
+            const nsPrefix = type.namespaced && namespace ? `namespaces/${namespace}/` : '';
+            const rawPath = type.group
+              ? `/apis/${type.group}/${type.version}/${nsPrefix}${type.plural}?limit=1`
+              : `/api/${type.version}/${nsPrefix}${type.plural}?limit=1`;
+            try {
+              const data = JSON.parse(await kubectl([...contextArgs, 'get', '--raw', rawPath]));
+              const items = Array.isArray(data?.items) ? data.items.length : 0;
+              const remainingValue = data?.metadata?.remainingItemCount;
+              if (data?.metadata?.continue && (typeof remainingValue !== 'number' || !Number.isFinite(remainingValue) || remainingValue < 0)) {
+                return;
+              }
+              const remaining = Math.max(0, Number(remainingValue ?? 0) || 0);
+              counts[type.kind] = items + remaining;
+            } catch {
+              // Ignore individual forbidden or unavailable resource kinds
+            }
+          }));
+        }
+        return send(counts);
+      }
       if (operation === 'custom-resources') {
         const name = url.searchParams.get('name') ?? '';
         const uid = url.searchParams.get('uid');
@@ -100,9 +139,13 @@ export function createK8sMiddleware(run: KubectlExecutor = execute) {
         return send(await kubectl([...contextArgs, 'logs', `pod/${name}`, '-n', namespace, ...(container ? ['-c', container] : []), '--tail=500', '--timestamps=true']));
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       const failure = normalizeK8sError(error, info);
       res.statusCode = failure.status ?? 500;
       return send({ error: { code: failure.code, message: failure.message, status: failure.status, retryable: failure.retryable, ...info } });
+    } finally {
+      req.off('aborted', abort);
+      res.off('close', disconnected);
     }
   };
 }

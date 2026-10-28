@@ -1,4 +1,7 @@
+import { logTimestampFormatter, systemTimeZone } from '../../core/utils/log_timestamp';
+import { Select } from '../ui/Select';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ContainerChoices } from './ContainerLaunchDialog';
 import { LogsToolbar } from './LogsToolbar';
 import { useSessionContainers } from './useSessionContainers';
@@ -8,7 +11,7 @@ import { fetchLogSlice, type LogSliceParams } from '../../providers/tauri_logs';
 import { resourceRef } from '../../core/resources/identity';
 import { k8s } from '../../providers/k8s_provider';
 import { useDockStore, type DockSession } from '../../state/dock_store';
-import { LOG_POLL_PRESETS, useUiStore } from '../../state/ui_store';
+import { LOG_POLL_PRESETS, LOG_TAIL_PRESETS, useUiStore } from '../../state/ui_store';
 import { Button } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
 
@@ -38,19 +41,29 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
   const { containers, container: activeContainer, context, recreated, uid } = useSessionContainers(session);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
-  /* Session toggles initialized from the Logs page defaults in settings. */
-  const [wrap, setWrap] = useState(() => useUiStore.getState().logsWrap);
+  /* Display preferences are shared by log panes and persisted across launches. */
+  const wrap = useUiStore(s => s.logsWrap);
+  const setWrap = useUiStore(s => s.setLogsWrap);
   const [filter, setFilter] = useState('');
-  const [showTimestamps, setShowTimestamps] = useState(() => useUiStore.getState().logsTimestamps);
-  const [structured, setStructured] = useState(() => useUiStore.getState().logsStructured);
-  const [colorLevels, setColorLevels] = useState(() => useUiStore.getState().logsColorLevels);
-  const [pollMs, setPollMs] = useState(() => useUiStore.getState().logsPollMs);
+  const showTimestamps = useUiStore(s => s.logsTimestamps);
+  const setShowTimestamps = useUiStore(s => s.setLogsTimestamps);
+  const timestampZone = useUiStore(s => s.logsTimestampZone);
+  const localZone = systemTimeZone();
+  const formatTimestamp = useMemo(() => logTimestampFormatter(timestampZone, localZone), [timestampZone, localZone]);
+  const structured = useUiStore(s => s.logsStructured);
+  const setStructured = useUiStore(s => s.setLogsStructured);
+  const colorLevels = useUiStore(s => s.logsColorLevels);
+  const setColorLevels = useUiStore(s => s.setLogsColorLevels);
+  const pollMs = useUiStore(s => s.logsPollMs);
+  const setPollMs = useUiStore(s => s.setLogsPollMs);
+  const logsMode = useUiStore(s => s.logsMode);
 
   const updateSessionContainer = useDockStore((s) => s.updateSessionContainer);
   const seqRef = useRef(1);
   const native = !k8s.demo && '__TAURI_INTERNALS__' in window;
   const [previous, setPrevious] = useState(false);
-  const [tail, setTail] = useState(() => useUiStore.getState().logsDefaultTail);
+  const tail = useUiStore(s => s.logsDefaultTail);
+  const setTail = useUiStore(s => s.setLogsDefaultTail);
   const [since, setSince] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [phase, setPhase] = useState('Connecting');
@@ -87,17 +100,17 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     const run = async () => {
       if (cancelled) return;
       if (!visible) { timer = setTimeout(run, pollRef.current); return; }
+      let text = '';
       try {
         if (k8s.demo) {
           const [level, template] = LOG_TEMPLATES[seqRef.current % LOG_TEMPLATES.length];
           const msg = `[demo ${session.resourceName}/${activeContainer}] ` + template.replace('{ms}', '42').replace(/\{n\}/g, '3');
-          const line = { t: new Date().toISOString().slice(11, 23), level, msg, seq: seqRef.current++ };
+          const line = { t: new Date().toISOString(), level, msg, seq: seqRef.current++ };
           setLines((current) => [...current, line].slice(-500));
         } else {
           if (recreated) throw new Error('The Pod was recreated. Open the current Pod to read its logs.');
           if (!context || !session.resourceName || !session.namespace) throw new Error('Select a Pod and namespace to view logs.');
           if (!activeContainer) throw new Error('Select a container to view logs.');
-          let text: string;
           let replace = false;
           if (native) {
             if (!uid) throw new Error('A Pod with UID is required. Reopen logs from the current Pod.');
@@ -115,11 +128,11 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           if (replace) {
             /* Browser mode returns a whole snapshot; it always replaces history. */
             buffer.clear();
-            buffer.push([...new TextEncoder().encode(text)], true);
+            buffer.pushText(text, true);
           } else {
             /* The overlap from the last second is refetched; drop exact repeats. */
             const decoded = new LogBuffer();
-            decoded.push([...new TextEncoder().encode(text)], true);
+            decoded.pushText(text, true);
             const seen = new Set(buffer.lines.map((l) => `${l.t}\u0000${l.msg}`));
             for (const line of decoded.lines) {
               const signature = `${line.t}\u0000${line.msg}`;
@@ -132,7 +145,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           retries = 0;
           setError('');
           if (native && previous) { setPhase('Snapshot'); return; }
-          setPhase(`Polling every ${Math.round(pollRef.current / 1000)}s`);
+          setPhase(logsMode === 'watch' ? 'Streaming logs' : `Polling every ${Math.round(pollRef.current / 1000)}s`);
         }
       } catch (read) {
         if (cancelled) return;
@@ -144,18 +157,16 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
       }
       if (cancelled) return;
       /* Failures back off (1×, 2×, 4×) and stop after three consecutive misses. */
-      timer = setTimeout(run, pollRef.current * [1, 2, 4][Math.min(retries, 2)]);
+      const nextDelay = logsMode === 'watch'
+        ? (text && text.trim().length > 0 ? 500 : 1000)
+        : pollRef.current;
+      timer = setTimeout(run, nextDelay * [1, 2, 4][Math.min(retries, 2)]);
     };
     void run();
     const stop = () => { cancelled = true; if (timer) clearTimeout(timer); };
     window.addEventListener('pagehide', stop);
     return () => { window.removeEventListener('pagehide', stop); stop(); };
   }, [sourceKey, paused, recreated, visible]);
-
-  useEffect(() => {
-    const output = outputRef.current;
-    if (visible && pinned.current && output) output.scrollTop = output.scrollHeight;
-  }, [lines, visible, filter]);
 
   const [filterRegex, setFilterRegex] = useState(false);
   const shown = useMemo(() => {
@@ -179,15 +190,35 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     return parsed;
   }, [shown, structured]);
 
+  const rowVirtualizer = useVirtualizer({
+    count: shown.length,
+    getScrollElement: () => outputRef.current,
+    estimateSize: () => 24,
+    overscan: 20,
+    getItemKey: (index) => shown[index]?.seq ?? index,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+
+  useEffect(() => {
+    const output = outputRef.current;
+    if (visible && pinned.current && output) {
+      if (shown.length > 0) {
+        rowVirtualizer.scrollToIndex(shown.length - 1, { align: 'end' });
+      } else {
+        output.scrollTop = output.scrollHeight;
+      }
+    }
+  }, [lines, visible, filter, shown.length]);
+
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
       {error && <div role="alert" className="px-3 py-1 text-[var(--status-danger)] text-xs">{error}</div>}
       <div className="px-3 py-0.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{k8s.demo ? `Simulated logs · poll every ${Math.round(pollMs / 1000)}s` : native ? `${phase} · ${previous ? 'previous container snapshot' : `initial tail ${tail}`} · history up to 1000 lines` : `Browser snapshot · latest 500 lines · refresh every ${Math.round(pollMs / 1000)}s`}{truncated && ' · older or oversized output discarded'}</div>
       <LogsToolbar sourceControls={native ? <div className="border-t border-[var(--border-default)] p-2 space-y-2 text-xs">
         <label className="flex items-center gap-2"><input type="checkbox" checked={previous} onChange={(event) => setPrevious(event.target.checked)} />Previous container instance</label>
-        <label className="flex items-center justify-between gap-2">Initial tail<select aria-label="Initial log tail" value={tail} onChange={(event) => setTail(Number(event.target.value))} className="ide-select">{[100, 500, 1000].map((n) => <option key={n} value={n}>{n} lines</option>)}</select></label>
-        <label className="flex items-center justify-between gap-2">Since<select aria-label="Log time range" value={since} onChange={(event) => setSince(Number(event.target.value))} className="ide-select">{[[0, 'Any time'], [300, '5 minutes'], [3600, '1 hour'], [86400, '24 hours']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="flex items-center justify-between gap-2">Poll frequency<select aria-label="Log poll frequency" value={pollMs} onChange={(event) => { const value = Number(event.target.value); setPollMs(value); useUiStore.getState().setLogsPollMs(value); }} className="ide-select">{LOG_POLL_PRESETS.map((value) => <option key={value} value={value}>{value / 1000}s</option>)}</select></label>
+        <label className="flex items-center justify-between gap-2">Initial tail<Select aria-label="Initial log tail" value={tail} onChange={(event) => setTail(Number(event.target.value))} className="ide-select">{LOG_TAIL_PRESETS.map((n) => <option key={n} value={n}>{n} lines</option>)}</Select></label>
+        <label className="flex items-center justify-between gap-2">Since<Select aria-label="Log time range" value={since} onChange={(event) => setSince(Number(event.target.value))} className="ide-select">{[[0, 'Any time'], [300, '5 minutes'], [3600, '1 hour'], [86400, '24 hours']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>
+        <label className="flex items-center justify-between gap-2">Poll frequency<Select aria-label="Log poll frequency" value={pollMs} onChange={(event) => { const value = Number(event.target.value); setPollMs(value); }} className="ide-select">{LOG_POLL_PRESETS.map((value) => <option key={value} value={value}>{value / 1000}s</option>)}</Select></label>
         <Button size="sm" onClick={() => { setPaused(false); setGeneration((value) => value + 1); }}>Reconnect logs</Button>
         <p className="text-[var(--text-muted)]">Reads reload the recent tail, then poll only lines after the newest timestamp. Previous logs are a snapshot.</p>
       </div> : undefined} name={session.resourceName} namespace={session.namespace} context={context} containers={containers} container={activeContainer}
@@ -210,7 +241,12 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
           </div>
         ) : (
           <div className={cx('font-mono text-[length:calc(11px*var(--ui-factor))] leading-[1.6]', !wrap && 'w-max min-w-full')}>
-            {shown.map((l) => {
+            {virtualRows.length > 0 && virtualRows[0].start > 0 && (
+              <div aria-hidden="true" data-virtual-spacer style={{ height: `${virtualRows[0].start}px` }} />
+            )}
+            {virtualRows.map((virtualRow) => {
+              const l = shown[virtualRow.index];
+              if (!l) return null;
               const parsed = structured ? parsedLines.get(l.seq) ?? null : null;
               const level = parsed?.level ?? l.level;
               const message = parsed ? (parsed.message ?? (parsed.fields.length ? '' : l.msg)) : l.msg;
@@ -247,6 +283,8 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
               return (
                 <div
                   key={l.seq}
+                  data-index={virtualRow.index}
+                  ref={rowVirtualizer.measureElement}
                   data-testid="log-line"
                   data-level={level}
                   className={cx(
@@ -257,11 +295,12 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                   )}
                 >
                   {showTimestamps && (
-                    <span className="text-[var(--text-muted)] select-none pr-2 font-mono text-[10px]">
-                      {l.t}
-                    </span>
+                    <time data-testid="log-timestamp" dateTime={l.t || undefined} title={l.t ? `Original: ${l.t}` : undefined} className="text-[var(--text-muted)] pr-2 font-mono text-[10px]">
+                      {formatTimestamp(l.t)}
+                    </time>
                   )}
                   <span className="sr-only">{level}: </span>
+                  {parsed?.prefix && <span>{parsed.prefix} </span>}
                   {message && <span>{message}</span>}
                   {parsed?.fields.length ? (
                     <span className="inline-flex flex-wrap items-center gap-1.5 ml-2 align-middle">
@@ -289,9 +328,13 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                       })}
                     </span>
                   ) : null}
+                  {parsed?.suffix && <span> {parsed.suffix}</span>}
                 </div>
               );
             })}
+            {virtualRows.length > 0 && (
+              <div aria-hidden="true" data-virtual-spacer style={{ height: `${Math.max(0, rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end)}px` }} />
+            )}
           </div>
         )}
       </div>

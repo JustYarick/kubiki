@@ -38,7 +38,18 @@ pub async fn discover(
     client: Client,
     context: &str,
 ) -> Result<Vec<DiscoveredResourceType>, ApiError> {
-    let discovery = bounded(context, "api-resources", Discovery::new(client).run()).await?;
+    let groups: std::collections::HashSet<&str> = resource_types()
+        .iter()
+        .map(|resource| resource.group.as_str())
+        .collect();
+    let discovery = bounded(
+        context,
+        "api-resources",
+        Discovery::new(client)
+            .filter(&groups.into_iter().collect::<Vec<_>>())
+            .run(),
+    )
+    .await?;
     let mut result = Vec::new();
     for group in discovery.groups() {
         for (ar, caps) in group.recommended_resources() {
@@ -63,11 +74,35 @@ pub async fn discover(
     Ok(result)
 }
 
-async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result<Value, ApiError> {
-    let api: Api<DynamicObject> = match &query.namespace {
+fn api_for(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Api<DynamicObject> {
+    match &query.namespace {
         Some(ns) => Api::namespaced_with(client, ns, ar),
         None => Api::all_with(client, ar),
+    }
+}
+
+fn build_api(
+    client: Client,
+    query: &ResourceQuery,
+) -> Result<(Api<DynamicObject>, ApiResource), ApiError> {
+    let known = validate_query(query)?;
+    let ar = ApiResource {
+        group: query.group.clone(),
+        version: query.version.clone(),
+        api_version: if query.group.is_empty() {
+            query.version.clone()
+        } else {
+            format!("{}/{}", query.group, query.version)
+        },
+        kind: query.kind.clone(),
+        plural: known.plural.clone(),
     };
+    let api = api_for(client, query, &ar);
+    Ok((api, ar))
+}
+
+async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result<Value, ApiError> {
+    let api = api_for(client, query, ar);
     let mut params = ListParams::default().limit(500);
     let mut items = Vec::new();
     loop {
@@ -75,6 +110,7 @@ async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result
             .await
             .map_err(|e| e.with_resource(query))?;
         items.extend(page.items.into_iter().map(|mut item| {
+            item.metadata.managed_fields = None;
             item.types = Some(kube::core::TypeMeta {
                 api_version: ar.api_version.clone(),
                 kind: ar.kind.clone(),
@@ -89,20 +125,64 @@ async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result
     Ok(json!({"items": items}))
 }
 pub async fn resources(client: Client, query: ResourceQuery) -> Result<Value, ApiError> {
-    let known = validate_query(&query)?;
-    let ar = ApiResource {
-        group: query.group.clone(),
-        version: query.version.clone(),
-        api_version: if query.group.is_empty() {
-            query.version.clone()
-        } else {
-            format!("{}/{}", query.group, query.version)
-        },
-        kind: query.kind.clone(),
-        plural: known.plural.clone(),
-    };
+    let (_, ar) = build_api(client.clone(), &query)?;
     list(client, &query, &ar).await
 }
+
+pub async fn resource_count(client: Client, query: ResourceQuery) -> Result<usize, ApiError> {
+    let (api, _) = build_api(client, &query)?;
+    let params = ListParams::default().limit(1);
+    let page = bounded(
+        &query.context,
+        "resource-counts",
+        api.list_metadata(&params),
+    )
+    .await
+    .map_err(|e| e.with_resource(&query))?;
+    let remaining = match page.metadata.remaining_item_count {
+        Some(count) if count >= 0 => count as usize,
+        None if page.metadata.continue_.as_deref().is_none_or(str::is_empty) => 0,
+        _ => {
+            return Err(ApiError::from_status(
+                503,
+                "The API did not provide a complete resource count",
+                "resource-counts",
+                Some(&query.context),
+            )
+            .with_resource(&query));
+        }
+    };
+    Ok(page.items.len() + remaining)
+}
+
+pub async fn resource_counts(
+    client: Client,
+    queries: Vec<ResourceQuery>,
+) -> std::collections::HashMap<String, usize> {
+    use futures::StreamExt;
+    let pairs: Vec<(String, Result<usize, ApiError>)> = futures::stream::iter(queries)
+        .map(|query| {
+            let client = client.clone();
+            let kind = query.kind.clone();
+            async move { (kind, resource_count(client, query).await) }
+        })
+        .buffer_unordered(12)
+        .collect()
+        .await;
+    let mut counts = std::collections::HashMap::new();
+    let mut incomplete = std::collections::HashSet::new();
+    for (kind, count) in pairs {
+        match count {
+            Ok(count) => *counts.entry(kind).or_insert(0) += count,
+            Err(_) => {
+                incomplete.insert(kind);
+            }
+        }
+    }
+    counts.retain(|kind, _| !incomplete.contains(kind));
+    counts
+}
+
 pub async fn custom_resources(
     client: Client,
     context: String,
@@ -166,4 +246,150 @@ pub async fn custom_resources(
         },
     };
     list(client, &query, &ar).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kube::client::Body;
+
+    #[tokio::test]
+    async fn discovery_does_not_query_unrelated_custom_api_groups() {
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        let service = tower::service_fn(move |request: http::Request<Body>| {
+            let path = request.uri().path().to_owned();
+            seen.lock().unwrap().push(path.clone());
+            async move {
+                let group = |name: &str| json!({ "name": name, "versions": [{ "groupVersion": format!("{name}/v1"), "version": "v1" }], "preferredVersion": { "groupVersion": format!("{name}/v1"), "version": "v1" } });
+                let body = match path.as_str() {
+                    "/apis" => {
+                        json!({ "kind": "APIGroupList", "apiVersion": "v1", "groups": [group("apps"), group("unrelated.example.com")] })
+                    }
+                    "/api" => {
+                        json!({ "kind": "APIVersions", "apiVersion": "v1", "versions": ["v1"], "serverAddressByClientCIDRs": [] })
+                    }
+                    "/api/v1" => {
+                        json!({ "kind": "APIResourceList", "apiVersion": "v1", "groupVersion": "v1", "resources": [{ "name": "pods", "singularName": "pod", "namespaced": true, "kind": "Pod", "verbs": ["get", "list", "watch"] }] })
+                    }
+                    "/apis/apps/v1" => {
+                        json!({ "kind": "APIResourceList", "apiVersion": "v1", "groupVersion": "apps/v1", "resources": [{ "name": "deployments", "singularName": "deployment", "namespaced": true, "kind": "Deployment", "verbs": ["get", "list", "watch"] }] })
+                    }
+                    other => panic!("Unexpected API discovery request: {other}"),
+                };
+                Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .status(200)
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                )
+            }
+        });
+        let resources = discover(Client::new(service, "default"), "prod")
+            .await
+            .unwrap();
+        assert_eq!(resources.len(), 2);
+        assert_eq!(requests.lock().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn resource_counts_uses_limit_one_and_remaining_item_count() {
+        let service = tower::service_fn(|request: http::Request<Body>| async move {
+            let uri = request.uri().to_string();
+            let body = if uri.contains("/configmaps?") {
+                json!({ "apiVersion": "meta.k8s.io/v1", "kind": "PartialObjectMetadataList", "metadata": { "continue": "unknown" }, "items": [{ "metadata": { "name": "one" } }] })
+            } else if uri.contains("/pods?") && uri.contains("limit=1") && !uri.contains("blocked")
+            {
+                json!({
+                    "apiVersion": "meta.k8s.io/v1",
+                    "kind": "PartialObjectMetadataList",
+                    "metadata": { "remainingItemCount": 8999, "continue": "tok" },
+                    "items": [{ "metadata": { "name": "pod-0", "namespace": "default", "uid": "u-0" } }]
+                })
+            } else if uri.contains("/nodes?") && uri.contains("limit=1") {
+                json!({
+                    "apiVersion": "meta.k8s.io/v1",
+                    "kind": "PartialObjectMetadataList",
+                    "metadata": {},
+                    "items": []
+                })
+            } else {
+                return Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .status(403)
+                        .body(Body::from(
+                            serde_json::to_vec(&json!({
+                                "kind": "Status",
+                                "status": "Failure",
+                                "message": "forbidden",
+                                "code": 403
+                            }))
+                            .unwrap(),
+                        ))
+                        .unwrap(),
+                );
+            };
+            Ok(http::Response::builder()
+                .status(200)
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap())
+        });
+        let client = Client::new(service, "default");
+        let counts = resource_counts(
+            client.clone(),
+            vec![
+                ResourceQuery {
+                    context: "prod".into(),
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: "Pod".into(),
+                    namespace: None,
+                },
+                ResourceQuery {
+                    context: "prod".into(),
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: "Node".into(),
+                    namespace: None,
+                },
+                ResourceQuery {
+                    context: "prod".into(),
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: "ConfigMap".into(),
+                    namespace: None,
+                },
+                ResourceQuery {
+                    context: "prod".into(),
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: "Secret".into(),
+                    namespace: None,
+                },
+            ],
+        )
+        .await;
+        assert_eq!(counts.get("Pod"), Some(&9000));
+        assert_eq!(counts.get("Node"), Some(&0));
+        assert_eq!(counts.get("Secret"), None);
+        assert_eq!(counts.get("ConfigMap"), None);
+        let counts = resource_counts(
+            client,
+            ["default", "blocked"]
+                .map(|namespace| ResourceQuery {
+                    context: "prod".into(),
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: "Pod".into(),
+                    namespace: Some(namespace.into()),
+                })
+                .to_vec(),
+        )
+        .await;
+        assert_eq!(
+            counts.get("Pod"),
+            None,
+            "a forbidden namespace must not produce a partial total"
+        );
+    }
 }

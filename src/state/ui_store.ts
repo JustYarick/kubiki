@@ -1,3 +1,4 @@
+import type { LogTimestampZone } from '../core/utils/log_timestamp';
 import { DEFAULT_TERMINAL_FONT, normalizeTerminalFont, normalizeTerminalLineHeight } from '../core/terminal_appearance';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -10,7 +11,8 @@ import { DEFAULT_TOPOLOGY_RENDERING, normalizeTopologyRendering, type TopologyRe
 import { ANALYSIS_INSTRUCTIONS, normalizeAnalysisPrompt, normalizeAiAgent, type AiAgent } from '../core/ai_analysis';
 
 export type Density = 'compact' | 'comfortable';
-export type RightTab = 'overview' | 'yaml' | 'related' | 'events';
+export type RightTab = 'overview' | 'yaml' | 'related' | 'events' | 'env';
+export type LogMode = 'poll' | 'watch';
 
 interface UIState extends TopologyRenderingPreferences {
   developerMode: boolean;
@@ -39,8 +41,10 @@ interface UIState extends TopologyRenderingPreferences {
   /* defaults for new log sessions */
   logsWrap: boolean;
   logsTimestamps: boolean;
+  logsTimestampZone: LogTimestampZone;
   logsStructured: boolean;
   logsColorLevels: boolean;
+  logsMode: LogMode;
   /** Poll frequency for the log viewer, milliseconds. Lens-style reads. */
   logsPollMs: number;
   logsDefaultTail: number;
@@ -88,8 +92,10 @@ interface UIState extends TopologyRenderingPreferences {
   setTerminalAckTimeoutSecs: (value: number) => void;
   setLogsWrap: (value: boolean) => void;
   setLogsTimestamps: (value: boolean) => void;
+  setLogsTimestampZone: (value: LogTimestampZone) => void;
   setLogsStructured: (value: boolean) => void;
   setLogsColorLevels: (value: boolean) => void;
+  setLogsMode: (value: LogMode) => void;
   setLogsPollMs: (value: number) => void;
   setLogsDefaultTail: (value: number) => void;
   setLogsMaxBufferLines: (value: number) => void;
@@ -114,10 +120,12 @@ interface UIState extends TopologyRenderingPreferences {
   toggleInspector: () => void;
   toggleGroup: (title: string) => void;
   setHiddenColumns: (kind: string, hidden: string[]) => void;
+  resetHiddenColumns: (kind?: string) => void;
   setColumnWidth: (kind: string, colId: string, width: number) => void;
   resetColumnWidths: (kind?: string) => void;
   setColumnOrder: (kind: string, order: string[]) => void;
   resetColumnOrder: (kind?: string) => void;
+  resetAllTableLayouts: () => void;
   setRightTab: (t: RightTab) => void;
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -174,8 +182,10 @@ export const useUiStore = create<UIState>()(
       terminalAckTimeoutSecs: 0,
       logsWrap: true,
       logsTimestamps: true,
+      logsTimestampZone: 'utc',
       logsStructured: false,
       logsColorLevels: false,
+      logsMode: 'poll' as LogMode,
       logsPollMs: 2000,
       logsDefaultTail: 500,
       logsMaxBufferLines: 1000,
@@ -215,8 +225,10 @@ export const useUiStore = create<UIState>()(
       setTerminalAckTimeoutSecs: (value) => set({ terminalAckTimeoutSecs: normalizeTimeoutSecs(value) }),
       setLogsWrap: (logsWrap) => set({ logsWrap }),
       setLogsTimestamps: (logsTimestamps) => set({ logsTimestamps }),
+      setLogsTimestampZone: (value) => set({ logsTimestampZone: value === 'local' ? 'local' : 'utc' }),
       setLogsStructured: (logsStructured) => set({ logsStructured }),
       setLogsColorLevels: (logsColorLevels) => set({ logsColorLevels }),
+      setLogsMode: (value) => set({ logsMode: value === 'watch' ? 'watch' : 'poll' }),
       setLogsPollMs: (value) => set({ logsPollMs: (LOG_POLL_PRESETS as readonly number[]).includes(value) ? value : 2000 }),
       setLogsDefaultTail: (value) => set({ logsDefaultTail: (LOG_TAIL_PRESETS as readonly number[]).includes(value as any) ? value : 500 }),
       setLogsMaxBufferLines: (value) => set({ logsMaxBufferLines: (LOG_BUFFER_PRESETS as readonly number[]).includes(value as any) ? value : 1000 }),
@@ -249,6 +261,13 @@ export const useUiStore = create<UIState>()(
       toggleGroup: (title) =>
         set((s) => ({ sidebarGroups: { ...s.sidebarGroups, [title]: !(s.sidebarGroups[title] ?? s.sidebarGroups['*'] ?? false) } })),
       setHiddenColumns: (kind, hidden) => set((s) => ({ hiddenColumns: { ...s.hiddenColumns, [kind]: hidden } })),
+      resetHiddenColumns: (kind) =>
+        set((s) => {
+          if (!kind) return { hiddenColumns: {} };
+          const next = { ...s.hiddenColumns };
+          delete next[kind];
+          return { hiddenColumns: next };
+        }),
       setColumnWidth: (kind, colId, width) =>
         set((s) => ({ columnWidths: { ...s.columnWidths, [`${kind}:${colId}`]: width } })),
       resetColumnWidths: (kind) =>
@@ -267,6 +286,12 @@ export const useUiStore = create<UIState>()(
           const next = { ...s.columnOrder };
           delete next[kind];
           return { columnOrder: next };
+        }),
+      resetAllTableLayouts: () =>
+        set({
+          hiddenColumns: {},
+          columnOrder: {},
+          columnWidths: {},
         }),
       setRightTab: (rightTab) => set({ rightTab }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
@@ -307,8 +332,10 @@ export const useUiStore = create<UIState>()(
           yamlHideManagedFields: normalizeBool(stored?.yamlHideManagedFields, true),
           logsWrap: normalizeBool(stored?.logsWrap, true),
           logsTimestamps: normalizeBool(stored?.logsTimestamps, true),
+          logsTimestampZone: stored?.logsTimestampZone === 'local' ? 'local' : 'utc',
           logsStructured: normalizeBool(stored?.logsStructured, false),
           logsColorLevels: normalizeBool(stored?.logsColorLevels, false),
+          logsMode: stored?.logsMode === 'watch' ? ('watch' as const) : ('poll' as const),
           logsPollMs: normalizeNumber(stored?.logsPollMs, 500, 60000, 2000),
           logsDefaultTail: normalizeNumber(stored?.logsDefaultTail, 100, 5000, 500),
           logsMaxBufferLines: normalizeNumber(stored?.logsMaxBufferLines, 1000, 25000, 1000),
@@ -339,8 +366,10 @@ export const useUiStore = create<UIState>()(
         yamlHideManagedFields: s.yamlHideManagedFields,
         logsWrap: s.logsWrap,
         logsTimestamps: s.logsTimestamps,
+        logsTimestampZone: s.logsTimestampZone,
         logsStructured: s.logsStructured,
         logsColorLevels: s.logsColorLevels,
+        logsMode: s.logsMode,
         logsPollMs: s.logsPollMs,
         logsDefaultTail: s.logsDefaultTail,
         logsMaxBufferLines: s.logsMaxBufferLines,

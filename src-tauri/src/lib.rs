@@ -16,6 +16,7 @@ mod exec_stream;
 mod helm_commands;
 mod host_terminal_commands;
 mod k8s_commands;
+mod read_tasks;
 mod log_commands;
 mod node_commands;
 mod terminal_commands;
@@ -68,7 +69,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(ClusterClientPool::new(KubeConfigManager::new()))
-        .manage(InformerManager::new(ResourceStore::new()))
+        .manage(read_tasks::ReadTasks::default())
+        .manage(InformerManager::new(ResourceStore::disabled()))
         .manage(PodTerminalManager::default())
         .manage(NodeDebugManager::default())
         .manage(HostTerminalManager::default())
@@ -85,7 +87,8 @@ pub fn run() {
             update_commands::install_app_update,
             extension_request,
             extension_cancel,
-            list_helm_releases,
+            get_helm_inventory,
+            read_tasks::cancel_read_task,
             mutate_resource,
             search_helm_charts,
             get_helm_history,
@@ -103,6 +106,7 @@ pub fn run() {
             get_overview_metrics,
             get_namespaces,
             get_resources,
+            get_resource_counts,
             get_api_resources,
             get_custom_resources,
             delete_resource,
@@ -145,7 +149,9 @@ pub fn run() {
                 let hosts = window.state::<HostTerminalManager>().inner().clone();
                 let nodes = window.state::<NodeDebugManager>().inner().clone();
                 let forwards = window.state::<PortForwardManager>().inner().clone();
+                let reads = window.state::<read_tasks::ReadTasks>().inner().clone();
                 let owner = window.label().to_owned();
+                reads.stop_owner(&owner);
                 tauri::async_runtime::spawn(async move {
                     extensions.close().await;
                     manager.stop_owner(&owner).await;

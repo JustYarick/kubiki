@@ -53,6 +53,24 @@ test('search temporarily reveals matching resource ancestors and clearing it res
   await expect(explorer.getByRole('button', { name: /^Pods(?: \d+)?$/ })).toHaveCount(0);
 });
 
+test('switching resource tabs reveals and highlights the current type in the tree', async ({ page }) => {
+  await page.goto('/?demo=1');
+  const explorer = page.getByTestId('explorer-panel');
+  await explorer.getByRole('button', { name: 'Expand All', exact: true }).click();
+  await explorer.locator('[data-resource-type="Pod"]').click();
+  await explorer.locator('[data-resource-type="ConfigMap"]').click();
+  await expect(explorer.locator('[data-resource-type="ConfigMap"]')).toHaveAttribute('aria-current', 'page');
+  await explorer.getByRole('button', { name: 'Collapse All', exact: true }).click();
+  const tabs = page.getByRole('tablist', { name: 'Workspace tabs' });
+  await tabs.getByRole('tab').filter({ hasText: 'Pods' }).click();
+  await expect(explorer.locator('[data-resource-type="Pod"]')).toBeVisible();
+  await expect(explorer.locator('[data-resource-type="Pod"]')).toHaveAttribute('aria-current', 'page');
+  await tabs.getByRole('tab').filter({ hasText: 'ConfigMaps' }).click();
+  await expect(explorer.locator('[data-resource-type="ConfigMap"]')).toBeVisible();
+  await expect(explorer.locator('[data-resource-type="ConfigMap"]')).toHaveAttribute('aria-current', 'page');
+  await expect(explorer.locator('[data-resource-type="Pod"]')).not.toHaveAttribute('aria-current', 'page');
+});
+
 test('custom resources nest by API group, groups start collapsed, and legacy expansion settings migrate once', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { uiScale: 120, sidebarGroups: { '*': true, workloads: true, crd: true } }, version: 0 })));
   await customApi(page);
@@ -68,5 +86,35 @@ test('custom resources nest by API group, groups start collapsed, and legacy exp
   await expect(explorer.getByRole('button', { name: 'Widget', exact: true })).toHaveCount(1);
   await explorer.getByRole('button', { name: 'Widget', exact: true }).click();
   await expect(page.getByTestId('resource-table')).toHaveAttribute('aria-label', 'Widget resource table');
+  await expect(explorer.getByRole('button', { name: 'second.example', exact: true })).toHaveCount(1);
   await expect(explorer.getByRole('button', { name: 'second.example', exact: true })).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('sidebar displays lightweight resource counts on connect without loading unopened collections', async ({ page }) => {
+  const fullReads: string[] = [];
+  await page.route('**/api/k8s/**', route => {
+    const url = new URL(route.request().url());
+    const operation = url.pathname.split('/').pop();
+    if (operation === 'contexts') return route.fulfill({ json: [{ name: 'cluster', is_current: true }] });
+    if (operation === 'ping') return route.fulfill({ json: { version: { gitVersion: 'v1.35.0' } } });
+    if (operation === 'namespaces') return route.fulfill({ json: ['default', 'payments'] });
+    if (operation === 'resource-counts') {
+      const ns = url.searchParams.get('namespace');
+      return route.fulfill({ json: ns === 'payments' ? { Pod: 42, Deployment: 5, Secret: 12, Node: 18 } : { Pod: 9000, Deployment: 120, Secret: 340, Node: 18 } });
+    }
+    if (operation === 'resources') {
+      const kind = url.searchParams.get('kind') ?? '';
+      fullReads.push(kind);
+    }
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/');
+  const explorer = page.getByTestId('explorer-panel');
+  await expect(explorer.getByRole('button', { name: 'Workloads 9120', exact: true })).toBeVisible();
+  await expect(explorer.getByRole('button', { name: 'Nodes 18', exact: true })).toBeVisible();
+  await explorer.getByRole('button', { name: 'Workloads 9120', exact: true }).click();
+  await expect(explorer.getByRole('button', { name: 'Pods 9000', exact: true })).toBeVisible();
+  await expect(explorer.getByRole('button', { name: 'Deployments 120', exact: true })).toBeVisible();
+  expect(fullReads).not.toContain('Deployment');
+  expect(fullReads).not.toContain('Secret');
 });

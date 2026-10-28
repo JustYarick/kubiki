@@ -218,6 +218,48 @@ fn watch_error(error: watcher::Error, query: &ResourceQuery) -> ApiError {
     result.with_resource(query)
 }
 
+/// Drop server bookkeeping from cached objects. ConfigMap and Secret keep only the
+/// timestamps of writers that own their payload, so consumers can tell when the
+/// data last changed; the field sets themselves are never retained.
+fn prune_managed_fields(obj: &mut DynamicObject, kind: &str) {
+    let Some(entries) = obj.metadata.managed_fields.take() else {
+        return;
+    };
+    if !matches!(kind, "ConfigMap" | "Secret") {
+        return;
+    }
+    let kept: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            entry
+                .fields_v1
+                .as_ref()
+                .and_then(|fields| serde_json::to_string(fields).ok())
+                .is_some_and(|text| text.contains("\"f:data\"") || text.contains("\"f:binaryData\""))
+        })
+        .map(|mut entry| {
+            entry.fields_v1 = None;
+            entry
+        })
+        .collect();
+    if !kept.is_empty() {
+        obj.metadata.managed_fields = Some(kept);
+    }
+}
+
+fn strip_crd_schemas(obj: &mut DynamicObject) {
+    if let Some(spec) = obj.data.get_mut("spec").and_then(|s| s.as_object_mut()) {
+        spec.remove("validation");
+        if let Some(versions) = spec.get_mut("versions").and_then(|v| v.as_array_mut()) {
+            for version in versions {
+                if let Some(version_obj) = version.as_object_mut() {
+                    version_obj.remove("schema");
+                }
+            }
+        }
+    }
+}
+
 async fn run_watch<F>(
     store: ResourceStore,
     scope: WatchScope,
@@ -285,7 +327,8 @@ async fn run_watch<F>(
     };
     let stream = watcher::watcher(
         api,
-        watcher::Config::default().timeout(WATCH_TIMEOUT_SECONDS),
+        watcher::Config::default()
+            .timeout(WATCH_TIMEOUT_SECONDS),
     )
     .default_backoff();
     tokio::pin!(stream);
@@ -314,12 +357,22 @@ async fn run_watch<F>(
                         Event::Init
                     }
                     Event::InitDone => Event::InitDone,
-                    Event::Apply(value) => {
+                    Event::Apply(mut value) => {
+                        prune_managed_fields(&mut value, &scope.query.kind);
+                        if scope.query.kind == "CustomResourceDefinition" {
+                            strip_crd_schemas(&mut value);
+                        }
                         Event::Apply(serde_json::to_value(value).expect("DynamicObject is JSON"))
                     }
-                    Event::InitApply(value) => Event::InitApply(
-                        serde_json::to_value(value).expect("DynamicObject is JSON"),
-                    ),
+                    Event::InitApply(mut value) => {
+                        prune_managed_fields(&mut value, &scope.query.kind);
+                        if scope.query.kind == "CustomResourceDefinition" {
+                            strip_crd_schemas(&mut value);
+                        }
+                        Event::InitApply(
+                            serde_json::to_value(value).expect("DynamicObject is JSON"),
+                        )
+                    }
                     Event::Delete(value) => {
                         Event::Delete(serde_json::to_value(value).expect("DynamicObject is JSON"))
                     }
@@ -374,5 +427,86 @@ async fn run_watch<F>(
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_crd_schemas() {
+        let mut obj: DynamicObject = serde_json::from_value(serde_json::json!({
+            "apiVersion": "apiextensions.k8s.io/v1",
+            "kind": "CustomResourceDefinition",
+            "metadata": { "name": "tests.example.com" },
+            "spec": {
+                "group": "example.com",
+                "validation": {
+                    "openAPIV3Schema": {
+                        "type": "object",
+                        "properties": { "foo": { "type": "string" } }
+                    }
+                },
+                "versions": [
+                    {
+                        "name": "v1",
+                        "served": true,
+                        "storage": true,
+                        "schema": {
+                            "openAPIV3Schema": {
+                                "type": "object",
+                                "properties": { "bar": { "type": "integer" } }
+                            }
+                        }
+                    },
+                    {
+                        "name": "v2",
+                        "served": true,
+                        "storage": false,
+                        "schema": {
+                            "openAPIV3Schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        strip_crd_schemas(&mut obj);
+
+        assert!(obj.data["spec"].get("validation").is_none());
+        assert_eq!(obj.data["spec"]["group"], "example.com");
+        let versions = obj.data["spec"]["versions"].as_array().unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0]["name"], "v1");
+        assert!(versions[0].get("schema").is_none());
+        assert_eq!(versions[1]["name"], "v2");
+        assert!(versions[1].get("schema").is_none());
+    }
+
+    #[test]
+    fn prune_managed_fields_keeps_only_data_writer_times_for_config() {
+        let source = serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": { "name": "app", "managedFields": [
+                { "manager": "kubectl", "operation": "Update", "apiVersion": "v1", "time": "2026-01-02T00:00:00Z", "fieldsType": "FieldsV1", "fieldsV1": { "f:data": { "f:A": {} } } },
+                { "manager": "labeler", "operation": "Update", "apiVersion": "v1", "time": "2026-01-03T00:00:00Z", "fieldsType": "FieldsV1", "fieldsV1": { "f:metadata": { "f:labels": {} } } }
+            ] },
+            "data": { "A": "1" }
+        });
+        let mut config: DynamicObject = serde_json::from_value(source.clone()).unwrap();
+        prune_managed_fields(&mut config, "ConfigMap");
+        let kept = config.metadata.managed_fields.unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].manager.as_deref(), Some("kubectl"));
+        assert!(kept[0].fields_v1.is_none());
+
+        let mut pod: DynamicObject = serde_json::from_value(source).unwrap();
+        prune_managed_fields(&mut pod, "Pod");
+        assert!(pod.metadata.managed_fields.is_none());
     }
 }

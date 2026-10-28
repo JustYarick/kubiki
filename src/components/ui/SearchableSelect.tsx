@@ -1,3 +1,4 @@
+import { selectedFirst } from '../../core/utils/selected_first';
 import { useId, useState } from 'react';
 import { Check, ChevronDown, Search, type LucideIcon } from 'lucide-react';
 import { Popover } from './Dropdown';
@@ -21,16 +22,15 @@ export function SearchableSelect({ label, value, options, onChange, icon: Icon, 
 
 function SelectMenu({ label, value, options, onSelect, customOption, customHint }: { label: string; value: string; options: SelectOption[]; onSelect: (value: string) => void; customOption?: (query: string) => SelectOption | undefined; customHint?: string }) {
   const [query, setQuery] = useState('');
-  const [limit, setLimit] = useState(50);
   const listId = useId();
   const extra = customOption?.(query.trim());
   const candidates = extra && !options.some((option) => option.value === extra.value) ? [...options, extra] : options;
-  const filtered = candidates.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase()));
+  const filtered = selectedFirst(candidates.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase())), option => option.value === value);
   return <div role="dialog" aria-label={`Choose ${label}`}>
     <div className="px-2 pb-2 pt-1">
       <div className="relative"><Search size="calc(13px * var(--ui-factor))" className="absolute left-2 top-2 text-[var(--text-muted)]" />
         <input autoFocus type="search" aria-label={`Filter ${label} by name`} placeholder="Filter by name…" value={query} aria-controls={listId}
-          onChange={(event) => { setQuery(event.target.value); setLimit(50); }}
+          onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') { event.preventDefault(); document.getElementById(listId)?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(); }
             if (event.key === 'Enter' && filtered.length) { event.preventDefault(); onSelect(filtered[0].value); }
@@ -41,7 +41,7 @@ function SelectMenu({ label, value, options, onSelect, customOption, customHint 
       {customHint && <p className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mt-1">{customHint}</p>}
     </div>
     <div id={listId} role="listbox" aria-label={label} className="max-h-[calc(240px*var(--ui-factor))] overflow-y-auto kubiki-scrollbar">
-      {filtered.slice(0, limit).map((option) => <button type="button" role="option" aria-selected={option.value === value} key={option.value}
+      {filtered.map((option) => <button type="button" role="option" aria-selected={option.value === value} key={option.value}
         onClick={() => onSelect(option.value)}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -55,6 +55,5 @@ function SelectMenu({ label, value, options, onSelect, customOption, customHint 
       </button>)}
     </div>
     {!filtered.length && <p className="px-2.5 py-2 text-xs text-[var(--text-muted)]">No matching namespaces or scopes.</p>}
-    {filtered.length > limit && <button type="button" onClick={() => setLimit((value) => value + 50)} className="w-full py-2 text-xs text-[var(--accent)] hover:bg-[var(--bg-hover)]">Show next 50</button>}
   </div>;
 }

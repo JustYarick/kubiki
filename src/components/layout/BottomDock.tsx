@@ -58,7 +58,6 @@ const ExpandedDock: React.FC = () => {
   } = useDockStore();
 
   const pfCount = usePfStore((s) => s.sessions.length);
-  const resources = useResourceStore((s) => s.resources);
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
 
   const [visited, setVisited] = useState<Set<string>>(new Set());
@@ -82,9 +81,6 @@ const ExpandedDock: React.FC = () => {
       setIsMaximized(true);
     }
   };
-
-  const allPods = useMemo(() => Array.from(resources['Pod']?.values() || []), [resources]);
-  const allNodes = useMemo(() => Array.from(resources['Node']?.values() || []), [resources]);
 
   if (sessions.length === 0) {
     return (
@@ -237,7 +233,19 @@ const ExpandedDock: React.FC = () => {
               />
             )}
           >
-            {(close) => (
+            {(close) => {
+              const currentResources = useResourceStore.getState().resources;
+              const topNodes: ResourceItem[] = [];
+              for (const node of currentResources['Node']?.values() ?? []) {
+                topNodes.push(node);
+                if (topNodes.length >= 6) break;
+              }
+              const topPods: ResourceItem[] = [];
+              for (const pod of currentResources['Pod']?.values() ?? []) {
+                topPods.push(pod);
+                if (topPods.length >= 8) break;
+              }
+              return (
               <div className="py-1 max-h-[calc(380px*var(--ui-factor))] overflow-y-auto kubiki-scrollbar">
                 <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
                   Workstation &amp; Cluster Tools
@@ -281,10 +289,10 @@ const ExpandedDock: React.FC = () => {
                 <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Node Shells (Cluster Nodes)
                 </div>
-                {allNodes.length === 0 ? (
+                {topNodes.length === 0 ? (
                   <div className="px-3 py-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No loaded nodes</div>
                 ) : (
-                  allNodes.slice(0, 6).map((node) => (
+                  topNodes.map((node) => (
                     <button
                       key={node.uid}
                       onClick={() => {
@@ -309,10 +317,10 @@ const ExpandedDock: React.FC = () => {
                 <div className="px-2.5 py-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   Attach to Running Pod
                 </div>
-                {allPods.length === 0 ? (
+                {topPods.length === 0 ? (
                   <div className="px-2.5 py-1 text-[length:calc(10.5px*var(--ui-factor))] text-[var(--text-muted)]">No pods found</div>
                 ) : (
-                  allPods.slice(0, 8).map((p) => (
+                  topPods.map((p) => (
                     <div key={p.uid} className="flex items-center justify-between px-2.5 py-1 hover:bg-[var(--bg-hover)] text-[length:calc(11px*var(--ui-factor))]">
                       <span className="font-mono truncate max-w-[calc(130px*var(--ui-factor))] text-[var(--text-secondary)]">{p.name}</span>
                       <div className="flex items-center gap-1">
@@ -339,7 +347,8 @@ const ExpandedDock: React.FC = () => {
                   ))
                 )}
               </div>
-            )}
+              );
+            }}
           </Popover>
 
           {activeSession?.type === 'terminal' && <IconButton icon={ExternalLink} size="sm" aria-label="Open terminal in tab" tooltip="Open a new terminal tab for this target" onClick={() => {
@@ -387,13 +396,18 @@ const ExpandedDock: React.FC = () => {
 function PortsPane() {
   const sessions = usePfStore((s) => s.sessions);
   const remove = usePfStore((s) => s.remove);
-  const resources = useResourceStore(state => state.resources);
   const scope = useClusterStore((s) => s.selectedNamespace);
   const [addOpen, setAddOpen] = useState(false);
   const [targetSearch, setTargetSearch] = useState('');
   const [target, setTarget] = useState<ResourceItem | null>(null);
   const [stopping, setStopping] = useState<string>();
-  const candidates = [...resources.Pod.values(), ...resources.Service.values()].filter(item => inNamespaceScope(scope, item.namespace) && (item.name.toLowerCase().includes(targetSearch.trim().toLowerCase()) || (item.namespace ?? '').toLowerCase().includes(targetSearch.trim().toLowerCase())));
+  const pods = useResourceStore((s) => (addOpen ? s.resources.Pod : null));
+  const services = useResourceStore((s) => (addOpen ? s.resources.Service : null));
+  const candidates = useMemo(() => {
+    if (!addOpen || !pods || !services) return [];
+    const q = targetSearch.trim().toLowerCase();
+    return [...pods.values(), ...services.values()].filter(item => inNamespaceScope(scope, item.namespace) && (!q || item.name.toLowerCase().includes(q) || (item.namespace ?? '').toLowerCase().includes(q)));
+  }, [addOpen, pods, services, scope, targetSearch]);
 
   useEffect(() => {
     if (!k8s.demo) return;
@@ -492,13 +506,27 @@ function EventsPane() {
   const loadError = useResourceStore((s) => s.loadErrors.Event);
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'All' | 'Normal' | 'Warning'>('All');
+  const [visibleCount, setVisibleCount] = useState(200);
+
+  useEffect(() => {
+    setVisibleCount(200);
+  }, [filter, typeFilter]);
 
   const filtered = useMemo(() => {
-    let list: ClusterEvent[] = k8s.demo ? MOCK_EVENTS : [...events.values()].map((event) => {
-      const raw = event.raw ?? {};
-      const ref = raw.involvedObject ?? raw.regarding ?? {};
-      return { id: event.uid, type: raw.type === 'Warning' ? 'Warning' : 'Normal', reason: raw.reason ?? '', object: `${ref.kind ?? ''}/${ref.name ?? ''}`, message: raw.message ?? raw.note ?? '', count: raw.count ?? raw.series?.count ?? 1, age: event.age ?? '—' };
-    });
+    let list: ClusterEvent[] = (k8s.demo ? MOCK_EVENTS : [...events.values()])
+      .map((event) => {
+        const raw = (event as any).raw ?? {};
+        const ref = raw.involvedObject ?? raw.regarding ?? {};
+        return {
+          id: (event as any).uid ?? (event as any).id,
+          type: ((event as any).type === 'Warning' || raw.type === 'Warning') ? 'Warning' : 'Normal',
+          reason: raw.reason ?? (event as any).reason ?? '',
+          object: (event as any).object ?? `${ref.kind ?? ''}/${ref.name ?? ''}`,
+          message: raw.message ?? raw.note ?? (event as any).message ?? '',
+          count: raw.count ?? raw.series?.count ?? (event as any).count ?? 1,
+          age: (event as any).age ?? '—',
+        };
+      });
     if (typeFilter !== 'All') list = list.filter((e) => e.type === typeFilter);
     if (filter) {
       const q = filter.toLowerCase();
@@ -506,6 +534,8 @@ function EventsPane() {
     }
     return list;
   }, [typeFilter, filter, events]);
+
+  const visibleEvents = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
   return (
     <div className="h-full flex flex-col min-h-0 bg-[var(--bg-canvas)]">
@@ -529,7 +559,16 @@ function EventsPane() {
       </div>
 
       {loadError && <div role="alert" className="p-2 text-[var(--status-warn)] text-xs">{loadError.message}</div>}
-      <div className="flex-1 overflow-auto kubiki-scrollbar p-2">
+      <div
+        className="flex-1 overflow-auto kubiki-scrollbar p-2"
+        onScroll={(e) => {
+          if (visibleCount >= filtered.length) return;
+          const el = e.currentTarget;
+          if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) {
+            setVisibleCount((prev) => Math.min(filtered.length, prev + 200));
+          }
+        }}
+      >
         <table className="datagrip-grid w-full">
           <thead>
             <tr>
@@ -542,7 +581,7 @@ function EventsPane() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((e) => (
+            {visibleEvents.map((e) => (
               <tr key={e.id} className="datagrip-row">
                 <td className="datagrip-cell">
                   <span

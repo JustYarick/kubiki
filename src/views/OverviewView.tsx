@@ -13,8 +13,15 @@ import type { ResourceKind } from '../types/k8s';
 import { k8s } from '../providers/k8s_provider';
 
 export function OverviewView() {
-  const { availableResourceKinds, currentContext, selectedNamespace, isLoading, isConnected } = useClusterStore();
-  const { resources, syncMode, watchStates, loadErrors } = useResourceStore();
+  const availableResourceKinds = useClusterStore((s) => s.availableResourceKinds);
+  const currentContext = useClusterStore((s) => s.currentContext);
+  const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
+  const isLoading = useClusterStore((s) => s.isLoading);
+  const isConnected = useClusterStore((s) => s.isConnected);
+  const resources = useResourceStore((s) => s.resources);
+  const syncMode = useResourceStore((s) => s.syncMode);
+  const watchStates = useResourceStore((s) => s.watchStates);
+  const loadErrors = useResourceStore((s) => s.loadErrors);
   const summary = useMemo(() => buildOverview({ availableKinds: availableResourceKinds, resources, namespace: selectedNamespace, context: currentContext, syncMode, loading: isLoading, connected: isConnected, watchStates, loadErrors, onDemand: !k8s.demo }), [resources, availableResourceKinds, selectedNamespace, currentContext, syncMode, isLoading, isConnected, watchStates, loadErrors]);
   const open = (kind: ResourceKind) => { useResourceStore.getState().setActiveKind(kind); useWorkspaceStore.getState().openResourceList(kind); };
   const value = (count: number | null | undefined) => count == null ? '—' : count.toLocaleString();

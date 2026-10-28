@@ -33,7 +33,7 @@ import { errorHint } from './providers/errors';
 import { DEFAULT_APPEARANCE, uiFactor, uiPixels } from './core/appearance';
 import { resetExecSessions, closeExecConnections } from './providers/tauri_exec';
 import { closeNodeDebugConnections } from './providers/node_debug';
-import { cancelResourceSnapshots, scanClusterInventory, syncResourceSnapshot } from './providers/snapshot_sync';
+import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snapshot_sync';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
 
 export default function App() {
@@ -48,9 +48,19 @@ export default function App() {
     return () => { window.removeEventListener('pagehide', close); close(); };
   }, []);
   useEffect(() => {
-    const resize = () => setViewportWidth(window.innerWidth);
+    let raf = 0;
+    const resize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setViewportWidth(window.innerWidth);
+      });
+    };
     window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+    };
   }, []);
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth,
@@ -102,38 +112,38 @@ export default function App() {
     useUiStore.setState({ inspectorCollapsed: true });
     setLoading(true);
     try {
-      await k8s.resetResourceWatches();
-      await resetExecSessions();
-      await resetPortForwards();
+      await Promise.all([
+        k8s.resetResourceWatches(),
+        resetExecSessions(),
+        resetPortForwards(),
+      ]);
       if (!current()) return;
       const ping = await k8s.pingCluster(contextName);
       if (!current()) return;
       if (ping.status === 'error') throw new Error('Cluster is unavailable');
-      // Namespace listing can be forbidden while individual namespace reads are allowed.
-      try {
-        const namespaces = await k8s.getNamespaces(contextName);
-        if (current()) setAvailableNamespaces(namespaces);
-      } catch (error) {
-        if (current()) toast.warn('Namespace discovery unavailable', String(error));
-      }
-      if (!current()) return;
       let available = RESOURCE_TYPES;
-      try {
-        const discovered = await k8s.getApiResources(contextName);
-        if (!current()) return;
-        available = discovered;
-        setDiscoveredResourceTypes(discovered);
-        useClusterStore.setState({ availableResourceKinds: discovered.map(type => type.kind) });
-      } catch { /* Discovery can be denied independently; keep explicit per-resource reads available. */ }
+      const [nsResult, apiResult] = await Promise.allSettled([
+        k8s.getNamespaces(contextName),
+        k8s.getApiResources(contextName),
+      ]);
+      if (!current()) return;
+      if (nsResult.status === 'fulfilled') {
+        setAvailableNamespaces(nsResult.value);
+      } else {
+        toast.warn('Namespace discovery unavailable', String(nsResult.reason));
+      }
+      if (apiResult.status === 'fulfilled') {
+        available = apiResult.value;
+        setDiscoveredResourceTypes(apiResult.value);
+        useClusterStore.setState({ availableResourceKinds: apiResult.value.map(type => type.kind) });
+      }
       if (!current()) return;
       setConnected(true, ping.version);
       const kinds = available.map(type => type.kind) as ResourceKind[];
       useResourceStore.getState().setSyncMode(k8s.demo ? 'demo' : k8s.supportsResourceWatch ? 'watch' : 'snapshot');
       const results = k8s.demo ? await Promise.allSettled(kinds.map(async (kind) => {
         await syncResourceSnapshot(contextName, kind, 'all');
-      })) : await scanClusterInventory(contextName, kinds, useClusterStore.getState().selectedNamespace);
-      if (!current()) return;
-      if (!k8s.demo) results.push(...await startResourceWatches(contextName));
+      })) : await startResourceWatches(contextName);
       if (!current()) return;
       const failures = results.filter((r) => r.status === 'rejected').length;
       if (failures) toast.warn('Some resources could not be loaded', `${failures} resource types unavailable. See individual views.`);
@@ -330,7 +340,9 @@ export default function App() {
 function ConnectionBanner({ onRetry }: { onRetry: () => void }) {
   const error = useClusterStore((s) => s.error);
   const loading = useClusterStore((s) => s.isLoading);
-  if (!error && !k8s.demo) return null;
+  const currentContext = useClusterStore((s) => s.currentContext);
+  const isDemo = k8s.demo || currentContext === 'kubiki-demo';
+  if (!error && !isDemo) return null;
   return <div role="status" className="flex items-center gap-3 px-3 py-1.5 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] text-xs">
     <span className={error ? 'text-[var(--status-danger)]' : 'text-[var(--status-warn)]'}>{error ? <>{error.message}{errorHint(error) && <span className="ml-2 text-[var(--text-secondary)]">{errorHint(error)}</span>}</> : 'Demo cluster · simulated resources and sessions'}</span>
     {error && <button disabled={loading} onClick={onRetry} className="text-[var(--accent)] shrink-0">Reconnect</button>}

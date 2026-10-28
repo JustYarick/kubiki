@@ -15,6 +15,7 @@ import { useUiStore } from '../../state/ui_store';
 import { uiFactor } from '../../core/appearance';
 import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
+import { FullManifest } from '../../views/FullManifest';
 import { k8s } from '../../providers/k8s_provider';
 import { AnalysisView } from '../../views/AnalysisView';
 import { IconButton } from '../ui/Button';
@@ -97,7 +98,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
   const loadingKinds = useResourceStore(state => state.loadingKinds);
   const customKey = tab?.type === 'resource-list' ? tab.kind : tab?.kind ? resourceBucket({ kind: tab.kind, apiVersion: tab.apiVersion }) : '';
   const customDefinition = useMemo(() => [...resources.CustomResourceDefinition.values()].map(customResourceType).find(type => type?.key === customKey), [resources.CustomResourceDefinition, customKey]);
-  const custom = useCustomResources(tab?.type !== 'resource-list' && tab?.context === context ? customDefinition : undefined);
+  const custom = useCustomResources(visible && tab?.type !== 'resource-list' && tab?.context === context ? customDefinition : undefined, tab?.namespace);
 
   if (!tab) {
     return (
@@ -185,8 +186,9 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     const candidate = tab.uid ? resources[kind]?.get(tab.uid)
       : tab.name ? Array.from(resources[kind]?.values() || []).find((item) => matchesResourceRef(item, { ...tab, kind, name: tab.name! })) : undefined;
     const loaded = candidate && matchesResourceRef(candidate, tab.resource ?? { ...tab, kind, name: tab.name ?? candidate.name }) ? candidate : undefined;
-    // An already open shell can keep its pinned target while namespace snapshots are unloaded.
-    const item = loaded ?? (tab.item?.kind === 'HelmRelease' ? tab.item : tab.kind === 'HelmRelease' && tab.name && tab.namespace ? { kind: 'HelmRelease' as const, apiVersion: tab.apiVersion ?? 'helm.sh/v1', name: tab.name, namespace: tab.namespace, uid: tab.uid ?? tab.id, raw: { context: tab.context } } : undefined) ?? ((tab.type === 'terminal' || tab.type === 'logs') && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode) ? tab.item : undefined);
+    // Live sessions own their pinned target: changing an inventory's namespace
+    // must not unmount the pane and close its connection during a new snapshot.
+    const item = loaded ?? (tab.item?.kind === 'HelmRelease' ? tab.item : tab.kind === 'HelmRelease' && tab.name && tab.namespace ? { kind: 'HelmRelease' as const, apiVersion: tab.apiVersion ?? 'helm.sh/v1', name: tab.name, namespace: tab.namespace, uid: tab.uid ?? tab.id, raw: { context: tab.context } } : undefined) ?? ((tab.type === 'terminal' || tab.type === 'logs') ? tab.item : undefined);
 
     if (!item && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
       return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;
@@ -239,6 +241,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
             </div>
           }
         >
+          <FullManifest item={item}>{(item) => (
           <YamlEditor
             item={item}
             onApply={async (yaml) => {
@@ -265,6 +268,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
               }
             }}
           />
+          )}</FullManifest>
         </Suspense>
       </div>
     );
@@ -272,5 +276,5 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
 
   // Default: Resource List Table
   if (tab.kind?.startsWith('custom:') && !customDefinition) return <p className="p-3 text-xs text-[var(--text-secondary)]">This custom resource definition is not loaded in the current cluster.</p>;
-  return <ResourceView viewId={tab.id} key={tab.id} explicitKind={tab.kind} customType={customDefinition} />;
+  return <ResourceView key={tab.id} explicitKind={tab.kind} customType={customDefinition} />;
 }

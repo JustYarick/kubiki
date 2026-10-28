@@ -7,7 +7,8 @@ import { useClusterStore } from '../../state/cluster_store';
 import type { RightTab } from '../../state/ui_store';
 import { useUiStore } from '../../state/ui_store';
 import { useDockStore } from '../../state/dock_store';
-import { buildResourceGraph } from '../../core/resources/relationships';
+import { useTopologyGraph } from '../../providers/use_topology_graph';
+import { relatedResourceKinds } from '../../core/resources/resource_demand';
 import { useHelmGraph } from '../../providers/use_helm_graph';
 import { resourceKey, resourceRef } from '../../core/resources/identity';
 import { resourceEvents } from '../../core/resources/resource_events';
@@ -22,13 +23,14 @@ import { PFDialog } from '../dialogs/PFDialog';
 import { toast } from '../../state/notifications_store';
 import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
+import { FullManifest } from '../../views/FullManifest';
 import { k8s } from '../../providers/k8s_provider';
 import type { ResourceItem } from '../../types/k8s';
 import { DetailsPanel } from '../k8s/details/DetailsPanel';
 import { ResourceLoading } from '../ui/ResourceLoading';
 import { ResourceDetailsRouter } from '../k8s/details/ResourceDetailsRouter';
+import { PodEnvironmentTab } from '../k8s/details/PodEnvironmentTab';
 import { retainResourceKinds } from '../../state/resource_requirements';
-import { RESOURCE_TYPES } from '../../core/resources/resource_types';
 
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 const HelmReleaseDetails = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmReleaseDetails })));
@@ -92,18 +94,18 @@ function KubernetesResourceDetails({
     setRelatedLimit(50);
   }, [item?.uid]);
 
-  // Related is lazy and inspects only adjacent edges, including Namespace membership.
-  const graph = useMemo(
-    () => (item && rightTab === 'related' ? buildResourceGraph(resources, { adjacentTo: new Set([resourceKey(item)]) }) : undefined),
-    [resources, item, rightTab]
+  const { graph, loading: relatedLoading, notice: relatedError } = useTopologyGraph(resources, 'related', item, 1, !!item && rightTab === 'related');
+  const childPods = useMemo(
+    () => (item ? findWorkloadPods(item, { Pod: resources.Pod, ReplicaSet: resources.ReplicaSet, Job: resources.Job }) : []),
+    [item, resources.Pod, resources.ReplicaSet, resources.Job]
   );
-  const childPods = useMemo(() => item ? findWorkloadPods(item, resources) : [], [item, resources]);
   const currentContext = useClusterStore((s) => s.currentContext);
+  const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
   useEffect(() => {
     if (!inspector && item && currentContext && rightTab === 'related') {
-      return retainResourceKinds(currentContext, RESOURCE_TYPES.map(type => type.kind));
+      return retainResourceKinds(currentContext, relatedResourceKinds(item), item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? selectedNamespace);
     }
-  }, [inspector, item?.uid, currentContext, rightTab]);
+  }, [inspector, item, currentContext, rightTab, selectedNamespace]);
 
   if (!item) {
     return (
@@ -320,8 +322,15 @@ function KubernetesResourceDetails({
         onPorts={() => setPfOpen(true)}
         rightTab={rightTab}
         setTab={setTab}
-        busy={rightTab === 'related' && helm.loading}
-        busyLabel="Loading Helm relationships…"
+        tabs={item.kind === 'Pod' ? [
+          { id: 'overview', label: 'Overview' },
+          { id: 'env', label: 'Environment' },
+          { id: 'related', label: 'Related' },
+          { id: 'events', label: 'Events' },
+          { id: 'yaml', label: 'YAML' },
+        ] : undefined}
+        busy={rightTab === 'related' && (helm.loading || relatedLoading)}
+        busyLabel="Loading resource relationships…"
         footer={
           <>
             <PFDialog key={`pf-${item.uid}`} item={pfOpen ? item : null} onClose={() => setPfOpen(false)} />
@@ -330,6 +339,7 @@ function KubernetesResourceDetails({
       >
         {rightTab === 'yaml' ? (
           <Suspense fallback={<div className="p-4 text-[var(--text-muted)] flex gap-2"><Loader2 size="calc(13px * var(--ui-factor))" /> Loading editor…</div>}>
+            <FullManifest item={item}>{(item) => (
             <YamlEditor
               key={item.uid}
               item={item}
@@ -357,6 +367,7 @@ function KubernetesResourceDetails({
                 }
               }}
             />
+            )}</FullManifest>
           </Suspense>
         ) : rightTab === 'related' ? (
           <div className="details-scroll details-body">
@@ -378,8 +389,9 @@ function KubernetesResourceDetails({
               <div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mb-2">
                 {filteredRelated.length} matching · {related.length} relationships
               </div>
-              {helm.loading && !related.length && <ResourceLoading label="Loading resource relationships…" />}
-              {!helm.loading && !related.length && <p className="text-[var(--text-secondary)] text-xs">No relationships found in loaded resources.</p>}
+              {(helm.loading || relatedLoading) && !related.length && <ResourceLoading label="Loading resource relationships…" />}
+              {relatedError && <p role="alert" className="text-xs text-[var(--status-danger)]">{relatedError}</p>}
+              {!helm.loading && !relatedLoading && !relatedError && !related.length && <p className="text-[var(--text-secondary)] text-xs">No relationships found in loaded resources.</p>}
               {filteredRelated.slice(0, relatedLimit).map((edge) => {
                 const outgoing = edge.source === key;
                 const target = edge.missing ? undefined : graph?.items.get(outgoing ? edge.target : edge.source);
@@ -417,6 +429,8 @@ function KubernetesResourceDetails({
           </div>
         ) : rightTab === 'events' ? (
           <ResourceEvents key={item.uid} item={item} />
+        ) : rightTab === 'env' && item.kind === 'Pod' ? (
+          <PodEnvironmentTab key={item.uid} item={item} onNavigate={navigate} />
         ) : (
           <div className="details-scroll details-body kubiki-scrollbar">
             <ResourceDetailsRouter key={item.uid} item={item} onNavigate={navigate} onLogs={logs} onShell={shell} />

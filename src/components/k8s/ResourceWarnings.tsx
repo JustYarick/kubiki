@@ -8,20 +8,35 @@ import { cx } from '../../core/utils/cx';
 import type { ResourceItem } from '../../types/k8s';
 
 export const ResourceWarnings = memo(function ResourceWarnings({ item, showSummary = false }: { item: ResourceItem; showSummary?: boolean }) {
-  const pods = useResourceStore((state) => item.kind === 'Service' ? state.resources.Pod : undefined);
-  const podError = useResourceStore((state) => item.kind === 'Service' ? state.loadErrors.Pod : undefined);
-  const storageClasses = useResourceStore((state) => item.kind === 'PersistentVolumeClaim' ? state.resources.StorageClass : undefined);
-  const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
-  const snapshotsReady = useClusterStore((state) => item.kind === 'Service' ? state.isConnected && !state.isLoading : false);
-  const storageClassName = item.spec?.storageClassName ?? item.storageClass;
-  const issues = resourceIssues(item, {
-    pods: pods ? [...pods.values()] : undefined,
-    podsLoaded: snapshotsReady && podsCurrent && !podError,
-    storageClass: storageClasses ? [...storageClasses.values()].find((entry) => entry.name === storageClassName) : undefined,
-  });
+  if (item.kind === 'Service') return <ServiceWarnings item={item} showSummary={showSummary} />;
+  if (item.kind === 'PersistentVolumeClaim') return <PvcWarnings item={item} showSummary={showSummary} />;
+  const issues = resourceIssues(item);
   if (!issues.length) return null;
   return <IssueIndicator issues={issues} showSummary={showSummary} />;
 });
+
+function ServiceWarnings({ item, showSummary }: { item: ResourceItem; showSummary: boolean }) {
+  const pods = useResourceStore((state) => state.resources.Pod);
+  const podError = useResourceStore((state) => state.loadErrors.Pod);
+  const podsCurrent = useResourceStore((s) => s.syncMode !== 'watch' || s.watchStates.Pod?.phase === 'live');
+  const snapshotsReady = useClusterStore((state) => state.isConnected && !state.isLoading);
+  const issues = resourceIssues(item, {
+    pods: [...pods.values()],
+    podsLoaded: snapshotsReady && podsCurrent && !podError,
+  });
+  if (!issues.length) return null;
+  return <IssueIndicator issues={issues} showSummary={showSummary} />;
+}
+
+function PvcWarnings({ item, showSummary }: { item: ResourceItem; showSummary: boolean }) {
+  const storageClasses = useResourceStore((state) => state.resources.StorageClass);
+  const storageClassName = item.spec?.storageClassName ?? item.storageClass;
+  const issues = resourceIssues(item, {
+    storageClass: [...storageClasses.values()].find((entry) => entry.name === storageClassName),
+  });
+  if (!issues.length) return null;
+  return <IssueIndicator issues={issues} showSummary={showSummary} />;
+}
 
 function IssueIndicator({ issues, showSummary }: { issues: ResourceIssue[]; showSummary: boolean }) {
   const [open, setOpen] = useState(false);

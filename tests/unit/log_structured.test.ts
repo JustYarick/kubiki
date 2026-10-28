@@ -12,10 +12,20 @@ it('splits JSON records into message, level and k=v fields like Grafana', () => 
 });
 
 it('maps common level spellings and message aliases', () => {
+  expect(parseStructuredLog('{"messageText":"capitalized alias"}')?.message).toBe('capitalized alias');
   expect(parseStructuredLog('{"severity":"FATAL","message":"boom"}')).toMatchObject({ level: 'error', message: 'boom' });
   expect(parseStructuredLog('{"lvl":"Warning","log":"slow"}')).toMatchObject({ level: 'warn', message: 'slow' });
   expect(parseStructuredLog('{"loglevel":"verbose","event":"hop"}')).toMatchObject({ level: 'debug', message: 'hop' });
   expect(parseStructuredLog('{"severity":"notice","msg":"ok"}')).toMatchObject({ level: 'info', message: 'ok', fields: [] });
+});
+
+it('retains other message-like fields and text around embedded JSON', () => {
+  expect(parseStructuredLog('{"level":"error","msg":"request failed","body":{"error":"access denied"},"action":"create"}')).toEqual({
+    level: 'error', message: 'request failed', fields: [['body', '{"error":"access denied"}'], ['action', 'create']],
+  });
+  expect(parseStructuredLog('fatal: admission rejected {"code":403} for resource widgets/team-a')).toEqual({
+    level: undefined, message: undefined, fields: [['code', '403']], prefix: 'fatal: admission rejected', suffix: 'for resource widgets/team-a',
+  });
 });
 
 it('leaves unknown levels with plain fields and keeps raw rendering for non-JSON', () => {

@@ -30,7 +30,7 @@ kubiki/
 ├── shared/                     Shared resource type registry
 ├── server/                     Local frontend development and test bridges
 ├── tests/                      Frontend unit, contract, and interface tests
-├── docs/                       Documentation and screenshots
+├── docs/                       Documentation, GIF demos and screenshots
 ├── public/licenses/            Bundled font and icon license notices
 └── .github/workflows/          Verification and release packaging
 ```
@@ -71,15 +71,16 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/yaml_draft_store.ts` | In-memory editor drafts keyed by context and resource identity. |
 | `src/state/mutation_confirm_store.ts` | Pending native mutation confirmation requests. |
 | `src/state/pf_store.ts` | Port-forward session state. |
+| `src/state/table_view_store.ts` | Resource table search query, regex toggle, column sorting, and column filters persisted per resource kind. |
 | `src/state/update_store.ts` | Update service composition and unsaved-editor installation preflight. |
 
 ### Providers and resource logic
 
 `src/providers/contract.ts` defines the common resource access interface. `k8s_provider.ts` selects the transport, and the desktop application calls native commands through Tauri. Dedicated transports handle watches, logs, exec sessions, and forwarding.
 
-`resource_watch_session.ts` manages frontend subscription state. `tauri_watch.ts` creates Tauri channels, checks subscription identity, and requests native cleanup when a watch closes. `errors.ts` normalizes backend failures for the interface.
+`resource_watch_session.ts` manages frontend subscription state. `multi_namespace_watch.ts` bounds actual initial namespace snapshots before releasing their long-lived watches. `tauri_watch.ts` creates Tauri channels, checks subscription identity, and requests native cleanup when a watch closes. `read_queue.ts` bounds ordinary reads, and `read_transport.ts` forwards cancellation to native read tasks or the HTTP bridge. `errors.ts` normalizes backend failures for the interface.
 
-`src/core/resources/` contains resource identity, namespace scoping, relationship inference, diagnostics, quantity parsing, topology preparation, and presentation logic. `shared/resource-types.json` supplies the resource registry used by frontend code and local tooling. API discovery supplements the registry with information from the selected cluster.
+`src/core/resources/` contains resource identity, namespace scoping, relationship inference, pod environment resolution and drift detection, diagnostics, quantity parsing, topology preparation, and presentation logic. `shared/resource-types.json` supplies the resource registry used by frontend code and local tooling. API discovery supplements the registry with information from the selected cluster.
 
 ## Desktop shell
 
@@ -88,6 +89,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | Command module in `src-tauri/src/` | Responsibility |
 | --- | --- |
 | `k8s_commands.rs` | Contexts, namespaces, resource reads, discovery, and overview metrics. |
+| `read_tasks.rs` | Window-owned cancellation, read deadlines, and concurrency limits. |
 | `watch_commands.rs` | Native resource watch subscriptions and Tauri channel delivery. |
 | `mutation_commands.rs` | Preparation and execution of supported resource and Helm changes. |
 | `mutation_guard.rs` | Pending confirmation requests, desktop review events, and approval resolution. |
@@ -119,7 +121,7 @@ The desktop shell owns transport and application lifecycle concerns. Kubernetes 
 
 `src/cluster/kubeconfig.rs` reads the default kubeconfig or the files listed in `KUBECONFIG`. `src/cluster/client.rs` provides context-specific clients so requests can remain tied to the selected context.
 
-`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; operation preparation and execution live in `src/helm/mutations.rs`.
+`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation, including reviewed mutations. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`.
 
 The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reuses the library. The desktop application does not depend on that executable.
 
@@ -127,7 +129,7 @@ The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reus
 
 The frontend starts resource subscriptions for the active context and namespace scope. Each subscription identifies its query and receives batches through a Tauri channel.
 
-The Rust informer layer maintains resource snapshots and processes Kubernetes watch changes. The frontend watch session applies the resulting batches to the resource store. Table searches belong to workspace tabs in `table_view_store.ts`, separate from the shared resource cache. Components subscribe to that store to render the current resource state.
+The Rust informer layer maintains resource snapshots and processes Kubernetes watch changes. The frontend watch session applies the resulting batches to the resource store. Table view preferences (search query, regex toggle, column sorting, and column filters) are persisted per resource kind in `table_view_store.ts`, separate from the shared resource cache. Components subscribe to that store to render the current resource state.
 
 Changing the context stops the old frontend session before starting another. Namespace selection updates subscription scope. The transport checks subscription and query identity before delivering a batch, preventing a closed subscription from updating an unrelated view.
 
@@ -186,7 +188,7 @@ for preparation and verification commands.
 
 ## Documentation and assets
 
-`docs/media/` contains the screenshots used by the README: overview, resources, YAML, topology, and Helm. Native application icons are stored in `src-tauri/icons/`.
+`docs/media/` contains the GIF demonstrations and static PNG alternatives used by the README: overview, resources, YAML, topology, and Helm. Run `pnpm docs:media` to regenerate them; see [README recordings](MEDIA.md). Native application icons are stored in `src-tauri/icons/`.
 
 Font and Redis/Kafka icon license notices are stored in `public/licenses/`.
 `docs/DESKTOP_RENDERING.md` records dated investigation results and limitations;

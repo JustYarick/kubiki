@@ -19,10 +19,19 @@ const WORKLOADS = new Set(['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet
 const FAILED_STATES = new Set(['Failed', 'Error', 'CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'InvalidImageName', 'CreateContainerConfigError', 'CreateContainerError', 'RunContainerError', 'ContainerCannotRun', 'OOMKilled', 'Evicted']);
 const STARTUP_STATES = new Set(['ContainerCreating', 'PodInitializing']);
 const STUCK_AFTER_MS = 5 * 60 * 1000;
+const CACHE_BUCKET_MS = 15_000;
+const defaultIssuesCache = new WeakMap<ResourceItem, { bucket: number; issues: ResourceIssue[] }>();
 const record = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 
 /** Diagnostics require API evidence. Missing data and intentional idle states are not failures. */
 export function resourceIssues(item: ResourceItem, context: DiagnosticContext = {}): ResourceIssue[] {
+  const cacheable = context.now === undefined && context.pods === undefined && context.storageClass === undefined && !context.podsLoaded;
+  const now = context.now ?? Date.now();
+  const bucket = Math.floor(now / CACHE_BUCKET_MS);
+  if (cacheable) {
+    const cached = defaultIssuesCache.get(item);
+    if (cached && cached.bucket === bucket) return cached.issues;
+  }
   const raw = item.raw ?? {};
   const metadata = record(raw.metadata ?? item.metadata);
   const spec = record(raw.spec ?? item.spec);
@@ -36,7 +45,10 @@ export function resourceIssues(item: ResourceItem, context: DiagnosticContext = 
   const fromCondition = (condition: Record<string, any>, severity: ResourceIssue['severity'] = 'warning') => {
     add(`condition:${condition.type}`, severity, `${condition.type}: ${condition.reason || condition.status}`, condition.message);
   };
-  const now = context.now ?? Date.now();
+  const finish = (result: ResourceIssue[]) => {
+    if (cacheable) defaultIssuesCache.set(item, { bucket, issues: result });
+    return result;
+  };
   const age = typeof metadata.creationTimestamp === 'string' ? now - Date.parse(metadata.creationTimestamp) : item.creationTimestamp ? now - Date.parse(item.creationTimestamp) : NaN;
   const terminating = Boolean(metadata.deletionTimestamp) || item.status === 'Terminating';
   const desired = item.kind === 'DaemonSet' ? status.desiredNumberScheduled ?? item.replicas : spec.replicas ?? item.replicas ?? parseReady(item.ready)?.desired;
@@ -46,9 +58,9 @@ export function resourceIssues(item: ResourceItem, context: DiagnosticContext = 
   if (terminating) {
     const deletingFor = now - Date.parse(metadata.deletionTimestamp);
     if (deletingFor > STUCK_AFTER_MS) add('terminating', 'warning', 'Deletion has not completed for over 5 minutes', Array.isArray(metadata.finalizers) && metadata.finalizers.length ? `Finalizers: ${metadata.finalizers.join(', ')}` : 'The resource is still terminating. Check its events and dependent resources.');
-    if (item.kind !== 'Namespace') return [...issues.values()];
+    if (item.kind !== 'Namespace') return finish([...issues.values()]);
   }
-  if (completed) return [];
+  if (completed) return finish([]);
   if (item.kind === 'HelmRelease') {
     if (item.status === 'failed') add('helm-failed', 'error', 'Helm release failed', 'Open the release history and inspect its managed resources.');
     else if (item.status?.startsWith('pending-') || item.status === 'uninstalling') add('helm-pending', 'warning', `Helm release ${item.status}`, 'A Helm operation is in progress or may require attention.');
@@ -123,7 +135,7 @@ export function resourceIssues(item: ResourceItem, context: DiagnosticContext = 
     }
   }
   if (item.kind === 'Event' && raw.type === 'Warning') add('warning-event', 'warning', raw.reason || 'Warning event', raw.message ?? raw.note);
-  return [...issues.values()].sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error'));
+  return finish([...issues.values()].sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error')));
 }
 
 function parseReady(value?: string): { ready: number; desired: number } | undefined {
