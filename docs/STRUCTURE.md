@@ -30,7 +30,7 @@ kubiki/
 ├── shared/                     Shared resource type registry
 ├── server/                     Local frontend development and test bridges
 ├── tests/                      Frontend unit, contract, and interface tests
-├── docs/                       Documentation and screenshots
+├── docs/                       Documentation, GIF demos and screenshots
 ├── public/licenses/            Bundled font and icon license notices
 └── .github/workflows/          Verification and release packaging
 ```
@@ -188,7 +188,7 @@ for preparation and verification commands.
 
 ## Documentation and assets
 
-`docs/media/` contains the screenshots used by the README: overview, resources, YAML, topology, and Helm. Native application icons are stored in `src-tauri/icons/`.
+`docs/media/` contains the GIF demonstrations and static PNG alternatives used by the README: overview, resources, YAML, topology, and Helm. Run `pnpm docs:media` to regenerate them; see [README recordings](MEDIA.md). Native application icons are stored in `src-tauri/icons/`.
 
 Font and Redis/Kafka icon license notices are stored in `public/licenses/`.
 `docs/DESKTOP_RENDERING.md` records dated investigation results and limitations;
