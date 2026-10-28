@@ -299,8 +299,7 @@ async fn run_watch<F>(
     let stream = watcher::watcher(
         api,
         watcher::Config::default()
-            .timeout(WATCH_TIMEOUT_SECONDS)
-            .page_size(500),
+            .timeout(WATCH_TIMEOUT_SECONDS),
     )
     .default_backoff();
     tokio::pin!(stream);

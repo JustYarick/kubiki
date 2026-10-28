@@ -166,7 +166,12 @@ export function resourceDemand(input: {
   const visible = input.tabs.filter(tab => tab === active || tab.id === input.splitTabId);
   for (const tab of visible) {
     if (tab.context && tab.context !== input.context) continue;
-    if (tab.type === 'overview') for (const kind of OVERVIEW_KINDS) request(kind);
+    if (tab.type === 'overview') {
+      for (const kind of OVERVIEW_KINDS) {
+        if (selectedNamespace !== 'all' && (kind === 'Node' || kind === 'Namespace')) continue;
+        request(kind);
+      }
+    }
     else if (tab.type === 'topology') {
       // The mounted view owns its chosen scope. A focused tab only needs its
       // target collection to mount before the view registers dependencies.
