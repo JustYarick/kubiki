@@ -2,6 +2,7 @@ import type { ResourceItem, ResourceKind } from '../../../types/k8s';
 import { presentationFor, fieldText, fieldValue } from '../../../core/resources/resource_presentations';
 import { resourceType, apiVersionFor as typeApiVersion } from '../../../core/resources/resource_types';
 import { memoryText, quantity } from '../../../core/resources/quantities';
+import type { WorkloadPodActivity } from '../../../core/resources/workload_pod_activity';
 
 export interface ColumnDef {
   id: string;
@@ -13,6 +14,7 @@ export interface ColumnDef {
   /** Tooltip shown on the cell — explains where the value comes from. */
   hint?: string;
   get: (i: ResourceItem) => string | undefined;
+  podActivity?: (i: ResourceItem) => WorkloadPodActivity | undefined;
 }
 
 export const DEFAULT_COL_SIZE: Record<string, number> = {
@@ -33,7 +35,15 @@ export const BASE_COLUMNS: ColumnDef[] = [
   { id: 'namespace', label: 'Namespace', get: (i) => i.namespace },
 ];
 
-export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<string, number> }): ColumnDef[] => {
+export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<string, number>; podActivity?: Map<string, WorkloadPodActivity> }): ColumnDef[] => {
+  const workloadPods: ColumnDef = {
+    id: 'pods', label: 'Pods', hint: 'Ready / total existing Pods, including pending and terminating Pods',
+    get: item => {
+      const activity = options?.podActivity?.get(item.uid);
+      return activity ? `${activity.ready}/${activity.total}` : undefined;
+    },
+    podActivity: item => options?.podActivity?.get(item.uid),
+  };
   const presentation = presentationFor({ kind, apiVersion: typeApiVersion(resourceType(kind)) });
   if (presentation) return [BASE_COLUMNS[0], ...(resourceType(kind).namespaced ? [BASE_COLUMNS[1]] : []), ...presentation.fields.map((field, index) => ({ id: `field-${index}`, label: field.label, get: (item: ResourceItem) => fieldText(fieldValue(item.raw, field.path)) })), { id: 'status', label: 'Status', get: item => item.status }, { id: 'age', label: 'Age', get: item => item.age }];
   switch (kind) {
@@ -54,7 +64,7 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
     case 'ReplicationController':
       return [
         ...BASE_COLUMNS,
-        { id: 'pods', label: 'Pods', get: (i) => i.ready },
+        workloadPods,
         { id: 'status', label: 'Conditions', get: (i) => i.status },
         { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
@@ -62,7 +72,7 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
     case 'DaemonSet':
       return [
         ...BASE_COLUMNS,
-        { id: 'pods', label: 'Pods', get: (i) => i.ready },
+        workloadPods,
         { id: 'nodeSelector', label: 'Node Selector', mono: true, get: (i) => i.selectorText || '—' },
         { id: 'status', label: 'Conditions', get: (i) => i.status },
         { id: 'image', label: 'Image', mono: true, get: (i) => i.image ?? undefined },
@@ -71,7 +81,7 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
     case 'ReplicaSet':
       return [
         ...BASE_COLUMNS,
-        { id: 'pods', label: 'Pods', get: (i) => i.ready },
+        workloadPods,
         { id: 'controlledBy', label: 'Controlled By', mono: true, get: (i) => i.controlledBy },
         { id: 'status', label: 'Conditions', get: (i) => i.status },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },

@@ -3,10 +3,11 @@ import type { ResourceItem, ResourceKind } from '../../../types/k8s';
 import { customColumnValue, type CustomResourceType } from '../../../core/resources/custom_resource_types';
 import { presentationFor, fieldText, fieldValue } from '../../../core/resources/resource_presentations';
 import { columnsFor, BASE_COLUMNS, type ColumnDef } from './columns';
+import type { WorkloadPodActivity } from '../../../core/resources/workload_pod_activity';
 
-export function useResourceColumns(effectiveKind: ResourceKind, customType: CustomResourceType | undefined, podsByNode: Map<string, number>) {
+export function useResourceColumns(effectiveKind: ResourceKind, customType: CustomResourceType | undefined, podsByNode: Map<string, number>, podActivity?: Map<string, WorkloadPodActivity>) {
   return useMemo<ColumnDef[]>(() => {
-    if (!customType) return columnsFor(effectiveKind, { podsByNode });
+    if (!customType) return columnsFor(effectiveKind, { podsByNode, podActivity });
     const printers = customType.columns.filter(column => column.name.toLowerCase() !== 'age').map((column, index) => ({
       id: /^(status|phase)$/i.test(column.name) ? 'status' : `printer-${index}`,
       label: column.name,
@@ -37,5 +38,5 @@ export function useResourceColumns(effectiveKind: ResourceKind, customType: Cust
       { id: 'status', label: 'Status', get: (item: ResourceItem) => item.status },
       { id: 'age', label: 'Age', align: 'right', get: (item: ResourceItem) => item.age },
     ];
-  }, [effectiveKind, customType, podsByNode]);
+  }, [effectiveKind, customType, podsByNode, podActivity]);
 }

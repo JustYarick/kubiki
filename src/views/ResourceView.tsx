@@ -48,6 +48,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { findWorkloadPods, preferredWorkloadPod } from '../core/resources/workload_pods';
+import { hasWorkloadPodColumn, workloadPodActivity } from '../core/resources/workload_pod_activity';
 import { gitOpsFamily } from '../core/resources/gitops';
 import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
@@ -91,13 +92,16 @@ const EMPTY_RESOURCE_MAP = new Map<string, ResourceItem>();
 export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, customType }) => {
   const activeKind = useResourceStore(s => s.activeKind);
   const effectiveKind = explicitKind || activeKind;
-  const needsPods = effectiveKind === 'Pod' || effectiveKind === 'Node' || effectiveKind === 'Service';
+  const needsWorkloadPods = !customType && hasWorkloadPodColumn(effectiveKind);
+  const needsPods = needsWorkloadPods || effectiveKind === 'Pod' || effectiveKind === 'Node' || effectiveKind === 'Service';
   const needsStorageClass = effectiveKind === 'StorageClass' || effectiveKind === 'PersistentVolumeClaim';
   const resources = useResourceStore(useShallow(s => ({
     [effectiveKind]: s.resources[effectiveKind],
     Pod: needsPods ? s.resources.Pod : EMPTY_RESOURCE_MAP,
+    ReplicaSet: effectiveKind === 'Deployment' || effectiveKind === 'ReplicaSet' ? s.resources.ReplicaSet : EMPTY_RESOURCE_MAP,
     StorageClass: needsStorageClass ? s.resources.StorageClass : EMPTY_RESOURCE_MAP,
   })));
+  const podSnapshotsReady = useResourceStore(s => s.syncMode !== 'watch' || s.watchStates.Pod?.hasSnapshot === true && (effectiveKind !== 'Deployment' || s.watchStates.ReplicaSet?.hasSnapshot === true));
   const {
     setActiveKind, selectItem, selectedItem,
     applyDelta,
@@ -129,7 +133,10 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     return map;
   }, [effectiveKind, resources.Pod]);
 
-  const tableColumns = useResourceColumns(effectiveKind, customType, podsByNode);
+  const podActivity = useMemo(() => needsWorkloadPods && podSnapshotsReady ? workloadPodActivity(
+    resources[effectiveKind]?.values() ?? [], resources.Pod?.values() ?? [], resources.ReplicaSet?.values() ?? [],
+  ) : undefined, [needsWorkloadPods, podSnapshotsReady, effectiveKind, resources[effectiveKind], resources.Pod, resources.ReplicaSet]);
+  const tableColumns = useResourceColumns(effectiveKind, customType, podsByNode, podActivity);
   const tableRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const currentContext = useClusterStore((s) => s.currentContext);
