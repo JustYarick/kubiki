@@ -87,17 +87,12 @@ fn fixture(kind: &str, write_status: u16) -> Fixture {
     }
 }
 #[tokio::test]
-async fn consent_sees_server_diff_before_any_write_and_scales_only_replicas_with_atomic_identity() {
+async fn concise_consent_precedes_writes_and_scaling_keeps_atomic_identity() {
     let f = fixture("Deployment", 200);
     let plan = PreparedMutation::prepare(f.client, scale()).await.unwrap();
     let observed_writes = f.writes.clone();
     plan.confirm_and_commit(|review| async move {
-        assert!(
-            review.contains("production")
-                && review.contains("original")
-                && review.contains("backend")
-        );
-        assert!(review.contains("spec.replicas: 3 → 0"));
+        assert_eq!(review, "Scale from 3 to 0 replicas.");
         assert!(observed_writes.lock().unwrap().is_empty());
         Ok(true)
     })
@@ -136,7 +131,7 @@ async fn batch_confirms_once_before_any_write_and_commits_every_step() {
     let result = batch
         .confirm_and_commit(|review| {
             counter.fetch_add(1, Ordering::SeqCst);
-            assert!(review.contains("2 steps"));
+            assert!(review.contains("2 operations"));
             assert!(writes_before_confirmation.lock().unwrap().is_empty());
             async { Ok(true) }
         })
@@ -254,7 +249,7 @@ async fn stale_or_recreated_objects_rejected_before_prompt_and_after_consent() {
     }
 }
 #[tokio::test]
-async fn secret_review_lists_changed_keys_without_values_and_commits_only_the_reviewed_payload() {
+async fn secret_confirmation_counts_changed_keys_without_listing_data_and_commits_exact_payload() {
     let f = fixture("Secret", 200);
     f.state.lock().unwrap()["data"] =
         json!({"old":"c2VjcmV0","change":"YmVmb3Jl","keep":"c2FtZQ=="});
@@ -265,12 +260,7 @@ async fn secret_review_lists_changed_keys_without_values_and_commits_only_the_re
     .await
     .unwrap();
     let review = plan.review();
-    assert!(
-        review.contains("old")
-            && review.contains("removed")
-            && review.contains("new")
-            && review.contains("added")
-    );
+    assert_eq!(review, "Update Secret data (3 changed keys).");
     assert!(!review.contains("keep"));
     assert!(!review.contains("YmVmb3Jl") && !review.contains("YWZ0ZXI="));
     assert!(plan.details().steps[0].diff.is_none());
@@ -364,14 +354,14 @@ async fn prepared_delete_shows_server_identity_and_propagation_before_commit_and
     .await
     .unwrap();
     let review = plan.review().to_owned();
-    assert!(
-        review.contains("DELETE")
-            && review.contains("background garbage collection")
-            && review.contains("dependents")
-            && review.contains("app"),
-        "{review}"
+    assert_eq!(
+        review,
+        "Delete this Deployment and its dependent resources."
     );
-    assert!(review.contains("Resource version: \"10\""));
+    assert_eq!(
+        plan.details().steps[0].resource.uid.as_deref(),
+        Some("original")
+    );
     let writes = f.writes.clone();
     plan.confirm_and_commit(|_| async move {
         assert!(writes.lock().unwrap().is_empty());

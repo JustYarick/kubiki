@@ -41,6 +41,45 @@ async function selectNamespace(page: Page, name: string) {
   await menu.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
 }
 
+test('desktop namespace search selects only discovered namespaces and never submits typed names', async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    w.__namespaceRequests = [];
+    w.__TAURI_INTERNALS__ = {
+      transformCallback: () => 1, unregisterCallback: () => {},
+      invoke: async (command: string, args: any = {}) => {
+        if (command === 'get_kube_contexts') return [{ name: 'test', is_current: true }];
+        if (command === 'ping_cluster') return { git_version: 'v1.35.0' };
+        if (command === 'get_namespaces') return ['backend', 'other'];
+        if (command === 'get_api_resources') return '';
+        if (command === 'get_resources') { w.__namespaceRequests.push(args.namespace); return { items: [] }; }
+        if (command === 'watch_resources') { w.__namespaceRequests.push(args.query.namespace); return; }
+        if (command.startsWith('stop_') || command === 'ack_resources' || command === 'cancel_read_task' || command.startsWith('plugin:event|')) return;
+        throw new Error(`Unexpected command ${command}`);
+      },
+    };
+  });
+  await page.goto('/');
+  const scope = page.getByRole('button', { name: 'Namespace Scope', exact: true });
+  await scope.click();
+  const menu = page.getByRole('dialog', { name: 'Choose Namespace Scope', exact: true });
+  await expect(menu.getByRole('option', { name: 'backend', exact: true })).toBeVisible();
+  const search = menu.getByRole('searchbox');
+  await search.fill('made-up-namespace');
+  await expect(menu.getByRole('option')).toHaveCount(0);
+  await expect(menu.getByText('No matching namespaces.', { exact: true })).toBeVisible();
+  await search.press('Enter');
+  await menu.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
+  await expect(scope).toHaveAttribute('data-value', 'all');
+  expect(await page.evaluate(() => (window as any).__namespaceRequests)).not.toContain('made-up-namespace');
+  await scope.click();
+  await menu.getByRole('searchbox').fill('back');
+  await expect(menu.getByRole('option')).toHaveCount(1);
+  await menu.getByRole('searchbox').press('Enter');
+  await menu.getByRole('button', { name: 'Apply namespaces', exact: true }).click();
+  await expect(scope).toHaveAttribute('data-value', 'backend');
+});
+
 test('header clicks sort by column and the right-click popup filters the column', async ({ page }) => {
   await fixture(page);
   const table = await openPods(page);

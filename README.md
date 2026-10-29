@@ -196,7 +196,7 @@ Flux and Argo CD overviews focus on reconciliation issues and recent controller 
 
 Use the release actions to install a chart, upgrade a release, roll back to a previous revision, or uninstall it. Repository management and chart search use the local Helm configuration. Operations affecting a cluster are pinned to the context selected in Kubiki.
 
-Helm changes are prepared for review before execution. Existing releases are checked again after confirmation so that a change in release state can invalidate an outdated review.
+Helm operations use a short confirmation showing the release, cluster, namespace, and operation. There is no manifest review or confirmation expiry. Uninstall confirms once and removes the named release without depending on the table's cached revision. Install and upgrade use a frozen chart archive and values; upgrades and rollbacks still check for actual release revision/state changes. Chart templates render during execution rather than being compared across repeated dry runs.
 
 ### Logs and terminals
 
@@ -212,11 +212,11 @@ Start port forwarding from a Pod or Service, select the remote TCP port, and spe
 
 The listener binds to `127.0.0.1`. Open the forwarded address locally and stop the session from the bottom panel when it is no longer needed. A Service forward resolves a matching running Pod and maps the Service port to its target port.
 
-### Reviewing changes
+### Confirming operations
 
-Resource changes pass through a backend preparation and confirmation flow. The dialog identifies the target and describes the proposed operation. Manual YAML edits include a complete review of the changes. Built-in actions show the operation, its parameters, every target, and relevant warnings. Secret and ConfigMap data edits list changed key names without exposing their values in the confirmation. Batch reviews retain every step; operations whose complete review exceeds the size limit are rejected rather than truncated.
+Resource changes use one short confirmation showing the operation, resource, cluster and namespace. Confirmations have no time limit: they remain open until confirmed, cancelled, or the window closes. Secret and ConfigMap data edits show the number of changed keys. Grouped operations use one confirmation for the whole group. Only applying YAML includes a detailed diff.
 
-For existing Kubernetes objects, mutation checks use the object identity, UID, and resource version to detect replacement or concurrent edits. If the target changes during review, refresh the resource and review the operation again. Grouped actions share a review and execute their steps sequentially; they are not Kubernetes transactions.
+For existing Kubernetes objects, mutation checks use the object identity, UID, and resource version to detect replacement or concurrent edits. If the target changes while confirmation is open, refresh the resource before trying again. Grouped actions execute their steps sequentially; they are not Kubernetes transactions.
 
 Interactive shell commands execute in their respective shell sessions. They are separate from the confirmation flow used for resource actions in the interface.
 
@@ -280,7 +280,7 @@ flowchart TB
 | Provider layer | Resource access contracts, native command calls, watch subscriptions, and error normalization. | `src/providers/` |
 | Desktop shell | Application lifecycle, IPC dispatch, stream ownership, and mutation confirmation dialogs. | `src-tauri/` |
 | Kubernetes engine | Kubeconfig parsing, context-specific client pooling, API discovery, informers, metrics, resource mutations, logs, exec, and port forwarding. | `crates/kubiki-core/` |
-| Helm integration | Context-specific Helm reads and reviewed lifecycle operations through the local Helm executable. | `crates/kubiki-core/src/helm/` |
+| Helm integration | Context-specific Helm reads and confirmed lifecycle operations through the local Helm executable. | `crates/kubiki-core/src/helm/` |
 | Extension platform | SDK contracts, package tools, local Node controller/workers and isolated extension panels. | `packages/`, `src/extensions/`, `src-tauri/src/extension_commands.rs` |
 | Desktop updates | Update state machine, stable/dev channel isolation, signed downloads and guarded installation. | `src/core/app_updates.ts`, `src-tauri/src/update_commands.rs` |
 

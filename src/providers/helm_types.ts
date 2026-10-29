@@ -12,7 +12,7 @@ export type HelmMutation =
   | (ReleaseTarget & { operation: 'install'; chart: string; chart_version: string | null; values: string; create_namespace: boolean; run_hooks: boolean; wait: boolean })
   | (ReleaseTarget & { operation: 'upgrade'; expected_revision: number; chart: string; chart_version: string | null; values: string; run_hooks: boolean; wait: boolean })
   | (ReleaseTarget & { operation: 'rollback'; expected_revision: number; revision: number; run_hooks: boolean; wait: boolean })
-  | (ReleaseTarget & { operation: 'uninstall'; expected_revision: number; keep_history: boolean; run_hooks: boolean })
+  | (ReleaseTarget & { operation: 'uninstall'; keep_history: boolean; run_hooks: boolean })
   | { operation: 'repository_set'; name: string; url: string; previous_url: string | null }
   | { operation: 'repository_remove'; name: string; expected_url: string }
   | { operation: 'repository_update'; name: string | null };

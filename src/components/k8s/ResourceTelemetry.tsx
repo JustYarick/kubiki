@@ -19,7 +19,7 @@ const format = (dimension: Dimension, value: number | null) => dimension === 'cp
 export function ResourceTelemetry({ context, namespace, pods, nodes, children }: { context: string; namespace: string | null; pods: ResourceItem[] | null; nodes: ResourceItem[] | null; children?: ReactNode }) {
   const [paused, setPaused] = useState(false);
   const [fixedScale, setFixedScale] = useState(false);
-  const state = useOverviewMetrics(context, namespace, data => buildTelemetry(data, pods, nodes, namespace).point, paused);
+  const state = useOverviewMetrics(context, namespace, paused);
   const telemetry = useMemo(() => buildTelemetry(state.data, pods, nodes, namespace), [state.data, pods, nodes, namespace, state.loading]);
   const [range, setRange] = useState(15);
   const [mode, setMode] = useState<'pods' | 'nodes'>('pods');

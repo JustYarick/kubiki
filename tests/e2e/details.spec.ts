@@ -155,7 +155,7 @@ test('annotations render readable fields, a last-applied summary and expandable 
   await expect(lastApplied.locator('dd').filter({ hasText: /^0$/ }).first()).toBeVisible();
   await expect(lastApplied.getByText('spec.template.spec.containers[0].image', { exact: true })).toBeHidden();
   await lastApplied.getByText('Original value', { exact: true }).click();
-  await expect(lastApplied.locator('pre')).toHaveText(JSON.stringify(applied));
+  await expect(lastApplied.getByRole('group', { name: 'Original annotation kubectl.kubernetes.io/last-applied-configuration editor', exact: true }).locator('.view-lines')).toHaveText(JSON.stringify(applied));
   await lastApplied.getByText('Original value', { exact: true }).click();
   await lastApplied.getByText(/^Manifest fields/).click();
   await expect(lastApplied.getByText('spec.replicas', { exact: true })).toBeVisible();

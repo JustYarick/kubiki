@@ -44,7 +44,7 @@ pub async fn expand_drain(
         return Err(error(
             &node,
             409,
-            "Node changed or was recreated. Refresh and review again",
+            "Node changed or was recreated. Refresh and try again",
         ));
     }
     let mut intents = Vec::new();

@@ -18,7 +18,6 @@ import { useClusterStore } from '../../state/cluster_store';
 import { useDockStore } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
-import { k8s } from '../../providers/k8s_provider';
 import { refreshResourceWatches } from '../../state/resource_watch';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
 import { IconButton, Tooltip } from '../ui/Button';
@@ -229,7 +228,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
 
         {/* Namespace Picker */}
         <NamespaceSelect value={selectedNamespace} onChange={selectNamespace} options={availableNamespaces}
-          allowCustom={k8s.supportsResourceWatch} className="app-titlebar-namespace max-w-[calc(170px*var(--ui-factor))] font-mono" />
+          className="app-titlebar-namespace max-w-[calc(170px*var(--ui-factor))] font-mono" />
       </div>
 
       {/* Center: JetBrains "Search Everywhere" Widget */}

@@ -54,6 +54,9 @@ glib = { path = "../vendor/glib" }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 glib = "0.18.5"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
 # Exercise the backported out-pointer fix with optimizer assumptions enabled.
 [profile.test.package.glib]
 opt-level = 2

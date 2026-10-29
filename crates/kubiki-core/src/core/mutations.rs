@@ -11,19 +11,14 @@ use kube::{
     },
 };
 use serde_json::{Value, json};
-use std::{
-    collections::BTreeSet,
-    future::Future,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeSet, future::Future, time::Duration};
 
 mod review;
 pub use review::{MutationReview, ReviewKind, ReviewStep, ReviewWarning};
 mod actions;
 pub use actions::ResourceAction;
 
-pub const REVIEW_TTL: Duration = Duration::from_secs(120);
-pub const MAX_REVIEW_CHARS: usize = 24_000;
+pub const MAX_YAML_REVIEW_CHARS: usize = 24_000;
 
 pub enum MutationIntent {
     Action {
@@ -264,7 +259,7 @@ impl ResourcePrecondition {
             return Err(error(
                 &self.resource,
                 409,
-                "Source resource changed or was recreated. Refresh and review again",
+                "Source resource changed or was recreated. Refresh and try again",
             ));
         }
         Ok(())
@@ -281,7 +276,7 @@ fn verify_version(
         return Err(error(
             resource,
             409,
-            "Resource changed or was recreated. Refresh and review again",
+            "Resource changed or was recreated. Refresh and try again",
         ));
     }
     Ok(())
@@ -322,7 +317,6 @@ pub struct PreparedMutation {
     action: PreparedAction,
     details: MutationReview,
     preconditions: Vec<ResourcePrecondition>,
-    prepared_at: Instant,
 }
 impl PreparedMutation {
     pub async fn prepare(client: Client, intent: MutationIntent) -> Result<Self, ApiError> {
@@ -412,7 +406,7 @@ impl PreparedMutation {
             return Err(error(
                 &resource,
                 409,
-                "Resource changed or was recreated. Refresh and review again",
+                "Resource changed or was recreated. Refresh and try again",
             ));
         }
         let mut after = before.clone();
@@ -426,9 +420,7 @@ impl PreparedMutation {
             if old == json!(replicas) {
                 return Err(error(&resource, 400, "No changes to apply"));
             }
-            diff = format!(
-                "spec.replicas: {old} → {replicas}\nChanging replicas may create or terminate Pods."
-            );
+            diff = format!("Scale from {old} to {replicas} replicas.");
         } else if let Some(request) = secret {
             if before.data.get("immutable") == Some(&json!(true)) {
                 return Err(error(&resource, 422, "This Secret is immutable"));
@@ -441,70 +433,29 @@ impl PreparedMutation {
                 .unwrap_or_default();
             let new = serde_json::to_value(request.data).expect("string map serializes");
             let keys: BTreeSet<_> = old.keys().chain(new.as_object().unwrap().keys()).collect();
-            for key in keys {
-                if old.get(key) != new.get(key) {
-                    let change = if !old.contains_key(key) {
-                        "added"
-                    } else if new.get(key).is_none() {
-                        "removed"
-                    } else {
-                        "updated"
-                    };
-                    diff.push_str(&format!(
-                        "data/{}: {change}\n",
-                        serde_json::to_string(key).expect("key serializes")
-                    ));
-                }
-            }
-            if diff.is_empty() {
+            let changed = keys
+                .into_iter()
+                .filter(|key| old.get(*key) != new.get(*key))
+                .count();
+            if changed == 0 {
                 return Err(error(&resource, 400, "No changes to apply"));
             }
+            diff = format!("Update Secret data ({changed} changed keys).");
             after.data["data"] = new;
             if let Some(object) = after.data.as_object_mut() {
                 object.remove("stringData");
             }
         }
         if delete {
-            let metadata = serde_json::to_value(&before.metadata).expect("metadata serializes");
-            let summary = json!({"creationTimestamp": metadata.get("creationTimestamp"), "labels": metadata.get("labels"), "owners": metadata.get("ownerReferences"), "finalizers": metadata.get("finalizers")});
             diff = format!(
-                "DELETE this Kubernetes object using background garbage collection. Controllers or garbage collection may also remove dependents; Kubernetes does not provide a complete preview of those effects.\n\nObject metadata:\n{}",
-                serde_json::to_string_pretty(&summary).expect("metadata serializes")
+                "Delete this {} and its dependent resources.",
+                resource.query.kind
             );
-            if resource.query.kind == "CustomResourceDefinition" {
-                diff.push_str("\n\nDeleting a CRD deletes all custom resources defined by it across namespaces.");
-            }
-            if resource.query.kind == "Namespace" {
-                diff.push_str("\n\nDeleting a Namespace removes its namespaced contents.");
-            }
         }
         if evict {
-            let metadata = serde_json::to_value(&before.metadata).expect("metadata serializes");
-            let summary = json!({"creationTimestamp": metadata.get("creationTimestamp"), "labels": metadata.get("labels"), "owners": metadata.get("ownerReferences")});
-            diff = format!(
-                "EVICT this Pod using policy/v1 Eviction API.\nPodDisruptionBudgets (PDB) will be respected. The API will refuse eviction if a PDB is violated.\n\nPod metadata:\n{}",
-                serde_json::to_string_pretty(&summary).expect("metadata serializes")
-            );
+            diff = "Evict this Pod. Kubernetes will enforce PodDisruptionBudgets.".into();
         }
-        let operation = if delete {
-            "DELETE"
-        } else if evict {
-            "EVICT"
-        } else {
-            "Apply"
-        };
-        let review = format!(
-            "{}\n\n{}\n\n{operation} this exact change? Cancel leaves the resource unchanged.",
-            identity_summary(&resource, &version),
-            diff
-        );
-        if review.chars().count() > MAX_REVIEW_CHARS {
-            return Err(error(
-                &resource,
-                422,
-                "Change is too large for a complete confirmation dialog (24000 characters). Split the edit into smaller changes",
-            ));
-        }
+        let review = diff.clone();
         let warnings = deletion_warnings(&resource, delete, evict);
         let details = MutationReview::single(
             ReviewKind::Action,
@@ -540,7 +491,6 @@ impl PreparedMutation {
             } else {
                 PreparedAction::Replace
             },
-            prepared_at: Instant::now(),
         })
     }
 
@@ -592,34 +542,12 @@ impl PreparedMutation {
             .collect();
         let mut after = before.clone();
         after.metadata.finalizers = Some(remaining);
-        // serde_json keeps untrusted names quoted and escaped in review text.
-        let old_json =
-            serde_json::to_string(&before.metadata.finalizers).unwrap_or_else(|_| "[]".into());
-        let new_json =
-            serde_json::to_string(&after.metadata.finalizers).unwrap_or_else(|_| "[]".into());
-        let diff = format!(
-            "metadata.finalizers:\n  BEFORE: {old_json}\n  AFTER:  {new_json}\n\nRemoving the last finalizer lets a deleting object disappear immediately. Cluster controllers may re-add their own finalizers while the object is still in use."
-        );
-        let review = format!(
-            "{}\n\n{}\n\nRemove finalizer {:?} from this object? Cancel leaves the resource unchanged.",
-            identity_summary(&resource, &version),
-            diff,
-            finalizer
-        );
-        if review.chars().count() > MAX_REVIEW_CHARS {
-            return Err(error(
-                &resource,
-                422,
-                "Change is too large for a complete confirmation dialog. Split the edit into smaller changes",
-            ));
-        }
+        let review = format!("Remove finalizer {finalizer:?} from this object.");
         let details = MutationReview::single(
             ReviewKind::Action,
             "REMOVE_FINALIZER",
             &resource,
-            format!(
-                "Remove finalizer {finalizer:?}. Removing the last finalizer can complete deletion immediately; controllers may re-add it."
-            ),
+            review.clone(),
             None,
             vec![ReviewWarning::Dependents],
         );
@@ -633,7 +561,6 @@ impl PreparedMutation {
             details,
             preconditions: Vec::new(),
             action: PreparedAction::RemoveFinalizer(finalizer),
-            prepared_at: Instant::now(),
         })
     }
 
@@ -703,7 +630,7 @@ impl PreparedMutation {
                 return Err(error(
                     &resource,
                     409,
-                    "The YAML identity or resourceVersion differs from the object opened in the editor. Refresh and review again",
+                    "The YAML identity or resourceVersion differs from the object opened in the editor. Refresh and try again",
                 ));
             }
         }
@@ -718,7 +645,7 @@ impl PreparedMutation {
                 return Err(error(
                     &resource,
                     409,
-                    "Object changed or was recreated. Refresh and review again",
+                    "Object changed or was recreated. Refresh and try again",
                 ));
             }
             // Server-owned fields are restored, never trusted from an editable document.
@@ -767,13 +694,17 @@ impl PreparedMutation {
         if diff.is_empty() {
             return Err(error(&resource, 400, "No changes to apply"));
         }
-        let review = format!(
-            "{}\n\n{}\n\n{} this exact object? Changes to controllers or finalizers may create or delete dependent resources. Cancel changes nothing.",
-            identity_summary(&resource, &version),
-            diff,
-            if create { "CREATE" } else { "UPDATE" }
-        );
-        if review.chars().count() > MAX_REVIEW_CHARS {
+        let review = if detailed {
+            format!(
+                "{}\n\n{}\n\n{} this exact object? Changes to controllers or finalizers may create or delete dependent resources. Cancel changes nothing.",
+                identity_summary(&resource, &version),
+                diff,
+                if create { "CREATE" } else { "UPDATE" }
+            )
+        } else {
+            "Apply this resource action.".into()
+        };
+        if detailed && review.chars().count() > MAX_YAML_REVIEW_CHARS {
             return Err(error(
                 &resource,
                 422,
@@ -810,7 +741,6 @@ impl PreparedMutation {
             } else {
                 PreparedAction::Replace
             },
-            prepared_at: Instant::now(),
         })
     }
 
@@ -837,27 +767,10 @@ impl PreparedMutation {
         self.commit().await
     }
 
-    /// Execute an already approved single mutation.
+    /// Execute an already confirmed mutation; consent does not expire.
     pub async fn commit(self) -> Result<Value, ApiError> {
-        self.commit_inner(true).await
-    }
-
-    /// Batch callers check the consent TTL once before the first step; re-checking
-    /// it for every step would turn a slow but valid batch into N expiry errors.
-    pub async fn commit_after_shared_consent(self) -> Result<Value, ApiError> {
-        self.commit_inner(false).await
-    }
-
-    async fn commit_inner(self, check_ttl: bool) -> Result<Value, ApiError> {
         for condition in &self.preconditions {
             condition.check(true).await?;
-        }
-        if check_ttl && self.prepared_at.elapsed() > REVIEW_TTL {
-            return Err(error(
-                &self.resource,
-                409,
-                "Confirmation expired. Refresh and review again",
-            ));
         }
         if matches!(self.action, PreparedAction::Create) {
             if bounded(&self.resource, self.api.get_opt(&self.resource.name))
@@ -867,14 +780,7 @@ impl PreparedMutation {
                 return Err(error(
                     &self.resource,
                     409,
-                    "An object appeared during confirmation. Nothing was overwritten; refresh and review again",
-                ));
-            }
-            if check_ttl && self.prepared_at.elapsed() > REVIEW_TTL {
-                return Err(error(
-                    &self.resource,
-                    409,
-                    "Confirmation expired during the final check; review again",
+                    "An object appeared during confirmation. Nothing was overwritten; refresh and try again",
                 ));
             }
             // POST cannot replace an object created by another actor after this read.
@@ -898,14 +804,7 @@ impl PreparedMutation {
             return Err(error(
                 &self.resource,
                 409,
-                "Resource changed while confirmation was open. Refresh and review again",
-            ));
-        }
-        if check_ttl && self.prepared_at.elapsed() > REVIEW_TTL {
-            return Err(error(
-                &self.resource,
-                409,
-                "Confirmation expired during the final check; review again",
+                "Resource changed while confirmation was open. Refresh and try again",
             ));
         }
         if matches!(self.action, PreparedAction::Delete) {
@@ -1081,45 +980,6 @@ fn json_diff(path: &str, before: &Value, after: &Value, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    async fn expired_review_cannot_write_even_if_approved() {
-        let resource: ResourceRef=serde_json::from_value(json!({"context":"test","group":"apps","version":"v1","kind":"Deployment","namespace":"default","name":"web","uid":"uid"})).unwrap();
-        let service = tower::service_fn(|_: http::Request<kube::client::Body>| async {
-            panic!("Expired confirmation must not contact Kubernetes");
-            #[allow(unreachable_code)]
-            Ok::<_, std::convert::Infallible>(http::Response::new(kube::client::Body::empty()))
-        });
-        let before:DynamicObject=serde_json::from_value(json!({"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","uid":"uid","resourceVersion":"10"},"spec":{"replicas":1}})).unwrap();
-        let plan = PreparedMutation {
-            api: resource_api(Client::new(service, "default"), &resource)
-                .await
-                .unwrap(),
-            resource: resource.clone(),
-            version: "10".into(),
-            before: before.clone(),
-            after: before,
-            review: "review".into(),
-            action: PreparedAction::Scale(0),
-            details: MutationReview::single(
-                ReviewKind::Action,
-                "SCALE",
-                &resource,
-                String::new(),
-                None,
-                vec![],
-            ),
-            preconditions: Vec::new(),
-            prepared_at: Instant::now() - REVIEW_TTL - Duration::from_secs(1),
-        };
-        assert_eq!(
-            plan.confirm_and_commit(|_| async { Ok(true) })
-                .await
-                .unwrap_err()
-                .status,
-            Some(409)
-        );
-    }
-
     fn test_client() -> Client {
         let service = tower::service_fn(|_: http::Request<kube::client::Body>| async {
             panic!("Batch validation must not contact Kubernetes");

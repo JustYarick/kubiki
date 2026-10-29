@@ -104,7 +104,6 @@ else:sys.stderr.write('Unexpected command');sys.exit(1)
                 "context",
                 "namespace",
                 "name",
-                "expected_revision",
                 "keep_history",
                 "run_hooks",
             ],
@@ -146,16 +145,12 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
-async fn preview_cancel_and_upgrade_consent_own_the_exact_payload() {
+async fn concise_confirmation_cancel_and_upgrade_own_the_exact_payload() {
     let fixture = Fixture::new();
     let prepared = fixture.prepare(fixture.request("upgrade")).await;
-    assert!(
-        prepared
-            .review()
-            .contains("UPDATE v1/ConfigMap/backend/web")
-    );
-    assert!(prepared.review().contains("BEFORE \"old\" → AFTER \"new\""));
-    assert!(!prepared.review().contains("/data/key"));
+    assert!(prepared.summary().contains("Upgrade release web"));
+    assert!(!prepared.summary().contains("old"));
+    assert!(!prepared.summary().contains("BEFORE"));
     assert!(!fixture.wrote());
     assert_eq!(
         prepared
@@ -192,7 +187,12 @@ async fn install_rollback_and_uninstall_only_write_after_consent() {
         }
         let prepared = fixture.prepare(fixture.request(op)).await;
         assert!(!fixture.wrote());
-        assert!(prepared.review().contains(&op.to_uppercase()));
+        assert!(
+            prepared
+                .summary()
+                .to_lowercase()
+                .contains(if op == "rollback" { "roll back" } else { op })
+        );
         prepared
             .confirm_and_commit(|_| async { Ok(true) })
             .await
@@ -219,7 +219,7 @@ async fn changed_release_and_changed_frozen_chart_are_rejected() {
     let argv: Vec<String> = serde_json::from_str(
         calls
             .lines()
-            .find(|line| line.contains("--dry-run=server"))
+            .find(|line| line.contains("chart.tgz"))
             .unwrap(),
     )
     .unwrap();
@@ -235,19 +235,18 @@ async fn changed_release_and_changed_frozen_chart_are_rejected() {
     assert!(!fixture.wrote());
 }
 #[tokio::test]
-async fn nondeterministic_render_and_uncertain_writes_do_not_retry_or_leak_payloads() {
+async fn nondeterministic_templates_execute_once_and_uncertain_writes_do_not_retry_or_leak_payloads()
+ {
     let fixture = Fixture::new();
     fs::write(fixture.dir.join("drift"), "").unwrap();
     let prepared = fixture.prepare(fixture.request("upgrade")).await;
-    assert_eq!(
-        prepared
-            .confirm_and_commit(|_| async { Ok(true) })
-            .await
-            .unwrap_err()
-            .status,
-        Some(409)
-    );
-    assert!(!fixture.wrote());
+    prepared
+        .confirm_and_commit(|_| async { Ok(true) })
+        .await
+        .unwrap();
+    assert!(fixture.wrote());
+    let calls = fs::read_to_string(fixture.dir.join("calls")).unwrap();
+    assert!(!calls.contains("--dry-run"));
     let fixture = Fixture::new();
     fs::write(fixture.dir.join("fail-write"), "").unwrap();
     let prepared = fixture.prepare(fixture.request("uninstall")).await;
@@ -265,6 +264,58 @@ async fn nondeterministic_render_and_uncertain_writes_do_not_retry_or_leak_paylo
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn uninstall_does_not_read_or_pin_a_cached_revision_or_build_a_large_review() {
+    let fixture = Fixture::new();
+    let mut value: Value =
+        serde_json::from_slice(&fs::read(fixture.dir.join("state.json")).unwrap()).unwrap();
+    value["manifest"] = json!("private-manifest-data".repeat(10000));
+    value["info"]["status"] = json!("pending-upgrade");
+    fs::write(
+        fixture.dir.join("state.json"),
+        serde_json::to_vec(&value).unwrap(),
+    )
+    .unwrap();
+    let prepared = fixture.prepare(fixture.request("uninstall")).await;
+    assert!(prepared.summary().len() < 200);
+    assert!(!prepared.summary().contains("private-manifest-data"));
+    assert!(!fixture.dir.join("calls").exists());
+    prepared
+        .confirm_and_commit(|_| async {
+            fixture.change_revision();
+            Ok(true)
+        })
+        .await
+        .unwrap();
+    let calls = fs::read_to_string(fixture.dir.join("calls")).unwrap();
+    assert_eq!(calls.lines().count(), 1);
+    assert!(calls.contains("uninstall"));
+    assert!(!calls.contains("status"));
+    assert!(fixture.wrote());
+}
+
+#[tokio::test]
+async fn upgrades_ignore_volatile_status_metadata_without_losing_real_revision_checks() {
+    let fixture = Fixture::new();
+    let prepared = fixture.prepare(fixture.request("upgrade")).await;
+    prepared
+        .confirm_and_commit(|_| async {
+            let mut value: Value =
+                serde_json::from_slice(&fs::read(fixture.dir.join("state.json")).unwrap()).unwrap();
+            value["info"]["notes"] = json!("Updated status output");
+            value["info"]["resources"] = json!({"ready": true});
+            fs::write(
+                fixture.dir.join("state.json"),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+            Ok(true)
+        })
+        .await
+        .unwrap();
+    assert!(fixture.wrote());
 }
 #[tokio::test]
 async fn repository_crud_and_cache_update_use_exact_config_snapshot() {

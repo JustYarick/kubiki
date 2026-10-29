@@ -3,6 +3,8 @@ import { Check, Copy } from 'lucide-react';
 import { ANNOTATION_LABELS, LAST_APPLIED_ANNOTATION, annotationFields, lastAppliedSummary, parseAnnotationValue, type AnnotationField } from '../../core/resources/annotations';
 import { IconButton } from '../ui/Button';
 import { toast } from '../../state/notifications_store';
+import { CodeEditor } from '../ui/CodeEditor';
+import { codeLanguage } from '../../core/code_language';
 
 export function ResourceAnnotations({ values }: { values: Record<string, unknown> }) {
   const entries = Object.entries(values).sort(([a], [b]) => {
@@ -49,7 +51,7 @@ function AnnotationEntry({ name, value }: { name: string; value: unknown }) {
         : <p className="mt-1.5 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)]">{source.length.toLocaleString()} characters · {source.split('\n').length} lines</p>}
       {(structured || longText) && <details className="mt-2" onToggle={(event) => setSourceOpen(event.currentTarget.open)}>
         <summary className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer select-none">Original value</summary>
-        {sourceOpen && <pre className="mt-2 max-h-60 overflow-auto kubiki-scrollbar bg-[var(--bg-secondary)] rounded border border-[var(--border-default)] p-2 text-[length:calc(10px*var(--ui-factor))] font-mono whitespace-pre-wrap break-all">{source}</pre>}
+        {sourceOpen && <div className="mt-2"><CodeEditor ariaLabel={`Original annotation ${name}`} value={source} language={codeLanguage('', source)} readOnly copyable={false} /></div>}
       </details>}
     </article>
   );

@@ -67,23 +67,11 @@ impl PreparedMutation {
                     .cloned()
                     .unwrap_or_default();
                 let keys: BTreeSet<_> = old.keys().chain(new.as_object().unwrap().keys()).collect();
-                let summary = keys
+                let changed = keys
                     .into_iter()
                     .filter(|key| old.get(*key) != new.get(*key))
-                    .map(|key| {
-                        format!(
-                            "{key:?}: {}",
-                            if !old.contains_key(key) {
-                                "added"
-                            } else if new.get(key).is_none() {
-                                "removed"
-                            } else {
-                                "updated"
-                            }
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                    .count();
+                let summary = format!("Update ConfigMap data ({changed} changed keys).");
                 after["data"] = new;
                 ("UPDATE_CONFIG_MAP", summary, vec![])
             }
@@ -285,10 +273,7 @@ impl PreparedMutation {
             None,
             warnings,
         );
-        prepared.review = format!(
-            "{}\n\n{operation}: {summary}\n\nConfirm this operation? Cancel leaves the cluster unchanged.",
-            identity_summary(&prepared.resource, &prepared.version)
-        );
+        prepared.review = summary;
         prepared.preconditions = sources;
         Ok(prepared)
     }

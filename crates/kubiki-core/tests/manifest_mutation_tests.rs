@@ -332,7 +332,7 @@ async fn every_builtin_delete_requires_fresh_identity_and_cancel_never_deletes()
             .unwrap();
             let result = plan
                 .confirm_and_commit(|review| async move {
-                    assert!(review.contains("DELETE") && review.contains("original"));
+                    assert!(review.starts_with("Delete this "));
                     Ok(approve)
                 })
                 .await;
@@ -351,14 +351,11 @@ async fn every_builtin_delete_requires_fresh_identity_and_cancel_never_deletes()
 }
 
 #[tokio::test]
-async fn watch_and_list_strip_managed_fields_while_yaml_and_action_updates_preserve_them_on_server() {
+async fn watch_and_list_strip_managed_fields_while_yaml_and_action_updates_preserve_them_on_server()
+{
     use kube::runtime::watcher::Event;
     use kubiki_core::{
-        core::{
-            api::ResourceQuery,
-            mutations::ResourceAction,
-            reads::resources,
-        },
+        core::{api::ResourceQuery, mutations::ResourceAction, reads::resources},
         informer::{delta::ResourceDelta, reconcile::Reconciler},
     };
 
@@ -373,14 +370,22 @@ async fn watch_and_list_strip_managed_fields_while_yaml_and_action_updates_prese
     // 1. Verify watch Reconciler strips metadata.managedFields on InitApply and Apply.
     let mut reconciler = Reconciler::new(query.clone());
     assert!(reconciler.consume(Event::Init).unwrap().is_none());
-    assert!(reconciler.consume(Event::InitApply(object())).unwrap().is_none());
-    let Some(ResourceDelta::Restarted { items }) = reconciler.consume(Event::InitDone).unwrap() else {
+    assert!(
+        reconciler
+            .consume(Event::InitApply(object()))
+            .unwrap()
+            .is_none()
+    );
+    let Some(ResourceDelta::Restarted { items }) = reconciler.consume(Event::InitDone).unwrap()
+    else {
         panic!("expected Restarted delta");
     };
     assert_eq!(items.len(), 1);
     assert!(items[0]["metadata"].get("managedFields").is_none());
 
-    let Some(ResourceDelta::Applied { data: streamed }) = reconciler.consume(Event::Apply(object())).unwrap() else {
+    let Some(ResourceDelta::Applied { data: streamed }) =
+        reconciler.consume(Event::Apply(object())).unwrap()
+    else {
         panic!("expected Applied delta");
     };
     assert!(streamed["metadata"].get("managedFields").is_none());

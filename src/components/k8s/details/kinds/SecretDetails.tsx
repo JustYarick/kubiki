@@ -3,6 +3,7 @@ import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { SecretDataEditorBlock } from '../blocks/SecretDataEditorBlock';
 import { UsedByList } from '../blocks/UsedByList';
 import { MetadataBlock } from '../blocks/MetadataBlock';
+import { SecretOriginBlock } from '../blocks/SecretOriginBlock';
 
 interface SecretDetailsProps {
   item: ResourceItem;
@@ -14,6 +15,8 @@ export function SecretDetails({ item, onNavigate }: SecretDetailsProps) {
     <div className="details-stack">
       {/* 1. "What's wrong" diagnostic banner */}
       <ProblemsBanner item={item} />
+
+      <SecretOriginBlock item={item} onNavigate={onNavigate} />
 
       {/* 2. Secret Data Editor (Lens-grade) */}
       <SecretDataEditorBlock item={item} />

@@ -26,8 +26,8 @@ it('sends every batch step through one backend call so the user confirms once', 
   await new K8sProvider().applyBatch(primary, steps);
   expect(invoke).toHaveBeenCalledExactlyOnceWith('mutate_resource', { request: { operation: 'batch', primary, steps } });
 });
-it('routes Helm uninstall through the same backend review as other changes', async () => {
-  const request = { operation: 'uninstall' as const, context: 'prod', namespace: 'team', name: 'web', expected_revision: 2, keep_history: false, run_hooks: false };
+it('routes Helm uninstall to backend confirmation without a cached revision', async () => {
+  const request = { operation: 'uninstall' as const, context: 'prod', namespace: 'team', name: 'web', keep_history: false, run_hooks: false };
   await new K8sProvider().mutateHelm(request);
   expect(invoke).toHaveBeenCalledExactlyOnceWith('mutate_resource', { request: { operation: 'helm', request } });
 });

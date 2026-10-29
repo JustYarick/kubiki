@@ -1,4 +1,5 @@
 import { Select } from '../components/ui/Select';
+import { CodeEditor } from '../components/ui/CodeEditor';
 import { namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Anchor, Copy, RefreshCw, Search, GitBranch, ArrowUpCircle, RotateCcw, Trash2, MoreHorizontal, Package, Boxes, FileCode, SlidersHorizontal, Plus } from 'lucide-react';
@@ -285,15 +286,17 @@ function HelmHistoryPane({ result, release, onSelect, onRestore, canRestore }: {
 
 function HelmDocumentPane({ context, release, revision, document, onLatest }: { context: string; release: HelmRelease; revision: number; document: HelmDocument; onLatest: () => void }) {
   const result = useHelmRead(JSON.stringify([context, releaseKey(release), revision, document]), signal => readHelmDocument(context, release.namespace, release.name, revision, document, signal));
+  const title = <span className="helm-document-title details-caption">{document} · revision {revision}</span>;
+  const actions = <>
+    <IconButton icon={RotateCcw} size="sm" disabled={revision === Number(release.revision)} onClick={onLatest} aria-label="Latest revision" tooltip="Latest revision" />
+    <IconButton icon={Copy} size="sm" disabled={result.data === null} aria-label={`Copy Helm ${document}`} tooltip={`Copy ${document}`} onClick={() => { void navigator.clipboard.writeText(result.data!).then(() => toast.success('Copied')).catch(() => toast.error('Clipboard unavailable')); }} />
+  </>;
   return <div className="helm-document-pane" aria-busy={result.loading}>
-    <div className="helm-document-toolbar">
-      <span className="min-w-0 flex-1 truncate details-caption">{document} · revision {revision}</span>
-      <IconButton icon={RotateCcw} size="sm" disabled={revision === Number(release.revision)} onClick={onLatest} aria-label="Latest revision" tooltip="Latest revision" />
-      <IconButton icon={Copy} size="sm" disabled={result.data === null} aria-label={`Copy Helm ${document}`} tooltip={`Copy ${document}`} onClick={() => { void navigator.clipboard.writeText(result.data!).then(() => toast.success('Copied')).catch(() => toast.error('Clipboard unavailable')); }} />
-    </div>
     {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={result.data !== null} />}
-    {result.data === null ? <div role="status" className="details-loading">{result.loading ? <ResourceLoading label={`Loading ${document}…`} /> : `No ${document} available.`}</div>
-      : <pre tabIndex={0} aria-label={`Helm ${document} revision ${revision}`} className="helm-document kubiki-scrollbar">{result.data.trim() ? result.data : `No ${document} for this revision.`}</pre>}
+    {result.data === null ? <>
+      <div className="helm-document-toolbar">{title}{actions}</div>
+      <div role="status" className="details-loading">{result.loading ? <ResourceLoading label={`Loading ${document}…`} /> : `No ${document} available.`}</div>
+    </> : <CodeEditor key={JSON.stringify([context, releaseKey(release), revision, document])} ariaLabel={`Helm ${document} revision ${revision}`} value={result.data} language={document === 'notes' ? 'plaintext' : 'yaml'} readOnly fill variant="document" copyable={false} toolbarLeading={title} toolbarTrailing={actions} />}
   </div>;
 }
 

@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { stringify } from 'yaml';
 import { DetailsSection } from '../DetailsSection';
 import { Button } from '../../../ui/Button';
+import { CodeEditor } from '../../../ui/CodeEditor';
 
 function NestedEntry({ label, value }: { label: string; value: object }) {
   const [open, setOpen] = useState(false);
-  return <details className="details-structured-entry" onToggle={event => setOpen(event.currentTarget.open)}><summary>{label}</summary>{open && <pre>{stringify(value)}</pre>}</details>;
+  return <details className="details-structured-entry" onToggle={event => setOpen(event.currentTarget.open)}><summary>{label}</summary>{open && <CodeEditor ariaLabel={`${label} YAML`} value={stringify(value)} language="yaml" readOnly />}</details>;
 }
 
 /** Bounded rendering for arbitrary nested API fields; large inventories expand incrementally. */

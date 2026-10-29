@@ -296,15 +296,12 @@ impl NodeDebugManager {
                 // consent dialog belongs to the first caller, we just share the
                 // result.
                 let mut rx = existing.ready.subscribe();
-                let outcome =
-                    tokio::time::timeout(Duration::from_secs(150), rx.wait_for(|o| o.is_some()))
-                        .await
-                        .map_err(|_| {
-                            error(&request, 504, "Node shell is still starting; try again")
-                        })?
-                        .map_err(|_| error(&request, 503, "Node shell task ended"))?
-                        .clone()
-                        .ok_or_else(|| error(&request, 503, "Node shell task ended"))?;
+                let outcome = rx
+                    .wait_for(|o| o.is_some())
+                    .await
+                    .map_err(|_| error(&request, 503, "Node shell task ended"))?
+                    .clone()
+                    .ok_or_else(|| error(&request, 503, "Node shell task ended"))?;
                 return outcome.map(|pod| NodeDebugResult {
                     session_id: id,
                     pod,
@@ -373,7 +370,6 @@ impl NodeDebugManager {
         let response_request = request.clone();
         let inner = Arc::downgrade(&self.inner);
         let key_for_task = key.clone();
-        let id_for_task = id.clone();
         tokio::spawn(async move {
             let mut cancellation = lease.cancel.subscribe();
             let mut collapsing = lease.collapse.subscribe();
@@ -385,10 +381,8 @@ impl NodeDebugManager {
                 if let Some(resource)=adopt_existing(&request,&lease,client.clone()).await? {
                     Ok::<_,ApiError>(resource)
                 } else {
-                    let review = format!("CREATE privileged node-debug Pod\n{}\n\nManifest to create:\n{}\n\nThis grants root host access (hostPID/IPC/network, privileged, /host mount). The helper Pod is deleted automatically when all shell sessions on this Node are closed, when Kubiki stops, or from the End session button — no extra confirmation for deletion. Cancel creates nothing.\n\nCreate this exact Pod?", crate::core::mutations::identity_summary(&request.resource, "(Node UID checked before create)"), serde_json::to_string_pretty(&debug_pod(&request, &id_for_task)).expect("Pod serializes"));
-                    let reviewed_at = std::time::Instant::now();
+                    let review = format!("Open a root shell on Node {:?} using image {}. The helper Pod is deleted automatically when the last session closes.", request.resource.name, request.image);
                     if !confirm(review).await? { return Err(crate::core::mutations::cancelled(&request.resource,"Operation cancelled. Debug Pod was not created")); }
-                    if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL { return Err(error(&request,409,"Confirmation expired. Start and review again")); }
                     verify_node(&request,client.clone()).await?;
                     provision(&lease,client.clone()).await
                 }
@@ -802,23 +796,11 @@ impl NodeDebugManager {
             .clone()
             .filter(|v| !v.is_empty())
             .ok_or_else(|| error(&request, 409, "Debug Pod has no resourceVersion; refresh"))?;
-        let review = format!(
-            "DELETE debug Pod\n{}\n\nPod to delete:\n{}\n\nDeletion uses background garbage collection; dependents may also be removed. This action cannot be undone.\n\nDelete this Pod?",
-            crate::core::mutations::identity_summary(&resource, &version),
-            serde_json::to_string_pretty(&pod).expect("Pod serializes")
-        );
-        let reviewed_at = std::time::Instant::now();
+        let review = format!("Delete debug Pod {:?}.", resource.name);
         if !confirm(review).await? {
             return Err(crate::core::mutations::cancelled(
                 &resource,
                 "Operation cancelled. Nothing was deleted",
-            ));
-        }
-        if reviewed_at.elapsed() > crate::core::mutations::REVIEW_TTL {
-            return Err(error(
-                &request,
-                409,
-                "Confirmation expired. Refresh and review again",
             ));
         }
         let current = bounded(&request, pods.get(&resource.name)).await?;
@@ -828,7 +810,7 @@ impl NodeDebugManager {
             return Err(error(
                 &request,
                 409,
-                "Debug Pod changed during confirmation; refresh and review again",
+                "Debug Pod changed during confirmation; refresh and try again",
             ));
         }
         bounded(

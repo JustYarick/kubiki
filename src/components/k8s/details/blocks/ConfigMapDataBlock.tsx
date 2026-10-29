@@ -1,8 +1,10 @@
 import { performResourceAction } from '../../../../providers/resource_actions';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { FileCode, Copy, Plus, Trash2, Search, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { Button } from '../../../ui/Button';
+import { CodeEditor } from '../../../ui/CodeEditor';
+import { codeLanguage } from '../../../../core/code_language';
 import { toast } from '../../../../state/notifications_store';
 import { k8s } from '../../../../providers/k8s_provider';
 import { useClusterStore } from '../../../../state/cluster_store';
@@ -19,14 +21,15 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
   const changed = editing && !!baseline && (baseline.context !== context || baseline.item.uid !== item.uid || baseline.item.raw?.metadata?.resourceVersion !== item.raw?.metadata?.resourceVersion);
   const immutable = item.raw?.immutable === true;
   const rawData: Record<string, string> = item.raw?.data ?? {};
-  const [draft, setDraft] = useState<Array<{ key: string; value: string }>>([]);
+  const nextId = useRef(0);
+  const [draft, setDraft] = useState<Array<{ id: number; key: string; value: string }>>([]);
 
   const entries = Object.entries(rawData);
   const filtered = entries.filter(([k]) => k.toLowerCase().includes(filter.toLowerCase()));
 
   const startEdit = () => {
     setBaseline({ item, context });
-    setDraft(entries.map(([key, value]) => ({ key, value })));
+    setDraft(entries.map(([key, value]) => ({ id: nextId.current++, key, value })));
     setEditing(true);
   };
 
@@ -104,9 +107,11 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
         {editing ? (
           <div className="details-stack">
             {draft.map((d, idx) => (
-              <div key={idx} className="p-2 rounded bg-[var(--bg-secondary)]/40 border border-[var(--border-subtle)] space-y-1.5">
+              <div key={d.id} className="p-2 rounded bg-[var(--bg-secondary)]/40 border border-[var(--border-subtle)] space-y-1.5">
                 <div className="flex items-center gap-2">
                   <input
+                    aria-label={`Key ${idx + 1}`}
+                    disabled={saving}
                     className={`${field} py-1 flex-1`}
                     value={d.key}
                     placeholder="Key"
@@ -117,6 +122,7 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
                   />
                   <button
                     type="button"
+                    disabled={saving}
                     onClick={() => setDraft((prev) => prev.filter((_, i) => i !== idx))}
                     className="text-rose-400 hover:text-rose-300 p-1 rounded"
                     title="Delete key"
@@ -124,11 +130,12 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
                     <Trash2 size="calc(12px * var(--ui-factor))" />
                   </button>
                 </div>
-                <textarea
-                  className={`${field} resource-data-value kubiki-scrollbar min-h-20 resize-y`}
+                <CodeEditor
+                  ariaLabel={`Value ${idx + 1}`}
+                  language={codeLanguage(d.key, d.value)}
+                  readOnly={saving}
                   value={d.value}
-                  onChange={(e) => {
-                    const val = e.target.value;
+                  onChange={(val) => {
                     setDraft((prev) => prev.map((item, i) => (i === idx ? { ...item, value: val } : item)));
                   }}
                 />
@@ -136,7 +143,7 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
             ))}
 
             <div className="flex items-center gap-2 pt-2 border-t border-[var(--border-subtle)]">
-              <Button size="sm" onClick={() => setDraft((prev) => [...prev, { key: '', value: '' }])}>
+              <Button size="sm" disabled={saving} onClick={() => { const id = nextId.current++; setDraft((prev) => [...prev, { id, key: '', value: '' }]); }}>
                 <Plus size="calc(12px * var(--ui-factor))" /> Add key
               </Button>
               <div className="flex-1" />
@@ -168,9 +175,7 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
                     <Copy size="calc(11px * var(--ui-factor))" />
                   </button>
                 </div>
-                <pre tabIndex={0} aria-label={`Value for ${key}`} className="resource-data-value font-mono text-xs p-2.5 rounded bg-[var(--bg-secondary)]/50 border border-[var(--border-subtle)] overflow-x-auto kubiki-scrollbar select-text break-all whitespace-pre-wrap max-h-48">
-                  {String(value)}
-                </pre>
+                <CodeEditor ariaLabel={`Value for ${key}`} value={String(value)} language={codeLanguage(key, String(value))} readOnly copyable={false} />
               </div>
             ))}
           </div>

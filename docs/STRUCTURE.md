@@ -37,7 +37,9 @@ kubiki/
 
 ## Frontend
 
-The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Monaco provides the YAML editor, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
+The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Monaco provides code editors and document viewers, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
+
+`src/components/ui/CodeEditor.tsx` is the shared embedded editor for Helm documents and values, Secret and ConfigMap values, new resource manifests, nested YAML fields, and annotation source. It includes search, replacement in editable fields, line numbers, wrapping, and explicit YAML/JSON formatting. `core/code_language.ts` detects syntax from data key filenames or valid JSON objects/arrays. Models belong to individual mounted fields and are disposed on unmount; hidden Secret values do not mount an editor. `views/monaco_setup.ts` shares the theme, bundled workers, and language registration with the full resource YAML editor, which retains its resource draft/apply workflow.
 
 ### Views and navigation
 
@@ -117,11 +119,11 @@ The desktop shell owns transport and application lifecycle concerns. Kubernetes 
 | `src/crd/` | API and custom resource discovery and dynamic resource access. |
 | `src/metrics/` | Metrics API requests and overview aggregation. |
 | `src/pod_ops/` | Logs, Pod exec, node debug sessions, host terminals, and port forwarding. |
-| `src/helm/` | Helm models, bounded reads, and reviewed lifecycle operations. |
+| `src/helm/` | Helm models, bounded reads, and lifecycle operations with concise confirmation. |
 
 `src/cluster/kubeconfig.rs` reads the default kubeconfig or the files listed in `KUBECONFIG`. `src/cluster/client.rs` provides context-specific clients so requests can remain tied to the selected context.
 
-`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation, including reviewed mutations. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`.
+`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`. Helm confirmation has no expiry; uninstall operates on the confirmed context, namespace and release name, while upgrades and rollbacks check the release revision/state.
 
 The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reuses the library. The desktop application does not depend on that executable.
 
@@ -137,11 +139,11 @@ Custom resources use the discovery and dynamic access modules. Resource types an
 
 ## Resource mutations
 
-Resource actions enter the native backend through the mutation command module. `ResourceAction` commands construct common actions against live objects in core; only manual YAML edits use the arbitrary manifest path. Structured review DTOs carry all targets, action summaries and warnings to the interface, while YAML edits additionally carry a complete diff. Review strings are not parsed as a protocol. Supported operations are represented as structured requests rather than arbitrary shell commands.
+Resource actions enter the native backend through the mutation command module. `ResourceAction` commands construct common actions against live objects in core; only manual YAML edits use the arbitrary manifest path. Actions and groups produce a concise confirmation with a target and operation summary. Only YAML applications send a detailed diff to the interface. Supported operations are represented as structured requests rather than arbitrary shell commands.
 
-The core mutation implementation prepares the requested change against live resource state. For existing objects, it records identity and concurrency information and produces a review. The desktop guard emits a confirmation request to the frontend and waits for the user's decision.
+The core mutation implementation prepares the requested change against live resource state. For existing objects, it records identity and concurrency information. The desktop guard emits one confirmation request and waits for the user's decision without an expiry. Closing the window cancels its pending confirmation.
 
-After approval, the backend commits the prepared operation with the applicable identity and resource-version checks. Kubernetes remains responsible for authorization, admission, and API validation. Grouped actions are prepared for a shared review and committed sequentially; a group is not an atomic cluster transaction.
+After approval, the backend commits the prepared operation with the applicable identity and resource-version checks. Kubernetes remains responsible for authorization, admission, and API validation. Grouped actions are confirmed once and committed sequentially; a group is not an atomic cluster transaction.
 
 Helm operations have a separate preparation implementation. They invoke the local Helm executable with the selected context, and changes to an existing release are checked against the state used during preparation.
 

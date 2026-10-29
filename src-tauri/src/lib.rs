@@ -143,6 +143,7 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                mutation_guard::cancel_owner(window.label());
                 let extensions = window.state::<ExtensionManager>().inner().clone();
                 let manager = window.state::<InformerManager>().inner().clone();
                 let terminals = window.state::<PodTerminalManager>().inner().clone();

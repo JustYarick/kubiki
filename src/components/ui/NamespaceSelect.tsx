@@ -1,29 +1,29 @@
-import { useId, useLayoutEffect, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useState } from 'react';
 import { selectedFirst } from '../../core/utils/selected_first';
 import { Check, ChevronDown, Layers, Search } from 'lucide-react';
 import { namespaceNames, namespaceScope, namespaceScopeLabel } from '../../core/resources/namespace_scope';
-import { isValidNamespaceName } from '../../core/resources/resource_types';
 import { Popover } from './Dropdown';
 import { Button } from './Button';
 import { cx } from '../../core/utils/cx';
 
 /** Selection is applied once, so a batch of checkboxes starts one new data generation. */
-export function NamespaceSelect({ label = 'Namespace Scope', value, options, onChange, className, allowCustom = false }: {
-  label?: string; value: string; options: string[]; onChange: (scope: string) => void; className?: string; allowCustom?: boolean;
+export function NamespaceSelect({ label = 'Namespace Scope', value, options, onChange, className }: {
+  label?: string; value: string; options: string[]; onChange: (scope: string) => void; className?: string;
 }) {
   const names = namespaceNames(value);
   return <Popover width={320} trigger={({ open }) => <button type="button" aria-label={label} aria-haspopup="dialog" aria-expanded={open} data-value={value}
     title={namespaceScopeLabel(value)} className={cx('flex items-center gap-1.5 h-[calc(26px*var(--ui-factor))] px-2 rounded border border-[var(--border-default)] text-xs min-w-0 max-w-[calc(260px*var(--ui-factor))] hover:bg-[var(--bg-hover)]', className)}>
     <Layers size="calc(12px * var(--ui-factor))" className="text-violet-400 shrink-0" /><span className="truncate">{names && names.length > 1 ? `${names.length} namespaces` : namespaceScopeLabel(value)}</span><ChevronDown size="calc(11px * var(--ui-factor))" className="shrink-0 ml-auto" />
   </button>}>
-    {close => <NamespaceMenu key={value} label={label} value={value} options={options} allowCustom={allowCustom} onApply={scope => { onChange(scope); close(); }} />}
+    {close => <NamespaceMenu key={value} label={label} value={value} options={options} onApply={scope => { onChange(scope); close(); }} />}
   </Popover>;
 }
-function NamespaceMenu({ label, value, options, allowCustom, onApply }: { label: string; value: string; options: string[]; allowCustom: boolean; onApply: (scope: string) => void }) {
-  const [selected, setSelected] = useState<string[] | null>(() => namespaceNames(value));
+function NamespaceMenu({ label, value, options, onApply }: { label: string; value: string; options: string[]; onApply: (scope: string) => void }) {
+  const [draft, setSelected] = useState<string[] | null>(() => namespaceNames(value));
+  const selected = useMemo(() => draft === null ? null : draft.filter(name => options.includes(name)), [draft, options]);
   const [query, setQuery] = useState('');
   const id = useId();
-  const candidates = [...new Set([...options, ...(selected ?? []), ...(allowCustom && isValidNamespaceName(query.trim()) && query.trim() !== 'all' ? [query.trim()] : [])])].sort();
+  const candidates = [...new Set(options)].sort();
   const showAll = !query.trim() || 'all namespaces'.includes(query.trim().toLowerCase());
   const filtered = candidates.filter(name => name.toLowerCase().includes(query.trim().toLowerCase()));
   const choices = selectedFirst([...(showAll ? [null] : []), ...filtered], name => name === null ? selected === null : selected?.includes(name) ?? false);

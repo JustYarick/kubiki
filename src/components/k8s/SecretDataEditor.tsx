@@ -1,5 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
+import { CodeEditor } from '../ui/CodeEditor';
+import { codeLanguage } from '../../core/code_language';
+import { Copy } from 'lucide-react';
+import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
 import { resourceRef } from '../../core/resources/identity';
@@ -25,6 +29,10 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
+  const copy = async (value: string, label: string) => {
+    try { await navigator.clipboard.writeText(value); toast.success(`${label} copied`); }
+    catch { toast.error('Clipboard unavailable'); }
+  };
   useEffect(() => {
     if (!reveal || draft) return;
     const timer = setTimeout(() => setReveal(false), 60000);
@@ -58,7 +66,7 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
       try { const converted = formatRows(rows, mode, true); if (draft) setDraft({ ...draft, rows: converted }); setEncoding(mode); setError(''); }
       catch { setError('Invalid base64 value. Fix it before switching to Text.'); if (draft) { setValidate(true); const id = validateSecretRows(rows).keys().next().value; if (id !== undefined) focusField(id, 'value'); } }
     }}>{mode === 'text' ? 'Text' : 'Base64'}</button>)}</div>{!draft && <Button size="sm" onClick={() => setReveal(v => !v)}>{reveal ? 'Hide values' : 'Reveal values'}</Button>}{!draft && <Button size="sm" disabled={immutable || !context || (!k8s.demo && !item.raw?.metadata?.resourceVersion)} onClick={edit}>Edit data</Button>}</div>
-    <p className="text-xs text-[var(--text-muted)] mb-2">{item.raw?.type ?? 'Opaque'} · Text is decoded automatically and saved as base64. Binary values use Base64 mode.</p>
+    <p className="text-xs text-[var(--text-muted)] mb-2">{item.raw?.type ?? 'Opaque'} · Text is decoded automatically and saved as base64. Binary values use Base64 mode. Copy value uses the selected encoding, including hidden values.</p>
     {immutable && <p className="text-xs text-[var(--status-warn)]">This Secret is immutable.</p>}
     {draft && !changed && <p role="status" className="text-xs text-[var(--text-secondary)] mb-2">{saving ? "Saving changes…" : "Editing draft · changes are not saved yet"}</p>}
     {changed && <p role="alert" className="text-xs text-[var(--status-warn)]">The Secret changed while editing. Your draft is preserved. Cancel and edit again to load the latest version.</p>}
@@ -66,10 +74,14 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
     <div className="flex flex-col gap-3">{rows.map(row => <div key={row.id} className="border-b border-[var(--border-subtle)] pb-3 min-w-0" aria-label={`Secret key ${row.key}`}>
       <div className="flex flex-wrap gap-2 items-center mb-1.5 min-w-0">{draft ? <input aria-label={`Key ${row.id + 1}`} data-secret-field={`${row.id}-key`} aria-invalid={!!rowErrors.get(row.id)?.key} aria-describedby={rowErrors.get(row.id)?.key ? `${fieldPrefix}-${row.id}-key` : undefined} className={`${field} flex-1 basis-40`} value={row.key} disabled={saving} autoComplete="off" spellCheck={false} onChange={e => update(row.id, { key: e.target.value })} /> : <span className="font-mono text-xs break-all flex-1">{row.key}</span>}
         {row.mode === 'base64' && encoding === 'text' && <span className="text-xs text-[var(--text-muted)] shrink-0" title="Binary value cannot be decoded as UTF-8">Binary · base64</span>}
+        <Button size="sm" type="button" disabled={saving} aria-label={`Copy key ${row.key || row.id + 1}`} onClick={() => void copy(row.key, 'Secret key')}><Copy size={12} aria-hidden="true" />Copy key</Button>
+        <Button size="sm" type="button" disabled={saving} aria-label={`Copy value for ${row.key || row.id + 1}`} onClick={() => void copy(row.value, 'Secret value')}><Copy size={12} aria-hidden="true" />Copy value</Button>
         {draft && <Button size="sm" disabled={saving} aria-label={`Remove key ${row.id + 1}`} onClick={() => setDraft(d => d && ({ ...d, rows: d.rows.filter(r => r.id !== row.id) }))}>Remove</Button>}
       </div>
       {rowErrors.get(row.id)?.key && <p role="alert" id={`${fieldPrefix}-${row.id}-key`} className="text-xs text-[var(--status-danger)] mb-1.5">{rowErrors.get(row.id)?.key}</p>}
-      {draft ? <textarea aria-label={`Value ${row.id + 1}`} data-secret-field={`${row.id}-value`} aria-invalid={!!rowErrors.get(row.id)?.value} aria-describedby={rowErrors.get(row.id)?.value ? `${fieldPrefix}-${row.id}-value` : undefined} className={`${field} resource-data-value kubiki-scrollbar resize-y min-h-20`} value={row.value} disabled={saving} autoComplete="off" spellCheck={false} onChange={e => update(row.id, { value: e.target.value })} /> : <pre tabIndex={0} aria-label={`Value for ${row.key}`} className="resource-data-value kubiki-scrollbar text-xs font-mono whitespace-pre-wrap break-all">{reveal ? row.value || '(empty)' : '••••••••'}</pre>}
+      {draft ? <CodeEditor ariaLabel={`Value ${row.id + 1}`} focusTarget={`${row.id}-value`} aria-invalid={!!rowErrors.get(row.id)?.value} aria-describedby={rowErrors.get(row.id)?.value ? `${fieldPrefix}-${row.id}-value` : undefined} value={row.value} readOnly={saving} copyable={false} language={row.mode === 'base64' ? 'plaintext' : codeLanguage(row.key, row.value)} onChange={value => update(row.id, { value })} />
+        : reveal ? <CodeEditor ariaLabel={`Value for ${row.key}`} value={row.value} language={row.mode === 'base64' ? 'plaintext' : codeLanguage(row.key, row.value)} readOnly copyable={false} />
+          : <pre tabIndex={0} aria-label={`Value for ${row.key}`} className="resource-data-value kubiki-scrollbar text-xs font-mono whitespace-pre-wrap break-all">••••••••</pre>}
       {rowErrors.get(row.id)?.value && <p role="alert" id={`${fieldPrefix}-${row.id}-value`} className="text-xs text-[var(--status-danger)] mt-1">{rowErrors.get(row.id)?.value}</p>}
     </div>)}</div>
     {error && <p role="alert" className="text-xs text-[var(--status-danger)] mt-2">{error}</p>}

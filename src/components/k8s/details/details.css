@@ -114,7 +114,7 @@
 .details-structured-fields { display: grid; gap: calc(6px * var(--ui-factor)); min-width: 0; }
 .details-structured-entry { min-width: 0; border-bottom: 1px solid var(--border-subtle); padding: calc(4px * var(--ui-factor)) 0; font-size: calc(11px * var(--ui-factor)); }
 .details-structured-entry summary { cursor: pointer; overflow-wrap: anywhere; }
-.details-structured-entry pre { font: calc(11px * var(--ui-factor))/1.5 var(--font-mono); max-height: calc(280px * var(--ui-factor)); overflow: auto; padding: calc(8px * var(--ui-factor)); background: var(--bg-secondary); margin-top: calc(6px * var(--ui-factor)); }
+.details-structured-entry > .code-editor { margin-top: calc(6px * var(--ui-factor)); }
 .details-link { color: var(--accent-text); text-align: left; overflow-wrap: anywhere; }
 .details-link:hover { text-decoration: underline; }
 

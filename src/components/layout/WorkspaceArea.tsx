@@ -1,5 +1,6 @@
 import { RegisteredPanel } from '../../core/workspace_panels';
 import { useCustomResources } from '../../providers/use_custom_resources';
+import { useRetainedOverviewMetrics } from '../../providers/use_overview_metrics';
 import { customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
 import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { MainTabBar } from './MainTabBar';
@@ -41,6 +42,9 @@ export const WorkspaceArea: React.FC<{
   onHeaderHeight?: (height: number) => void;
 }> = ({ onSelectContext, onHeaderHeight }) => {
   const { tabs, activeTabId, splitTabId } = useWorkspaceStore();
+  const context = useClusterStore(state => state.currentContext);
+  const namespace = useClusterStore(state => state.selectedNamespace);
+  useRetainedOverviewMetrics(context, namespace === 'all' ? null : namespace, tabs.some(tab => tab.type === 'overview'));
   const [splitRatio, setSplitRatio] = useState(0.5); // 50% split by default
   const uiScale = useUiStore((state) => state.uiScale);
   const factor = uiFactor(uiScale);
