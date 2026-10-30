@@ -1,4 +1,5 @@
-import { CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { useId, useState } from 'react';
+import { CheckCircle2, XCircle, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { cx } from '../../../../core/utils/cx';
 
 interface Condition {
@@ -14,14 +15,17 @@ interface ConditionsTableProps {
 }
 
 export function ConditionsTable({ conditions }: ConditionsTableProps) {
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
   if (!conditions || conditions.length === 0) return null;
 
   return (
     <section aria-label="Conditions" className="details-section">
-      <div className="details-section-heading text-[length:calc(11px*var(--ui-factor))] font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] flex items-center justify-between">
+      <button type="button" aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpanded(value => !value)} className="details-section-heading w-full text-left cursor-pointer hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:-outline-offset-2 justify-between">
         <span>Conditions ({conditions.length})</span>
-      </div>
-      <div className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-canvas)]">
+        {expanded ? <ChevronDown size="calc(13px * var(--ui-factor))" aria-hidden="true" /> : <ChevronRight size="calc(13px * var(--ui-factor))" aria-hidden="true" />}
+      </button>
+      <div id={contentId} hidden={!expanded} className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-canvas)]">
         {conditions.map((c) => {
           const negative = /^(Failed|Failure|Degraded|Stalled|Denied|ReplicaFailure|DisruptionTarget)$/.test(c.type);
           const pending = c.type === 'Reconciling';
