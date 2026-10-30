@@ -8,14 +8,16 @@
 .ai-cluster-tag:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
 .ai-cluster-tag.is-active { background: var(--bg-selection); border-color: var(--accent); color: white; font-weight: 500; }
 .ai-tag-count { opacity: 0.8; font-size: 0.9em; }
-.ai-cluster-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1.5px 5px; border-radius: calc(3px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); font-weight: 500; line-height: 1.2; background: var(--bg-surface); border: 1px solid var(--border-default); color: var(--text-secondary); white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
-.ai-cluster-badge.is-all { color: var(--accent); border-color: var(--border-strong); }
+.ai-cluster-status-dot { width: 6.5px; height: 6.5px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 5px currentColor; }
+.ai-cluster-status-dot-sm { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.ai-cluster-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1.5px 6px; border-radius: calc(3px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); font-weight: 500; line-height: 1.2; background: var(--bg-surface); border: 1px solid var(--border-default); color: var(--text-secondary); white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; transition: all 120ms ease; }
+.ai-cluster-badge.is-all { color: var(--accent); border-color: rgba(99, 102, 241, 0.35); background: rgba(99, 102, 241, 0.08); }
 .ai-cluster-badge.is-cluster { color: var(--text-primary); }
 .ai-cluster-badge.is-general { color: var(--text-muted); }
-.ai-cluster-pill { display: inline-flex; align-items: center; gap: 6px; height: calc(27px * var(--ui-factor)); padding: 0 10px; border-radius: calc(4px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); font-weight: 500; line-height: 1; background: var(--bg-secondary); border: 1px solid var(--border-default); color: var(--text-primary); white-space: nowrap; flex-shrink: 0; box-sizing: border-box; }
-.ai-cluster-pill.is-all { color: var(--accent); border-color: var(--border-strong); background: rgba(99, 102, 241, 0.08); }
+.ai-cluster-pill { display: inline-flex; align-items: center; gap: 6.5px; height: calc(27px * var(--ui-factor)); padding: 0 10px; border-radius: calc(4px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); font-weight: 500; line-height: 1; background: var(--bg-secondary); border: 1px solid var(--border-default); color: var(--text-primary); white-space: nowrap; flex-shrink: 0; box-sizing: border-box; transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease; }
+.ai-cluster-pill.is-all { color: var(--accent); border-color: rgba(99, 102, 241, 0.35); background: rgba(99, 102, 241, 0.08); }
 .ai-cluster-pill.is-cluster { color: var(--text-primary); }
-.ai-cluster-pill.is-general { color: var(--text-muted); }
+.ai-cluster-pill.is-general { color: var(--text-muted); background: var(--bg-secondary); border-color: var(--border-default); }
 .ai-target-cluster-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: calc(3px * var(--ui-factor)); background: var(--bg-surface); border: 1px solid var(--border-default); font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); }
 .ai-target-cluster-badge strong { color: var(--text-primary); font-weight: 600; }
 .ai-conversation-row { display: flex; gap: 2px; align-items: center; border-radius: 4px; margin-bottom: 4px; }

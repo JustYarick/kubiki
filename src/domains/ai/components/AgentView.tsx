@@ -35,6 +35,7 @@ import { desktopAiAvailable } from '../transport';
 import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
 import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
 import { getToolIntent } from '../tool_intents';
+import { getClusterTone } from '../../../core/cluster_color';
 import '../ai.css';
 
 const statusLabels: Record<string, string> = {
@@ -106,6 +107,32 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
       <AgentSettings ref={settingsRef} onStatusChange={setSettingsStatus} />
     </Modal>
   </section>;
+}
+
+function ClusterPill({ context, label, title, className = '' }: { context?: string | null; label?: string; title?: string; className?: string }) {
+  const tone = getClusterTone(context);
+  const isSpecial = !context || context === 'general' || context === '*';
+  const displayLabel = label ?? (context === '*' ? 'All clusters' : context || 'No cluster connected');
+
+  return (
+    <span
+      className={`ai-cluster-pill ${context === '*' ? 'is-all' : !context || context === 'general' ? 'is-general' : 'is-cluster'} ${className}`}
+      style={!isSpecial ? {
+        color: tone.color,
+        backgroundColor: tone.bg,
+        borderColor: tone.border,
+      } : undefined}
+      title={title}
+    >
+      <span
+        className="ai-cluster-status-dot"
+        style={{ backgroundColor: isSpecial ? (context === '*' ? 'var(--accent)' : 'var(--text-muted)') : tone.dot }}
+        aria-hidden="true"
+      />
+      <Server size={12} style={!isSpecial ? { color: tone.color } : undefined} className="shrink-0" aria-hidden="true" />
+      <span className="truncate max-w-[170px]">{displayLabel}</span>
+    </span>
+  );
 }
 
 function AgentHome({ onSettings }: { onSettings: () => void }) {
@@ -184,10 +211,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
         <p>Ask a question, investigate a failing resource, or describe the application you want to create.</p>
         <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
           <span className="text-[var(--text-muted)]">Active cluster:</span>
-          <span className={`ai-cluster-pill ${!currentContext ? 'is-general' : 'is-cluster'}`}>
-            <Server size={12} className={!currentContext ? 'text-[var(--text-muted)]' : 'text-emerald-400'} aria-hidden="true" />
-            <span>{currentContext || 'No cluster connected'}</span>
-          </span>
+          <ClusterPill context={currentContext} title="Active cluster context" />
         </div>
       </div>
 
@@ -398,10 +422,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   return <>
     <header className="ai-chat-header">
       <div className="ai-scope">
-        <span className={`ai-cluster-pill ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`} title="Pinned cluster context for this conversation">
-          <Server size={12} className="text-emerald-400" aria-hidden="true" />
-          <span>{c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}</span>
-        </span>
+        <ClusterPill
+          context={c.scope.context}
+          label={c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}
+          title="Pinned cluster context for this conversation"
+        />
         <span className="text-[var(--text-secondary)]">
           {c.scope.allNamespaces ? 'All namespaces' : c.scope.namespaces.join(', ') || 'No namespaces'}
         </span>
@@ -456,13 +481,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
               </Select>
             </label>
           ) : (
-            <span
-              className={`ai-cluster-pill ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`}
+            <ClusterPill
+              context={c.scope.context}
+              label={c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}
               title="Pinned cluster context for this conversation"
-            >
-              <Server size={12} className="shrink-0 text-emerald-400" aria-hidden="true" />
-              <span className="truncate max-w-[150px]">{c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}</span>
-            </span>
+            />
           )}
 
           <label className="ai-compact-field">
