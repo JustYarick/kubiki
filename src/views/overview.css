@@ -49,7 +49,7 @@ button.overview-summary-item:hover { background: var(--bg-hover); }
 .telemetry-chart-collecting { position: absolute; top: 35px; left: 0; right: 0; text-align: center; font-size: calc(10px * var(--ui-factor)); color: var(--text-muted); pointer-events: none; }
 .telemetry-chart-tooltip { position: absolute; left: 0; right: 0; top: 0; width: fit-content; max-width: 100%; margin: auto; padding: 4px 6px; border: 1px solid var(--border-strong); background: var(--bg-overlay); border-radius: 3px; font-size: calc(10px * var(--ui-factor)); overflow-wrap: anywhere; pointer-events: none; }
 .telemetry-chart-times { display: flex; justify-content: space-between; flex-wrap: wrap; gap: calc(6px * var(--ui-factor)); color: var(--text-muted); font-size: calc(10px * var(--ui-factor)); }
-.telemetry-chart-times { font-family: var(--font-mono); padding-inline: 2.3%; font-size: calc(9px * var(--ui-factor)); }
+.telemetry-chart-times { font-family: var(--font-mono); padding-inline: 12px; font-size: calc(9px * var(--ui-factor)); }
 .telemetry-ranking .overview-section-body { padding: 0; }
 .telemetry-segment { display: flex; max-width: 100%; border: 1px solid var(--border-default); border-radius: 4px; overflow: hidden; }
 .telemetry-segment button { padding: calc(5px * var(--ui-factor)) calc(10px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); color: var(--text-secondary); min-height: calc(26px * var(--ui-factor)); }

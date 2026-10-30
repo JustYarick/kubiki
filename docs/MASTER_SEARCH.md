@@ -26,3 +26,11 @@ ns:^(production|staging)$ -status:Failed
 Search indexes metadata and selected diagnostic fields. Secret `data`/`stringData`, container environment values and the contents of the last-applied manifest annotation are excluded. It does not search arbitrary YAML bodies. Regex compilation and evaluation run in a disposable Web Worker with a computation deadline, so pathological expressions cannot block the renderer. Invalid or slow expressions show an actionable error.
 
 Unavailable collections are listed as partial coverage, rather than silently claiming a complete search. Results are paged in the palette, with a count of all matches; the worker returns up to 1,000 results and larger result sets require narrower filters. Search results are observations, not a guarantee that an object still exists when opened; detail views keep the normal UID/context checks and live refresh.
+
+## Node details
+
+Node details include independently sampled CPU and memory histories, usage relative to allocatable resources, a fixed-scale option, a 5/15/30-minute range, pause/resume and manual refresh. The Metrics API source timestamp and CPU averaging window are shown. Node metrics are cluster-scoped and do not change with a Pod namespace filter. Overview and node views share the same read subscription; per-node history uses actual source timestamps and rejects duplicates/stale observations.
+
+Scheduling state, provider ID, Pod CIDRs, region/zone, machine/system/boot identity, cached image-group counts and volume information accompany the existing capacity, runtime, addresses, taints, conditions and Pod details. Node Pod inventory covers all namespaces; permission failures are displayed as incomplete data.
+
+Metrics Server supplies CPU and memory, not disk/network performance rates or historical data from before the application collected it. Missing or denied usage is shown as unavailable. Unknown capacities and system fields remain unknown.

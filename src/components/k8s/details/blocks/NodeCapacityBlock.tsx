@@ -38,7 +38,7 @@ export function NodeCapacityBlock({ item }: NodeCapacityBlockProps) {
             <span className="text-xs font-semibold text-[var(--text-primary)]">Capacity & Allocatable</span>
           </div>
           <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
-            {podsOnNode.length} pods running / {allocatable.pods ?? capacity.pods ?? '—'} allocatable
+            {podsOnNode.length} Pods / {allocatable.pods ?? capacity.pods ?? '—'} allocatable
           </span>
         </div>
 

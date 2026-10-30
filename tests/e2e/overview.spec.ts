@@ -46,14 +46,19 @@ test('Overview keeps one continuous CPU/RAM history while switching workspace ta
   const cpu = overview.getByRole('img', { name: 'CPU usage history', exact: true });
   const memory = overview.getByRole('img', { name: 'RAM usage history', exact: true });
   await expect(cpu).toHaveAttribute('data-samples', '1');
+  const initialLine = await cpu.locator('.telemetry-chart-line').getAttribute('d');
+  const flat = initialLine?.match(/M[\d.]+,([\d.]+) L[\d.]+,([\d.]+)/);
+  expect(flat).not.toBeNull();
+  expect(flat![1]).toBe(flat![2]);
   const explorer = page.getByTestId('explorer-panel');
   for (let index = 0; index < 4; index++) {
     await explorer.locator(`[data-resource-type="${index % 2 ? 'Service' : 'Pod'}"]`).click();
     await expect(overview).toHaveCount(0);
     const before = reads;
-    sampledAt += 15000;
+    const elapsed = index === 2 ? 120000 : 15000;
+    sampledAt += elapsed;
     const response = page.waitForResponse(response => response.url().includes('/api/k8s/metrics?'));
-    await page.clock.runFor(15000);
+    if (elapsed > 15000) await page.clock.fastForward(elapsed); else await page.clock.runFor(elapsed);
     await (await response).finished();
     await expect.poll(() => reads).toBe(before + 1);
     await page.getByRole('button', { name: 'Open Overview', exact: true }).click();
@@ -73,6 +78,41 @@ test('Overview marks missing data, handles empty namespaces and fits narrow edit
   const { overview } = await setup(page, true);await expect(overview.getByText(/Partial or stale data/)).toBeVisible();await expect(overview.locator('details')).toContainText('Events access denied');
   await page.getByRole('button', { name: 'Namespace Scope', exact: true }).click();await page.getByRole('option', { name: 'empty', exact: true }).click();await page.getByRole('button', { name: 'Apply namespaces', exact: true }).click();await expect(overview.getByRole('button', { name: 'Pods: 0', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 900, height: 900 });expect(await overview.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);await captureScreenshot(page, { path: 'test-results/overview.png' });
+});
+
+test('Overview chart markers remain round and hover selects the right measurement at every viewport width', async ({ page }) => {
+  const base = Date.now();
+  let sampledAt = base;
+  let reads = 0;
+  await page.clock.install({ time: base });
+  await page.setViewportSize({ width: 3440, height: 1440 });
+  const { overview } = await setup(page, false, url => ({ context: 'test', namespace: url.searchParams.get('namespace'),
+    pods: { items: [], error: null }, nodes: { items: [{ name: 'worker', timestamp: new Date(sampledAt).toISOString(), window: '15s', cpu: String(++reads), memory: '128Mi' }], error: null },
+  }));
+  const chart = overview.getByRole('img', { name: 'CPU usage history', exact: true });
+  await expect(chart).toHaveAttribute('data-samples', '1');
+  for (let sample = 2; sample <= 3; sample++) {
+    sampledAt += 15000;
+    const response = page.waitForResponse(response => response.url().includes('/api/k8s/metrics?'));
+    await page.clock.runFor(15000);
+    await (await response).finished();
+    await expect(chart).toHaveAttribute('data-samples', String(sample));
+  }
+  for (const width of [3440, 1920, 900]) {
+    await page.setViewportSize({ width, height: 1440 });
+    await expect.poll(() => chart.evaluate(element => Math.abs((element as SVGSVGElement).viewBox.baseVal.width - element.getBoundingClientRect().width))).toBeLessThan(0.1);
+    const rect = (await chart.boundingBox())!;
+    await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    const marker = chart.locator('.telemetry-chart-hover-point');
+    await expect(marker).toBeVisible();
+    const dot = (await marker.boundingBox())!;
+    expect(Math.abs(dot.width - dot.height)).toBeLessThan(0.1);
+    expect(dot.width).toBeCloseTo(11, 1); // 9px circle plus its 2px stroke.
+    expect(dot.x + dot.width / 2).toBeCloseTo(rect.x + rect.width / 2, 0);
+    await expect(overview.locator('.telemetry-chart-tooltip')).toContainText('2 cores');
+  }
+  await page.setViewportSize({ width: 3440, height: 1440 });
+  await captureScreenshot(page, { path: 'test-results/overview-ultrawide.png' });
 });
 
 

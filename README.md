@@ -379,7 +379,7 @@ Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validatio
 - [Publishing desktop releases](docs/RELEASING.md)
 - [Application updates and signing](docs/APP_UPDATES.md)
 - [Project structure and architecture](docs/STRUCTURE.md)
-- [Master search and regex filters](docs/MASTER_SEARCH.md)
+- [Master search, regex filters and node performance](docs/MASTER_SEARCH.md)
 - [Traffic observability research: Cilium, Istio, Calico and eBPF sources](docs/TRAFFIC_OBSERVABILITY.md)
 - [Workspace extensions](docs/EXTENSIONS.md) and [extension architecture](docs/EXTENSION_PLATFORM.md)
 - [Resource analysis](docs/AI_ANALYSIS.md)

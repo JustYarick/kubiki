@@ -115,3 +115,29 @@ it('suspends retained polling while the document is hidden and resumes with the 
   expect(received.at(-1)?.history).toHaveLength(2);
   stop();
 });
+
+it('retains independent node histories, shares reads, and never records cached or duplicate node samples', async () => {
+  vi.useFakeTimers();
+  const visibility = Object.assign(new EventTarget(), { hidden: false });
+  const make = (): OverviewMetrics => ({ ...measured('test', null), nodes: { items: [
+    { name: 'worker-a', timestamp: new Date().toISOString(), window: '15s', cpu: '1', memory: '1Gi' },
+    { name: 'worker-b', timestamp: new Date().toISOString(), window: '15s', cpu: '2', memory: '2Gi' },
+  ], error: null } });
+  const read = vi.fn(async () => make());
+  const subscriptions = new MetricsSubscriptions(read, () => visibility);
+  const states: MetricsSnapshot[] = [];
+  const closeA = subscriptions.subscribe('test', null, snapshot => states.push(snapshot));
+  const closeB = subscriptions.subscribe('test', null, () => {});
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(states.at(-1)?.nodeHistory['worker-a'].map(point => point.cpu)).toEqual([1, 1]);
+  expect(states.at(-1)?.nodeHistory['worker-b'].map(point => point.cpu)).toEqual([2, 2]);
+  subscriptions.refresh('test', null);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(states.at(-1)?.nodeHistory['worker-a']).toHaveLength(2);
+  read.mockResolvedValue({ ...make(), nodes: { items: null, error: { code: 'forbidden', message: 'Denied', operation: 'metrics', retryable: false } } });
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(states.at(-1)?.nodeHistory['worker-a']).toHaveLength(2);
+  expect(states.at(-1)?.data?.nodes.error?.code).toBe('forbidden');
+  closeA(); closeB();
+});

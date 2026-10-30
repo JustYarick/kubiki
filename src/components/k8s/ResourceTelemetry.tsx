@@ -3,7 +3,7 @@ import { OverviewSection } from './OverviewSection';
 import { Popover } from '../ui/Dropdown';
 import { IconButton, Button } from '../ui/Button';
 import { CheckboxRow } from '../ui/Checkbox';
-import { Fragment, useId, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Cpu, MemoryStick, RefreshCw, ChevronDown, ArrowUpRight, Settings2 } from 'lucide-react';
 import type { ResourceItem } from '../../types/k8s';
 import { useOverviewMetrics } from '../../providers/use_overview_metrics';
@@ -71,43 +71,57 @@ export function ResourceTelemetry({ context, namespace, pods, nodes, children }:
     </OverviewSection>
   </section>;
 }
-function HistoryChart({ history, dimension, minutes, reference }: { history: HistoryPoint[]; dimension: Dimension; minutes: number; reference: number | null }) {
+export function HistoryChart({ history, dimension, minutes, reference }: { history: HistoryPoint[]; dimension: Dimension; minutes: number; reference: number | null }) {
   const id = useId().replace(/:/g, '');const [hover, setHover] = useState<number>();
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [size, setSize] = useState({ width: 520, height: 150 });
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const measure = () => {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width <= 24 || rect.height <= 32) return;
+      setSize(previous => previous.width === rect.width && previous.height === rect.height ? previous : { width: rect.width, height: rect.height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, []);
+  const leftEdge = 12;
+  const rightEdge = size.width - 12;
+  const baseline = size.height - 20;
   const end = history[history.length - 1]?.at ?? Date.now();const duration = Math.min(minutes * 60000, Math.max(15000, end - (history[0]?.at ?? end)));const start = end - duration;
   const points = history.filter(point => point.at >= start && point[dimension] !== null);
   const maximum = reference !== null && reference > 0 ? reference : Math.max(dimension === 'cpu' ? 0.1 : 1024 ** 2, ...points.map(point => point[dimension]!)) * 1.2;
   const values = points.map(point => point[dimension]!);
   const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-  const x = (at: number) => 12 + (at - start) / (end - start) * 496;
-  const y = (value: number) => 120 - Math.min(1, value / maximum) * 104;
-  const segments: HistoryPoint[][] = [];
-  let gap = true;
-  for (const point of history.filter(point => point.at >= start)) {
-    if (point[dimension] === null) { gap = true;continue; }
-    const last = segments[segments.length - 1];
-    if (gap || !last || point.at - last[last.length - 1].at > 45000) segments.push([point]);else last.push(point);
-    gap = false;
-  }
+  const x = (at: number) => leftEdge + (at - start) / (end - start) * (rightEdge - leftEdge);
+  const y = (value: number) => baseline - Math.min(1, value / maximum) * (baseline - 12);
+  // Connect observed values across pauses; only actual samples enter history or tooltips.
+  const initial = points.length === 1;
+  const left = !points.length || initial ? leftEdge : x(points[0].at);
+  const right = !points.length || initial ? rightEdge : x(points[points.length - 1].at);
+  const path = initial ? `M${left.toFixed(1)},${y(points[0][dimension]!).toFixed(1)} L${right.toFixed(1)},${y(points[0][dimension]!).toFixed(1)}` : points.map((point, i) => `${i ? 'L' : 'M'}${x(point.at).toFixed(1)},${y(point[dimension]!).toFixed(1)}`).join(' ');
   const selected = hover === undefined ? undefined : points[hover];
   return <div className="telemetry-chart">
-    <svg viewBox="0 0 520 150" preserveAspectRatio="none" role="img" tabIndex={0} aria-describedby={`history-help-${id}`} onFocus={() => { if (points.length) setHover(points.length - 1); }} onBlur={() => setHover(undefined)} onKeyDown={event => {
+    <svg ref={svgRef} viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="xMidYMid meet" role="img" tabIndex={0} aria-describedby={`history-help-${id}`} onFocus={() => { if (points.length) setHover(points.length - 1); }} onBlur={() => setHover(undefined)} onKeyDown={event => {
       if (!points.length || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       setHover(index => event.key === 'Home' ? 0 : event.key === 'End' ? points.length - 1 : Math.min(points.length - 1, Math.max(0, (index ?? points.length - 1) + (event.key === 'ArrowRight' ? 1 : -1))));
     }} aria-label={`${labels[dimension]} usage history`} data-samples={points.length} onPointerLeave={event => { if (document.activeElement !== event.currentTarget) setHover(undefined); }} onPointerMove={event => {
-      const rect = event.currentTarget.getBoundingClientRect();const at = start + Math.min(1, Math.max(0, ((event.clientX - rect.left) / rect.width * 520 - 12) / 496)) * (end - start);
+      const rect = event.currentTarget.getBoundingClientRect();
+      const localX = (event.clientX - rect.left) / rect.width * size.width;
+      const at = start + Math.min(1, Math.max(0, (localX - leftEdge) / (rightEdge - leftEdge))) * (end - start);
       if (points.length) setHover(points.reduce((closest, point, index) => Math.abs(point.at - at) < Math.abs(points[closest].at - at) ? index : closest, 0));
     }}>
       <defs><linearGradient id={`area-${id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--telemetry-color)" stopOpacity=".12" /><stop offset="100%" stopColor="var(--telemetry-color)" stopOpacity="0" /></linearGradient></defs>
-      <line x1="12" x2="508" y1="120" y2="120" className="telemetry-chart-grid" />
-      {segments.map(segment => {
-        const path = segment.map((point, i) => `${i ? 'L' : 'M'}${x(point.at).toFixed(1)},${y(point[dimension]!).toFixed(1)}`).join(' ');
-        return <g key={segment[0].at}><path d={`${path} L${x(segment[segment.length - 1].at)},120 L${x(segment[0].at)},120 Z`} fill={`url(#area-${id})`} /><path d={path} className="telemetry-chart-line" />{segment.length === 1 && <circle cx={x(segment[0].at)} cy={y(segment[0][dimension]!)} r="2.5" fill="var(--telemetry-color)" />}</g>;
-      })}
-      {selected && <g><line x1={x(selected.at)} x2={x(selected.at)} y1="12" y2="120" className="telemetry-chart-cursor" /><circle cx={x(selected.at)} cy={y(selected[dimension]!)} r="4.5" fill="var(--telemetry-color)" stroke="var(--bg-secondary)" strokeWidth="2" /></g>}
+      <line x1={leftEdge} x2={rightEdge} y1={baseline} y2={baseline} className="telemetry-chart-grid" />
+      {points.length > 0 && <g><path d={`${path} L${right},${baseline} L${left},${baseline} Z`} fill={`url(#area-${id})`} /><path d={path} className="telemetry-chart-line" />{initial && <circle className="telemetry-chart-sample" cx={x(points[0].at)} cy={y(points[0][dimension]!)} r="2.5" fill="var(--telemetry-color)" />}</g>}
+      {selected && <g><line x1={x(selected.at)} x2={x(selected.at)} y1="12" y2={baseline} className="telemetry-chart-cursor" /><circle className="telemetry-chart-hover-point" cx={x(selected.at)} cy={y(selected[dimension]!)} r="4.5" fill="var(--telemetry-color)" stroke="var(--bg-secondary)" strokeWidth="2" /></g>}
     </svg>
     <div className="telemetry-chart-times"><span>−{duration < 60000 ? `${Math.round(duration / 1000)}s` : `${Number((duration / 60000).toFixed(1))}m`}</span>{reference !== null && reference > 0 && <span title="Values above the fixed scale are clipped">Fixed scale</span>}<span>{history.length ? new Date(end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now'}</span></div>
-    {points.length < 2 && <div className="telemetry-chart-collecting">{points.length ? 'Collecting history · next sample ~15s' : 'Waiting for metrics'}</div>}
+    {points.length < 2 && <div className="telemetry-chart-collecting">{points.length ? 'First measurement · next sample ~15s' : 'Waiting for metrics'}</div>}
     {selected && <output aria-live="polite" className="telemetry-chart-tooltip">{new Date(selected.at).toLocaleTimeString()} · {format(dimension, selected[dimension])}</output>}
     <p id={`history-help-${id}`} className="sr-only">{labels[dimension]} history: minimum {format(dimension, values.length ? Math.min(...values) : null)}, average {format(dimension, average)}, maximum {format(dimension, values.length ? Math.max(...values) : null)}. {reference !== null && reference > 0 ? 'Fixed to budget · values above budget are clipped' : 'Auto scale'} · ← → inspect samples · Home / End</p>
   </div>;
