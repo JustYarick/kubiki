@@ -59,7 +59,10 @@
 .ai-suggestion-card:hover { background: var(--bg-hover); border-color: var(--border-strong); }
 .ai-suggestion-card span { font-size: calc(11px * var(--ui-factor)); color: var(--text-primary); }
 .ai-suggestion-card small { font-size: calc(10px * var(--ui-factor)); color: var(--text-secondary); line-height: 1.4; }
+.ai-transcript-container { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .ai-transcript { overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0; padding: calc(20px * var(--ui-factor)); }
+.ai-scroll-bottom-btn { position: absolute; bottom: 14px; right: 24px; z-index: 10; display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 18px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22); font-size: calc(11px * var(--ui-factor)); font-weight: 500; cursor: pointer; transition: all 150ms ease; user-select: none; }
+.ai-scroll-bottom-btn:hover { background: var(--bg-hover); border-color: var(--border-strong); transform: translateY(-1px); }
 .ai-welcome, .ai-empty-chat { margin: auto; max-width: 680px; padding: 32px 20px; line-height: 1.7; color: var(--text-secondary); }
 .ai-welcome h2, .ai-empty-chat h2 { font-size: calc(18px * var(--ui-factor)); font-weight: 600; margin: 8px 0; color: var(--text-primary); }
 .ai-welcome p, .ai-empty-chat p { margin-bottom: 16px; }

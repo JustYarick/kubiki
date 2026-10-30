@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
+  ArrowDown,
   Bot,
   Brain,
   Check,
@@ -393,15 +394,63 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   const update = useAiStore(s => s.update);
   const refresh = useAiStore(s => s.refreshModels);
   const transcript = useRef<HTMLDivElement>(null);
-  const nearBottom = useRef(true);
+  const userScrolledUp = useRef(false);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const [modePending, setModePending] = useState(false);
 
+  const scrollToBottom = (smooth = false) => {
+    userScrolledUp.current = false;
+    setShowScrollBottom(false);
+    if (transcript.current) {
+      if (smooth) {
+        transcript.current.scrollTo({ top: transcript.current.scrollHeight, behavior: 'smooth' });
+      } else {
+        transcript.current.scrollTop = transcript.current.scrollHeight;
+      }
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY < 0) {
+      // User is scrolling up with mousewheel: instantly decouple auto-scroll
+      userScrolledUp.current = true;
+      setShowScrollBottom(true);
+    } else if (e.deltaY > 0 && transcript.current) {
+      const el = transcript.current;
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distFromBottom <= 35) {
+        userScrolledUp.current = false;
+        setShowScrollBottom(false);
+      }
+    }
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom <= 35) {
+      userScrolledUp.current = false;
+      setShowScrollBottom(false);
+    } else if (distFromBottom > 75) {
+      setShowScrollBottom(true);
+    }
+  };
+
   useEffect(() => { if (c.providerId && !models && desktopAiAvailable() && !loading && !modelError) void refresh(c.providerId); }, [c.providerId, models, loading, modelError, refresh]);
   useEffect(() => {
-    if (visible && nearBottom.current && transcript.current) transcript.current.scrollTop = c.messages.length ? transcript.current.scrollHeight : 0;
+    if (visible && !userScrolledUp.current && transcript.current) {
+      transcript.current.scrollTop = c.messages.length ? transcript.current.scrollHeight : 0;
+    }
   }, [c.messages, c.status, visible]);
-  useEffect(() => { nearBottom.current = true; if (visible) input.current?.focus(); }, [c.id, visible]);
+  useEffect(() => {
+    userScrolledUp.current = false;
+    setShowScrollBottom(false);
+    if (visible) {
+      if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+      input.current?.focus();
+    }
+  }, [c.id, visible]);
 
   async function mode(next: AgentMode) {
     setModePending(true);
@@ -414,6 +463,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     try { await useAiStore.getState().setPhase(c.id, next); }
     finally { setModePending(false); }
   }
+
+  const sendCurrent = () => {
+    scrollToBottom(false);
+    void useAiStore.getState().send(c.id);
+  };
 
   const selectedModel = models?.find(m => m.id === c.model);
   const DEFAULT_CONTEXT_WINDOW = 262144; // 256k default when provider provides no contextWindow
@@ -440,20 +494,41 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       <Button size="sm" variant="ghost" onClick={onSettings}><Settings size={13} aria-hidden="true" />Permissions</Button>
     </header>
 
-    <div ref={transcript} className="ai-transcript kubiki-scrollbar" role="log" aria-label="AI conversation messages" aria-live="off" onScroll={e => { const el = e.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
-      {!c.messages.length && <div className="ai-empty-chat"><h2>{c.title === 'New conversation' ? 'What would you like to investigate?' : c.title}</h2>
-        <p>Ask about Kubernetes, describe a deployment, or request evidence from this conversation's cluster.</p>
-        <div className="ai-suggestions">{['Why are my Pods failing?', 'Create a Nexus deployment with persistent storage', 'Explain my workload configuration'].map(text => <button type="button" key={text} onClick={() => { update(c.id, { draft: text }); input.current?.focus(); }}>{text}</button>)}</div>
-      </div>}
-      {c.messages.map((message, idx) => {
-        // If this user message directly answered the preceding ask_user tool,
-        // it is already formatted inside that QuestionCard!
-        const isAnswerToQuestion = message.role === 'user' && idx > 0 && c.messages[idx - 1]?.role === 'tool' && c.messages[idx - 1]?.call?.name === 'ask_user';
-        if (isAnswerToQuestion) return null;
-        return <Message key={message.id} message={message} conversation={c} />;
-      })}
-      {c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') && (
-        <LiveStatusIndicator status={c.status} />
+    <div className="ai-transcript-container">
+      <div
+        ref={transcript}
+        className="ai-transcript kubiki-scrollbar"
+        role="log"
+        aria-label="AI conversation messages"
+        aria-live="off"
+        onWheel={handleWheel}
+        onScroll={handleScroll}
+      >
+        {!c.messages.length && <div className="ai-empty-chat"><h2>{c.title === 'New conversation' ? 'What would you like to investigate?' : c.title}</h2>
+          <p>Ask about Kubernetes, describe a deployment, or request evidence from this conversation's cluster.</p>
+          <div className="ai-suggestions">{['Why are my Pods failing?', 'Create a Nexus deployment with persistent storage', 'Explain my workload configuration'].map(text => <button type="button" key={text} onClick={() => { update(c.id, { draft: text }); input.current?.focus(); }}>{text}</button>)}</div>
+        </div>}
+        {c.messages.map((message, idx) => {
+          // If this user message directly answered the preceding ask_user tool,
+          // it is already formatted inside that QuestionCard!
+          const isAnswerToQuestion = message.role === 'user' && idx > 0 && c.messages[idx - 1]?.role === 'tool' && c.messages[idx - 1]?.call?.name === 'ask_user';
+          if (isAnswerToQuestion) return null;
+          return <Message key={message.id} message={message} conversation={c} />;
+        })}
+        {c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') && (
+          <LiveStatusIndicator status={c.status} />
+        )}
+      </div>
+      {showScrollBottom && (
+        <button
+          type="button"
+          className="ai-scroll-bottom-btn"
+          onClick={() => scrollToBottom(true)}
+          aria-label="Scroll to bottom"
+        >
+          <ArrowDown size={13} aria-hidden="true" />
+          <span>Latest messages</span>
+        </button>
       )}
     </div>
 
@@ -575,7 +650,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       {!settings.providers.length && <p className="ai-help">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
       <label className="sr-only" htmlFor={`ai-message-${c.id}`}>Message AI agent</label>
       <textarea ref={input} id={`ai-message-${c.id}`} aria-label="Message AI agent" className="ide-textarea" value={c.draft} maxLength={24000} rows={3} placeholder="Ask a question or describe what you want to create…" onChange={e => update(c.id, { draft: e.target.value })} onKeyDown={e => {
-        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!c.busy && !c.invalidated && desktopAiAvailable()) void useAiStore.getState().send(c.id); }
+        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!c.busy && !c.invalidated && desktopAiAvailable()) sendCurrent(); }
       }} />
       <div className="ai-form-line">
         <span className="ai-run-status flex items-center gap-1.5 flex-wrap" role="status">
@@ -602,7 +677,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         </span>
         <span className="ai-grow" />
         {c.busy ? <Button size="sm" variant="danger" onClick={() => void useAiStore.getState().stop(c.id)}><Square size={12} aria-hidden="true" />Stop</Button>
-          : <Button size="sm" variant="primary" disabled={!desktopAiAvailable() || !c.draft.trim() || !c.providerId || !c.model || modePending || c.invalidated} onClick={() => void useAiStore.getState().send(c.id)}><Send size={12} aria-hidden="true" />Send</Button>}
+          : <Button size="sm" variant="primary" disabled={!desktopAiAvailable() || !c.draft.trim() || !c.providerId || !c.model || modePending || c.invalidated} onClick={() => sendCurrent()}><Send size={12} aria-hidden="true" />Send</Button>}
       </div>
     </footer>
   </>;
