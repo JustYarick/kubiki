@@ -71,7 +71,6 @@ export function RevisionHistoryBlock({ workload, item }: RevisionHistoryBlockPro
         toast.success(`Rolled back ${targetWorkload.name} to revision #${rev} (demo)`);
       } else {
         await performResourceAction(currentContext!, targetWorkload, { type: 'rollback', revision: resourceRef(currentContext!, rs), resource_version: rs.raw?.metadata?.resourceVersion ?? '' });
-        toast.success(`Rollback to revision #${rev} applied for ${targetWorkload.name}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') {

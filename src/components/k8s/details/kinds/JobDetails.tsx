@@ -82,7 +82,6 @@ export function JobDetails({ item, onNavigate, onLogs, onShell }: JobDetailsProp
         toast.success(`CronJob ${item.name} ${nextSuspended ? 'suspended' : 'resumed'} (demo)`);
       } else {
         await performResourceAction(currentContext!, item, { type: 'suspend', suspend: nextSuspended });
-        toast.success(`CronJob ${item.name} ${nextSuspended ? 'suspended' : 'resumed'}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Suspend/resume cancelled');
@@ -103,7 +102,6 @@ export function JobDetails({ item, onNavigate, onLogs, onShell }: JobDetailsProp
           return;
         }
         await performResourceAction(currentContext, item, { type: 'run_cron_job', name: manualJobName });
-        toast.success(`Spawned Job ${manualJobName}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') {

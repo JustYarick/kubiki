@@ -1010,10 +1010,10 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
             return;
           }
           await k8s.applyManifest(currentContext, yaml);
-          toast.success(`${displayKind} created`, object.metadata.name);
           if (useClusterStore.getState().currentContext === currentContext) {
             setNewOpen(false);
-            await refresh();
+            try { await refresh(); }
+            catch { toast.warn('Resource created; view refresh failed', 'Refresh the resource list to load the created resource.'); }
           }
         }}
       />

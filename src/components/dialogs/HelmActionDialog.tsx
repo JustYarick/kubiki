@@ -92,7 +92,8 @@ function HelmOperationForm({ action, release, repo, initialRevision, onClose, on
       else if (action === 'repository_set') request = { operation: action, name, url, previous_url: repo?.url ?? null };
       else if (action === 'repository_remove') request = { operation: action, name: repo!.name, expected_url: repo!.url };
       else request = { operation: action, name: repo?.name ?? null };
-      setBusy(true); await k8s.mutateHelm(request); invalidateHelmGraphs(); onCompleted(); onClose();
+      setBusy(true); await k8s.mutateHelm(request);
+      invalidateHelmGraphs(); onCompleted(); onClose();
     } catch (error) { setError(normalizeK8sError(error, { operation: 'helm_mutation' })); }
     finally { setBusy(false); }
   };

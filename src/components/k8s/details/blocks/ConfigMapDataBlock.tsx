@@ -60,7 +60,6 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
       const original = baseline.item;
       await performResourceAction(context, original, { type: 'config_map_data', data: dataObj });
       setEditing(false);
-      toast.success('ConfigMap saved to cluster');
     } catch (err) {
       toast.error('Failed to save ConfigMap', String(err));
     } finally {

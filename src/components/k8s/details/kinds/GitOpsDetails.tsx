@@ -51,7 +51,6 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
         toast.success(`Sync requested for ${item.name} (demo)`);
       } else {
         await performResourceAction(currentContext!, item, { type: 'argo_sync' });
-        toast.success(`Sync requested for ${item.name}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Sync cancelled');
@@ -83,7 +82,6 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
         toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${item.name} (demo)`);
       } else {
         await performResourceAction(currentContext!, item, { type: 'argo_refresh', hard });
-        toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${item.name}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Refresh cancelled');

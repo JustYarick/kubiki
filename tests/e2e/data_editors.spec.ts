@@ -8,11 +8,14 @@ test.beforeEach(({ page }) => {
 });
 test.afterEach(({ page }) => { expect(browserErrors.get(page)).toEqual([]); });
 
-async function setup(page: Page) {
-  await page.addInitScript(() => {
+async function setup(page: Page, withFlux = false) {
+  await page.addInitScript(withFlux => {
     const w = window as any;
     const secret = { apiVersion: 'v1', kind: 'Secret', metadata: { name: 'editor-secret', uid: 'secret-uid', namespace: 'apps', resourceVersion: '1' }, type: 'Opaque', data: { 'config.json': btoa('{"token":"private-token","count":2}'), password: btoa('old-password\n'), binary: '/wAB', empty: '' } };
     const config = { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'editor-config', uid: 'config-uid', namespace: 'apps', resourceVersion: '1', annotations: { 'app/config': '{"enabled":true,"nested":{"count":2}}' } }, data: { 'values.yaml': '# keep this comment\nreplicas: 2\nservice:\n  port: 8080\n', 'app.json': '{"enabled":true}' } };
+    const definition = { apiVersion: 'apiextensions.k8s.io/v1', kind: 'CustomResourceDefinition', metadata: { uid: 'helm-crd', name: 'helmreleases.helm.toolkit.fluxcd.io' }, spec: { group: 'helm.toolkit.fluxcd.io', names: { kind: 'HelmRelease', plural: 'helmreleases' }, scope: 'Namespaced', versions: [{ name: 'v2', served: true, storage: true }] } };
+    const flux = { apiVersion: 'helm.toolkit.fluxcd.io/v2', kind: 'HelmRelease', metadata: { name: 'flux-owner', namespace: 'apps', uid: 'flux-uid', resourceVersion: '5', generation: 2 }, spec: { releaseName: 'web' }, status: { conditions: [{ type: 'Stalled', status: 'True', reason: 'RetriesExceeded', observedGeneration: 2 }] } };
+    const itemsFor = (kind: string) => kind === 'Secret' ? [secret] : kind === 'ConfigMap' ? [config] : kind === 'CustomResourceDefinition' && withFlux ? [definition] : kind === 'Namespace' ? [{ apiVersion: 'v1', kind: 'Namespace', metadata: { name: 'apps', uid: 'apps' } }] : [];
     w.__dataIntents = []; w.__copied = []; w.__cancelMutation = false;
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { w.__copied.push(value); } } });
     let callback = 0;
@@ -23,7 +26,7 @@ async function setup(page: Page) {
         if (command === 'plugin:event|listen') return ++callback;
         if (command === 'plugin:event|unlisten' || command.startsWith('stop_') || ['ack_resources', 'cancel_read_task'].includes(command)) return;
         if (command === 'watch_resources') {
-          const items = args.query.kind === 'Secret' ? [secret] : args.query.kind === 'ConfigMap' ? [config] : args.query.kind === 'Namespace' ? [{ apiVersion: 'v1', kind: 'Namespace', metadata: { name: 'apps', uid: 'apps' } }] : [];
+          const items = itemsFor(args.query.kind);
           queueMicrotask(() => args.onEvent.onmessage({ subscription_id: args.subscriptionId, query: args.query, messages: [
             { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items } } } },
             { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } },
@@ -34,22 +37,27 @@ async function setup(page: Page) {
         if (command === 'ping_cluster') return { git_version: 'v1.35.0' };
         if (command === 'get_namespaces') return ['apps'];
         if (command === 'get_api_resources') return '';
-        if (command === 'get_resources') return { items: args.kind === 'Secret' ? [secret] : args.kind === 'ConfigMap' ? [config] : args.kind === 'Namespace' ? [{ apiVersion: 'v1', kind: 'Namespace', metadata: { name: 'apps', uid: 'apps' } }] : [] };
+        if (command === 'get_resources') return { items: itemsFor(args.kind) };
+        if (command === 'get_custom_resources') return { items: withFlux ? [flux] : [] };
         if (command === 'get_helm_inventory') return [{ name: 'web', namespace: 'apps', revision: '2', updated: '', status: 'deployed', chart: 'web-1', app_version: '1' }];
         if (command === 'get_helm_content') return '# retained comment\nreplicas: 2\nservice:\n  port: 8080\n';
         if (command === 'get_helm_history' || command === 'list_helm_repositories') return [];
+        if (command === 'delete_resource') {
+          w.__dataIntents.push(args.request);
+          return new Promise(resolve => { w.__finishDeletion = () => resolve({ kind: 'Status', status: 'Success' }); });
+        }
         if (command === 'mutate_resource') {
           const intent = args.request; w.__dataIntents.push(intent);
           if (w.__cancelMutation) throw { code: 'cancelled', message: 'Operation cancelled', retryable: false };
           if (intent.operation === 'secret') { secret.data = intent.request.data; secret.metadata.resourceVersion = '2'; return secret; }
-          if (intent.operation === 'action') { config.data = intent.action.data; return config; }
+          if (intent.operation === 'action') { if (intent.action.type === 'flux_retry') return flux; config.data = intent.action.data; return config; }
           if (intent.operation === 'manifest') return { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'new-editor-config', uid: 'new-uid', namespace: 'apps' }, data: { key: 'new value' } };
           return {};
         }
         throw new Error(`Unexpected command ${command}`);
       },
     };
-  });
+  }, withFlux);
   await page.goto('/');
   await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
 }
@@ -104,10 +112,12 @@ test('Secret editors keep hidden data out of the editor, preserve encoding and s
   await page.evaluate(() => { (window as any).__cancelMutation = true; });
   await data.getByRole('button', { name: 'Save data', exact: true }).click();
   await expect(data.getByRole('alert')).toContainText('Operation cancelled');
+  await expect(page.locator('[data-toast-type="success"]').filter({ hasText: 'Secret data saved' })).toHaveCount(0);
   await expect(password.locator('.view-lines')).toContainText('latest');
   await page.evaluate(() => { (window as any).__cancelMutation = false; });
   await data.getByRole('button', { name: 'Save data', exact: true }).click();
   await expect(data.getByRole('status').filter({ hasText: /^Secret data saved$/ })).toBeVisible();
+  await expect(page.locator('[data-toast-type="success"]').filter({ hasText: 'Secret data saved' })).toHaveCount(1);
   await expect(data.locator('.monaco-editor')).toHaveCount(0);
   const intents = await page.evaluate(() => (window as any).__dataIntents);
   expect(intents).toHaveLength(2);
@@ -154,6 +164,7 @@ test('ConfigMap has independent editors with find, replace, undo, formatting and
   await expect(page.getByText('Clipboard unavailable', { exact: true })).toBeVisible();
   await data.getByRole('button', { name: 'Save ConfigMap', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__dataIntents.length)).toBe(1);
+  await expect(page.locator('[data-toast-type="success"]').filter({ hasText: 'ConfigMap data saved' })).toHaveCount(1);
   const intent = await page.evaluate(() => (window as any).__dataIntents[0]);
   expect(intent).toMatchObject({ operation: 'action', resource: { context: 'test', kind: 'ConfigMap', name: 'editor-config' }, action: { type: 'config_map_data', data: { 'values.yaml': '# keep comment\nreplicas: 6\n', 'app.json': '{"enabled":false,"size":3}' } } });
   await details.getByText('Metadata & Object Spec', { exact: true }).click();
@@ -180,6 +191,7 @@ test('new resource manifest uses the code editor and stays in sync with identity
   await dialog.getByRole('button', { name: 'Review & create', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__dataIntents.length)).toBe(1);
   expect(await page.evaluate(() => (window as any).__dataIntents[0])).toMatchObject({ operation: 'manifest', context: 'test', manifest: expect.stringContaining('name: new-editor-config') });
+  await expect(page.locator('[data-toast-type="success"]').filter({ hasText: 'Resource created' })).toHaveCount(1);
 });
 
 test('Helm values viewer is searchable and upgrade values keep comments and edits', async ({ page }) => {
@@ -208,6 +220,7 @@ test('Helm values viewer is searchable and upgrade values keep comments and edit
   await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__dataIntents.length)).toBe(1);
   expect(await page.evaluate(() => (window as any).__dataIntents[0])).toMatchObject({ operation: 'helm', request: { operation: 'upgrade', values: '# retained comment\nreplicas: 4\n', chart: 'local/web' } });
+  await expect(page.locator('[data-toast-type="success"]').filter({ hasText: 'Helm release upgraded' })).toHaveCount(1);
 });
 
 test('data editing remains available when the advanced editor cannot load', async ({ page }) => {
@@ -222,4 +235,42 @@ test('data editing remains available when the advanced editor cannot load', asyn
   await data.getByRole('button', { name: 'Save data', exact: true }).click();
   await expect(data.getByRole('status').filter({ hasText: /^Secret data saved$/ })).toBeVisible();
   expect(await page.evaluate(() => (window as any).__dataIntents[0].request.data.password)).toBe(btoa('fallback password'));
+});
+
+test('RetriesExceeded resets Flux through the backend from both Helm ownership and custom resource details', async ({ page }) => {
+  await setup(page, true);
+  await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
+  await page.getByRole('row', { name: 'Inspect Helm release web in apps', exact: true }).click();
+  const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
+  const retry = details.getByRole('button', { name: 'Retry Helm release', exact: true });
+  await expect(retry).toBeEnabled();
+  await page.evaluate(() => { (window as any).__cancelMutation = true; });
+  await retry.click();
+  await expect(retry).toBeEnabled();
+  await expect(page.locator('[data-toast-type="success"]')).toHaveCount(0);
+  await details.getByRole('button', { name: 'apps/flux-owner', exact: true }).click();
+  await expect(details).toContainText('RetriesExceeded');
+  await expect(retry).toBeEnabled();
+  await page.evaluate(() => { (window as any).__cancelMutation = false; });
+  await retry.click();
+  await expect(page.locator('[data-toast-type="success"]')).toContainText('Flux Helm retry requested');
+  await expect(details.getByRole('button', { name: 'Retry requested', exact: true })).toBeDisabled();
+  const intents = await page.evaluate(() => (window as any).__dataIntents);
+  expect(intents).toHaveLength(2);
+  expect(intents[1]).toEqual({ operation: 'action', resource: { context: 'test', group: 'helm.toolkit.fluxcd.io', version: 'v2', kind: 'HelmRelease', namespace: 'apps', name: 'flux-owner', uid: 'flux-uid' }, resource_version: '5', action: { type: 'flux_retry' } });
+});
+
+test('deleting from the table reports one receipt only after backend execution, with resource and context', async ({ page }) => {
+  await setup(page);
+  await openResource(page, 'ConfigMap', 'editor-config');
+  await page.getByTestId('resource-table').getByText('editor-config', { exact: true }).click({ button: 'right' });
+  await page.getByRole('group', { name: 'Actions', exact: true }).getByRole('button', { name: /Delete…/ }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__dataIntents.length)).toBe(1);
+  await expect(page.locator('[data-toast-type="success"]')).toHaveCount(0);
+  await page.evaluate(() => (window as any).__finishDeletion());
+  const receipt = page.locator('[data-toast-type="success"]');
+  await expect(receipt).toHaveCount(1);
+  await expect(receipt).toContainText('Resource deletion accepted');
+  await expect(receipt).toContainText('ConfigMap apps/editor-config');
+  await expect(receipt).toContainText('Cluster: test');
 });

@@ -64,9 +64,7 @@ export function UsedByList({ item, onNavigate }: UsedByListProps) {
     }
 
     try {
-      const result = await k8s.applyBatch(resourceRef(currentContext!, item), restarted.map(({ res }) => resourceActionStep(currentContext!, res, { type: 'restart' })));
-      if (result.failed > 0) toast.warn('Restart completed with failures', `${result.succeeded} workload(s) restarted, ${result.failed} failed`);
-      else toast.success(`Rollout restart triggered for ${result.succeeded} workload(s)`);
+      await k8s.applyBatch(resourceRef(currentContext!, item), restarted.map(({ res }) => resourceActionStep(currentContext!, res, { type: 'restart' })));
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Restart consumers cancelled');
       else toast.error('Failed to restart consumers', String(err?.message || err));

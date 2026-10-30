@@ -256,11 +256,9 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
                 } else {
                   const currentContext = useClusterStore.getState().currentContext;
                   if (!currentContext) {
-                    toast.error('No active cluster context');
-                    return;
+                    throw new Error('No active cluster context');
                   }
-                  const output = await k8s.applyManifest(currentContext, yaml, item);
-                  toast.success(output || 'Manifest applied', `${item.kind}/${item.name}`);
+                  await k8s.applyManifest(currentContext, yaml, item);
                 }
               } catch (err: any) {
                 if (err?.code === 'cancelled') {

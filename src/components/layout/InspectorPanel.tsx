@@ -191,7 +191,6 @@ function KubernetesResourceDetails({
           item.raw?.metadata?.resourceVersion ?? '',
           item.apiVersion
         );
-        toast.success(`Deleted ${item.kind}/${item.name}`);
         onClose?.();
       }
     } catch (err: any) {
@@ -213,7 +212,6 @@ function KubernetesResourceDetails({
         toast.success(`Rollout restart triggered for ${item.kind}/${item.name} (demo)`);
       } else {
         await performResourceAction(currentContext!, item, { type: 'restart' });
-        toast.success(`Rollout restart triggered for ${item.kind}/${item.name}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Restart cancelled');
@@ -238,7 +236,6 @@ function KubernetesResourceDetails({
         return 'success';
       } else {
         await performResourceAction(currentContext!, item, { type: 'cordon', unschedulable: nextUnschedulable });
-        toast.success(`Node ${item.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'}`);
         return 'success';
       }
     } catch (err: any) {
@@ -275,21 +272,12 @@ function KubernetesResourceDetails({
     }
     try {
       const primary = resourceRef(currentContext!, item);
-      const result = await k8s.applyBatch(primary, [{
+      await k8s.applyBatch(primary, [{
         operation: 'drain',
         resource: primary,
         resource_version: item.raw?.metadata?.resourceVersion ?? '',
         critical: true,
       }]);
-      if (result.stopped) {
-        toast.error(`Drain failed for ${item.name}`, 'The node could not be cordoned. Nothing was evicted.');
-        return;
-      }
-      const evicted = result.steps.filter((step) => step.action === 'EVICT' && step.ok).length;
-      const failed = result.steps.filter((step) => step.action === 'EVICT' && !step.ok).length;
-      const summary = `Drained node ${item.name}: ${evicted} pod(s) evicted${failed > 0 ? `, ${failed} failed` : ''}`;
-      if (failed > 0) toast.warn('Drain completed with eviction failures', summary);
-      else toast.success('Drain complete', summary);
     } catch (err: any) {
       if (err?.code === 'cancelled') {
         toast.info('Drain cancelled');
@@ -351,11 +339,9 @@ function KubernetesResourceDetails({
                   } else {
                     const currentContext = useClusterStore.getState().currentContext;
                     if (!currentContext) {
-                      toast.error('No active cluster context');
-                      return;
+                      throw new Error('No active cluster context');
                     }
-                    const output = await k8s.applyManifest(currentContext, yaml, item);
-                    toast.success(output || 'Manifest applied', `${item.kind}/${item.name}`);
+                    await k8s.applyManifest(currentContext, yaml, item);
                   }
                 } catch (err: any) {
                   if (err?.code === 'cancelled') {

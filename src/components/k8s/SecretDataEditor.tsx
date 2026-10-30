@@ -58,6 +58,7 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
       if (raw?.metadata?.uid !== item.uid || raw?.metadata?.name !== item.name || raw?.metadata?.namespace !== item.namespace) throw new Error('Unexpected Secret identity returned; refresh to verify saved state');
       useResourceStore.getState().updateItem('Secret', item.uid, mapK8sResource(raw, 'Secret'));
       setDraft(undefined); setReveal(false); setSaved(k8s.demo ? 'Saved in demo memory' : 'Secret data saved');
+      if (k8s.demo) toast.success('Secret data saved in demo memory', `${item.namespace}/${item.name}`);
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Secret update failed. Refresh to verify saved state'); }
     finally { setSaving(false); }
   }

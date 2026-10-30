@@ -139,6 +139,8 @@ Custom resources use the discovery and dynamic access modules. Resource types an
 
 ## Resource mutations
 
+`src/providers/mutations.ts` emits one operation receipt after the write IPC resolves, through `mutation_feedback.ts`. This covers all resource actions, YAML create/update, deletions, Secret data, Helm operations, batches and node debug preparation independently of which screen initiated them. Messages contain resource identity and the pinned context, never resource values. Partial/stopped batches and re-added finalizers produce warning/error receipts rather than success. Deletion/eviction acceptance and controller requests are distinguished from completed cleanup or rollout. Screens retain local validation/errors and demo feedback, without duplicating real-operation success receipts.
+
 Resource actions enter the native backend through the mutation command module. `ResourceAction` commands construct common actions against live objects in core; only manual YAML edits use the arbitrary manifest path. Actions and groups produce a concise confirmation with a target and operation summary. Only YAML applications send a detailed diff to the interface. Supported operations are represented as structured requests rather than arbitrary shell commands.
 
 The core mutation implementation prepares the requested change against live resource state. For existing objects, it records identity and concurrency information. The desktop guard emits one confirmation request and waits for the user's decision without an expiry. Closing the window cancels its pending confirmation.

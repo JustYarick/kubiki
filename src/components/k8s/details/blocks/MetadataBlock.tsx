@@ -49,16 +49,7 @@ export function MetadataBlock({ item, defaultExpanded = false }: MetadataBlockPr
       }
       // Confirmation opens in a native dialog; the request pins the live object
       // server-side, so a stale panel copy cannot clobber a newer state.
-      const updated = await removeFinalizerRequest(resourceRef(context, item), finalizerName);
-      const readded = updated?.metadata?.finalizers?.includes(finalizerName);
-      if (readded) {
-        toast.warn(
-          `Finalizer "${finalizerName}" returned`,
-          'A cluster controller re-added it; the object is likely still in use',
-        );
-      } else {
-        toast.success(`Finalizer "${finalizerName}" removed`);
-      }
+      await removeFinalizerRequest(resourceRef(context, item), finalizerName);
     } catch (err) {
       toast.error('Failed to remove finalizer', normalizeK8sError(err, { operation: 'mutation' }).message);
     }

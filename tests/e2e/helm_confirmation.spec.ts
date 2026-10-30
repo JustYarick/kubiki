@@ -64,6 +64,7 @@ test('Helm uninstall opens one concise confirmation, can be cancelled, and remai
   await expect(dialog.locator('pre')).toHaveCount(0);
   await expect(dialog).not.toContainText(/review|expires|2 minutes/i);
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('[data-toast-type="success"]')).toHaveCount(0);
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeVisible();
 
@@ -74,6 +75,7 @@ test('Helm uninstall opens one concise confirmation, can be cancelled, and remai
   await expect(dialog).toBeVisible();
   await captureScreenshot(page, { path: 'test-results/helm-simple-confirmation.png' });
   await dialog.getByRole('button', { name: 'Uninstall', exact: true }).click();
+  await expect(page.locator('[data-toast-type="success"]')).toContainText('Helm release uninstalled');
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
   const intents = await page.evaluate(() => (window as any).__helmMutationIntents);
