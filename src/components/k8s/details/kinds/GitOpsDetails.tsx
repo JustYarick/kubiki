@@ -21,6 +21,7 @@ import { UsedByList } from '../blocks/UsedByList';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { Button } from '../../../ui/Button';
 import { SearchInput } from '../../../ui/Input';
+import { FluxHelmRetry } from '../../FluxHelmRetry';
 
 /** Flux and Argo CD resources: reconciliation state, sources and managed objects. */
 export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavigate: (item: ResourceItem) => void }) {
@@ -137,6 +138,7 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
         </DetailsSection>
       )}
 
+      <FluxHelmRetry key={`${item.uid}/${item.apiVersion}`} item={item} />
       <ConditionsTable conditions={raw.status?.conditions} />
 
       {!!references.sources.length && (

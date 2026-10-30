@@ -1,6 +1,8 @@
 import { Select } from '../components/ui/Select';
 import { CodeEditor } from '../components/ui/CodeEditor';
+import { FluxHelmRetry } from '../components/k8s/FluxHelmRetry';
 import { namespaceScopeLabel } from '../core/resources/namespace_scope';
+import { resourceBucket } from '../core/resources/custom_resource_types';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Anchor, Copy, RefreshCw, Search, GitBranch, ArrowUpCircle, RotateCcw, Trash2, MoreHorizontal, Package, Boxes, FileCode, SlidersHorizontal, Plus } from 'lucide-react';
 import { useClusterStore } from '../state/cluster_store';
@@ -214,7 +216,13 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
   const loadedResources = useMemo(() => Object.entries(resources).flatMap(([kind, map]) => kind === 'Event' ? [] : [...map.values()]), [resources]);
   const events = useMemo(() => [...resources.Event.values()], [resources.Event]);
   const managed = useMemo(() => releaseObjects({ name: item.name, namespace: item.namespace ?? '' }, loadedResources), [loadedResources, item.name, item.namespace]);
-  const navigate = (next: ResourceItem) => { setTab('overview'); onNavigate(next); };
+  const navigate = (next: ResourceItem) => {
+    const store = useResourceStore.getState();
+    const bucket = resourceBucket(next);
+    const existing = store.resources[bucket]?.get(next.uid);
+    if (!existing) store.setResourcesForKind(bucket, [...(store.resources[bucket]?.values() ?? []), next]);
+    setTab('overview'); onNavigate(existing ?? next);
+  };
   const owners = useFluxHelmOwners(context, null);
   const owner = fluxReleaseOwner({ name: item.name, namespace: item.namespace! }, owners.items);
   const canChange = !owner && !owners.loading && k8s.supportsHelmMutations && !!release && !history.loading && !history.error;
@@ -241,7 +249,7 @@ export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarge
       {!history.loading && !history.error && !release && tab !== 'history' && <p role="status" className="p-3 text-xs text-[var(--text-secondary)]">No release revision is available. Refresh or choose another release.</p>}
       {tab === 'history' ? <HelmHistoryPane result={history} release={release} onSelect={chooseRevision} canRestore={canChange} onRestore={revision => setAction({ kind: 'rollback', revision })} />
         : release && tab === 'overview' ? <div className="details-body details-stack">
-          {owner && <DetailsSection title="Managed by Flux"><p className="details-caption">Change the Flux HelmRelease to keep the release in sync with its source.</p><button className="details-resource-row" onClick={() => navigate(owner)}>{owner.namespace}/{owner.name}</button></DetailsSection>}
+          {owner && <DetailsSection title="Managed by Flux"><p className="details-caption">Change the Flux HelmRelease to keep the release in sync with its source.</p><button className="details-resource-row" onClick={() => navigate(owner)}>{owner.namespace}/{owner.name}</button><FluxHelmRetry key={owner.uid} item={owner} onRequested={owners.refresh} /></DetailsSection>}
           {owners.error && <RequestErrorNotice error={owners.error} onRetry={owners.refresh} retainedData={!!owners.items.length} />}
           <ReleaseEvidence key={`${context}/${item.uid}/${release.revision}`} context={context} release={release} history={history.data ?? []} resources={loadedResources} events={events} onNavigate={navigate} />
           <DetailsSection title="Latest release snapshot" label="Release overview" icon={Package}>

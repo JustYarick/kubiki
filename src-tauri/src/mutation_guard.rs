@@ -149,6 +149,7 @@ pub async fn confirm_action(
         "SCALE" => ("Scale workload?", "Scale", false),
         "EVICT" => ("Evict Pod?", "Evict", true),
         "RESTART" => ("Restart workload?", "Restart", false),
+        "FLUX_RETRY" => ("Retry Flux Helm release?", "Retry", false),
         "UPDATE_SECRET" | "UPDATE_CONFIG_MAP" => ("Save resource data?", "Save", false),
         "CORDON" => ("Cordon Node?", "Cordon", false),
         "UNCORDON" => ("Uncordon Node?", "Uncordon", false),

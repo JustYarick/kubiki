@@ -2,7 +2,7 @@
 use kube::{Client, client::Body};
 use kubiki_core::core::{
     api::ResourceRef,
-    mutations::{ManifestTarget, MutationIntent, PreparedMutation},
+    mutations::{ManifestTarget, MutationIntent, PreparedMutation, ResourceAction},
 };
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -39,6 +39,11 @@ fn fixture(initial: Option<Value>, write_status: u16) -> Fixture {
                 (
                     200,
                     json!({"apiVersion":"v1","kind":"APIResourceList","groupVersion":"example.io/v1beta1","resources":[{"name":"widgets","singularName":"widget","kind":"Widget","namespaced":true,"verbs":["get","create","update","delete"]}]}),
+                )
+            } else if method == "GET" && uri == "/apis/helm.toolkit.fluxcd.io/v2" {
+                (
+                    200,
+                    json!({"apiVersion":"v1","kind":"APIResourceList","groupVersion":"helm.toolkit.fluxcd.io/v2","resources":[{"name":"helmreleases","singularName":"helmrelease","kind":"HelmRelease","namespaced":true,"verbs":["get","create","update","delete"]}]}),
                 )
             } else if method == "GET" {
                 match state.lock().unwrap().clone() {
@@ -447,4 +452,109 @@ async fn watch_and_list_strip_managed_fields_while_yaml_and_action_updates_prese
         action_writes[0].2["metadata"]["managedFields"],
         object()["metadata"]["managedFields"]
     );
+}
+
+fn exhausted_helm_release() -> Value {
+    json!({"apiVersion":"helm.toolkit.fluxcd.io/v2","kind":"HelmRelease","metadata":{"name":"web","namespace":"team","uid":"original","resourceVersion":"10","generation":3,"annotations":{"keep":"original"}},"spec":{"values":{"private":"do-not-expose"}},"status":{"conditions":[{"type":"Stalled","status":"True","reason":"RetriesExceeded","observedGeneration":3}]}})
+}
+fn flux_retry(value: &Value) -> MutationIntent {
+    let target = target(value);
+    MutationIntent::Action {
+        resource: target.resource,
+        resource_version: target.resource_version,
+        action: ResourceAction::FluxRetry,
+    }
+}
+#[tokio::test]
+async fn flux_retry_resets_and_reconciles_only_after_consent_without_forcing_an_upgrade() {
+    let initial = exhausted_helm_release();
+    let f = fixture(Some(initial.clone()), 200);
+    let plan = PreparedMutation::prepare(f.client, flux_retry(&initial))
+        .await
+        .unwrap();
+    assert_eq!(plan.details().steps[0].operation, "FLUX_RETRY");
+    assert!(!plan.review().contains("do-not-expose"));
+    let requests = f.requests.clone();
+    plan.confirm_and_commit(move |_| async move {
+        assert!(writes(&requests).is_empty());
+        Ok(true)
+    })
+    .await
+    .unwrap();
+    let requests = writes(&f.requests);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "PUT");
+    assert!(requests[0].1.contains("helmreleases/web"));
+    let saved = &requests[0].2;
+    let annotations = &saved["metadata"]["annotations"];
+    assert!(
+        annotations["reconcile.fluxcd.io/resetAt"]
+            .as_str()
+            .unwrap()
+            .len()
+            > 10
+    );
+    assert_eq!(
+        annotations["reconcile.fluxcd.io/resetAt"],
+        annotations["reconcile.fluxcd.io/requestedAt"]
+    );
+    assert!(annotations.get("reconcile.fluxcd.io/forceAt").is_none());
+    assert_eq!(annotations["keep"], "original");
+    assert_eq!(saved["spec"], initial["spec"]);
+    assert_eq!(saved["metadata"]["uid"], initial["metadata"]["uid"]);
+    assert_eq!(
+        saved["metadata"]["resourceVersion"],
+        initial["metadata"]["resourceVersion"]
+    );
+}
+#[tokio::test]
+async fn flux_retry_rejects_suspended_recovered_stale_or_unrelated_objects() {
+    for scenario in [
+        "suspended",
+        "recovered",
+        "stale_condition",
+        "inactive_condition",
+        "unrelated",
+    ] {
+        let mut initial = exhausted_helm_release();
+        match scenario {
+            "suspended" => initial["spec"]["suspend"] = json!(true),
+            "recovered" => initial["status"]["conditions"][0]["reason"] = json!("Succeeded"),
+            "stale_condition" => {
+                initial["status"]["conditions"][0]["observedGeneration"] = json!(2)
+            }
+            "inactive_condition" => initial["status"]["conditions"][0]["status"] = json!("False"),
+            _ => initial = object(),
+        }
+        let f = fixture(Some(initial.clone()), 200);
+        assert!(
+            PreparedMutation::prepare(f.client, flux_retry(&initial))
+                .await
+                .is_err(),
+            "{scenario}"
+        );
+        assert!(writes(&f.requests).is_empty(), "{scenario}");
+    }
+}
+#[tokio::test]
+async fn flux_retry_cancel_and_concurrent_updates_never_write() {
+    for concurrent in [false, true] {
+        let initial = exhausted_helm_release();
+        let f = fixture(Some(initial.clone()), 200);
+        let plan = PreparedMutation::prepare(f.client, flux_retry(&initial))
+            .await
+            .unwrap();
+        let state = f.state.clone();
+        let result = plan
+            .confirm_and_commit(move |_| async move {
+                if concurrent {
+                    state.lock().unwrap().as_mut().unwrap()["metadata"]["resourceVersion"] =
+                        json!("11");
+                }
+                Ok(concurrent)
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(writes(&f.requests).is_empty());
+    }
 }
