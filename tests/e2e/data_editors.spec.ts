@@ -237,6 +237,17 @@ test('data editing remains available when the advanced editor cannot load', asyn
   expect(await page.evaluate(() => (window as any).__dataIntents[0].request.data.password)).toBe(btoa('fallback password'));
 });
 
+test('About identifies the author and supports finding the attribution in settings', async ({ page }) => {
+  await setup(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+  await page.getByRole('navigation', { name: 'Settings categories', exact: true }).getByRole('button', { name: 'About', exact: true }).click();
+  const about = page.getByRole('region', { name: 'Settings: About', exact: true });
+  await expect(about).toContainText('Author:');
+  await expect(about.getByRole('link', { name: 'JustYarick', exact: true })).toHaveAttribute('href', 'https://github.com/JustYarick');
+  await page.getByRole('textbox', { name: 'Search settings', exact: true }).fill('JustYarick');
+  await expect(page.getByRole('link', { name: 'JustYarick', exact: true })).toBeVisible();
+});
+
 test('RetriesExceeded resets Flux through the backend from both Helm ownership and custom resource details', async ({ page }) => {
   await setup(page, true);
   await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();

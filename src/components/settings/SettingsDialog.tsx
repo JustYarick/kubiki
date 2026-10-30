@@ -586,6 +586,9 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
             <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] mt-0.5">
               Desktop Kubernetes IDE · Apache License 2.0
             </div>
+            <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] mt-1.5">
+              Author: <a href="https://github.com/JustYarick" target="_blank" rel="noopener noreferrer" className="text-[var(--accent)] hover:underline">JustYarick</a>
+            </div>
             <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mt-1.5 leading-relaxed">
               Kubiki provides a local workspace for day-to-day Kubernetes administration: resource browsing, YAML editing,
               resource topology, Helm management, logs, terminals and port forwarding. Live data comes from the Rust backend

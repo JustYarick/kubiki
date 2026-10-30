@@ -129,7 +129,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     icon: Info,
     sectionTitle: 'About',
     entries: [
-      { id: 'about.kubiki', label: 'Kubiki', keywords: 'desktop kubernetes ide version license apache features workspace clusters resources yaml logs terminals helm' },
+      { id: 'about.kubiki', label: 'Kubiki', keywords: 'desktop kubernetes ide version license apache author JustYarick автор features workspace clusters resources yaml logs terminals helm' },
       { id: 'about.updates', label: 'Application updates', description: 'Check for Kubiki releases in this build’s update channel and install updates.', keywords: 'update upgrade download github stable dev channel release version' },
       { id: 'about.cluster', label: 'Cluster connection', description: 'The context and API server version selected in the title bar. Connection info is read-only here.', keywords: 'context server version connected kubeconfig' },
     ],
