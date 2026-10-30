@@ -3,6 +3,7 @@
 | Command | Coverage |
 | --- | --- |
 | `pnpm test` | Pure logic, state, parsing, resource identity, adapters, permissions and cancellation contracts. |
+| `cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml` | Native AI policy, provider stream decoding, model metadata and tool runtime tests using a local HTTP server. |
 | `pnpm test:desktop` | Build provenance, updater manifests, publication gates, release channels and VirusTotal request pacing/report verification. No public files are uploaded by these tests. |
 | `pnpm test:extensions` | Extension package validation, capabilities, settings, cancellation and local host process/RPC lifecycles. |
 | `pnpm test:e2e` | Standard browser regression suite, including large inventories, stream cleanup, reviewed operations and representative responsive layouts. |
@@ -34,6 +35,29 @@ not prove live-cluster transport, installed native applications or macOS GPU FPS
 `PLAYWRIGHT_BASE_URL` uses an externally managed server and disables automatic
 server startup. Some scenarios import `/src` modules, so the entire suite still
 requires Vite; production-preview runs must select compatible scenarios.
+
+## Native Kubernetes TLS regression
+
+`src-tauri/src/kubernetes_tls_tests.rs` constructs real HTTPS clients with the
+desktop's complete dependency feature graph. It checks Kubernetes-first and
+AI-first startup in isolated subprocesses: Rustls's process-global provider must
+not be initialized accidentally by another parallel test. A mocked Kubernetes
+service or a standalone core build cannot catch conflicts introduced by desktop
+dependencies. AI uses `rustls-no-provider` with the existing Ring backend, matching
+Kubernetes and the updater; enabling reqwest's `rustls` feature also adds AWS-LC
+and can make kube's automatic crypto-provider selection panic.
+
+The current-context probe is ignored in CI. To explicitly check connectivity using
+the actual native client before and after AI initialization, run:
+
+```sh
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib \
+  kubernetes_tls_tests::current_cluster_version_is_reachable_before_and_after_ai \
+  -- --exact --ignored --nocapture
+```
+
+This probe uses the current kubeconfig context and only requests `/version`.
+It does not change configuration or Kubernetes resources.
 
 ## Standard and full layout coverage
 

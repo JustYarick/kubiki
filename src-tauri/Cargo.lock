@@ -2605,11 +2605,13 @@ name = "kubiki"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "futures",
  "glib",
  "k8s-openapi",
  "keyring",
  "kube",
+ "kubiki-ai",
  "kubiki-core",
  "portable-pty",
  "semver",
@@ -2625,6 +2627,19 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kubiki-ai"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

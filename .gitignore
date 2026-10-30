@@ -2,6 +2,7 @@
 target/
 **/target/
 Cargo.lock
+!crates/kubiki-ai/Cargo.lock
 
 # Logs
 logs

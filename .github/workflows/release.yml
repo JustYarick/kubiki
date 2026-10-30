@@ -245,6 +245,7 @@ jobs:
           key: ${{ matrix.target }}
           workspaces: |
             crates/kubiki-core
+            crates/kubiki-ai
             src-tauri
       - run: pnpm install --frozen-lockfile
       - name: Prepare target runtime and extension resources
@@ -255,6 +256,7 @@ jobs:
         if: needs.prepare.outputs.run_tests == 'true'
         run: |
           cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml
+          cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
       - name: Set build version and updater configuration
         shell: bash

@@ -8,6 +8,8 @@ mod mutation_guard;
 mod update_commands;
 use mutation_guard::resolve_mutation_confirm;
 mod mutation_commands;
+mod agent_commands;
+mod agent_tools;
 use mutation_commands::*;
 mod extension_commands;
 use extension_commands::{ExtensionManager, extension_cancel, extension_request};
@@ -21,6 +23,8 @@ mod log_commands;
 mod node_commands;
 mod terminal_commands;
 mod watch_commands;
+#[cfg(test)]
+mod kubernetes_tls_tests;
 use helm_commands::*;
 
 use host_terminal_commands::*;
@@ -77,11 +81,20 @@ pub fn run() {
         .manage(PortForwardManager::default())
         .manage(ExtensionManager::default())
         .manage(mutation_guard::MutationGuard::default())
+        .manage(agent_commands::AgentManager::default())
         .manage(update_commands::DesktopUpdater::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            agent_commands::ai_get_settings,
+            agent_commands::ai_save_settings,
+            agent_commands::ai_set_credential,
+            agent_commands::ai_list_models,
+            agent_commands::ai_create_session,
+            agent_commands::ai_set_mode,
+            agent_commands::ai_stop,
+            agent_commands::ai_send_message,
             update_commands::check_app_update,
             update_commands::download_app_update,
             update_commands::install_app_update,
@@ -144,6 +157,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 mutation_guard::cancel_owner(window.label());
+                window.state::<agent_commands::AgentManager>().stop_owner(window.label());
                 let extensions = window.state::<ExtensionManager>().inner().clone();
                 let manager = window.state::<InformerManager>().inner().clone();
                 let terminals = window.state::<PodTerminalManager>().inner().clone();

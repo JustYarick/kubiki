@@ -1,0 +1,20 @@
+[package]
+name = "kubiki-ai"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Kubiki AI domain: provider protocols, sessions, tools and authorization"
+
+[dependencies]
+async-trait = "0.1"
+futures = "0.3"
+# Keep the same crypto backend as kube and the desktop updater. reqwest's
+# `rustls` feature also enables AWS-LC and makes kube's automatic choice panic.
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

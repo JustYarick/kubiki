@@ -28,6 +28,8 @@ serde_yaml = "0.9"
 
 # Core K8s engine
 kubiki-core = { path = "../crates/kubiki-core" }
+kubiki-ai = { path = "../crates/kubiki-ai" }
+async-trait = "0.1"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
