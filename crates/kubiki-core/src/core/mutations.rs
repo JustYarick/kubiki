@@ -769,6 +769,16 @@ impl PreparedMutation {
 
     /// Execute an already confirmed mutation; consent does not expire.
     pub async fn commit(self) -> Result<Value, ApiError> {
+        self.commit_guarded(|| Ok(())).await
+    }
+
+    /// Recheck revocable backend authorization after the final live reads and
+    /// immediately before the mutation request. The callback cannot be supplied
+    /// through IPC. Ordinary manual consent keeps the existing commit path.
+    pub async fn commit_guarded<F>(self, authorize: F) -> Result<Value, ApiError>
+    where
+        F: FnOnce() -> Result<(), ApiError>,
+    {
         for condition in &self.preconditions {
             condition.check(true).await?;
         }
@@ -784,6 +794,7 @@ impl PreparedMutation {
                 ));
             }
             // POST cannot replace an object created by another actor after this read.
+            authorize()?;
             let result = bounded(
                 &self.resource,
                 self.api.create(&PostParams::default(), &self.after),
@@ -807,6 +818,7 @@ impl PreparedMutation {
                 "Resource changed while confirmation was open. Refresh and try again",
             ));
         }
+        authorize()?;
         if matches!(self.action, PreparedAction::Delete) {
             let params = DeleteParams {
                 preconditions: Some(Preconditions {
