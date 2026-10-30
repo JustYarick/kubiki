@@ -1,5 +1,25 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bot, Check, Copy, Plus, RefreshCw, Send, Server, Settings, Shield, Square, WandSparkles } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  Brain,
+  Check,
+  ChevronDown,
+  Copy,
+  Cpu,
+  FileCode,
+  FileText,
+  Plus,
+  RefreshCw,
+  Send,
+  Server,
+  Settings,
+  Shield,
+  Sparkles,
+  Square,
+  WandSparkles,
+  Zap,
+} from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '../../../components/ui/Button';
@@ -161,8 +181,8 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
         <p>Ask a question, investigate a failing resource, or describe the application you want to create.</p>
         <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
           <span className="text-[var(--text-muted)]">Active cluster:</span>
-          <span className={`ai-cluster-badge ${!currentContext ? 'is-general' : 'is-cluster'}`}>
-            <Server size={10} aria-hidden="true" />
+          <span className={`ai-cluster-pill ${!currentContext ? 'is-general' : 'is-cluster'}`}>
+            <Server size={12} className={!currentContext ? 'text-[var(--text-muted)]' : 'text-emerald-400'} aria-hidden="true" />
             <span>{currentContext || 'No cluster connected'}</span>
           </span>
         </div>
@@ -370,8 +390,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   return <>
     <header className="ai-chat-header">
       <div className="ai-scope">
-        <span className={`ai-cluster-badge ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`} title="Pinned cluster context for this conversation">
-          <Server size={10} aria-hidden="true" />
+        <span className={`ai-cluster-pill ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`} title="Pinned cluster context for this conversation">
+          <Server size={12} className="text-emerald-400" aria-hidden="true" />
           <span>{c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}</span>
         </span>
         <span className="text-[var(--text-secondary)]">
@@ -388,6 +408,9 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         <div className="ai-suggestions">{['Why are my Pods failing?', 'Create a Nexus deployment with persistent storage', 'Explain my workload configuration'].map(text => <button type="button" key={text} onClick={() => { update(c.id, { draft: text }); input.current?.focus(); }}>{text}</button>)}</div>
       </div>}
       {c.messages.map(message => <Message key={message.id} message={message} conversation={c} />)}
+      {c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') && (
+        <LiveThinkingIndicator status={c.status} />
+      )}
     </div>
 
     <footer className="ai-composer">
@@ -425,9 +448,12 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
               </Select>
             </label>
           ) : (
-            <span className={`ai-cluster-badge ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`} title="Pinned cluster context for this conversation">
-              <Server size={10} aria-hidden="true" />
-              <span>{c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}</span>
+            <span
+              className={`ai-cluster-pill ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`}
+              title="Pinned cluster context for this conversation"
+            >
+              <Server size={12} className="shrink-0 text-emerald-400" aria-hidden="true" />
+              <span className="truncate max-w-[150px]">{c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}</span>
             </span>
           )}
 
@@ -521,30 +547,259 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   return <div className="ai-code"><div className="ai-code-actions"><Button size="sm" variant="ghost" aria-label="Copy code" onClick={() => copy(ref.current?.textContent ?? '')}><Copy size={12} aria-hidden="true" />Copy</Button></div><pre ref={ref}>{children}</pre></div>;
 }
 
+interface ParsedThinking {
+  thinking?: string;
+  isThinkingActive: boolean;
+  content: string;
+}
+
+function parseThinking(text: string, isStreaming: boolean): ParsedThinking {
+  const thinkMatch = text.match(/<think>([\s\S]*?)(?:<\/think>|$)/i) ||
+                     text.match(/<thought>([\s\S]*?)(?:<\/thought>|$)/i);
+  if (!thinkMatch) {
+    return { isThinkingActive: false, content: text };
+  }
+
+  const thinking = thinkMatch[1].trim();
+  const hasClosed = /<\/think>|<\/thought>/i.test(text);
+  const content = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')
+    .replace(/<thought>[\s\S]*$/gi, '')
+    .trim();
+
+  return {
+    thinking,
+    isThinkingActive: !hasClosed && isStreaming,
+    content,
+  };
+}
+
+function ThinkingBlock({ thinking, isActive }: { thinking: string; isActive: boolean }) {
+  const [open, setOpen] = useState(isActive);
+
+  useEffect(() => {
+    if (isActive) setOpen(true);
+  }, [isActive]);
+
+  return (
+    <div className={`ai-thinking-block ${isActive ? 'is-active' : ''}`}>
+      <div
+        className="ai-thinking-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open); } }}
+      >
+        <div className="flex items-center gap-2">
+          {isActive ? (
+            <Sparkles size={13} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
+          ) : (
+            <Brain size={13} className="text-indigo-400" aria-hidden="true" />
+          )}
+          <span className="font-medium">
+            {isActive ? 'Thinking…' : 'Thought process'}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+          <span>{open ? 'Hide' : 'Show'}</span>
+          <ChevronDown size={13} className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+        </div>
+      </div>
+      {open && (
+        <div className="ai-thinking-content kubiki-scrollbar">
+          {thinking || 'Reasoning about prompt and cluster state…'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveThinkingIndicator({ status }: { status: string }) {
+  const [elapsed, setElapsed] = useState(1);
+  useEffect(() => {
+    const timer = setInterval(() => setElapsed(e => e + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="ai-live-indicator" role="status" aria-live="polite">
+      <Sparkles size={14} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
+      <span className="font-medium text-[var(--text-primary)]">
+        {status === 'connecting' ? 'Connecting to model…' : 'Thinking…'}
+      </span>
+      <span className="text-xs text-[var(--text-muted)] font-mono ml-auto">
+        {elapsed}s
+      </span>
+    </div>
+  );
+}
+
 function Message({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation }) {
   if (m.role === 'tool') {
     const result = m.result;
     const proposal = result?.proposal === true && typeof result.yaml === 'string';
     const error = typeof result?.error === 'string' ? result.error : undefined;
-    return <article className={`ai-tool ${error ? 'has-error' : ''}`} aria-label={`AI tool ${m.call?.name}`}>
-      <details open={proposal || !!error}>
-        <summary><span>{!result ? <RefreshCw size={12} aria-hidden="true" /> : <Check size={12} aria-hidden="true" />}{m.call?.name}</span><span>{!result ? 'Requested' : error ? 'Denied or failed' : typeof result.status === 'string' ? result.status : proposal ? 'Proposal · not executed' : 'Complete'}</span></summary>
-        {error ? <p className="ai-error">{error}</p> : proposal ? <><h4>{String(result.title ?? 'Proposed resources')}</h4><CodeBlock><code>{String(result.yaml)}</code></CodeBlock>
-          {c.mode !== 'read_only' && !c.busy && <Button size="sm" onClick={() => {
-            useAiStore.getState().update(c.id, { draft: 'Apply the YAML proposal above using apply_manifest for each document, within the current access policy. Report the actual tool receipts and verify the resulting resources when permitted.' });
-            void useAiStore.getState().send(c.id);
-          }}>Ask agent to apply proposal</Button>}
-        </> : <pre className="ai-tool-result">{result ? JSON.stringify(result, null, 2) : JSON.stringify(m.call?.arguments, null, 2)}</pre>}
-      </details>
-    </article>;
+    const isRunning = !result && c.busy;
+    const args = m.call?.arguments as Record<string, any> | undefined;
+    const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
+
+    return (
+      <article className={`ai-tool ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''}`} aria-label={`AI tool ${m.call?.name}`}>
+        <details open={proposal || !!error}>
+          <summary>
+            <span className="ai-tool-title">
+              {isRunning ? (
+                <RefreshCw size={12} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
+              ) : error ? (
+                <AlertCircle size={12} className="text-[var(--status-danger)]" aria-hidden="true" />
+              ) : proposal ? (
+                <FileCode size={12} className="text-cyan-400" aria-hidden="true" />
+              ) : (
+                <Check size={12} className="text-emerald-400" aria-hidden="true" />
+              )}
+              <span>{m.call?.name}</span>
+              {targetSummary && (
+                <span className="ai-tool-badge font-mono truncate max-w-[200px]" title={targetSummary}>
+                  {targetSummary}
+                </span>
+              )}
+            </span>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="ai-tool-status">
+                {isRunning
+                  ? 'Executing…'
+                  : error
+                  ? 'Denied or failed'
+                  : typeof result?.status === 'string'
+                  ? result.status
+                  : proposal
+                  ? 'Proposal · not executed'
+                  : 'Complete'}
+              </span>
+              <ChevronDown size={12} className="text-[var(--text-muted)]" aria-hidden="true" />
+            </div>
+          </summary>
+          {error ? (
+            <p className="ai-error p-3">{error}</p>
+          ) : proposal ? (
+            <div className="p-3">
+              <h4 className="text-xs font-semibold mb-2">{String(result.title ?? 'Proposed resources')}</h4>
+              <CodeBlock><code>{String(result.yaml)}</code></CodeBlock>
+              {c.mode !== 'read_only' && !c.busy && (
+                <div className="mt-2.5">
+                  <Button size="sm" variant="primary" onClick={() => {
+                    useAiStore.getState().update(c.id, { draft: 'Apply the YAML proposal above using apply_manifest for each document, within the current access policy. Report the actual tool receipts and verify the resulting resources when permitted.' });
+                    void useAiStore.getState().send(c.id);
+                  }}>
+                    Ask agent to apply proposal
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-3">
+              <pre className="ai-tool-result">{result ? JSON.stringify(result, null, 2) : JSON.stringify(m.call?.arguments, null, 2)}</pre>
+            </div>
+          )}
+        </details>
+      </article>
+    );
   }
-  return <article className={`ai-message is-${m.role}`} aria-label={m.role === 'user' ? 'Your message' : 'Agent response'}>
-    <div className="ai-message-heading"><strong>{m.role === 'user' ? 'You' : 'Kubiki AI'}</strong><Button variant="ghost" size="sm" aria-label="Copy message" onClick={() => copy(m.text)}><Copy size={12} aria-hidden="true" /></Button></div>
-    <div className="ai-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={url => /^https?:\/\//i.test(url) ? url : ''} components={{
-      pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-      // Images would make unreviewed network requests to model-selected URLs.
-      img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : '[Image omitted]'}</span>,
-      a: ({ href, children }) => href ? <a href={href} target="_blank" rel="noopener noreferrer" onClick={e => { if (desktopAiAvailable()) { e.preventDefault(); void import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(href)).catch(() => toast.error('Cannot open link')); } }}>{children}</a> : <span>{children}</span>,
-    }}>{m.text}</Markdown></div>
-  </article>;
+
+  const isUser = m.role === 'user';
+  const isPlan = !isUser && (m.phase === 'plan' || /^(#+ Plan|Proposed Plan|Plan:)/im.test(m.text));
+  const isStreaming = c.busy && c.messages[c.messages.length - 1]?.id === m.id;
+  const { thinking, isThinkingActive, content } = !isUser ? parseThinking(m.text, isStreaming) : { isThinkingActive: false, content: m.text };
+
+  return (
+    <article
+      className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''}`}
+      aria-label={isUser ? 'Your message' : 'Agent response'}
+    >
+      <div className="ai-message-heading">
+        <div className="flex items-center gap-2">
+          {isUser ? (
+            <strong>You</strong>
+          ) : (
+            <>
+              <Bot size={13} className={isPlan ? 'text-emerald-400' : 'text-indigo-400'} aria-hidden="true" />
+              <strong>Kubiki AI</strong>
+              {isPlan ? (
+                <span className="ai-plan-badge" title="Strategic plan proposal phase">
+                  <FileText size={10} aria-hidden="true" />
+                  Plan
+                </span>
+              ) : m.phase === 'action' ? (
+                <span className="ai-action-badge" title="Execution action phase">
+                  Action
+                </span>
+              ) : null}
+            </>
+          )}
+        </div>
+        <Button variant="ghost" size="sm" aria-label="Copy message" onClick={() => copy(m.text)}>
+          <Copy size={12} aria-hidden="true" />
+        </Button>
+      </div>
+
+      {thinking ? <ThinkingBlock thinking={thinking} isActive={isThinkingActive} /> : null}
+
+      <div className="ai-markdown">
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          skipHtml
+          urlTransform={url => /^https?:\/\//i.test(url) ? url : ''}
+          components={{
+            pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+            img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : '[Image omitted]'}</span>,
+            a: ({ href, children }) => href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => {
+                  if (desktopAiAvailable()) {
+                    e.preventDefault();
+                    void import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(href)).catch(() => toast.error('Cannot open link'));
+                  }
+                }}
+              >
+                {children}
+              </a>
+            ) : <span>{children}</span>,
+          }}
+        >
+          {content || (isThinkingActive ? '' : m.text)}
+        </Markdown>
+      </div>
+
+      {!isUser && (
+        <div className="ai-message-footer">
+          <div className="ai-message-stats">
+            {m.model && (
+              <span className="ai-stat-chip" title="Model used for this response">
+                <Cpu size={11} className="text-indigo-400" aria-hidden="true" />
+                <span className="font-mono">{m.model}</span>
+              </span>
+            )}
+            {m.tokensPerSec !== undefined && m.tokensPerSec > 0 && (
+              <span className="ai-stat-chip text-emerald-400 font-mono" title="Generation speed">
+                <Zap size={11} className="text-emerald-400" aria-hidden="true" />
+                <span>{m.tokensPerSec} tok/s</span>
+              </span>
+            )}
+            {m.outputTokens !== undefined && m.outputTokens > 0 && (
+              <span className="ai-stat-chip text-[var(--text-muted)] font-mono" title="Tokens generated">
+                <span>{m.outputTokens} tokens</span>
+                {m.durationMs ? <span>in {(m.durationMs / 1000).toFixed(1)}s</span> : null}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </article>
+  );
 }

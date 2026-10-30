@@ -12,6 +12,10 @@
 .ai-cluster-badge.is-all { color: var(--accent); border-color: var(--border-strong); }
 .ai-cluster-badge.is-cluster { color: var(--text-primary); }
 .ai-cluster-badge.is-general { color: var(--text-muted); }
+.ai-cluster-pill { display: inline-flex; align-items: center; gap: 6px; height: calc(27px * var(--ui-factor)); padding: 0 10px; border-radius: calc(4px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); font-weight: 500; line-height: 1; background: var(--bg-secondary); border: 1px solid var(--border-default); color: var(--text-primary); white-space: nowrap; flex-shrink: 0; box-sizing: border-box; }
+.ai-cluster-pill.is-all { color: var(--accent); border-color: var(--border-strong); background: rgba(99, 102, 241, 0.08); }
+.ai-cluster-pill.is-cluster { color: var(--text-primary); }
+.ai-cluster-pill.is-general { color: var(--text-muted); }
 .ai-target-cluster-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: calc(3px * var(--ui-factor)); background: var(--bg-surface); border: 1px solid var(--border-default); font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); }
 .ai-target-cluster-badge strong { color: var(--text-primary); font-weight: 600; }
 .ai-conversation-row { display: flex; gap: 2px; align-items: center; border-radius: 4px; margin-bottom: 4px; }
@@ -61,10 +65,27 @@
 .ai-suggestions { display: grid; gap: 8px; margin-top: 24px; }
 .ai-suggestions button { text-align: left; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 5px; background: var(--bg-secondary); cursor: pointer; }
 .ai-suggestions button:hover { background: var(--bg-hover); }
-.ai-message, .ai-tool { margin: 0 auto 20px; max-width: 900px; min-width: 0; }
-.ai-message.is-user { padding: 12px 14px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 7px; }
-.ai-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); }
-.ai-message-heading strong { font-weight: 600; }
+.ai-message, .ai-tool { margin: 0 auto 16px; max-width: 900px; min-width: 0; }
+.ai-message.is-user { padding: 12px 16px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: calc(8px * var(--ui-factor)); }
+.ai-message.is-assistant { padding: 14px 16px; background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: calc(8px * var(--ui-factor)); box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: border-color 150ms ease; }
+.ai-message.is-assistant.is-plan { border: 1px solid rgba(16, 185, 129, 0.4); background: linear-gradient(180deg, rgba(16, 185, 129, 0.05) 0%, var(--bg-secondary) 100%); box-shadow: 0 2px 14px rgba(16, 185, 129, 0.06); }
+.ai-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); }
+.ai-message-heading strong { font-weight: 600; color: var(--text-primary); }
+.ai-plan-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+.ai-action-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.35); }
+.ai-thinking-block { border: 1px solid var(--border-default); border-left: 3px solid var(--accent); border-radius: calc(6px * var(--ui-factor)); background: var(--bg-canvas); margin: 6px 0 12px; overflow: hidden; }
+.ai-thinking-block.is-active { border-left-color: #f59e0b; box-shadow: 0 0 10px rgba(245, 158, 11, 0.08); }
+.ai-thinking-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--bg-surface); cursor: pointer; user-select: none; font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); }
+.ai-thinking-header:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ai-thinking-content { padding: 10px 12px; font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-factor)); line-height: 1.6; color: var(--text-secondary); background: var(--bg-canvas); border-top: 1px solid var(--border-subtle); max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.ai-thinking-spinner { animation: ai-spin 1.8s linear infinite; }
+.ai-live-indicator { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: calc(8px * var(--ui-factor)); margin: 0 auto 16px; max-width: 900px; font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); }
+.ai-live-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: ai-pulse-soft 1.2s infinite ease-in-out; }
+.ai-message-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-subtle); font-size: calc(10.5px * var(--ui-factor)); color: var(--text-muted); }
+.ai-message-stats { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-stat-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 3px; background: var(--bg-canvas); border: 1px solid var(--border-subtle); }
+@keyframes ai-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes ai-pulse-soft { 0%, 100% { opacity: 0.4; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.15); } }
 .ai-markdown { line-height: 1.7; overflow-wrap: anywhere; }
 .ai-markdown p, .ai-markdown ul, .ai-markdown ol, .ai-markdown blockquote { margin-bottom: 10px; }
 .ai-markdown ul { list-style: disc; padding-left: 22px; }

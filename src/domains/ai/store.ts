@@ -24,20 +24,55 @@ interface AiState {
 export function applyAgentEvent(conversation: Conversation, event: AgentEvent): Conversation {
   if (event.type === 'status') return { ...conversation, status: event.status };
   if (event.type === 'error') return { ...conversation, error: event.message };
-  if (event.type === 'usage') return { ...conversation, inputTokens: conversation.inputTokens + (event.inputTokens ?? 0), outputTokens: conversation.outputTokens + (event.outputTokens ?? 0) };
   const messages = [...conversation.messages];
+  if (event.type === 'usage') {
+    const nextInput = conversation.inputTokens + (event.inputTokens ?? 0);
+    const nextOutput = conversation.outputTokens + (event.outputTokens ?? 0);
+    let lastIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') { lastIdx = i; break; }
+    }
+    if (lastIdx >= 0 && event.outputTokens) {
+      const msg = messages[lastIdx];
+      const durationMs = Math.max(100, msg.durationMs ?? (Date.now() - (msg.startTime ?? Date.now())));
+      const tokensPerSec = event.outputTokens > 0 && durationMs > 0
+        ? Number(((event.outputTokens / durationMs) * 1000).toFixed(1))
+        : undefined;
+      messages[lastIdx] = {
+        ...msg,
+        outputTokens: event.outputTokens,
+        durationMs,
+        tokensPerSec,
+      };
+    }
+    return { ...conversation, inputTokens: nextInput, outputTokens: nextOutput, messages };
+  }
   if (event.type === 'text_delta') {
     const last = messages[messages.length - 1];
-    if (last?.role === 'assistant') messages[messages.length - 1] = { ...last, text: last.text + event.text };
-    else messages.push({ id: crypto.randomUUID(), role: 'assistant', text: event.text });
+    if (last?.role === 'assistant') {
+      const durationMs = Math.max(50, Date.now() - (last.startTime ?? Date.now()));
+      messages[messages.length - 1] = { ...last, text: last.text + event.text, durationMs };
+    } else {
+      messages.push({
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        text: event.text,
+        model: conversation.model,
+        phase: conversation.phase,
+        startTime: Date.now(),
+      });
+    }
   } else if (event.type === 'tool_started') {
-    messages.push({ id: crypto.randomUUID(), role: 'tool', text: event.call.name, call: event.call });
+    messages.push({ id: crypto.randomUUID(), role: 'tool', text: event.call.name, call: event.call, startTime: Date.now() });
   } else {
     // Call IDs can repeat across provider turns (notably local models). Bind to
     // the most recent unfinished call rather than overwrite an earlier receipt.
     let index = messages.length - 1;
     while (index >= 0 && !(messages[index].call?.id === event.id && !messages[index].result)) index--;
-    if (index >= 0) messages[index] = { ...messages[index], result: event.result };
+    if (index >= 0) {
+      const durationMs = messages[index].startTime ? Math.max(50, Date.now() - messages[index].startTime!) : undefined;
+      messages[index] = { ...messages[index], result: event.result, durationMs };
+    }
   }
   return { ...conversation, messages };
 }
@@ -172,7 +207,33 @@ export const useAiStore = create<AiState>((set, get) => ({
       get().update(id, { draft: '', title: entry.messages.length ? entry.title : entry.title === 'New conversation' ? message.slice(0, 60) : entry.title, messages: [...current.messages, user] });
       await agentTransport.send(sessionId, message, event => set(state => ({ conversations: state.conversations.map(c => c.id === id ? applyAgentEvent(c, event) : c) })));
     } catch (error) { get().update(id, { error: agentError(error), status: 'failed' }); }
-    finally { get().update(id, { busy: false }); }
+    finally {
+      // Calculate token generation stats if usage didn't arrive
+      const conv = get().conversations.find(c => c.id === id);
+      if (conv) {
+        let lastIdx = -1;
+        for (let i = conv.messages.length - 1; i >= 0; i--) {
+          if (conv.messages[i].role === 'assistant') { lastIdx = i; break; }
+        }
+        if (lastIdx >= 0) {
+          const msg = conv.messages[lastIdx];
+          if (!msg.tokensPerSec && msg.text) {
+            const durationMs = Math.max(100, msg.durationMs ?? (Date.now() - (msg.startTime ?? Date.now())));
+            const approxTokens = msg.outputTokens ?? Math.max(1, Math.round(msg.text.length / 3.6));
+            const tokensPerSec = Number(((approxTokens / durationMs) * 1000).toFixed(1));
+            const updated = [...conv.messages];
+            updated[lastIdx] = {
+              ...msg,
+              outputTokens: approxTokens,
+              durationMs,
+              tokensPerSec,
+            };
+            get().update(id, { messages: updated });
+          }
+        }
+      }
+      get().update(id, { busy: false });
+    }
   },
   async stop(id) {
     runEpochs.set(id, (runEpochs.get(id) ?? 0) + 1);

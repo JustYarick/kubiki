@@ -31,8 +31,17 @@ export type AgentEvent =
   | { type: 'usage'; inputTokens: number | null; outputTokens: number | null }
   | { type: 'error'; message: string };
 export interface ChatMessage {
-  id: string; role: 'user' | 'assistant' | 'tool'; text: string;
-  call?: ToolCall; result?: Record<string, unknown>;
+  id: string;
+  role: 'user' | 'assistant' | 'tool';
+  text: string;
+  call?: ToolCall;
+  result?: Record<string, unknown>;
+  model?: string;
+  phase?: AgentPhase;
+  startTime?: number;
+  durationMs?: number;
+  outputTokens?: number;
+  tokensPerSec?: number;
 }
 export interface Conversation {
   id: string; sessionId?: string; title: string; scope: AgentScope;
