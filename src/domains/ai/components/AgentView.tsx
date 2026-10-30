@@ -387,12 +387,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
         <div className="ai-home-icon">
           <Bot size={32} aria-hidden="true" />
         </div>
-        <h2>Your Kubernetes assistant</h2>
-        <p>Ask a question, investigate a failing resource, or describe the application you want to create.</p>
-        <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-          <span className="text-[var(--text-muted)]">Active cluster:</span>
-          <ClusterPill context={currentContext} title="Active cluster context" />
-        </div>
+        <h2 className="ai-home-title">Kubiki agent</h2>
       </div>
 
       <div className="ai-composer-card">

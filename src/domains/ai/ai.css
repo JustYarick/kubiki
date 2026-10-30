@@ -50,7 +50,7 @@
 .ai-home { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-height: 0; padding: calc(24px * var(--ui-factor)) calc(20px * var(--ui-factor)); overflow-y: auto; max-width: 860px; width: 100%; margin: 0 auto; box-sizing: border-box; }
 .ai-home-hero { text-align: center; margin-bottom: 24px; max-width: 620px; display: flex; flex-direction: column; align-items: center; }
 .ai-home-icon { display: flex; align-items: center; justify-content: center; width: calc(52px * var(--ui-factor)); height: calc(52px * var(--ui-factor)); border-radius: 50%; background: var(--bg-secondary); border: 1px solid var(--border-default); color: var(--accent); margin-bottom: 12px; }
-.ai-home-hero h2 { font-size: calc(20px * var(--ui-factor)); font-weight: 600; color: var(--text-primary); margin: 0 0 8px; }
+.ai-home-hero h2, .ai-home-title { font-size: calc(22px * var(--ui-factor)); font-weight: 600; letter-spacing: -0.02em; color: var(--text-primary); margin: 0; }
 .ai-home-hero p { font-size: calc(12px * var(--ui-factor)); color: var(--text-secondary); margin: 0 0 12px; line-height: 1.5; }
 .ai-home-composer-box { width: 100%; background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px; padding: calc(12px * var(--ui-factor)); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
 .ai-home-textarea { width: 100%; resize: vertical; min-height: 72px; max-height: 220px; background: transparent; border: 0; outline: none; font-size: calc(12px * var(--ui-factor)); line-height: 1.6; color: var(--text-primary); }
