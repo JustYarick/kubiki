@@ -214,18 +214,6 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         </div>
       </div>
 
-      <div className="ai-mode-description">
-        {c.phase === 'plan'
-          ? (c.mode === 'read_only'
-              ? 'Plan (Read only): Safely explore cluster and propose plans. Cluster changes are strictly blocked.'
-              : c.mode === 'ask'
-              ? 'Plan: Inspection and proposal mode. Switch to Action to review and apply proposed changes.'
-              : 'Plan: Inspection and proposal mode. Switch to Action to execute permitted changes.')
-          : (c.mode === 'ask'
-              ? 'Action (Ask): Changes require explicit native confirmation for each operation.'
-              : 'Action (Accept): Permitted changes execute automatically within policy bounds.')}
-      </div>
-
       {modelError && <p role="alert" className="ai-error">{modelError}</p>}
       {selectedModel?.tools === false && <p className="ai-notice">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
       {c.error && <p role="alert" className="ai-error">{c.error}</p>}
@@ -236,7 +224,6 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!c.busy && !c.invalidated && desktopAiAvailable()) void useAiStore.getState().send(c.id); }
       }} />
       <div className="ai-form-line"><span className="ai-run-status" role="status">{statusLabels[c.status] ?? c.status}{c.inputTokens + c.outputTokens > 0 ? ` · ${c.inputTokens.toLocaleString()} input / ${c.outputTokens.toLocaleString()} output tokens` : ''}</span><span className="ai-grow" />
-        <span className="ai-help">Enter to send · Shift+Enter for a new line</span>
         {c.busy ? <Button size="sm" variant="danger" onClick={() => void useAiStore.getState().stop(c.id)}><Square size={12} aria-hidden="true" />Stop</Button>
           : <Button size="sm" variant="primary" disabled={!desktopAiAvailable() || !c.draft.trim() || !c.providerId || !c.model || modePending || c.invalidated} onClick={() => void useAiStore.getState().send(c.id)}><Send size={12} aria-hidden="true" />Send</Button>}
       </div>
