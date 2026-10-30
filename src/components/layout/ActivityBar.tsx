@@ -1,4 +1,4 @@
-import { usePanelRegistry, openWorkspacePanel } from '../../core/workspace_panels';
+import { usePanelRegistry, openWorkspacePanel, hasBottomPanel } from '../../core/workspace_panels';
 import React from 'react';
 import {
   FolderOpen,
@@ -18,6 +18,7 @@ export const ActivityBar: React.FC = () => {
   const panels = usePanelRegistry(s => s.panels);
   const area = useWorkspaceStore(activeWorkspaceArea);
   const { dockCollapsed, toggleDock } = useDockStore();
+  const canDock = hasBottomPanel(area, panels);
   const {
     toggleInspector,
     inspectorCollapsed,
@@ -88,14 +89,17 @@ export const ActivityBar: React.FC = () => {
       ))}
       {/* Bottom tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full mt-auto">
-        <Tooltip label={dockCollapsed ? 'Bottom Panel (⌘J)' : 'Hide Bottom Panel (⌘J)'} side="top" delay={300}>
+        <Tooltip label={!canDock ? 'Bottom Panel unavailable in this view' : dockCollapsed ? 'Bottom Panel (⌘J)' : 'Hide Bottom Panel (⌘J)'} side="top" delay={300}>
           <button
-            onClick={toggleDock}
+            onClick={() => {
+              if (canDock) toggleDock();
+            }}
+            disabled={!canDock}
             aria-label="Toggle Bottom Panel"
-            className={cxRail(!dockCollapsed)}
+            className={cx(cxRail(canDock && !dockCollapsed), 'disabled:opacity-40')}
           >
             <Terminal size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
-            {!dockCollapsed && (
+            {canDock && !dockCollapsed && (
               <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
             )}
           </button>

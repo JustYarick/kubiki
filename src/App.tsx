@@ -12,9 +12,8 @@ import { PrimarySideBar } from './components/layout/PrimarySideBar';
 import { SecondarySideBar } from './components/layout/SecondarySideBar';
 import { RightActivityBar } from './components/layout/RightActivityBar';
 import { WorkspaceArea } from './components/layout/WorkspaceArea';
-import { BottomDock } from './components/layout/BottomDock';
+import { BottomDockSlot } from './components/layout/BottomDockSlot';
 import { StatusBar } from './components/layout/StatusBar';
-import { Resizer } from './components/layout/Resizer';
 import { CommandPalette } from './navigation/CommandPalette';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import { AppUpdatePrompt } from './components/updates/AppUpdates';
@@ -25,6 +24,7 @@ import { useResourceStore } from './state/resource_store';
 import { useUiStore } from './state/ui_store';
 import { useWorkspaceStore } from './state/workspace_store';
 import { activeWorkspaceArea, areaHasInspector } from './core/workspace_areas';
+import { usePanelRegistry, hasBottomPanel } from './core/workspace_panels';
 import { usePfStore } from './state/pf_store';
 import { useDockStore } from './state/dock_store';
 import { k8s } from './providers/k8s_provider';
@@ -71,7 +71,7 @@ export default function App() {
   } = useUiStore();
 
   const {
-    dockHeight, dockCollapsed, setDockHeight, toggleDock,
+    toggleDock,
   } = useDockStore();
 
   const setContexts = useClusterStore((s) => s.setContexts);
@@ -245,7 +245,10 @@ export default function App() {
         } else useUiStore.getState().toggleSidebar();
       } else if (key === 'j') {
         e.preventDefault();
-        toggleDock();
+        const activeArea = activeWorkspaceArea(useWorkspaceStore.getState());
+        if (hasBottomPanel(activeArea, usePanelRegistry.getState().panels)) {
+          toggleDock();
+        }
       } else if (key === 'w') {
         const activeTabId = useWorkspaceStore.getState().activeTabId;
         if (activeTabId) {
@@ -313,15 +316,13 @@ export default function App() {
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
           <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
 
-          {/* Bottom Dock drawer — shares the foreground layer with SecondarySideBar, adapting its width */}
-          <div
-            data-testid="bottom-dock-wrapper"
-            style={{ marginRight: showInspector ? uiPixels(detailWidth) : '0px' }}
-            className="flex flex-col min-w-0 shrink-0 z-20"
-          >
-            {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
-            <BottomDock />
-          </div>
+          {/* Bottom Dock drawer — template slot (full in explorer, local in topology, hidden in ai-agent) */}
+          <BottomDockSlot
+            area={area}
+            factor={factor}
+            showInspector={showInspector}
+            detailWidth={detailWidth}
+          />
         </main>
 
         {/* Secondary Side Bar: Right Tool Window (Inspector, Details, Future Tools) */}
