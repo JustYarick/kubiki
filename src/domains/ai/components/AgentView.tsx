@@ -384,10 +384,17 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   return (
     <div className="ai-home kubiki-scrollbar">
       <div className="ai-home-hero">
-        <div className="ai-home-icon">
-          <Bot size={32} aria-hidden="true" />
+        <div className="ai-home-brand-logo flex items-center justify-center gap-3 select-none">
+          <img
+            src="/brand/kubiki-logo-color-dark.svg"
+            alt="kubiki"
+            width={360}
+            height={128}
+            draggable={false}
+            className="h-10 sm:h-12 w-auto shrink-0 select-none drop-shadow-md"
+          />
+          <span className="ai-home-brand-agent">agent</span>
         </div>
-        <h2 className="ai-home-title">Kubiki agent</h2>
       </div>
 
       <div className="ai-composer-card">
