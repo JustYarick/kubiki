@@ -91,7 +91,9 @@ const ExpandedDock: React.FC = () => {
         <div className="h-[calc(32px*var(--ui-factor))] shrink-0 flex items-center justify-between px-3 border-b border-[var(--border-default)] bg-[var(--bg-secondary)] select-none">
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
             <TerminalIcon size="calc(13px * var(--ui-factor))" />
-            <span className="font-semibold uppercase tracking-wider text-[length:calc(10px*var(--ui-factor))]">Bottom panel · no open sessions</span>
+            <span className="font-semibold uppercase tracking-wider text-[length:calc(10px*var(--ui-factor))]">
+              Bottom panel · no open sessions
+            </span>
           </div>
           <div className="flex items-center gap-1">
             <IconButton
@@ -112,7 +114,9 @@ const ExpandedDock: React.FC = () => {
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-xs text-[var(--text-muted)] bg-[var(--bg-canvas)]">
           <Laptop size="calc(32px * var(--ui-factor))" className="text-[var(--text-muted)] mb-2 opacity-60" />
-          <p className="mb-3 text-[var(--text-secondary)]">All bottom drawer tabs have been closed.</p>
+          <p className="mb-3 text-[var(--text-secondary)]">
+            All bottom drawer tabs have been closed.
+          </p>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="primary" onClick={() => openLocalTerminal()}>
               <Laptop size="calc(12px * var(--ui-factor))" className="mr-1.5" /> Open Local Terminal (Host PC)
@@ -609,8 +613,23 @@ function EventsPane() {
 
 export function BottomDock() {
   const { dockCollapsed, toggleDock, sessions } = useDockStore();
-  return <div className="shrink-0 min-h-0">
-    {dockCollapsed && <button onClick={toggleDock} className="w-full h-7 flex items-center gap-2 px-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" aria-label="Expand bottom panel"><TerminalIcon size="calc(12px * var(--ui-factor))" /><span>Bottom panel</span><span className="text-[var(--text-muted)]">{sessions.length} open tabs</span><span className="ml-auto text-[length:calc(10px*var(--ui-factor))]">{shortcutLabel('⌘J')}</span></button>}
-    <div hidden={dockCollapsed}><ExpandedDock /></div>
-  </div>;
+  return (
+    <div className="shrink-0 min-h-0">
+      {dockCollapsed && (
+        <button
+          onClick={toggleDock}
+          className="w-full h-7 flex items-center gap-2 px-3 border-t border-[var(--border-default)] bg-[var(--bg-secondary)] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+          aria-label="Expand bottom panel"
+        >
+          <TerminalIcon size="calc(12px * var(--ui-factor))" />
+          <span>Bottom panel</span>
+          <span className="text-[var(--text-muted)]">{sessions.length} open tabs</span>
+          <span className="ml-auto text-[length:calc(10px*var(--ui-factor))]">{shortcutLabel('⌘J')}</span>
+        </button>
+      )}
+      <div hidden={dockCollapsed}>
+        <ExpandedDock />
+      </div>
+    </div>
+  );
 }

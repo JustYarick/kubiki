@@ -17,6 +17,7 @@ export interface WorkspacePanel {
   component: ComponentType<WorkspacePanelProps>;
   sidebarComponent?: ComponentType;
   secondarySidebarComponent?: ComponentType;
+  bottomPanelComponent?: ComponentType;
   context: 'global' | 'cluster';
   tabType?: WorkspaceTab['type'];
   open?: () => void;
@@ -25,6 +26,7 @@ const TopologyView = lazy(() => import('../views/TopologyView').then(module => (
 const ExtensionsView = lazy(() => import('../views/ExtensionsView').then(module => ({ default: module.ExtensionsView })));
 const AgentView = lazy(() => import('../domains/ai/components/AgentView').then(module => ({ default: module.AgentView })));
 const AiConversationsSidebar = lazy(() => import('../domains/ai/components/AiConversationsSidebar').then(module => ({ default: module.AiConversationsSidebar })));
+const LocalTerminalBottomDock = lazy(() => import('../components/layout/LocalTerminalBottomDock').then(module => ({ default: module.LocalTerminalBottomDock })));
 const agent: WorkspacePanel = {
   id: 'ai-agent',
   title: 'AI Agent',
@@ -43,8 +45,14 @@ const topology: WorkspacePanel = {
   tabType: 'topology',
   open: () => useWorkspaceStore.getState().openTopology(),
   component: ({ tab, item, visible }) => <TopologyView item={item} namespace={tab.namespace} visible={visible} />,
+  bottomPanelComponent: () => <Suspense fallback={null}><LocalTerminalBottomDock /></Suspense>,
 };
 export const usePanelRegistry = create<{ panels: readonly WorkspacePanel[] }>(() => ({ panels: [topology, agent, extensions] }));
+
+export function hasBottomPanel(area: string, panels: readonly WorkspacePanel[]): boolean {
+  if (area === 'explorer') return true;
+  return panels.some((p) => p.id === area && !!p.bottomPanelComponent);
+}
 export function registerWorkspacePanel(panel: WorkspacePanel): () => void {
   if (!/^[a-z][a-z0-9.-]*$/.test(panel.id) || !panel.title.trim()) throw new Error('Panel requires a stable ID and title');
   if (usePanelRegistry.getState().panels.some(entry => entry.id === panel.id || panel.tabType && entry.tabType === panel.tabType)) throw new Error(`Panel already registered: ${panel.id}`);
