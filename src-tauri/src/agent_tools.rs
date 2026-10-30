@@ -196,6 +196,22 @@ impl ToolExecutor for KubernetesTools {
                 json!({"proposal":true,"title":proposal.title,"yaml":proposal.yaml,"executed":false}),
             );
         }
+        if call.name == "ask_user" {
+            #[derive(Deserialize)]
+            struct QuestionArgs {
+                question: String,
+                options: Vec<String>,
+                allow_other: Option<bool>,
+            }
+            let args: QuestionArgs = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "Invalid ask_user arguments")?;
+            return Ok(json!({
+                "question": args.question,
+                "options": args.options,
+                "allow_other": args.allow_other.unwrap_or(true),
+                "status": "awaiting_user_selection"
+            }));
+        }
         let client = self
             .client
             .clone()

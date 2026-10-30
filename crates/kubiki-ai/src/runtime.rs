@@ -212,6 +212,16 @@ pub async fn run(
             }
             history.push(Turn::Assistant(completion));
             if calls.is_empty() { return Ok(()); }
+            if calls.iter().any(|c| c.name == "ask_user") {
+                for call in calls.iter().filter(|c| c.name == "ask_user") {
+                    emit(AgentEvent::ToolStarted { call: call.clone() });
+                    let result = host.execute(&session, call, &emit).await;
+                    let result = result.unwrap_or_else(|e| json!({"error": e}));
+                    history.push(Turn::Tool { call: call.clone(), result: result.clone() });
+                    emit(AgentEvent::ToolCompleted { id: call.id.clone(), result });
+                }
+                return Ok(());
+            }
             for call in calls {
                 count += 1;
                 if count > 20 { return Err("AI run reached its 20-tool budget".into()); }
@@ -285,12 +295,24 @@ pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase
         }
     }
     let target = json!({"group":{"type":"string"},"version":{"type":"string"},"kind":{"type":"string"},"namespace":{"type":["string","null"]},"name":{"type":"string"}});
-    let mut tools = vec![tool(
-        "propose_manifests",
-        "Show complete Kubernetes YAML as a proposal without executing it. One or more YAML documents; no credentials. The human can copy the proposal. Use apply_manifest separately for authorized execution.",
-        json!({"title":{"type":"string"},"yaml":{"type":"string"}}),
-        &["title", "yaml"],
-    )];
+    let mut tools = vec![
+        tool(
+            "propose_manifests",
+            "Show complete Kubernetes YAML as a proposal without executing it. One or more YAML documents; no credentials. The human can copy the proposal. Use apply_manifest separately for authorized execution.",
+            json!({"title":{"type":"string"},"yaml":{"type":"string"}}),
+            &["title", "yaml"],
+        ),
+        tool(
+            "ask_user",
+            "Ask the user a clarifying question when requirements, choices, or scope are ambiguous. Provide a list of options and optionally allow freeform answer. Halts execution until the user selects or types an answer.",
+            json!({
+                "question": {"type": "string", "description": "The question to ask the user"},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "Predefined choices for the user to select from"},
+                "allow_other": {"type": "boolean", "description": "Whether to permit a custom freeform answer"}
+            }),
+            &["question", "options"],
+        ),
+    ];
     if policy.resources {
         tools.push(tool("list_namespaces", "Discover permitted namespace names for this conversation. Returns names only, filtered by scope and namespace policy; may be partial or unavailable under RBAC.", json!({}), &[]));
         tools.push(tool("list_resources", "Read up to 50 permitted resources of a kind in ONE explicit namespace (null only for cluster-scoped resources). Policy may omit objects. Use catalog for API versions.", target.clone(), &["group","version","kind","namespace"]));

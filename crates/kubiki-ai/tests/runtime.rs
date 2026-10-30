@@ -364,3 +364,73 @@ async fn downgrade_invalidates_authorization_while_a_tool_waits_for_review() {
     assert_eq!(writes.load(Ordering::SeqCst), 0);
     server.await.unwrap();
 }
+
+struct AskHost;
+#[async_trait]
+impl ToolExecutor for AskHost {
+    async fn execute(
+        &self,
+        _: &Session,
+        call: &ToolCall,
+        _: &EventSink,
+    ) -> Result<Value, String> {
+        assert_eq!(call.name, "ask_user");
+        Ok(json!({"status": "awaiting_user_selection"}))
+    }
+}
+
+#[tokio::test]
+async fn ask_user_completes_turn_without_subsequent_model_call() {
+    let call_json = json!({
+        "id": "chatcmpl-test",
+        "choices": [{
+            "delta": {
+                "role": "assistant",
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "ask_user",
+                        "arguments": serde_json::to_string(&json!({
+                            "question": "Should I apply the change?",
+                            "options": ["Yes", "No"]
+                        })).unwrap()
+                    }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }]
+    });
+    let fragment = format!("data: {}\n\ndata: [DONE]\n\n", serde_json::to_string(&call_json).unwrap());
+    let (client, _, task) = provider(vec![fragment]).await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_sink = events.clone();
+    let sink: EventSink = Arc::new(move |event| {
+        events_sink.lock().unwrap().push(event);
+    });
+    let s = session();
+    let revision = s.control().unwrap().revision;
+    run(
+        s,
+        revision,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Hi".into(),
+        Arc::new(AskHost),
+        sink,
+    )
+    .await
+    .unwrap();
+    let completed_tools = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::ToolCompleted { .. }))
+        .count();
+    assert_eq!(completed_tools, 1);
+    task.await.unwrap();
+}
+
