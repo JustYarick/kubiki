@@ -403,6 +403,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   const input = useRef<HTMLTextAreaElement>(null);
   const [modePending, setModePending] = useState(false);
 
+  const AT_BOTTOM_THRESHOLD = 120;
+
   const scrollToBottom = (smooth = false) => {
     userScrolledUp.current = false;
     setShowScrollBottom(false);
@@ -423,7 +425,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     } else if (e.deltaY > 0 && transcript.current) {
       const el = transcript.current;
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distFromBottom <= 35) {
+      if (distFromBottom <= 180) {
+        // User is rolling wheel down and close to bottom: re-engage auto-scroll
         userScrolledUp.current = false;
         setShowScrollBottom(false);
       }
@@ -433,10 +436,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distFromBottom <= 35) {
+    if (distFromBottom <= AT_BOTTOM_THRESHOLD) {
       userScrolledUp.current = false;
       setShowScrollBottom(false);
-    } else if (distFromBottom > 75) {
+    } else {
+      userScrolledUp.current = true;
       setShowScrollBottom(true);
     }
   };
