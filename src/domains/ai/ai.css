@@ -74,7 +74,7 @@
 .ai-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); }
 .ai-message-heading strong { font-weight: 600; color: var(--text-primary); }
 .ai-plan-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
-.ai-action-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.35); }
+.ai-action-badge, .ai-tooling-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.35); }
 .ai-thinking-block { border: 1px solid var(--border-default); border-left: 3px solid var(--accent); border-radius: calc(6px * var(--ui-factor)); background: var(--bg-canvas); margin: 6px 0 12px; overflow: hidden; }
 .ai-thinking-block.is-active { border-left-color: #f59e0b; box-shadow: 0 0 10px rgba(245, 158, 11, 0.08); }
 .ai-thinking-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--bg-surface); cursor: pointer; user-select: none; font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); }
@@ -142,6 +142,22 @@
 .ai-question-choice-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .ai-question-other { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .ai-question-other-input { flex: 1; min-width: 140px; }
+.ai-question-answered-box { margin-top: 8px; padding: 10px 12px; border-radius: 6px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); display: flex; flex-direction: column; gap: 3px; }
+.ai-question-answered-content { font-size: calc(12px * var(--ui-factor)); font-weight: 500; color: var(--text-primary); }
+.ai-question-option-btn.is-selected { border-color: #34d399; background: rgba(16, 185, 129, 0.12); color: #34d399; }
+.ai-question-checkbox-row { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-canvas); cursor: pointer; user-select: none; transition: all 120ms ease; font-size: calc(11.5px * var(--ui-factor)); }
+.ai-question-checkbox-row:hover { background: var(--bg-hover); border-color: var(--accent); }
+.ai-question-checkbox-row.is-checked { border-color: var(--accent); background: rgba(99, 102, 241, 0.1); color: var(--text-primary); }
+.ai-question-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+
+/* Unified Tooling Card */
+.ai-tool { border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-secondary); overflow: hidden; }
+.ai-tool.has-error { border-color: var(--status-danger); }
+.ai-tool.is-running { border-color: #f59e0b; }
+.ai-tool-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--bg-surface); font-size: calc(11px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); }
+.ai-tool-content { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ai-tool-executing-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 4px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); font-size: calc(11px * var(--ui-factor)); color: var(--text-primary); }
+.ai-tool-receipt-box { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 7px 11px; border-radius: 4px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); font-size: calc(11px * var(--ui-factor)); color: #34d399; font-family: var(--font-mono); }
 .ai-composer { border-top: 1px solid var(--border-default); padding: calc(12px * var(--ui-factor)) calc(16px * var(--ui-factor)); display: flex; flex-direction: column; gap: 8px; }
 .ai-composer textarea { width: 100%; resize: vertical; min-height: 60px; max-height: 240px; }
 .ai-run-status { color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); }

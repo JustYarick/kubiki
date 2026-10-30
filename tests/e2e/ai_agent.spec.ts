@@ -79,7 +79,7 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   const agent = await openAgent(page);
   await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(agent.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toBeDisabled();
+  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeDisabled();
   await expect(agent.getByRole('combobox', { name: 'Conversation AI model' })).toHaveValue('model-from-endpoint');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain Pending Pods');
   await agent.getByRole('button', { name: 'Send', exact: true }).click();
@@ -91,15 +91,15 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   await captureScreenshot(page, { path: 'test-results/ai-agent-chat.png' });
   await agent.getByRole('button', { name: 'Ask', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.modes.at(-1)?.mode)).toBe('ask');
-  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toBeEnabled();
-  await agent.getByRole('button', { name: 'Action', exact: true }).click();
-  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeEnabled();
+  await agent.getByRole('button', { name: /^(?:Tooling|Action)$/ }).click();
+  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toHaveAttribute('aria-pressed', 'true');
   await agent.getByRole('button', { name: 'Accept', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.modes.at(-1)?.mode)).toBe('accept');
   await agent.getByRole('button', { name: 'New AI conversation', exact: true }).click();
   await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(agent.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toBeDisabled();
+  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeDisabled();
   await expect(agent.getByRole('combobox', { name: 'AI conversation cluster' })).toHaveValue('kubiki-demo');
   await agent.getByRole('combobox', { name: 'AI conversation cluster' }).selectOption('general');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain Kubernetes architecture');

@@ -176,4 +176,33 @@ describe('AI domain conversations', () => {
     expect(c.messages[0].call?.name).toBe('ask_user');
     expect(c.messages[0].result?.status).toBe('awaiting_user_selection');
   });
+
+  it('supports tooling phase and multi_select questions', async () => {
+    const id = useAiStore.getState().create(scope);
+    await useAiStore.getState().setMode(id, 'ask');
+    await useAiStore.getState().setPhase(id, 'tooling');
+    expect(useAiStore.getState().conversations[0].phase).toBe('tooling');
+
+    let c = useAiStore.getState().conversations.find(c => c.id === id)!;
+    c = applyAgentEvent(c, {
+      type: 'tool_started',
+      call: {
+        id: 'ask-multi',
+        name: 'ask_user',
+        arguments: { question: 'Pick namespaces', options: ['default', 'apps', 'kube-system'], multi_select: true },
+      },
+    });
+    c = applyAgentEvent(c, {
+      type: 'tool_completed',
+      id: 'ask-multi',
+      result: {
+        question: 'Pick namespaces',
+        options: ['default', 'apps', 'kube-system'],
+        multi_select: true,
+        allow_other: true,
+        status: 'awaiting_user_selection',
+      },
+    });
+    expect(c.messages[0].result?.multi_select).toBe(true);
+  });
 });

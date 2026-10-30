@@ -1,5 +1,5 @@
 export type AgentMode = 'read_only' | 'ask' | 'accept';
-export type AgentPhase = 'plan' | 'action';
+export type AgentPhase = 'plan' | 'tooling' | 'action';
 export type ProviderProtocol = 'responses' | 'openai_compatible' | 'anthropic' | 'ollama';
 export type DataAccess = 'none' | 'metadata' | 'content';
 export type WriteOperation = 'create' | 'update' | 'delete' | 'scale' | 'restart';
@@ -53,7 +53,7 @@ export interface Conversation {
 
 export const WRITE_OPERATIONS: WriteOperation[] = ['create', 'update', 'delete', 'scale', 'restart'];
 export const MODE_LABELS: Record<AgentMode, string> = { read_only: 'Read only', ask: 'Ask', accept: 'Accept' };
-export const PHASE_LABELS: Record<AgentPhase, string> = { plan: 'Plan', action: 'Action' };
+export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'Tooling', action: 'Tooling' };
 
 export function defaultPolicy(): AgentPolicy {
   return { resources: true, events: true, logs: false, metrics: true, clusterResources: false,

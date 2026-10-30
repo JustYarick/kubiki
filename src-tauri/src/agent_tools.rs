@@ -201,6 +201,7 @@ impl ToolExecutor for KubernetesTools {
             struct QuestionArgs {
                 question: String,
                 options: Vec<String>,
+                multi_select: Option<bool>,
                 allow_other: Option<bool>,
             }
             let args: QuestionArgs = serde_json::from_value(call.arguments.clone())
@@ -208,6 +209,7 @@ impl ToolExecutor for KubernetesTools {
             return Ok(json!({
                 "question": args.question,
                 "options": args.options,
+                "multi_select": args.multi_select.unwrap_or(false),
                 "allow_other": args.allow_other.unwrap_or(true),
                 "status": "awaiting_user_selection"
             }));

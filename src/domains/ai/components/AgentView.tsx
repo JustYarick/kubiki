@@ -4,6 +4,7 @@ import {
   Bot,
   Brain,
   Check,
+  CheckCircle2,
   ChevronDown,
   Copy,
   Cpu,
@@ -291,16 +292,19 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
 
           <div className="ai-composer-axes">
             <div role="group" aria-label="AI execution phase" className="ai-phases">
-              {(Object.entries(PHASE_LABELS) as [AgentPhase, string][]).map(([value, label]) => {
-                const disabled = (value === 'action' && mode === 'read_only');
+              {['plan', 'tooling'].map(key => {
+                const label = PHASE_LABELS[key] ?? key;
+                const isTooling = key === 'tooling';
+                const isSelected = isTooling ? (phase === 'tooling' || phase === 'action') : phase === 'plan';
+                const disabled = (isTooling && mode === 'read_only');
                 return (
                   <button
-                    key={value}
+                    key={key}
                     type="button"
-                    aria-pressed={phase === value}
+                    aria-pressed={isSelected}
                     disabled={disabled}
-                    title={value === 'action' && mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
-                    onClick={() => setPhase(value)}
+                    title={isTooling && mode === 'read_only' ? 'Tooling is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
+                    onClick={() => setPhase(key as AgentPhase)}
                   >
                     {label}
                   </button>
@@ -412,7 +416,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   }
 
   const selectedModel = models?.find(m => m.id === c.model);
-  const maxContextTokens = settings.options.contextTokens || selectedModel?.contextWindow || null;
+  const DEFAULT_CONTEXT_WINDOW = 262144; // 256k default when provider provides no contextWindow
+  const maxContextTokens = settings.options.contextTokens || selectedModel?.contextWindow || DEFAULT_CONTEXT_WINDOW;
   const currentContext = c.currentContextTokens || (c.inputTokens > 0 ? c.inputTokens : 0);
   const contextPercent = maxContextTokens && currentContext > 0
     ? Math.min(100, Math.round((currentContext / maxContextTokens) * 100))
@@ -440,9 +445,15 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         <p>Ask about Kubernetes, describe a deployment, or request evidence from this conversation's cluster.</p>
         <div className="ai-suggestions">{['Why are my Pods failing?', 'Create a Nexus deployment with persistent storage', 'Explain my workload configuration'].map(text => <button type="button" key={text} onClick={() => { update(c.id, { draft: text }); input.current?.focus(); }}>{text}</button>)}</div>
       </div>}
-      {c.messages.map(message => <Message key={message.id} message={message} conversation={c} />)}
+      {c.messages.map((message, idx) => {
+        // If this user message directly answered the preceding ask_user tool,
+        // it is already formatted inside that QuestionCard!
+        const isAnswerToQuestion = message.role === 'user' && idx > 0 && c.messages[idx - 1]?.role === 'tool' && c.messages[idx - 1]?.call?.name === 'ask_user';
+        if (isAnswerToQuestion) return null;
+        return <Message key={message.id} message={message} conversation={c} />;
+      })}
       {c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') && (
-        <LiveThinkingIndicator status={c.status} />
+        <LiveStatusIndicator status={c.status} />
       )}
     </div>
 
@@ -521,16 +532,19 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
 
         <div className="ai-composer-axes">
           <div role="group" aria-label="AI execution phase" className="ai-phases">
-            {(Object.entries(PHASE_LABELS) as [AgentPhase, string][]).map(([value, label]) => {
-              const disabled = (value === 'action' && c.mode === 'read_only') || modePending || c.invalidated;
+            {['plan', 'tooling'].map(key => {
+              const label = PHASE_LABELS[key] ?? key;
+              const isTooling = key === 'tooling';
+              const isSelected = isTooling ? (c.phase === 'tooling' || c.phase === 'action') : c.phase === 'plan';
+              const disabled = (isTooling && c.mode === 'read_only') || modePending || c.invalidated;
               return (
                 <button
-                  key={value}
+                  key={key}
                   type="button"
-                  aria-pressed={c.phase === value}
+                  aria-pressed={isSelected}
                   disabled={disabled}
-                  title={value === 'action' && c.mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
-                  onClick={() => void phase(value)}
+                  title={isTooling && c.mode === 'read_only' ? 'Tooling is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
+                  onClick={() => void phase(key as AgentPhase)}
                 >
                   {label}
                 </button>
@@ -677,18 +691,24 @@ function ThinkingBlock({ thinking, isActive }: { thinking: string; isActive: boo
   );
 }
 
-function LiveThinkingIndicator({ status }: { status: string }) {
+function LiveStatusIndicator({ status }: { status: string }) {
   const [elapsed, setElapsed] = useState(1);
   useEffect(() => {
     const timer = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  const label = status === 'connecting'
+    ? 'Connecting to model…'
+    : status === 'executing'
+    ? 'Applying cluster changes…'
+    : 'Waiting for model response…';
+
   return (
     <div className="ai-live-indicator" role="status" aria-live="polite">
-      <Sparkles size={14} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
+      <RefreshCw size={13} className="ai-thinking-spinner text-indigo-400" aria-hidden="true" />
       <span className="font-medium text-[var(--text-primary)]">
-        {status === 'connecting' ? 'Connecting to model…' : 'Thinking…'}
+        {label}
       </span>
       <span className="text-xs text-[var(--text-muted)] font-mono ml-auto">
         {elapsed}s
@@ -707,20 +727,37 @@ function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; c
     : Array.isArray(args.options)
     ? args.options
     : ['Yes', 'No'];
+  const multiSelect = !!(result?.multi_select ?? args.multi_select);
   const allowOther = (result?.allow_other ?? args.allow_other) !== false;
+  const [selectedMulti, setSelectedMulti] = useState<string[]>([]);
 
   const msgIndex = c.messages.findIndex(item => item.id === m.id);
-  const isAnswered = msgIndex >= 0 && c.messages.slice(msgIndex + 1).some(item => item.role === 'user');
+  const answeredMsg = msgIndex >= 0 ? c.messages.slice(msgIndex + 1).find(item => item.role === 'user') : undefined;
+  const isAnswered = !!answeredMsg;
 
   const handleSelect = (optionText: string) => {
-    if (c.busy) return;
+    if (c.busy || isAnswered) return;
     useAiStore.getState().update(c.id, { draft: optionText });
+    void useAiStore.getState().send(c.id);
+  };
+
+  const handleToggleOption = (optionText: string) => {
+    if (c.busy || isAnswered) return;
+    setSelectedMulti(prev =>
+      prev.includes(optionText) ? prev.filter(x => x !== optionText) : [...prev, optionText]
+    );
+  };
+
+  const handleMultiSubmit = () => {
+    if (c.busy || isAnswered || selectedMulti.length === 0) return;
+    const answer = selectedMulti.join(', ');
+    useAiStore.getState().update(c.id, { draft: answer });
     void useAiStore.getState().send(c.id);
   };
 
   const handleOtherSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otherText.trim() || c.busy) return;
+    if (!otherText.trim() || c.busy || isAnswered) return;
     const text = otherText.trim();
     setOtherText('');
     useAiStore.getState().update(c.id, { draft: text });
@@ -734,8 +771,11 @@ function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; c
     >
       <div className="ai-question-header">
         <div className="flex items-center gap-2 font-medium">
-          <HelpCircle size={14} className={isAnswered ? 'text-[var(--text-muted)]' : 'text-indigo-400'} aria-hidden="true" />
+          <HelpCircle size={14} className={isAnswered ? 'text-emerald-400' : 'text-indigo-400'} aria-hidden="true" />
           <span>Agent Question</span>
+          {multiSelect && !isAnswered && (
+            <span className="text-[10px] text-[var(--text-muted)] font-mono">(Multi-choice)</span>
+          )}
         </div>
         <span className={`ai-question-badge ${isAnswered ? 'is-answered' : ''}`}>
           {isAnswered ? 'Answered' : 'Awaiting input'}
@@ -744,43 +784,86 @@ function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; c
 
       <p className="ai-question-text">{question}</p>
 
-      {options.length > 0 && (
-        <div className="ai-question-options" role="group" aria-label="Suggested responses">
-          {options.map((opt, idx) => (
-            <button
-              key={idx}
-              type="button"
-              className="ai-question-option-btn"
-              disabled={c.busy || isAnswered}
-              onClick={() => handleSelect(opt)}
-            >
-              <span className="ai-question-choice-dot" aria-hidden="true" />
-              <span>{opt}</span>
-            </button>
-          ))}
+      {isAnswered ? (
+        <div className="ai-question-answered-box">
+          <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold mb-1">
+            <CheckCircle2 size={13} aria-hidden="true" />
+            <span>Your response:</span>
+          </div>
+          <p className="ai-question-answered-content">{answeredMsg.text}</p>
         </div>
-      )}
+      ) : (
+        <>
+          {options.length > 0 && (
+            <div className="ai-question-options" role="group" aria-label="Suggested responses">
+              {multiSelect ? (
+                <>
+                  {options.map((opt, idx) => {
+                    const checked = selectedMulti.includes(opt);
+                    return (
+                      <label key={idx} className={`ai-question-checkbox-row ${checked ? 'is-checked' : ''}`}>
+                        <input
+                          type="checkbox"
+                          className="ui-checkbox"
+                          checked={checked}
+                          disabled={c.busy}
+                          onChange={() => handleToggleOption(opt)}
+                        />
+                        <span>{opt}</span>
+                      </label>
+                    );
+                  })}
+                  <div className="w-full ai-question-actions">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={c.busy || selectedMulti.length === 0}
+                      onClick={handleMultiSubmit}
+                    >
+                      <Check size={12} aria-hidden="true" />
+                      <span>Confirm selection ({selectedMulti.length})</span>
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                options.map((opt, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="ai-question-option-btn"
+                    disabled={c.busy}
+                    onClick={() => handleSelect(opt)}
+                  >
+                    <span className="ai-question-choice-dot" aria-hidden="true" />
+                    <span>{opt}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
 
-      {allowOther && !isAnswered && (
-        <form onSubmit={handleOtherSubmit} className="ai-question-other">
-          <input
-            type="text"
-            className="ide-input ai-question-other-input"
-            placeholder="Type other response…"
-            value={otherText}
-            disabled={c.busy}
-            onChange={e => setOtherText(e.target.value)}
-          />
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={!otherText.trim() || c.busy}
-            type="submit"
-          >
-            <Send size={12} aria-hidden="true" />
-            <span>Reply</span>
-          </Button>
-        </form>
+          {allowOther && (
+            <form onSubmit={handleOtherSubmit} className="ai-question-other">
+              <input
+                type="text"
+                className="ide-input ai-question-other-input"
+                placeholder="Type custom response…"
+                value={otherText}
+                disabled={c.busy}
+                onChange={e => setOtherText(e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!otherText.trim() || c.busy}
+                type="submit"
+              >
+                <Send size={12} aria-hidden="true" />
+                <span>Reply</span>
+              </Button>
+            </form>
+          )}
+        </>
       )}
     </article>
   );
@@ -802,42 +885,47 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
 
     return (
       <article className={`ai-tool ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''}`} aria-label={`AI tool ${m.call?.name}`}>
-        <details open={proposal || !!error}>
-          <summary>
-            <span className="ai-tool-title">
-              {isRunning ? (
-                <RefreshCw size={12} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
-              ) : error ? (
-                <AlertCircle size={12} className="text-[var(--status-danger)]" aria-hidden="true" />
-              ) : proposal ? (
-                <FileCode size={12} className="text-cyan-400" aria-hidden="true" />
-              ) : (
-                <Check size={12} className="text-emerald-400" aria-hidden="true" />
-              )}
-              <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
-              <span className="font-mono">{m.call?.name}</span>
-              {targetSummary && (
-                <span className="ai-tool-badge font-mono truncate max-w-[200px]" title={targetSummary}>
-                  {targetSummary}
-                </span>
-              )}
-            </span>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="ai-tool-status">
-                {isRunning
-                  ? 'Executing…'
-                  : error
-                  ? 'Denied or failed'
-                  : typeof result?.status === 'string'
-                  ? result.status
-                  : proposal
-                  ? 'Proposal · not executed'
-                  : 'Complete'}
+        <div className="ai-tool-header">
+          <div className="flex items-center gap-2 font-mono">
+            {isRunning ? (
+              <RefreshCw size={12} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
+            ) : error ? (
+              <AlertCircle size={12} className="text-[var(--status-danger)]" aria-hidden="true" />
+            ) : proposal ? (
+              <FileCode size={12} className="text-cyan-400" aria-hidden="true" />
+            ) : (
+              <Check size={12} className="text-emerald-400" aria-hidden="true" />
+            )}
+            <span className="ai-tooling-badge">TOOLING</span>
+            <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
+            <span className="font-semibold">{m.call?.name}</span>
+            {targetSummary && (
+              <span className="ai-tool-badge font-mono truncate max-w-[200px]" title={targetSummary}>
+                {targetSummary}
               </span>
-              <ChevronDown size={12} className="text-[var(--text-muted)]" aria-hidden="true" />
-            </div>
-          </summary>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="ai-tool-status font-medium">
+              {isRunning
+                ? 'Executing…'
+                : error
+                ? 'Denied or failed'
+                : typeof result?.status === 'string'
+                ? result.status
+                : proposal
+                ? 'Proposal · not executed'
+                : 'Complete'}
+            </span>
+            {m.durationMs ? (
+              <span className="text-[var(--text-muted)] font-mono">
+                {(m.durationMs / 1000).toFixed(1)}s
+              </span>
+            ) : null}
+          </div>
+        </div>
 
+        <div className="ai-tool-content">
           {/* Codex-Style Command Rationale Banner */}
           <div className={`ai-command-rationale ${intent.destructive ? 'is-destructive' : ''}`}>
             <div className="ai-command-rationale-header">
@@ -853,11 +941,17 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
             <p className="ai-command-rationale-desc">{intent.description}</p>
           </div>
 
-          {error ? (
-            <p className="ai-error p-3">{error}</p>
+          {/* Unified Execution Result */}
+          {isRunning ? (
+            <div className="ai-tool-executing-banner">
+              <RefreshCw size={13} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
+              <span>Executing operation on Kubernetes cluster…</span>
+            </div>
+          ) : error ? (
+            <p className="ai-error p-2">{error}</p>
           ) : proposal ? (
-            <div className="p-3">
-              <h4 className="text-xs font-semibold mb-2">{String(result.title ?? 'Proposed resources')}</h4>
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold">{String(result.title ?? 'Proposed resources')}</h4>
               <CodeBlock><code>{String(result.yaml)}</code></CodeBlock>
               {c.mode !== 'read_only' && !c.busy && (
                 <div className="mt-2.5">
@@ -871,11 +965,22 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
               )}
             </div>
           ) : (
-            <div className="p-3">
-              <pre className="ai-tool-result">{result ? JSON.stringify(result, null, 2) : JSON.stringify(m.call?.arguments, null, 2)}</pre>
+            <div className="space-y-2">
+              {result && (result.operationId || result.status) ? (
+                <div className="ai-tool-receipt-box">
+                  {result.operationId ? <span>Receipt ID: {String(result.operationId)}</span> : null}
+                  {result.status ? <span>Status: {String(result.status)}</span> : null}
+                </div>
+              ) : null}
+              <details>
+                <summary className="text-xs text-[var(--text-muted)] cursor-pointer select-none py-0.5">
+                  View raw parameters & output
+                </summary>
+                <pre className="ai-tool-result mt-1">{result ? JSON.stringify(result, null, 2) : JSON.stringify(m.call?.arguments, null, 2)}</pre>
+              </details>
             </div>
           )}
-        </details>
+        </div>
       </article>
     );
   }
@@ -903,9 +1008,9 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                   <FileText size={10} aria-hidden="true" />
                   Plan
                 </span>
-              ) : m.phase === 'action' ? (
-                <span className="ai-action-badge" title="Execution action phase">
-                  Action
+              ) : (m.phase === 'tooling' || m.phase === 'action') ? (
+                <span className="ai-tooling-badge" title="Tooling execution phase">
+                  Tooling
                 </span>
               ) : null}
             </>

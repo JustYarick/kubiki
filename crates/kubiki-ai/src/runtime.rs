@@ -89,6 +89,13 @@ impl Session {
     pub fn cancellation(&self) -> watch::Receiver<bool> {
         self.cancel.subscribe()
     }
+    pub async fn seed_history(&self, turns: Vec<Turn>) {
+        let mut history = self.history.lock().await;
+        *history = turns;
+    }
+    pub async fn inspect_history(&self) -> Vec<Turn> {
+        self.history.lock().await.clone()
+    }
     /// Linearization point for dispatch. A permission change cannot authorize an
     /// old approval or a queued write. A dispatched request may still complete.
     pub fn authorize_dispatch(
@@ -128,6 +135,83 @@ impl Drop for Running {
             state.active = false;
         }
     }
+}
+
+pub const OPENCODE_COMPACTION_PROMPT: &str = "\
+You are an anchored context summarization assistant for coding and Kubernetes operations sessions. \
+Summarize only the conversation history given to you. Preserve exact file paths, technical identifiers, \
+error logs, Kubernetes resources (Kind, namespace, name, UIDs), and user-stated constraints. \
+Use structured bullet points rather than vague paragraphs.\n\n\
+Structure the summary:\n\
+1. Primary Goal & Task Objective\n\
+2. What has been done and what is currently being worked on\n\
+3. Key Technical Context (resources, namespaces, manifests, errors, configurations)\n\
+4. Clear next steps for the session";
+
+fn history_size_bytes(history: &[Turn]) -> usize {
+    history
+        .iter()
+        .map(|t| match t {
+            Turn::User(s) => s.len(),
+            Turn::Assistant(c) => c.text.len() + c.calls.len() * 128,
+            Turn::Tool { call, result } => call.name.len() + result.to_string().len(),
+        })
+        .sum()
+}
+
+fn compact_history(history: &mut Vec<Turn>, max_bytes: usize) {
+    if history.len() <= 4 || history_size_bytes(history) < max_bytes * 3 / 4 {
+        return;
+    }
+    let split_at = history.len().saturating_sub(4);
+    if split_at == 0 {
+        return;
+    }
+    let older_turns: Vec<Turn> = history.drain(..split_at).collect();
+
+    let mut goals = Vec::new();
+    let mut actions = Vec::new();
+    let mut technical_context = Vec::new();
+    let mut next_steps = Vec::new();
+
+    for turn in older_turns {
+        match turn {
+            Turn::User(text) => {
+                if goals.is_empty() {
+                    goals.push(text.chars().take(200).collect::<String>());
+                } else {
+                    next_steps.push(text.chars().take(200).collect::<String>());
+                }
+            }
+            Turn::Assistant(completion) => {
+                if !completion.text.is_empty() {
+                    actions.push(completion.text.chars().take(300).collect::<String>());
+                }
+                for call in completion.calls {
+                    technical_context.push(format!("Tool: {} {:?}", call.name, call.arguments));
+                }
+            }
+            Turn::Tool { call, result } => {
+                let res_str = result.to_string();
+                technical_context.push(format!("Result for {}: {}", call.name, res_str.chars().take(200).collect::<String>()));
+            }
+        }
+    }
+
+    let summary = format!(
+        "[Context Summary: OpenCode-style compaction]\n\
+         ## 1. Primary Goal & Task Objective\n- {}\n\n\
+         ## 2. What Has Been Done & Investigated\n{}\n\n\
+         ## 3. Key Technical Context\n{}\n\n\
+         ## 4. Clear Next Steps\n{}\n\
+         [End Context Summary]",
+        if goals.is_empty() { "Kubernetes inspection".into() } else { goals.join("; ") },
+        if actions.is_empty() { "- None recorded".into() } else { actions.iter().take(6).map(|a| format!("- {a}")).collect::<Vec<_>>().join("\n") },
+        if technical_context.is_empty() { "- Cluster state within policy".into() } else { technical_context.iter().take(8).map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n") },
+        if next_steps.is_empty() { "- Proceed with current instructions".into() } else { next_steps.iter().take(4).map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n") }
+    );
+
+    history.insert(0, Turn::User(summary));
 }
 
 pub async fn run(
@@ -171,10 +255,12 @@ pub async fn run(
     let _running = Running(session.clone());
     let mut cancellation = session.cancellation();
     let mut history = session.history.lock().await;
-    // Fail visibly rather than silently drop evidence or produce invalid tool history.
-    if format!("{history:?}").len() + prompt.len() > 160000 {
-        return Err("Conversation reached its context budget. Start a new conversation".into());
-    }
+
+    // Default to 256k tokens if not specified by provider or settings.
+    let budget_tokens = options.context_tokens.unwrap_or(262_144);
+    let max_history_bytes = (budget_tokens as usize).saturating_mul(4);
+
+    compact_history(&mut history, max_history_bytes);
     history.push(Turn::User(prompt));
     let state = session.control()?;
     let system = format!(
@@ -199,7 +285,7 @@ pub async fn run(
     let outcome = async {
         let mut count = 0;
         loop {
-            if format!("{history:?}").len() > 160000 { return Err("Conversation reached its context budget. Start a new conversation".into()); }
+            compact_history(&mut history, max_history_bytes);
             let completion = tokio::select! {
                 biased;
                 _ = cancelled(&mut cancellation) => return Err("AI run stopped. Dispatched cluster requests may still finish".into()),
@@ -304,10 +390,11 @@ pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase
         ),
         tool(
             "ask_user",
-            "Ask the user a clarifying question when requirements, choices, or scope are ambiguous. Provide a list of options and optionally allow freeform answer. Halts execution until the user selects or types an answer.",
+            "Ask the user a clarifying question when requirements, choices, or scope are ambiguous. Provide a list of options (single choice or multi-select) and optionally allow freeform answer. Halts execution until the user selects or types an answer.",
             json!({
                 "question": {"type": "string", "description": "The question to ask the user"},
                 "options": {"type": "array", "items": {"type": "string"}, "description": "Predefined choices for the user to select from"},
+                "multi_select": {"type": "boolean", "description": "Whether the user can select multiple options (checkboxes) instead of a single choice"},
                 "allow_other": {"type": "boolean", "description": "Whether to permit a custom freeform answer"}
             }),
             &["question", "options"],

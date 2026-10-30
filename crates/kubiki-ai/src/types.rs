@@ -15,7 +15,13 @@ pub enum AgentMode {
 pub enum AgentPhase {
     #[default]
     Plan,
-    Action,
+    #[serde(alias = "action")]
+    Tooling,
+}
+
+impl AgentPhase {
+    #[allow(non_upper_case_globals)]
+    pub const Action: AgentPhase = AgentPhase::Tooling;
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]

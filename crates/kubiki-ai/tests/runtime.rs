@@ -434,3 +434,45 @@ async fn ask_user_completes_turn_without_subsequent_model_call() {
     task.await.unwrap();
 }
 
+#[tokio::test]
+async fn history_compaction_compresses_older_turns_when_context_budget_is_approached() {
+    let s = session();
+    let mut initial_turns = Vec::new();
+    for i in 0..25 {
+        initial_turns.push(Turn::User(format!("User query {i} regarding deployment details with lots of extra padding content for sizing purposes {}", "x".repeat(100))));
+        initial_turns.push(Turn::Assistant(Completion {
+            text: format!("Assistant analysis {i} for pod logs and cluster health check with extra padding content {}", "y".repeat(100)),
+            calls: vec![],
+            native: json!({}),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+        }));
+    }
+    s.seed_history(initial_turns).await;
+    let (client, _, task) = provider(vec![final_text()]).await;
+    let revision = s.control().unwrap().revision;
+    run(
+        s.clone(),
+        revision,
+        client,
+        "model".into(),
+        GenerationOptions {
+            context_tokens: Some(1024),
+            ..Default::default()
+        },
+        String::new(),
+        "Latest question".into(),
+        Arc::new(Host(Arc::new(AtomicUsize::new(0)))),
+        sink(),
+    )
+    .await
+    .unwrap();
+    let history = s.inspect_history().await;
+    let first = &history[0];
+    match first {
+        Turn::User(summary) => assert!(summary.contains("Context Summary"), "Expected compacted context summary"),
+        _ => panic!("Expected Turn::User with context summary"),
+    }
+    task.await.unwrap();
+}
+
