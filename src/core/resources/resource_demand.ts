@@ -177,7 +177,7 @@ export function resourceDemand(input: {
       // target collection to mount before the view registers dependencies.
       if (tab.uid && tab.kind && RESOURCE_TYPES.some(type => type.kind === tab.kind && (!tab.apiVersion || type.group === parseApiVersion(tab.apiVersion).group))) request(tab.kind, tab.namespace ?? selectedNamespace);
     } else if (tab.type === 'resource-list' || tab.type === 'resource-detail' || tab.type === 'yaml-editor' || tab.type === 'logs' || tab.type === 'terminal') {
-      const inScope = inNamespaceScope(selectedNamespace, tab.namespace);
+      const inScope = tab.namespacePinned || inNamespaceScope(selectedNamespace, tab.namespace);
       const scope = tab.type === 'resource-list' || !inScope ? selectedNamespace : tab.namespace ?? (tab.kind === 'Namespace' ? tab.name : undefined) ?? selectedNamespace;
       add(tab.kind, tab.type === 'resource-detail' && inScope, scope);
     }

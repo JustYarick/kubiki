@@ -42,6 +42,7 @@ export interface WorkspaceTab {
   kind?: ResourceKind;
   name?: string;
   namespace?: string;
+  namespacePinned?: boolean;
   uid?: string;
   apiVersion?: string;
   pinned?: boolean;
@@ -65,7 +66,7 @@ interface WorkspaceState {
   openHelm: (section: import('../providers/helm_types').HelmSection) => void;
   openResourceList: (kind: ResourceKind, namespace?: string) => void;
   openYamlEditor: (item: ResourceItem) => void;
-  openResourceDetail: (item: ResourceItem) => void;
+  openResourceDetail: (item: ResourceItem, options?: { namespacePinned?: boolean }) => void;
   openLogsTab: (item: ResourceItem, container?: string) => void;
   openTerminalTab: (item: ResourceItem, container?: string) => void;
   openTopology: (item?: ResourceItem, namespace?: string) => void;
@@ -123,6 +124,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         );
 
         if (existing) {
+          if (tabInput.namespacePinned && !existing.namespacePinned) set(state => ({ tabs: state.tabs.map(tab => tab.id === existing.id ? { ...tab, namespacePinned: true } : tab) }));
           get().setActiveTab(existing.id);
           return;
         }
@@ -181,12 +183,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
       }),
-      openResourceDetail: (item) => get().openTab({
+      openResourceDetail: (item, options) => get().openTab({
         id: resourceTabId('detail', useClusterStore.getState().currentContext, item),
         type: 'resource-detail', title: item.kind === 'HelmRelease' ? `Helm: ${item.name}` : item.name, subtitle: `${item.kind} · ${item.namespace || 'cluster'}`,
         resource: resourceRef(useClusterStore.getState().currentContext ?? '', item),
         kind: item.kind, apiVersion: item.apiVersion, name: item.name, namespace: item.namespace, uid: item.uid, item,
         context: useClusterStore.getState().currentContext,
+        namespacePinned: options?.namespacePinned,
       }),
       setTabContainer: (id, container) => set((state) => ({ tabs: state.tabs.map((tab) => tab.id === id ? { ...tab, container, subtitle: `${tab.namespace} · ${container}` } : tab) })),
       openLogsTab: (item, container) => {

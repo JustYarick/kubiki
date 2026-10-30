@@ -194,7 +194,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     // must not unmount the pane and close its connection during a new snapshot.
     const item = loaded ?? (tab.item?.kind === 'HelmRelease' ? tab.item : tab.kind === 'HelmRelease' && tab.name && tab.namespace ? { kind: 'HelmRelease' as const, apiVersion: tab.apiVersion ?? 'helm.sh/v1', name: tab.name, namespace: tab.namespace, uid: tab.uid ?? tab.id, raw: { context: tab.context } } : undefined) ?? ((tab.type === 'terminal' || tab.type === 'logs') ? tab.item : undefined);
 
-    if (!item && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
+    if (!item && !tab.namespacePinned && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
       return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;
     }
     if (!item && custom.loading) return <ResourceLoading label="Loading custom resource…" />;

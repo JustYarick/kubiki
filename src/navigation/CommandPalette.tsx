@@ -2,9 +2,13 @@ import { useExtensions } from '../extensions/registry';
 import { extensionRequest } from '../providers/extensions';
 import { usePanelRegistry, openWorkspacePanel } from '../core/workspace_panels';
 import { useTableViewStore } from '../state/table_view_store';
-import { inNamespaceScope, namespaceScopeLabel } from '../core/resources/namespace_scope';
+import { namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { shortcutLabel } from '../core/shortcuts';
-import { customResourceType } from '../core/resources/custom_resource_types';
+import { customResourceType, resourceBucket } from '../core/resources/custom_resource_types';
+import { useSearchInventory } from './use_search_inventory';
+import { useResourceSearch } from './use_resource_search';
+import { Select } from '../components/ui/Select';
+import { Button } from '../components/ui/Button';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRightLeft, Boxes, Braces, Command, FileText, Layout, Maximize2, Minimize2, PanelBottom, PanelLeft, PanelRight, Palette, RefreshCw, Rocket, Settings, Terminal, Trash2, Columns2, X } from 'lucide-react';
@@ -21,7 +25,7 @@ import { fuzzyScore, fuzzyRanges } from '../core/utils/fuzzy';
 import { refreshResourceWatches } from '../state/resource_watch';
 import { syncResourceSnapshot } from '../providers/snapshot_sync';
 import { cx } from '../core/utils/cx';
-import type { ResourceItem, ResourceKind } from '../types/k8s';
+import type { ResourceItem } from '../types/k8s';
 import { DEFAULT_APPEARANCE } from '../core/appearance';
 
 interface Command {
@@ -60,7 +64,17 @@ export const CommandPalette: React.FC = () => {
   const setOpen = useUiStore((s) => s.setPaletteOpen);
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
+  const [regex, setRegex] = useState(false);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [scope, setScope] = useState<'all' | 'selected'>('all');
+  const [mode, setMode] = useState<'all' | 'resources' | 'commands'>('all');
+  const [limit, setLimit] = useState(40);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const previousOpen = useRef(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  if (open && !previousOpen.current) returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  previousOpen.current = open;
 
   useEffect(() => {
     if (open) {
@@ -79,9 +93,25 @@ export const CommandPalette: React.FC = () => {
   const rightTab = useUiStore((s) => s.rightTab);
   const inspectorCollapsed = useUiStore((s) => s.inspectorCollapsed);
   const pfCount = usePfStore((s) => (open ? s.sessions.length : 0));
+  const inventory = useSearchInventory(open && mode !== 'commands', currentContext, scope === 'all' ? 'all' : selectedNamespace);
+  const search = useResourceSearch(inventory.items, { query, regex, caseSensitive }, open && mode !== 'commands');
+  useEffect(() => { setSel(0); setLimit(40); }, [query, regex, caseSensitive, mode, scope]);
+  useEffect(() => {
+    if (!open) return;
+    const previous = returnFocus.current;
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const nodes = [...(dialogRef.current?.querySelectorAll<HTMLElement>('input, select:not(:disabled), summary, button:not(:disabled):not([tabindex="-1"])') ?? [])].filter(node => node.getClientRects().length);
+      const first = nodes[0]; const last = nodes[nodes.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', trap);
+    return () => { document.removeEventListener('keydown', trap); if (previous?.isConnected) previous.focus(); };
+  }, [open]);
 
-  const { grouped, flat } = useMemo(() => {
-    if (!open || !resources) return { grouped: [] as Array<{ section: string; items: Command[] }>, flat: [] as Command[] };
+  const { grouped, flat, matched } = useMemo(() => {
+    if (!open || !resources) return { grouped: [] as Array<{ section: string; items: Command[] }>, flat: [] as Command[], matched: 0 };
     const st = useResourceStore.getState();
     const ui = useUiStore.getState();
     const cluster = useClusterStore.getState();
@@ -186,52 +216,41 @@ export const CommandPalette: React.FC = () => {
     );
 
     const scored: Array<{ c: Command; s: number }> = [];
-    for (const c of commands) {
-      const s = fuzzyScore(query, `${c.label} ${c.section} ${c.keywords ?? ''} ${c.id}`);
+    for (const c of mode === 'resources' || regex ? [] : commands) {
+      const text = `${c.label} ${c.section} ${c.keywords ?? ''} ${c.id}`;
+      const s = caseSensitive && query && !text.includes(query) ? -1 : fuzzyScore(query, text);
       if (s >= 0) scored.push({ c, s });
     }
 
-    const hasQuery = query.trim().length > 0;
-    const allKinds = Object.keys(resources) as ResourceKind[];
-    outer: for (const kind of allKinds) {
-      const map = resources[kind];
-      if (!map || map.size === 0) continue;
-      for (const item of map.values()) {
-        if (!inNamespaceScope(selectedNamespace, item.namespace)) continue;
-        if (!hasQuery && scored.length >= 40) break outer;
-        const section = `${item.kind}${item.namespace ? ` · ${item.namespace}` : ''}`;
-        const s = hasQuery ? fuzzyScore(query, `${item.name} ${section} ${item.namespace ?? ''} res-${item.uid}`) : 1;
-        if (s < 0) continue;
-        scored.push({
-          s,
-          c: {
-            id: `res-${item.uid}`,
-            label: item.name,
-            section,
-            icon: Boxes,
-            hint: 'inspect resource',
-            keywords: item.namespace,
-            resources: [item],
-            run: () => {
-              useResourceStore.getState().selectItem(item);
-              useUiStore.getState().setRightTab('overview');
-              if (useUiStore.getState().inspectorCollapsed) useUiStore.getState().toggleInspector();
-            },
-          },
-        });
-      }
+    for (const [index, item] of search.items.entries()) {
+      scored.push({ s: 1500 - index, c: {
+        id: `res-${item.apiVersion}-${item.uid}`, label: item.name,
+        section: `${item.kind}${item.namespace ? ` · ${item.namespace}` : ''}`, icon: Boxes,
+        hint: item.apiVersion, resources: [item],
+        run: () => {
+          if (useClusterStore.getState().currentContext !== currentContext) return;
+          const store = useResourceStore.getState();
+          const definition = inventory.items.find(candidate => candidate.kind === 'CustomResourceDefinition' && candidate.raw?.spec?.names?.kind === item.kind && item.apiVersion.startsWith(`${candidate.raw?.spec?.group}/`));
+          if (definition && !store.resources.CustomResourceDefinition.has(definition.uid)) store.setResourcesForKind('CustomResourceDefinition', [...store.resources.CustomResourceDefinition.values(), definition]);
+          const bucket = resourceBucket(item);
+          if (!store.resources[bucket]?.has(item.uid)) store.setResourcesForKind(bucket, [...(store.resources[bucket]?.values() ?? []), item]);
+          // A resource detail tab pins its own namespace, including matches outside the list scope.
+          useWorkspaceStore.getState().openResourceDetail(item, { namespacePinned: true });
+        },
+      } });
     }
 
     scored.sort((a, b) => b.s - a.s);
-    const top = scored.slice(0, 40);
+    const top = scored.slice(0, limit);
     const grouped: Array<{ section: string; items: Command[] }> = [];
     for (const { c } of top) {
-      const last = grouped[grouped.length - 1];
-      if (last && last.section === c.section) last.items.push(c);
-      else grouped.push({ section: c.section, items: [c] });
+      const group = grouped.find(entry => entry.section === c.section);
+      if (group) group.items.push(c); else grouped.push({ section: c.section, items: [c] });
     }
-    return { grouped, flat: grouped.flatMap((g) => g.items) };
-  }, [open, query, resources, selectedItem, activeKind, selectedNamespace, currentContext, activePerspective, density, rightTab, inspectorCollapsed, pfCount, panels, extensions]);
+    return { grouped, flat: grouped.flatMap((g) => g.items), matched: search.total + (scored.length - search.items.length) };
+  }, [open, query, resources, selectedItem, activeKind, selectedNamespace, currentContext, activePerspective, density, rightTab, inspectorCollapsed, pfCount, panels, extensions, search.items, search.total, mode, regex, caseSensitive, limit, inventory.items]);
+
+  useEffect(() => { setSel(previous => previous < flat.length ? previous : 0); }, [flat.length]);
 
   if (!open) return null;
 
@@ -241,6 +260,9 @@ export const CommandPalette: React.FC = () => {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); return; }
+    if ((e.target as HTMLElement).closest('select, button, summary')) return;
+    if (e.altKey && e.key.toLowerCase() === 'r' && mode !== 'commands') { e.preventDefault(); setRegex(value => !value); }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const delta = e.key === 'ArrowDown' ? 1 : -1;
@@ -249,31 +271,49 @@ export const CommandPalette: React.FC = () => {
         listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
       });
     }
-    if (e.key === 'Enter' && flat[sel]) exec(flat[sel]);
-    if (e.key === 'Escape') setOpen(false);
+    if (e.key === 'Enter' && flat[sel]) { e.preventDefault(); e.stopPropagation(); exec(flat[sel]); }
   };
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[10vh]" onKeyDown={onKeyDown}>
       <div className="absolute inset-0 bg-black/40 kub-fade" onClick={() => setOpen(false)} />
-      <div className="relative w-[calc(560px*var(--ui-factor))] max-w-[92vw] max-h-[60vh] flex flex-col rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-dialog)] kub-pop overflow-hidden">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Master search" className="relative w-[calc(680px*var(--ui-factor))] max-w-[92vw] max-h-[60vh] flex flex-col rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)] shadow-[var(--shadow-dialog)] kub-pop overflow-hidden">
         {/* input */}
         <div className="flex items-center gap-2 px-3 h-10 border-b border-[var(--border-subtle)] shrink-0">
           <Command size="calc(14px * var(--ui-factor))" className="text-[var(--text-muted)]" />
           <input
             autoFocus
+            aria-label="Master search query"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={true}
+            aria-controls="master-search-results"
+            aria-activedescendant={flat[sel] ? `master-result-${sel}` : undefined}
+            aria-invalid={!!search.error}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSel(0); }}
             placeholder="Search resources, run commands…"
-            className="flex-1 bg-transparent outline-none text-[length:calc(13px*var(--ui-factor))] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+            className="min-w-0 flex-1 bg-transparent outline-none text-[length:calc(13px*var(--ui-factor))] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
           />
+          <Button size="sm" variant="ghost" aria-label="Use regular expression" aria-pressed={regex} disabled={mode === 'commands'} title="Regular expression (Alt+R)" onClick={() => setRegex(value => !value)}>.*</Button>
+          <Button size="sm" variant="ghost" aria-label="Match case" aria-pressed={caseSensitive} onClick={() => setCaseSensitive(value => !value)}>Aa</Button>
           <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-default)] rounded px-1 py-px text-[var(--text-muted)] bg-[var(--bg-surface)]">esc</kbd>
         </div>
 
+        <div className="flex flex-wrap gap-2 items-center px-3 py-2 border-b border-[var(--border-subtle)] text-xs">
+          <Select aria-label="Search category" className="ide-select" value={mode} onChange={event => { setMode(event.target.value as typeof mode); if (event.target.value === 'commands') setRegex(false); }}><option value="all">All</option><option value="resources">Objects</option><option value="commands">Commands</option></Select>
+          <Select aria-label="Search namespace scope" className="ide-select min-w-0 max-w-full" value={scope} disabled={mode === 'commands'} onChange={event => setScope(event.target.value as typeof scope)}><option value="all">All namespaces</option><option value="selected">Selected: {namespaceScopeLabel(selectedNamespace)}</option></Select>
+          <Button size="sm" variant="ghost" disabled={mode === 'commands' || inventory.loading} onClick={inventory.refresh} aria-label="Refresh search inventory"><RefreshCw size={12} /></Button>
+          <span role="status" className="text-[var(--text-muted)]">{mode === 'commands' ? 'Commands' : `${inventory.loading ? 'Loading' : 'Scanned'} ${inventory.completed}/${inventory.total} collections · ${inventory.items.length} objects`}{search.pending && mode !== 'commands' ? ' · Searching…' : ''}</span>
+        </div>
+        {search.error && mode !== 'commands' && <p role="alert" className="px-3 py-2 text-xs text-[var(--status-danger)]">{search.error}</p>}
+        {!!inventory.errors.length && mode !== 'commands' && <details className="px-3 py-1 text-xs text-[var(--status-warn)]"><summary className="cursor-pointer">Partial inventory · {inventory.errors.length} unavailable collections</summary><div className="max-h-24 overflow-auto kubiki-scrollbar">{inventory.errors.map(error => <p key={error}>{error}</p>)}</div></details>}
+        <details className="px-3 py-1 text-xs text-[var(--text-muted)]"><summary className="cursor-pointer">Search filters</summary><p>Combine terms: kind:Pod ns:production name:api label:app=web -status:Failed. Fields: name, kind, ns, status, label, annotation, image, node, api, uid. Quote phrases. Regex uses the .* button or Alt+R. Secret values are excluded.</p></details>
+
         {/* results */}
-        <div ref={listRef} className="flex-1 overflow-y-auto kubiki-scrollbar py-1">
+        <div ref={listRef} role="listbox" id="master-search-results" aria-label="Search results" className="flex-1 overflow-y-auto kubiki-scrollbar py-1">
           {flat.length === 0 && (
-            <div className="px-4 py-8 text-center text-[length:calc(12px*var(--ui-factor))] text-[var(--text-muted)]">No matches — try fewer characters</div>
+            <div className="px-4 py-8 text-center text-[length:calc(12px*var(--ui-factor))] text-[var(--text-muted)]">{inventory.loading || search.pending ? 'Searching available objects…' : 'No matches — try fewer characters or change the filters'}</div>
           )}
           {grouped.map((g) => (
             <div key={g.section}>
@@ -285,6 +325,10 @@ export const CommandPalette: React.FC = () => {
                 return (
                   <button
                     key={c.id}
+                    role="option"
+                    aria-selected={isActive}
+                    id={`master-result-${idx}`}
+                    tabIndex={-1}
                     data-active={isActive}
                     onMouseEnter={() => setSel(idx)}
                     onClick={() => exec(c)}
@@ -295,9 +339,9 @@ export const CommandPalette: React.FC = () => {
                   >
                     <Icon size="calc(13px * var(--ui-factor))" className={cx('shrink-0', isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]')} strokeWidth={1.75} />
                     <span className="text-[length:calc(12px*var(--ui-factor))] text-[var(--text-primary)] flex-1 truncate">
-                      <TextWithRanges text={c.label} query={query} />
+                      <TextWithRanges text={c.label} query={regex ? '' : query} />
                     </span>
-                    {c.hint && <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{c.hint}</span>}
+                    {c.hint && <span title={c.hint} className="max-w-[45%] truncate text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">{c.hint}</span>}
                     {c.kbd && <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-subtle)] rounded px-1 text-[var(--text-muted)] bg-[var(--bg-surface)]">{shortcutLabel(c.kbd)}</kbd>}
                   </button>
                 );
@@ -306,11 +350,12 @@ export const CommandPalette: React.FC = () => {
           ))}
         </div>
 
+        {flat.length < Math.min(1000, matched) && <Button size="sm" variant="ghost" onClick={() => setLimit(value => value + 40)}>Show next 40</Button>}
         {/* footer */}
         <div className="h-6 shrink-0 border-t border-[var(--border-subtle)] flex items-center gap-3 px-3 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
           <span>↑↓ navigate</span>
           <span>↵ run</span>
-          <span className="ml-auto">{flat.length} results</span>
+          <span className="ml-auto">{flat.length} of {matched} matches{matched > 1000 ? ' · Refine filters for more results' : ''}</span>
         </div>
       </div>
     </div>,
