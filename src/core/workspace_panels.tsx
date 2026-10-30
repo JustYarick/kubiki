@@ -15,6 +15,8 @@ export interface WorkspacePanel {
   title: string;
   icon: LucideIcon;
   component: ComponentType<WorkspacePanelProps>;
+  sidebarComponent?: ComponentType;
+  secondarySidebarComponent?: ComponentType;
   context: 'global' | 'cluster';
   tabType?: WorkspaceTab['type'];
   open?: () => void;
@@ -22,10 +24,23 @@ export interface WorkspacePanel {
 const TopologyView = lazy(() => import('../views/TopologyView').then(module => ({ default: module.TopologyView })));
 const ExtensionsView = lazy(() => import('../views/ExtensionsView').then(module => ({ default: module.ExtensionsView })));
 const AgentView = lazy(() => import('../domains/ai/components/AgentView').then(module => ({ default: module.AgentView })));
-const agent: WorkspacePanel = { id: 'ai-agent', title: 'AI Agent', icon: Bot, context: 'global', open: () => openAiChat(), component: ({ visible }) => <AgentView visible={visible} /> };
+const AiConversationsSidebar = lazy(() => import('../domains/ai/components/AiConversationsSidebar').then(module => ({ default: module.AiConversationsSidebar })));
+const agent: WorkspacePanel = {
+  id: 'ai-agent',
+  title: 'AI Agent',
+  icon: Bot,
+  context: 'global',
+  open: () => openAiChat(),
+  sidebarComponent: () => <Suspense fallback={null}><AiConversationsSidebar /></Suspense>,
+  component: ({ visible }) => <AgentView visible={visible} />,
+};
 const extensions: WorkspacePanel = { id: 'extensions', title: 'Extensions', icon: Puzzle, context: 'global', component: () => <ExtensionsView /> };
 const topology: WorkspacePanel = {
-  id: 'topology', title: 'Cluster topology', icon: GitBranch, context: 'cluster', tabType: 'topology',
+  id: 'topology',
+  title: 'Cluster topology',
+  icon: GitBranch,
+  context: 'cluster',
+  tabType: 'topology',
   open: () => useWorkspaceStore.getState().openTopology(),
   component: ({ tab, item, visible }) => <TopologyView item={item} namespace={tab.namespace} visible={visible} />,
 };

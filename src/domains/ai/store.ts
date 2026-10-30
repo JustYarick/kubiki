@@ -6,10 +6,12 @@ interface AiState {
   settings: AiSettings; credentials: Record<string, boolean>; loaded: boolean; loading: boolean; saving: boolean; error?: string;
   models: Record<string, ModelInfo[]>; modelLoading: Record<string, boolean>; modelErrors: Record<string, string | undefined>;
   conversations: Conversation[]; activeId: string | null;
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
   load: () => Promise<void>; save: (settings: AiSettings) => Promise<void>;
   refreshModels: (providerId: string) => Promise<void>;
   inspectModel: (providerId: string, modelId: string) => Promise<void>;
-  create: (scope: AgentScope, draft?: string, title?: string, providerId?: string, model?: string) => string;
+  create: (scope: AgentScope, draft?: string, title?: string, providerId?: string, model?: string, phase?: AgentPhase, mode?: AgentMode) => string;
   update: (id: string, patch: Partial<Conversation>) => void;
   remove: (id: string) => Promise<void>;
   setMode: (id: string, mode: AgentMode) => Promise<void>;
@@ -47,6 +49,8 @@ const runEpochs = new Map<string, number>();
 export const useAiStore = create<AiState>((set, get) => ({
   settings: defaultSettings(), credentials: {}, loaded: false, loading: false, saving: false,
   models: {}, modelLoading: {}, modelErrors: {}, conversations: [], activeId: null,
+  settingsOpen: false,
+  setSettingsOpen: (open) => set({ settingsOpen: open }),
   async load() {
     if (loadTask) return loadTask;
     if (!desktopAiAvailable()) { set({ loaded: true }); return; }
@@ -96,12 +100,14 @@ export const useAiStore = create<AiState>((set, get) => ({
       if (revision === modelRevisions.get(providerId)) set(state => ({ modelErrors: { ...state.modelErrors, [providerId]: agentError(error) } }));
     }
   },
-  create(scope, draft = '', title = 'New conversation', providerId?: string, model?: string) {
+  create(scope, draft = '', title = 'New conversation', providerId?: string, model?: string, phase?: AgentPhase, mode?: AgentMode) {
     const settings = get().settings;
     const id = crypto.randomUUID();
     const pid = providerId || settings.defaultProvider || settings.providers[0]?.id || '';
     const mid = model || (pid === settings.defaultProvider ? settings.defaultModel ?? '' : '') || settings.defaultModel || '';
-    const entry: Conversation = { id, title, scope, providerId: pid, model: mid, mode: 'read_only', phase: 'plan', messages: [], draft, status: 'idle', busy: false, inputTokens: 0, outputTokens: 0 };
+    const initialMode = mode ?? 'read_only';
+    const initialPhase = initialMode === 'read_only' ? 'plan' : (phase ?? 'plan');
+    const entry: Conversation = { id, title, scope, providerId: pid, model: mid, mode: initialMode, phase: initialPhase, messages: [], draft, status: 'idle', busy: false, inputTokens: 0, outputTokens: 0 };
     set(state => ({ conversations: [...state.conversations, entry], activeId: id }));
     return id;
   },

@@ -100,10 +100,13 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(agent.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(agent.getByRole('button', { name: 'Action', exact: true })).toBeDisabled();
-  await agent.getByRole('combobox', { name: 'AI conversation scope' }).selectOption('general');
+  await expect(agent.getByRole('combobox', { name: 'AI conversation cluster' })).toHaveValue('kubiki-demo');
+  await agent.getByRole('combobox', { name: 'AI conversation cluster' }).selectOption('general');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain Kubernetes architecture');
   await agent.getByRole('button', { name: 'Send', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.commands.filter((c: any) => c.command === 'ai_create_session').at(-1)?.args.request.scope.context)).toBe('');
+  await expect(agent.getByRole('complementary', { name: 'AI conversations', exact: true }).getByText('General').first()).toBeVisible();
+  await expect(agent.getByRole('tab', { name: /All/ })).toBeVisible();
   await agent.getByRole('button', { name: 'New AI conversation', exact: true }).click();
   await page.evaluate(() => { (window as any).__aiHarness.models = [{ id: 'newly-installed-local-model', name: 'New local model', contextWindow: 8192, maxOutputTokens: null, tools: false }]; });
   await agent.getByRole('combobox', { name: 'Conversation AI model' }).click();

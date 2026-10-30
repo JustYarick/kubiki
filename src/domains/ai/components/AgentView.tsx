@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bot, Check, Copy, Plus, RefreshCw, Send, Settings, Shield, Square, Trash2, WandSparkles } from 'lucide-react';
+import { Bot, Check, Copy, Plus, RefreshCw, Send, Server, Settings, Shield, Square, WandSparkles } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '../../../components/ui/Button';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
 import { toast } from '../../../state/notifications_store';
+import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
 import { desktopAiAvailable } from '../transport';
-import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type ChatMessage, type Conversation } from '../types';
+import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
 import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
 import '../ai.css';
 
@@ -21,7 +22,8 @@ const statusLabels: Record<string, string> = {
 export function AgentView({ visible = true }: { visible?: boolean }) {
   const state = useAiStore();
   const conversation = state.conversations.find(c => c.id === state.activeId);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpen = state.settingsOpen;
+  const setSettingsOpen = state.setSettingsOpen;
   const settingsRef = useRef<AgentSettingsHandle>(null);
   const [settingsStatus, setSettingsStatus] = useState<{ message?: string; error?: string; saving?: boolean }>({});
 
@@ -41,8 +43,6 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
     }
   }, [state.settings, state.update]);
 
-  const add = (create = false) => state.create(currentAgentScope(), create ? 'Create an application in Kubernetes. ' : '', create ? 'Create with AI' : undefined);
-
   async function saveSettingsModal() {
     if (settingsRef.current) {
       const ok = await settingsRef.current.save();
@@ -52,32 +52,18 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
     }
   }
 
-  return <section className="ai-workspace" aria-label="AI Agent workspace">
-    <aside className="ai-conversations" aria-label="AI conversations">
-      <div className="ai-form-line"><strong><Bot size={15} aria-hidden="true" />AI Agent</strong><Button size="sm" aria-label="New AI conversation" onClick={() => add()}><Plus size={13} aria-hidden="true" /></Button></div>
-      <div className="ai-conversation-list">{state.conversations.map(c => <div key={c.id} className={`ai-conversation-row ${c.id === state.activeId ? 'is-active' : ''}`}>
-        <button type="button" aria-pressed={c.id === state.activeId} onClick={() => useAiStore.setState({ activeId: c.id })}><span>{c.title}</span><small>{c.scope.context || 'General chat'} · {PHASE_LABELS[c.phase]} · {MODE_LABELS[c.mode]}</small></button>
-        <Button variant="ghost" size="sm" aria-label={`Delete conversation ${c.title}`} onClick={() => void state.remove(c.id)}><Trash2 size={12} aria-hidden="true" /></Button>
-      </div>)}</div>
-      <p className="ai-help">Conversations stay in memory. Permissions and provider connections are saved on this device.</p>
-      <Button size="sm" onClick={() => setSettingsOpen(true)}><Settings size={13} aria-hidden="true" />AI settings</Button>
-    </aside>
+  return <section className="ai-workspace">
     <div className="ai-chat">
       <div className="ai-mobile-conversations">
-        <label className="ai-field ai-grow">Conversation<Select aria-label="Active AI conversation" className="ide-select" value={state.activeId ?? ''} onChange={e => useAiStore.setState({ activeId: e.target.value })}>
-          <option value="">Choose conversation</option>{state.conversations.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+        <label className="ai-field ai-grow">Conversation<Select aria-label="Active AI conversation" className="ide-select" value={state.activeId ?? ''} onChange={e => useAiStore.setState({ activeId: e.target.value || null })}>
+          <option value="">+ New conversation</option>{state.conversations.map(c => <option key={c.id} value={c.id}>{c.scope.context ? `[${c.scope.context}] ` : ''}{c.title}</option>)}
         </Select></label>
-        <Button size="sm" onClick={() => add()}><Plus size={12} aria-hidden="true" />New</Button>
+        <Button size="sm" onClick={() => useAiStore.setState({ activeId: null })}><Plus size={12} aria-hidden="true" />New</Button>
         <Button size="sm" onClick={() => setSettingsOpen(true)}><Settings size={12} aria-hidden="true" />Settings</Button>
       </div>
       {!desktopAiAvailable() && <p className="ai-notice">AI connections and cluster tools run in the desktop app. You can explore the interface here; no data is sent.</p>}
       {state.error && <p role="alert" className="ai-error">{state.error}</p>}
-      {conversation ? <Chat conversation={conversation} visible={visible} onSettings={() => setSettingsOpen(true)} /> : <div className="ai-welcome">
-        <Bot size={30} aria-hidden="true" /><h2>Your Kubernetes assistant</h2>
-        <p>Ask a question, investigate a failing resource, or describe the application you want to create.</p>
-        <div className="ai-form-line"><Button variant="primary" onClick={() => add()}><Plus size={13} aria-hidden="true" />New conversation</Button><Button onClick={() => add(true)}><WandSparkles size={13} aria-hidden="true" />Create with AI</Button></div>
-        <p className="ai-help"><Shield size={13} aria-hidden="true" />Starts in Plan and Read only. Secret contents, ConfigMap contents and logs are excluded by default.</p>
-      </div>}
+      {conversation ? <Chat conversation={conversation} visible={visible} onSettings={() => setSettingsOpen(true)} /> : <AgentHome onSettings={() => setSettingsOpen(true)} />}
     </div>
     <Modal
       open={settingsOpen}
@@ -99,7 +85,256 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
   </section>;
 }
 
+function AgentHome({ onSettings }: { onSettings: () => void }) {
+  const currentContext = useClusterStore(s => s.currentContext);
+  const contexts = useClusterStore(s => s.contexts);
+  const [selectedCluster, setSelectedCluster] = useState<string>(currentContext || '*');
+  const [clusterUserChanged, setClusterUserChanged] = useState(false);
+  const settings = useAiStore(s => s.settings);
+  const [providerId, setProviderId] = useState(settings.defaultProvider ?? settings.providers[0]?.id ?? '');
+  const [model, setModel] = useState(settings.defaultModel ?? '');
+  const [phase, setPhase] = useState<AgentPhase>('plan');
+  const [mode, setMode] = useState<AgentMode>('read_only');
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const input = useRef<HTMLTextAreaElement>(null);
+
+  // Inherit status from main selector until user explicitly changes it:
+  useEffect(() => {
+    if (!clusterUserChanged) {
+      setSelectedCluster(currentContext || '*');
+    }
+  }, [currentContext, clusterUserChanged]);
+
+  useEffect(() => {
+    if (!providerId && (settings.defaultProvider || settings.providers[0]?.id)) {
+      const pid = settings.defaultProvider ?? settings.providers[0]?.id ?? '';
+      setProviderId(pid);
+      if (!model) setModel(pid === settings.defaultProvider ? settings.defaultModel ?? '' : '');
+    }
+  }, [settings, providerId, model]);
+
+  const models = useAiStore(s => s.models[providerId]);
+  const modelsLoading = useAiStore(s => s.modelLoading[providerId]);
+  const modelsError = useAiStore(s => s.modelErrors[providerId]);
+  const refresh = useAiStore(s => s.refreshModels);
+
+  useEffect(() => {
+    if (providerId && !models && desktopAiAvailable() && !modelsLoading && !modelsError) {
+      void refresh(providerId);
+    }
+  }, [providerId, models, modelsLoading, modelsError, refresh]);
+
+  async function handleStart() {
+    if (!draft.trim() || sending) return;
+    setSending(true);
+    try {
+      let scope: AgentScope;
+      if (selectedCluster === 'general' || selectedCluster === '') {
+        scope = { context: '', namespaces: [], allNamespaces: false };
+      } else if (selectedCluster === '*') {
+        scope = { context: '*', namespaces: [], allNamespaces: true };
+      } else {
+        const cur = currentAgentScope();
+        scope = {
+          context: selectedCluster,
+          namespaces: cur.context === selectedCluster ? cur.namespaces : [],
+          allNamespaces: cur.context === selectedCluster ? cur.allNamespaces : true,
+        };
+      }
+      const id = useAiStore.getState().create(scope, draft, undefined, providerId, model, phase, mode);
+      await useAiStore.getState().send(id);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const selectedModel = models?.find(m => m.id === model);
+
+  return (
+    <div className="ai-home kubiki-scrollbar">
+      <div className="ai-home-hero">
+        <div className="ai-home-icon">
+          <Bot size={32} aria-hidden="true" />
+        </div>
+        <h2>Your Kubernetes assistant</h2>
+        <p>Ask a question, investigate a failing resource, or describe the application you want to create.</p>
+        <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+          <span className="text-[var(--text-muted)]">Active cluster:</span>
+          <span className={`ai-cluster-badge ${!currentContext ? 'is-general' : 'is-cluster'}`}>
+            <Server size={10} aria-hidden="true" />
+            <span>{currentContext || 'No cluster connected'}</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="ai-home-composer-box">
+        <textarea
+          ref={input}
+          aria-label="Message AI agent"
+          className="ide-textarea ai-home-textarea"
+          value={draft}
+          maxLength={24000}
+          rows={3}
+          placeholder="Ask a question or describe what you want to create…"
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              if (draft.trim() && desktopAiAvailable() && !sending) void handleStart();
+            }
+          }}
+        />
+
+        <div className="ai-composer-config">
+          <div className="ai-compact-inputs">
+            <label className="ai-compact-field">
+              <span className="sr-only">Cluster</span>
+              <Select
+                className="ide-select ai-compact-select"
+                aria-label="AI conversation cluster"
+                value={selectedCluster}
+                onChange={e => {
+                  setSelectedCluster(e.target.value);
+                  setClusterUserChanged(true);
+                }}
+              >
+                <option value="*">All clusters</option>
+                {contexts.map(ctx => (
+                  <option key={ctx.name} value={ctx.name}>Cluster: {ctx.name}</option>
+                ))}
+                {currentContext && !contexts.some(c => c.name === currentContext) && (
+                  <option value={currentContext}>Cluster: {currentContext}</option>
+                )}
+                <option value="general">General chat · no cluster</option>
+              </Select>
+            </label>
+
+            <label className="ai-compact-field">
+              <span className="sr-only">Provider</span>
+              <Select
+                className="ide-select ai-compact-select"
+                aria-label="Conversation AI provider"
+                value={providerId}
+                onChange={e => {
+                  setProviderId(e.target.value);
+                  setModel(e.target.value === settings.defaultProvider ? settings.defaultModel ?? '' : '');
+                }}
+              >
+                <option value="">Configure provider</option>
+                {settings.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            </label>
+            <label className="ai-compact-field ai-grow">
+              <span className="sr-only">Model</span>
+              <Select
+                className="ide-select ai-compact-select"
+                aria-label="Conversation AI model"
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                onPointerDown={() => { if (providerId && desktopAiAvailable() && !modelsLoading) void refresh(providerId); }}
+                onFocus={() => { if (providerId && desktopAiAvailable() && !modelsLoading) void refresh(providerId); }}
+              >
+                <option value="">{modelsLoading ? 'Loading models…' : 'Select model'}</option>
+                {model && !models?.some(m => m.id === model) && <option value={model}>{model} (refresh to verify)</option>}
+                {models?.map(m => <option key={m.id} value={m.id}>{m.name === m.id ? m.id : `${m.name} · ${m.id}`}</option>)}
+              </Select>
+            </label>
+          </div>
+
+          <div className="ai-composer-axes">
+            <div role="group" aria-label="AI execution phase" className="ai-phases">
+              {(Object.entries(PHASE_LABELS) as [AgentPhase, string][]).map(([value, label]) => {
+                const disabled = (value === 'action' && mode === 'read_only');
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={phase === value}
+                    disabled={disabled}
+                    title={value === 'action' && mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
+                    onClick={() => setPhase(value)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div role="group" aria-label="AI execution mode" className="ai-modes">
+              {(Object.entries(MODE_LABELS) as [AgentMode, string][]).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={mode === value}
+                  onClick={() => {
+                    setMode(value);
+                    if (value === 'read_only') setPhase('plan');
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!desktopAiAvailable() || !draft.trim() || !providerId || !model || sending}
+              loading={sending}
+              onClick={() => void handleStart()}
+            >
+              <Send size={12} aria-hidden="true" />Send
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {modelsError && <p role="alert" className="ai-error mt-2">{modelsError}</p>}
+      {selectedModel?.tools === false && <p className="ai-notice mt-2">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
+      {!settings.providers.length && <p className="ai-help mt-2">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
+
+      <div className="ai-home-suggestions" aria-label="Suggested prompts">
+        <button
+          type="button"
+          className="ai-suggestion-card"
+          onClick={() => { setDraft('Why are my Pods failing or restarting? Check events and logs.'); input.current?.focus(); }}
+        >
+          <div className="flex items-center gap-1.5 font-medium">
+            <Shield size={12} className="text-amber-400" aria-hidden="true" />
+            <span>Diagnose failing Pods</span>
+          </div>
+          <small>Identify scheduling issues, CrashLoopBackOff and OOM events</small>
+        </button>
+        <button
+          type="button"
+          className="ai-suggestion-card"
+          onClick={() => { setDraft('Create a Nexus deployment with persistent storage in Kubernetes'); input.current?.focus(); }}
+        >
+          <div className="flex items-center gap-1.5 font-medium">
+            <WandSparkles size={12} className="text-cyan-400" aria-hidden="true" />
+            <span>Create a deployment</span>
+          </div>
+          <small>Generate manifests for services, stateful workloads or ingress</small>
+        </button>
+        <button
+          type="button"
+          className="ai-suggestion-card"
+          onClick={() => { setDraft('Explain the architecture and workload configuration in this cluster'); input.current?.focus(); }}
+        >
+          <div className="flex items-center gap-1.5 font-medium">
+            <Bot size={12} className="text-indigo-400" aria-hidden="true" />
+            <span>Cluster overview</span>
+          </div>
+          <small>Explore resource relationships, namespaces and capacity</small>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Chat({ conversation: c, visible, onSettings }: { conversation: Conversation; visible: boolean; onSettings: () => void }) {
+  const contexts = useClusterStore(s => s.contexts);
   const settings = useAiStore(s => s.settings);
   const models = useAiStore(s => s.models[c.providerId]);
   const loading = useAiStore(s => s.modelLoading[c.providerId]);
@@ -135,9 +370,13 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   return <>
     <header className="ai-chat-header">
       <div className="ai-scope">
-        <Shield size={14} aria-hidden="true" />
-        <span title={c.scope.context}>{c.scope.context || 'General chat · no cluster'}</span>
-        <span>{c.scope.allNamespaces ? 'All namespaces' : c.scope.namespaces.join(', ') || 'No namespaces'}</span>
+        <span className={`ai-cluster-badge ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`} title="Pinned cluster context for this conversation">
+          <Server size={10} aria-hidden="true" />
+          <span>{c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}</span>
+        </span>
+        <span className="text-[var(--text-secondary)]">
+          {c.scope.allNamespaces ? 'All namespaces' : c.scope.namespaces.join(', ') || 'No namespaces'}
+        </span>
       </div>
       <span className="ai-grow" />
       <Button size="sm" variant="ghost" onClick={onSettings}><Settings size={13} aria-hidden="true" />Permissions</Button>
@@ -154,16 +393,53 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     <footer className="ai-composer">
       <div className="ai-composer-config">
         <div className="ai-compact-inputs">
-          <label className="ai-compact-field">
-            <span className="sr-only">Scope</span>
-            <Select className="ide-select ai-compact-select" aria-label="AI conversation scope" disabled={!!c.sessionId || c.busy} value={c.scope.context ? 'cluster' : 'general'} onChange={e => update(c.id, { scope: e.target.value === 'general' ? { context: '', namespaces: [], allNamespaces: false } : currentAgentScope() })}>
-              <option value="general">General chat · no cluster</option>
-              <option value="cluster" disabled={!currentAgentScope().context}>Cluster: {c.scope.context || currentAgentScope().context || 'none'}</option>
-            </Select>
-          </label>
+          {!c.sessionId && c.messages.length === 0 ? (
+            <label className="ai-compact-field">
+              <span className="sr-only">Cluster</span>
+              <Select
+                className="ide-select ai-compact-select"
+                aria-label="AI conversation cluster"
+                disabled={c.busy}
+                value={c.scope.context === '*' ? '*' : c.scope.context || 'general'}
+                onChange={e => {
+                  const val = e.target.value;
+                  let nextScope: AgentScope;
+                  if (val === 'general' || val === '') {
+                    nextScope = { context: '', namespaces: [], allNamespaces: false };
+                  } else if (val === '*') {
+                    nextScope = { context: '*', namespaces: [], allNamespaces: true };
+                  } else {
+                    const cur = currentAgentScope();
+                    nextScope = {
+                      context: val,
+                      namespaces: cur.context === val ? cur.namespaces : [],
+                      allNamespaces: cur.context === val ? cur.allNamespaces : true,
+                    };
+                  }
+                  update(c.id, { scope: nextScope });
+                }}
+              >
+                <option value="*">All clusters</option>
+                {contexts.map(ctx => <option key={ctx.name} value={ctx.name}>Cluster: {ctx.name}</option>)}
+                <option value="general">General chat · no cluster</option>
+              </Select>
+            </label>
+          ) : (
+            <span className={`ai-cluster-badge ${c.scope.context === '*' ? 'is-all' : !c.scope.context ? 'is-general' : 'is-cluster'}`} title="Pinned cluster context for this conversation">
+              <Server size={10} aria-hidden="true" />
+              <span>{c.scope.context === '*' ? 'All clusters' : c.scope.context || 'General'}</span>
+            </span>
+          )}
+
           <label className="ai-compact-field">
             <span className="sr-only">Provider</span>
-            <Select className="ide-select ai-compact-select" aria-label="Conversation AI provider" disabled={!!c.sessionId || c.busy} value={c.providerId} onChange={e => update(c.id, { providerId: e.target.value, model: e.target.value === settings.defaultProvider ? settings.defaultModel ?? '' : '' })}>
+            <Select
+              className="ide-select ai-compact-select"
+              aria-label="Conversation AI provider"
+              disabled={!!c.sessionId || c.busy}
+              value={c.providerId}
+              onChange={e => update(c.id, { providerId: e.target.value, model: e.target.value === settings.defaultProvider ? settings.defaultModel ?? '' : '' })}
+            >
               <option value="">Configure provider</option>
               {settings.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>

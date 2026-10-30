@@ -21,6 +21,7 @@ export const ActivityBar: React.FC = () => {
   const {
     toggleInspector,
     inspectorCollapsed,
+    toggleSidebar,
     setPaletteOpen,
     setSettingsOpen,
   } = useUiStore();
@@ -31,7 +32,14 @@ export const ActivityBar: React.FC = () => {
       <div className="flex flex-col items-center gap-1 w-full">
         <Tooltip label="Cluster Explorer (⌘B)" side="bottom" delay={300}>
           <button
-            onClick={() => { useWorkspaceStore.getState().activateArea('explorer'); useUiStore.setState({ sidebarCollapsed: false }); }}
+            onClick={() => {
+              if (area === 'explorer') {
+                toggleSidebar();
+              } else {
+                useWorkspaceStore.getState().activateArea('explorer');
+                useUiStore.setState({ sidebarCollapsed: false });
+              }
+            }}
             aria-label="Cluster Explorer"
             aria-pressed={area === 'explorer'}
             className={cxRail(area === 'explorer')}
@@ -54,7 +62,30 @@ export const ActivityBar: React.FC = () => {
         </Tooltip>
       </div>
 
-      {panels.map(panel => <Tooltip key={panel.id} label={panel.title} side="bottom" delay={300}><button className={cxRail(area === panel.id)} aria-label={panel.title} aria-pressed={area === panel.id} onClick={() => openWorkspacePanel(panel)}><panel.icon size="calc(16px * var(--ui-factor))" />{area === panel.id && <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />}</button></Tooltip>)}
+      {panels.map((panel) => (
+        <Tooltip key={panel.id} label={panel.title} side="bottom" delay={300}>
+          <button
+            className={cxRail(area === panel.id)}
+            aria-label={panel.title}
+            aria-pressed={area === panel.id}
+            onClick={() => {
+              if (area === panel.id) {
+                if (panel.sidebarComponent || panel.id === 'ai-agent') {
+                  toggleSidebar();
+                }
+              } else {
+                openWorkspacePanel(panel);
+                useUiStore.setState({ sidebarCollapsed: false });
+              }
+            }}
+          >
+            <panel.icon size="calc(16px * var(--ui-factor))" />
+            {area === panel.id && (
+              <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
+            )}
+          </button>
+        </Tooltip>
+      ))}
       {/* Bottom tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full mt-auto">
         <Tooltip label={dockCollapsed ? 'Bottom Panel (⌘J)' : 'Hide Bottom Panel (⌘J)'} side="top" delay={300}>

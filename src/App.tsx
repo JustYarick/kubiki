@@ -8,9 +8,10 @@ import { closePortForwards, resetPortForwards, listPortForwards } from './provid
 import { useEffect, useCallback, useRef, useState, type CSSProperties } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { ActivityBar } from './components/layout/ActivityBar';
-import { Sidebar } from './components/layout/Sidebar';
+import { PrimarySideBar } from './components/layout/PrimarySideBar';
+import { SecondarySideBar } from './components/layout/SecondarySideBar';
+import { RightActivityBar } from './components/layout/RightActivityBar';
 import { WorkspaceArea } from './components/layout/WorkspaceArea';
-import { InspectorPanel } from './components/layout/InspectorPanel';
 import { BottomDock } from './components/layout/BottomDock';
 import { StatusBar } from './components/layout/StatusBar';
 import { Resizer } from './components/layout/Resizer';
@@ -265,7 +266,6 @@ export default function App() {
   }, [activeTabType, inspectorPinned]);
   const factor = uiFactor(uiScale);
   const logicalViewportWidth = viewportWidth / factor;
-  const showSidebar = area === 'explorer' && !sidebarCollapsed;
   const compact = logicalViewportWidth < 760;
   const overlaySidebar = compact && showInspector;
   useEffect(() => {
@@ -292,20 +292,28 @@ export default function App() {
       }} />
 
       {/* Main IDE Frame: Left Rails + Tool Windows + Workspaces + Right Tool Windows */}
-      <div className="flex-1 flex min-h-0 min-w-0 relative">
+      <div
+        className="flex-1 flex min-h-0 min-w-0 relative"
+        {...(area === 'ai-agent' ? { role: 'region', 'aria-label': 'AI Agent workspace' } : {})}
+      >
         <ActivityBar />
 
-        {/* Left Tool Window (Cluster Explorer) */}
-        <div data-testid="explorer-panel" hidden={!showSidebar} style={{ width: uiPixels(Math.min(sidebarWidth, logicalViewportWidth - 56)) }} className={`shrink-0 min-h-0 ${overlaySidebar ? "absolute left-[calc(40px*var(--ui-factor))] top-0 bottom-0 z-30 shadow-xl border-r border-[var(--border-default)]" : ""}`}>
-          <Sidebar />
-        </div>
-        {showSidebar && !overlaySidebar && <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d / factor)} />}
+        {/* Primary Side Bar: Explorer, AI Agent history, Topology controls, etc. */}
+        <PrimarySideBar
+          area={area}
+          sidebarWidth={sidebarWidth}
+          sidebarCollapsed={sidebarCollapsed}
+          overlaySidebar={overlaySidebar}
+          logicalViewportWidth={logicalViewportWidth}
+          factor={factor}
+          onResize={setSidebarWidth}
+        />
 
         {/* Central Workspace: Tabs + Breadcrumbs + DataGrid/Editor + Bottom Dock */}
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
           <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
 
-          {/* Bottom Dock drawer — shares the foreground layer with InspectorPanel, adapting its width */}
+          {/* Bottom Dock drawer — shares the foreground layer with SecondarySideBar, adapting its width */}
           <div
             data-testid="bottom-dock-wrapper"
             style={{ marginRight: showInspector ? uiPixels(detailWidth) : '0px' }}
@@ -316,13 +324,19 @@ export default function App() {
           </div>
         </main>
 
-        {/* Right Tool Window (Inspector / Details) — floats above the workspace, the table keeps its size */}
-        {showInspector && (
-          <div data-testid="inspector-panel" data-layout="overlay" style={{ width: uiPixels(detailWidth), top: uiPixels(headerHeight) }} className="absolute right-0 bottom-0 z-40 min-h-0 border-l border-[var(--border-default)] shadow-xl">
-            <Resizer orientation="vertical" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, zIndex: 10 }} onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />
-            <InspectorPanel />
-          </div>
-        )}
+        {/* Secondary Side Bar: Right Tool Window (Inspector, Details, Future Tools) */}
+        <SecondarySideBar
+          area={area}
+          inspectorWidth={inspectorWidth}
+          inspectorCollapsed={inspectorCollapsed}
+          headerHeight={headerHeight}
+          factor={factor}
+          logicalViewportWidth={logicalViewportWidth}
+          onResize={setInspectorWidth}
+        />
+
+        {/* Right Activity Bar: Slot for future right-rail tool icons */}
+        <RightActivityBar />
       </div>
 
       {/* Bottom Global Status Bar */}
