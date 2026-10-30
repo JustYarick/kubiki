@@ -1,11 +1,13 @@
 import { useMutationConfirmStore } from '../../state/mutation_confirm_store';
+import { useAiStore } from '../../domains/ai/store';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 
 export function MutationConfirmModal() {
   const pending = useMutationConfirmStore(s => s.pending);
   const resolve = useMutationConfirmStore(s => s.resolve);
-  if (!pending) return null;
+  const aiWaiting = useAiStore(s => s.conversations.some(c => c.status === 'awaiting_approval'));
+  if (!pending || aiWaiting) return null;
   const { resource, details, review, simple } = pending;
   const yaml = details?.kind === 'yaml';
   const deleting = simple?.destructive ?? details?.steps.some(step => step.operation === 'DELETE') ?? false;

@@ -93,9 +93,31 @@ async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
         .map_err(|_| "Cannot locate AI settings directory")?
         .join("ai.json");
     tokio::task::spawn_blocking(move || match std::fs::read(path) {
-        Ok(bytes) if bytes.len() <= 1024 * 1024 => serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned()),
+        Ok(bytes) if bytes.len() <= 1024 * 1024 => {
+            let mut settings: AiSettings = serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned())?;
+            if settings.policy.writes.is_empty() && settings.policy.rules.is_empty() {
+                settings.policy.writes = vec![
+                    kubiki_ai::WriteOperation::Create,
+                    kubiki_ai::WriteOperation::Update,
+                    kubiki_ai::WriteOperation::Delete,
+                    kubiki_ai::WriteOperation::Scale,
+                    kubiki_ai::WriteOperation::Restart,
+                ];
+            }
+            Ok(settings)
+        }
         Ok(_) => Err("AI settings file exceeds 1 MiB".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AiSettings::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let mut settings = AiSettings::default();
+            settings.policy.writes = vec![
+                kubiki_ai::WriteOperation::Create,
+                kubiki_ai::WriteOperation::Update,
+                kubiki_ai::WriteOperation::Delete,
+                kubiki_ai::WriteOperation::Scale,
+                kubiki_ai::WriteOperation::Restart,
+            ];
+            Ok(settings)
+        }
         Err(_) => Err("Cannot read AI settings".into()),
     }).await.map_err(|_| "AI settings task failed")?
 }

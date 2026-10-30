@@ -58,7 +58,8 @@ export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'To
 export function defaultPolicy(): AgentPolicy {
   return { resources: true, events: true, logs: false, metrics: true, clusterResources: false,
     secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false,
-    customResources: 'metadata', contexts: ['*'], namespaces: ['*'], writes: [], maxReplicas: 10,
+    customResources: 'metadata', contexts: ['*'], namespaces: ['*'],
+    writes: ['create', 'update', 'delete', 'scale', 'restart'], maxReplicas: 10,
     rules: [], deniedPaths: [] };
 }
 export function defaultSettings(): AiSettings {

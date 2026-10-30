@@ -418,8 +418,9 @@ pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase
     if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {
         // Rules can grant writes even when the defaults are empty; dispatcher
         // still checks every exact target and operation.
-        let allowed =
-            !policy.writes.is_empty() || policy.rules.iter().any(|r| !r.writes.is_empty());
+        let allowed = mode == AgentMode::Ask
+            || !policy.writes.is_empty()
+            || policy.rules.iter().any(|r| !r.writes.is_empty());
         if allowed {
             tools.push(tool("apply_manifest", "Create or update ONE YAML resource. Requires policy authorization; ask mode waits for the human's exact review. Include namespace explicitly. Never apply RBAC, Secrets, raw Pods or arbitrary custom resources.", json!({"yaml":{"type":"string"}}), &["yaml"]));
             let mut properties = target.clone();

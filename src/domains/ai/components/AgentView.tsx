@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, isValidElement, type ReactNode } from 'react';
 import {
   AlertCircle,
   ArrowDown,
@@ -29,6 +29,8 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '../../../components/ui/Button';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
+import { CodeEditor } from '../../../components/ui/CodeEditor';
+import { useMutationConfirmStore, type MutationConfirmRequest } from '../../../state/mutation_confirm_store';
 import { toast } from '../../../state/notifications_store';
 import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
@@ -393,6 +395,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   const modelError = useAiStore(s => s.modelErrors[c.providerId]);
   const update = useAiStore(s => s.update);
   const refresh = useAiStore(s => s.refreshModels);
+  const mutationPending = useMutationConfirmStore(s => s.pending);
+  const resolveMutation = useMutationConfirmStore(s => s.resolve);
   const transcript = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -515,9 +519,14 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
           if (isAnswerToQuestion) return null;
           return <Message key={message.id} message={message} conversation={c} />;
         })}
-        {c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') && (
+        {c.status === 'awaiting_approval' && mutationPending ? (
+          <ActionApprovalCard
+            request={mutationPending}
+            onResolve={approved => void resolveMutation(approved)}
+          />
+        ) : c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') ? (
           <LiveStatusIndicator status={c.status} />
-        )}
+        ) : null}
       </div>
       {showScrollBottom && (
         <button
@@ -691,9 +700,122 @@ function formatTokenCount(n: number): string {
 
 function copy(text: string) { void navigator.clipboard.writeText(text).then(() => toast.success('Copied')).catch(() => toast.error('Clipboard unavailable')); }
 
+function ActionApprovalCard({
+  request,
+  onResolve,
+}: {
+  request: MutationConfirmRequest;
+  onResolve: (approved: boolean) => void;
+}) {
+  const { resource, details, review, simple } = request;
+  const yaml = details?.kind === 'yaml';
+  const deleting = simple?.destructive ?? details?.steps.some(step => step.operation === 'DELETE') ?? false;
+  const title = simple?.title ?? (yaml ? 'Review and Approve YAML Mutation' : deleting ? 'Approve Resource Deletion' : 'Action Approval Required');
+  const summary = simple ? review : details?.kind === 'batch' ? `Perform ${details.steps.length} operations on the selected resources.` : details?.steps[0]?.summary ?? review;
+  const diffContent = yaml && details.steps[0]?.diff ? details.steps[0].diff : '';
+
+  return (
+    <div className="ai-action-approval-card my-3 p-4 rounded-lg border-2 border-amber-500/40 bg-[var(--bg-secondary)] shadow-lg animate-fade-in max-w-[900px] mx-auto">
+      <div className="flex items-center justify-between gap-3 mb-2.5">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded bg-amber-500/10 text-amber-400">
+            <ShieldAlert size={16} aria-hidden="true" />
+          </div>
+          <div>
+            <h4 className="text-xs font-semibold text-[var(--text-primary)]">{title}</h4>
+            <p className="text-[10.5px] text-[var(--text-secondary)] font-mono">
+              {resource.kind} <span className="text-[var(--text-primary)] font-semibold">{resource.name}</span>
+              {resource.namespace ? ` · ns: ${resource.namespace}` : ''} · cluster: {resource.context}
+            </p>
+          </div>
+        </div>
+        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+          Awaiting confirmation
+        </span>
+      </div>
+
+      <p className="text-xs text-[var(--text-secondary)] mb-3 leading-relaxed">
+        {summary}
+      </p>
+
+      {diffContent ? (
+        <div className="mb-3 rounded border border-[var(--border-default)] overflow-hidden">
+          <CodeEditor
+            ariaLabel="YAML Mutation Diff"
+            value={diffContent}
+            language="yaml"
+            readOnly={true}
+            height="min(38vh, 300px)"
+            copyable={true}
+            variant="field"
+          />
+        </div>
+      ) : null}
+
+      <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[var(--border-subtle)]">
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onResolve(false)}
+        >
+          Decline
+        </Button>
+        <Button
+          size="sm"
+          variant={deleting ? 'danger' : 'primary'}
+          onClick={() => onResolve(true)}
+        >
+          {deleting ? 'Confirm & Delete' : 'Approve & Apply'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function CodeBlock({ children }: { children?: ReactNode }) {
+  let language = 'yaml';
+  let rawText = '';
+  if (isValidElement(children)) {
+    const className = (children.props as { className?: string })?.className || '';
+    const match = /language-(\w+)/.exec(className);
+    if (match) language = match[1];
+    rawText = String((children.props as { children?: ReactNode })?.children ?? '');
+  } else {
+    rawText = String(children ?? '');
+  }
+
+  const isMultiline = rawText.includes('\n');
+  const normalizedLang = language.toLowerCase();
+  if (isMultiline && ['yaml', 'yml', 'json', 'bash', 'sh', 'shell', 'dockerfile'].includes(normalizedLang)) {
+    const lang = (normalizedLang === 'yml' ? 'yaml' : normalizedLang === 'shell' ? 'bash' : normalizedLang) as any;
+    const lineCount = rawText.split('\n').length;
+    const height = Math.min(360, Math.max(90, lineCount * 20 + 35));
+    return (
+      <div className="my-2.5 rounded border border-[var(--border-default)] overflow-hidden">
+        <CodeEditor
+          ariaLabel={`${lang} code snippet`}
+          value={rawText.trimEnd()}
+          language={lang}
+          readOnly={true}
+          height={height}
+          copyable={true}
+          variant="field"
+        />
+      </div>
+    );
+  }
+
   const ref = useRef<HTMLPreElement>(null);
-  return <div className="ai-code"><div className="ai-code-actions"><Button size="sm" variant="ghost" aria-label="Copy code" onClick={() => copy(ref.current?.textContent ?? '')}><Copy size={12} aria-hidden="true" />Copy</Button></div><pre ref={ref}>{children}</pre></div>;
+  return (
+    <div className="ai-code">
+      <div className="ai-code-actions">
+        <Button size="sm" variant="ghost" aria-label="Copy code" onClick={() => copy(ref.current?.textContent ?? '')}>
+          <Copy size={12} aria-hidden="true" />Copy
+        </Button>
+      </div>
+      <pre ref={ref}>{children}</pre>
+    </div>
+  );
 }
 
 interface ParsedThinking {
@@ -1025,13 +1147,26 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           ) : error ? (
             <p className="ai-error p-2">{error}</p>
           ) : proposal ? (
-            <div className="space-y-2">
-              <h4 className="text-xs font-semibold">{String(result.title ?? 'Proposed resources')}</h4>
-              <CodeBlock><code>{String(result.yaml)}</code></CodeBlock>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-xs font-semibold text-[var(--text-primary)]">{String(result.title ?? 'Proposed Kubernetes Manifest')}</h4>
+                <span className="text-[10px] text-[var(--text-muted)] font-mono">YAML</span>
+              </div>
+              <div className="rounded border border-[var(--border-default)] overflow-hidden">
+                <CodeEditor
+                  ariaLabel={`Proposed manifest: ${result.title ?? 'YAML'}`}
+                  value={String(result.yaml)}
+                  language="yaml"
+                  readOnly={true}
+                  height="min(45vh, 340px)"
+                  copyable={true}
+                  variant="field"
+                />
+              </div>
               {c.mode !== 'read_only' && !c.busy && (
                 <div className="mt-2.5">
                   <Button size="sm" variant="primary" onClick={() => {
-                    useAiStore.getState().update(c.id, { draft: 'Apply the YAML proposal above using apply_manifest for each document, within the current access policy. Report the actual tool receipts and verify the resulting resources when permitted.' });
+                    useAiStore.getState().update(c.id, { draft: `Apply the following YAML proposal using apply_manifest:\n\`\`\`yaml\n${String(result.yaml)}\n\`\`\`` });
                     void useAiStore.getState().send(c.id);
                   }}>
                     Ask agent to apply proposal
@@ -1041,6 +1176,22 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
             </div>
           ) : (
             <div className="space-y-2">
+              {m.call?.name === 'apply_manifest' && m.call?.arguments?.yaml ? (
+                <div className="space-y-1.5 my-2">
+                  <div className="text-[11px] font-semibold text-[var(--text-secondary)]">Manifest to Apply:</div>
+                  <div className="rounded border border-[var(--border-default)] overflow-hidden">
+                    <CodeEditor
+                      ariaLabel="Applied Manifest YAML"
+                      value={String(m.call.arguments.yaml)}
+                      language="yaml"
+                      readOnly={true}
+                      height="min(35vh, 260px)"
+                      copyable={true}
+                      variant="field"
+                    />
+                  </div>
+                </div>
+              ) : null}
               {result && (result.operationId || result.status) ? (
                 <div className="ai-tool-receipt-box">
                   {result.operationId ? <span>Receipt ID: {String(result.operationId)}</span> : null}
