@@ -45,7 +45,8 @@ export function applyAgentEvent(conversation: Conversation, event: AgentEvent): 
         tokensPerSec,
       };
     }
-    return { ...conversation, inputTokens: nextInput, outputTokens: nextOutput, messages };
+    const currentContextTokens = (event.inputTokens ?? 0) + (event.outputTokens ?? 0);
+    return { ...conversation, inputTokens: nextInput, outputTokens: nextOutput, currentContextTokens, messages };
   }
   if (event.type === 'text_delta') {
     const last = messages[messages.length - 1];
@@ -228,7 +229,9 @@ export const useAiStore = create<AiState>((set, get) => ({
               durationMs,
               tokensPerSec,
             };
-            get().update(id, { messages: updated });
+            const totalChars = conv.messages.reduce((acc, m) => acc + m.text.length, 0) + 1200;
+            const currentContextTokens = conv.currentContextTokens ?? Math.round(totalChars / 3.6);
+            get().update(id, { messages: updated, currentContextTokens });
           }
         }
       }

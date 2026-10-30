@@ -48,6 +48,7 @@ export interface Conversation {
   providerId: string; model: string; mode: AgentMode; phase: AgentPhase; messages: ChatMessage[];
   draft: string; status: string; error?: string; busy: boolean; invalidated?: boolean;
   inputTokens: number; outputTokens: number;
+  currentContextTokens?: number;
 }
 
 export const WRITE_OPERATIONS: WriteOperation[] = ['create', 'update', 'delete', 'scale', 'restart'];

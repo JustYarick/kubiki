@@ -385,6 +385,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   }
 
   const selectedModel = models?.find(m => m.id === c.model);
+  const maxContextTokens = settings.options.contextTokens || selectedModel?.contextWindow || null;
+  const currentContext = c.currentContextTokens || (c.inputTokens > 0 ? c.inputTokens : 0);
+  const contextPercent = maxContextTokens && currentContext > 0
+    ? Math.min(100, Math.round((currentContext / maxContextTokens) * 100))
+    : 0;
   useEffect(() => { if (selectedModel && c.model) void useAiStore.getState().inspectModel(c.providerId, c.model); }, [c.providerId, c.model, selectedModel]);
 
   return <>
@@ -532,12 +537,41 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       <textarea ref={input} id={`ai-message-${c.id}`} aria-label="Message AI agent" className="ide-textarea" value={c.draft} maxLength={24000} rows={3} placeholder="Ask a question or describe what you want to create…" onChange={e => update(c.id, { draft: e.target.value })} onKeyDown={e => {
         if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!c.busy && !c.invalidated && desktopAiAvailable()) void useAiStore.getState().send(c.id); }
       }} />
-      <div className="ai-form-line"><span className="ai-run-status" role="status">{statusLabels[c.status] ?? c.status}{c.inputTokens + c.outputTokens > 0 ? ` · ${c.inputTokens.toLocaleString()} input / ${c.outputTokens.toLocaleString()} output tokens` : ''}</span><span className="ai-grow" />
+      <div className="ai-form-line">
+        <span className="ai-run-status flex items-center gap-1.5 flex-wrap" role="status">
+          <span>{statusLabels[c.status] ?? c.status}</span>
+          {c.inputTokens + c.outputTokens > 0 && (
+            <span>· {c.inputTokens.toLocaleString()} input / {c.outputTokens.toLocaleString()} output tokens</span>
+          )}
+          {maxContextTokens ? (
+            <span
+              className="ai-context-indicator inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-mono text-[10.5px]"
+              title={`Context window usage: ${currentContext.toLocaleString()} used of ${maxContextTokens.toLocaleString()} tokens maximum (${contextPercent}%)`}
+            >
+              <span className="text-[var(--text-muted)]">Context:</span>
+              <span className={contextPercent > 80 ? 'text-amber-400 font-semibold' : 'text-[var(--text-secondary)]'}>
+                {formatTokenCount(currentContext)} / {formatTokenCount(maxContextTokens)}
+              </span>
+              <span className="text-[var(--text-muted)]">({contextPercent}%)</span>
+            </span>
+          ) : currentContext > 0 ? (
+            <span className="text-[var(--text-muted)] font-mono text-[10.5px]">
+              · Context: ~{formatTokenCount(currentContext)}
+            </span>
+          ) : null}
+        </span>
+        <span className="ai-grow" />
         {c.busy ? <Button size="sm" variant="danger" onClick={() => void useAiStore.getState().stop(c.id)}><Square size={12} aria-hidden="true" />Stop</Button>
           : <Button size="sm" variant="primary" disabled={!desktopAiAvailable() || !c.draft.trim() || !c.providerId || !c.model || modePending || c.invalidated} onClick={() => void useAiStore.getState().send(c.id)}><Send size={12} aria-hidden="true" />Send</Button>}
       </div>
     </footer>
   </>;
+}
+
+function formatTokenCount(n: number): string {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return n.toLocaleString();
 }
 
 function copy(text: string) { void navigator.clipboard.writeText(text).then(() => toast.success('Copied')).catch(() => toast.error('Clipboard unavailable')); }
