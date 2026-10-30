@@ -1,5 +1,10 @@
 # Integrated AI agent
 
+This page describes the current implementation. The next stages, including a
+shared Kubernetes access service, separate Plan/Action phases, deeper diagnostics
+and chat history, are tracked in the [development roadmap](AI_ROADMAP.md).
+Plan/Action phases are planned and are not implemented by the current mode selector.
+
 Kubiki's integrated agent has its own workspace tab and a shared runtime for
 ordinary chat, resource investigation and resource generation. It calls model
 APIs directly. It does not run Codex, Claude Code, `kubectl`, a shell or an

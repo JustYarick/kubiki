@@ -391,6 +391,7 @@ Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validatio
 - [Traffic observability research: Cilium, Istio, Calico and eBPF sources](docs/TRAFFIC_OBSERVABILITY.md)
 - [Workspace extensions](docs/EXTENSIONS.md) and [extension architecture](docs/EXTENSION_PLATFORM.md)
 - [Integrated AI agent](docs/AI_AGENT.md)
+- [AI development roadmap](docs/AI_ROADMAP.md)
 - [Resource analysis](docs/AI_ANALYSIS.md)
 - [Desktop rendering investigation and platform validation](docs/DESKTOP_RENDERING.md)
 - [Shared tab metrics](docs/UI_TABS.md) and [resource icons](docs/ICONS.md)
