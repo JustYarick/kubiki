@@ -1216,6 +1216,10 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
   const isStreaming = c.busy && c.messages[c.messages.length - 1]?.id === m.id;
   const { thinking, isThinkingActive, content } = !isUser ? parseThinking(m.text, isStreaming) : { isThinkingActive: false, content: m.text };
 
+  if (!isUser && !content.trim() && !thinking && !isThinkingActive && !isStreaming) {
+    return null;
+  }
+
   return (
     <article
       className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''}`}
