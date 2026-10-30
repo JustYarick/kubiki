@@ -4,7 +4,7 @@ import { defaultSettings, type AgentEvent } from '../../src/domains/ai/types';
 vi.mock('../../src/domains/ai/transport', () => ({
   desktopAiAvailable: () => true,
   agentError: (error: unknown) => String(error),
-  agentTransport: { settings: vi.fn(), save: vi.fn(), credential: vi.fn(), models: vi.fn(), create: vi.fn(), mode: vi.fn(), stop: vi.fn(), send: vi.fn() },
+  agentTransport: { settings: vi.fn(), save: vi.fn(), credential: vi.fn(), models: vi.fn(), create: vi.fn(), mode: vi.fn(), phase: vi.fn(), stop: vi.fn(), send: vi.fn() },
 }));
 import { agentTransport } from '../../src/domains/ai/transport';
 import { applyAgentEvent, useAiStore } from '../../src/domains/ai/store';
@@ -19,22 +19,42 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 beforeEach(() => {
   vi.resetAllMocks();
   useAiStore.setState({ settings: settings(), credentials: {}, loaded: true, loading: false, saving: false, error: undefined, models: {}, modelLoading: {}, modelErrors: {}, conversations: [], activeId: null });
-  vi.mocked(agentTransport.create).mockResolvedValue({ id: 'native', scope, mode: 'read_only', policy: settings().policy });
-  vi.mocked(agentTransport.mode).mockResolvedValue();
+  vi.mocked(agentTransport.create).mockResolvedValue({ id: 'native', scope, mode: 'read_only', phase: 'plan', policy: settings().policy });
+  vi.mocked(agentTransport.mode).mockImplementation(async (_s, mode) => ({ id: 'native', scope, mode, phase: mode === 'read_only' ? 'plan' : 'plan', policy: settings().policy }));
+  vi.mocked(agentTransport.phase).mockImplementation(async (_s, phase) => ({ id: 'native', scope, mode: 'ask', phase, policy: settings().policy }));
   vi.mocked(agentTransport.stop).mockResolvedValue();
   vi.mocked(agentTransport.send).mockResolvedValue();
   vi.mocked(agentTransport.save).mockImplementation(async updated => { vi.mocked(agentTransport.settings).mockResolvedValue({ settings: updated, credentials: {} }); });
 });
 
 describe('AI domain conversations', () => {
-  it('always creates read-only conversations and applies an explicit mode after native creation', async () => {
+  it('always creates read-only conversations in plan phase and applies explicit mode and phase', async () => {
     const id = useAiStore.getState().create(scope, 'Scale my workload');
     expect(useAiStore.getState().conversations[0].mode).toBe('read_only');
+    expect(useAiStore.getState().conversations[0].phase).toBe('plan');
     await useAiStore.getState().setMode(id, 'ask');
+    await useAiStore.getState().setPhase(id, 'action');
+    expect(useAiStore.getState().conversations[0].mode).toBe('ask');
+    expect(useAiStore.getState().conversations[0].phase).toBe('action');
     await useAiStore.getState().send(id);
     expect(agentTransport.mode).toHaveBeenCalledWith('native', 'ask');
-    expect(vi.mocked(agentTransport.mode).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(agentTransport.send).mock.invocationCallOrder[0]);
+    expect(agentTransport.phase).toHaveBeenCalledWith('native', 'action');
     expect(useAiStore.getState().conversations[0].draft).toBe('');
+  });
+
+  it('rejects action phase while in read-only mode and resets to plan when switching to read-only', async () => {
+    const id = useAiStore.getState().create(scope, 'Explore');
+    await useAiStore.getState().setPhase(id, 'action');
+    expect(useAiStore.getState().conversations[0].phase).toBe('plan');
+    expect(useAiStore.getState().conversations[0].error).toContain('Switch to Ask or Accept');
+
+    await useAiStore.getState().setMode(id, 'ask');
+    await useAiStore.getState().setPhase(id, 'action');
+    expect(useAiStore.getState().conversations[0].phase).toBe('action');
+
+    await useAiStore.getState().setMode(id, 'read_only');
+    expect(useAiStore.getState().conversations[0].mode).toBe('read_only');
+    expect(useAiStore.getState().conversations[0].phase).toBe('plan');
   });
 
   it('Stop during connection creation prevents the deferred message from being sent', async () => {
@@ -43,7 +63,7 @@ describe('AI domain conversations', () => {
     const id = useAiStore.getState().create(scope, 'Create something');
     const send = useAiStore.getState().send(id);
     await useAiStore.getState().stop(id);
-    pending.resolve({ id: 'late', scope, mode: 'read_only', policy: settings().policy });
+    pending.resolve({ id: 'late', scope, mode: 'read_only', phase: 'plan', policy: settings().policy });
     await send;
     expect(agentTransport.send).not.toHaveBeenCalled();
     expect(agentTransport.stop).toHaveBeenCalledWith('late', true);
@@ -86,11 +106,15 @@ describe('AI domain conversations', () => {
     expect(agentTransport.send).toHaveBeenCalledTimes(1);
   });
 
-  it('resource actions attach identity only and pin the action namespace', () => {
+  it('resource actions attach identity only, pin the action namespace, and select default provider and model', () => {
     useClusterStore.setState({ currentContext: 'prod', selectedNamespace: 'all' });
     openAiChat({ resource: { apiVersion: 'v1', kind: 'Secret', name: 'app', namespace: 'apps', uid: 'original', raw: { data: { password: 'private-source-value' }, metadata: { annotations: { private: 'annotation-source-value' } } } } });
     const c = useAiStore.getState().conversations[0];
     expect(c.scope).toEqual(scope);
+    expect(c.providerId).toBe('provider');
+    expect(c.model).toBe('dynamic:latest');
+    expect(c.phase).toBe('plan');
+    expect(c.mode).toBe('read_only');
     expect(c.draft).toContain('UID original');
     expect(JSON.stringify(c)).not.toContain('private-source-value');
     expect(JSON.stringify(c)).not.toContain('annotation-source-value');

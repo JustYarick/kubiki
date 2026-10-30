@@ -22,8 +22,25 @@ async function setup(page: Page) {
         if (command === 'ai_save_settings') { settings = structuredClone(args.settings); return; }
         if (command === 'ai_set_credential') { if (args.apiKey) keys.set(args.providerId, args.apiKey); else keys.delete(args.providerId); return; }
         if (command === 'ai_list_models') return structuredClone(w.__aiHarness.models);
-        if (command === 'ai_create_session') { const id = `native-${++sequence}`; const session = { ...args.request, id, mode: 'read_only', policy }; sessions.set(id, session); return session; }
-        if (command === 'ai_set_mode') { modes.push(args); sessions.get(args.sessionId).mode = args.mode; return; }
+        if (command === 'ai_create_session') { const id = `native-${++sequence}`; const session = { ...args.request, id, mode: 'read_only', phase: 'plan', policy }; sessions.set(id, session); return session; }
+        if (command === 'ai_set_mode') {
+          modes.push(args);
+          const s = sessions.get(args.sessionId);
+          if (s) {
+            s.mode = args.mode;
+            if (args.mode === 'read_only') s.phase = 'plan';
+            return { id: args.sessionId, scope: s.scope, mode: s.mode, phase: s.phase, policy: s.policy };
+          }
+          return { id: args.sessionId, scope: { context: '', namespaces: [], allNamespaces: false }, mode: args.mode, phase: 'plan', policy };
+        }
+        if (command === 'ai_set_phase') {
+          const s = sessions.get(args.sessionId);
+          if (s) {
+            s.phase = args.phase;
+            return { id: args.sessionId, scope: s.scope, mode: s.mode, phase: s.phase, policy: s.policy };
+          }
+          return { id: args.sessionId, scope: { context: '', namespaces: [], allNamespaces: false }, mode: 'read_only', phase: args.phase, policy };
+        }
         if (command === 'ai_stop') { stops.push(args); const s = sessions.get(args.sessionId); s?.finish?.(); if (args.close) sessions.delete(args.sessionId); return; }
         if (command === 'ai_send_message') {
           sends.push(args); const emit = (event: object) => args.onEvent.onmessage(event);
@@ -61,6 +78,8 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   await page.route('https://tracking.invalid/**', route => { trackingRequests++; return route.abort(); });
   const agent = await openAgent(page);
   await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toBeDisabled();
   await expect(agent.getByRole('combobox', { name: 'Conversation AI model' })).toHaveValue('model-from-endpoint');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain Pending Pods');
   await agent.getByRole('button', { name: 'Send', exact: true }).click();
@@ -72,10 +91,15 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   await captureScreenshot(page, { path: 'test-results/ai-agent-chat.png' });
   await agent.getByRole('button', { name: 'Ask', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.modes.at(-1)?.mode)).toBe('ask');
+  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toBeEnabled();
+  await agent.getByRole('button', { name: 'Action', exact: true }).click();
+  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await agent.getByRole('button', { name: 'Accept', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.modes.at(-1)?.mode)).toBe('accept');
   await agent.getByRole('button', { name: 'New AI conversation', exact: true }).click();
   await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: 'Action', exact: true })).toBeDisabled();
   await agent.getByRole('combobox', { name: 'AI conversation scope' }).selectOption('general');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain Kubernetes architecture');
   await agent.getByRole('button', { name: 'Send', exact: true }).click();

@@ -93,6 +93,7 @@ pub fn run() {
             agent_commands::ai_list_models,
             agent_commands::ai_create_session,
             agent_commands::ai_set_mode,
+            agent_commands::ai_set_phase,
             agent_commands::ai_stop,
             agent_commands::ai_send_message,
             update_commands::check_app_update,

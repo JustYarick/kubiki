@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { agentError, agentTransport, desktopAiAvailable } from './transport';
-import { defaultSettings, type AgentEvent, type AgentMode, type AgentScope, type AiSettings, type ChatMessage, type Conversation, type ModelInfo } from './types';
+import { defaultSettings, type AgentEvent, type AgentMode, type AgentPhase, type AgentScope, type AiSettings, type ChatMessage, type Conversation, type ModelInfo } from './types';
 
 interface AiState {
   settings: AiSettings; credentials: Record<string, boolean>; loaded: boolean; loading: boolean; saving: boolean; error?: string;
@@ -9,10 +9,11 @@ interface AiState {
   load: () => Promise<void>; save: (settings: AiSettings) => Promise<void>;
   refreshModels: (providerId: string) => Promise<void>;
   inspectModel: (providerId: string, modelId: string) => Promise<void>;
-  create: (scope: AgentScope, draft?: string, title?: string) => string;
+  create: (scope: AgentScope, draft?: string, title?: string, providerId?: string, model?: string) => string;
   update: (id: string, patch: Partial<Conversation>) => void;
   remove: (id: string) => Promise<void>;
   setMode: (id: string, mode: AgentMode) => Promise<void>;
+  setPhase: (id: string, phase: AgentPhase) => Promise<void>;
   send: (id: string) => Promise<void>;
   stop: (id: string) => Promise<void>;
 }
@@ -95,10 +96,12 @@ export const useAiStore = create<AiState>((set, get) => ({
       if (revision === modelRevisions.get(providerId)) set(state => ({ modelErrors: { ...state.modelErrors, [providerId]: agentError(error) } }));
     }
   },
-  create(scope, draft = '', title = 'New conversation') {
+  create(scope, draft = '', title = 'New conversation', providerId?: string, model?: string) {
     const settings = get().settings;
     const id = crypto.randomUUID();
-    const entry: Conversation = { id, title, scope, providerId: settings.defaultProvider ?? settings.providers[0]?.id ?? '', model: settings.defaultModel ?? '', mode: 'read_only', messages: [], draft, status: 'idle', busy: false, inputTokens: 0, outputTokens: 0 };
+    const pid = providerId || settings.defaultProvider || settings.providers[0]?.id || '';
+    const mid = model || (pid === settings.defaultProvider ? settings.defaultModel ?? '' : '') || settings.defaultModel || '';
+    const entry: Conversation = { id, title, scope, providerId: pid, model: mid, mode: 'read_only', phase: 'plan', messages: [], draft, status: 'idle', busy: false, inputTokens: 0, outputTokens: 0 };
     set(state => ({ conversations: [...state.conversations, entry], activeId: id }));
     return id;
   },
@@ -112,10 +115,28 @@ export const useAiStore = create<AiState>((set, get) => ({
   async setMode(id, mode) {
     const entry = get().conversations.find(c => c.id === id); if (!entry) return;
     try {
-      if (entry.sessionId) await agentTransport.mode(entry.sessionId, mode);
-      // Session creation is deliberately read only; defer native mode changes
-      // until it exists, and never persist elevated modes across a restart.
-      get().update(id, { mode, error: undefined });
+      if (entry.sessionId) {
+        const view = await agentTransport.mode(entry.sessionId, mode);
+        get().update(id, { mode: view.mode, phase: view.phase, error: undefined });
+      } else {
+        const nextPhase = mode === 'read_only' ? 'plan' : entry.phase;
+        get().update(id, { mode, phase: nextPhase, error: undefined });
+      }
+    } catch (error) { get().update(id, { error: agentError(error) }); }
+  },
+  async setPhase(id, phase) {
+    const entry = get().conversations.find(c => c.id === id); if (!entry) return;
+    if (phase === 'action' && entry.mode === 'read_only') {
+      get().update(id, { error: 'Switch to Ask or Accept mode before entering Action phase' });
+      return;
+    }
+    try {
+      if (entry.sessionId) {
+        const view = await agentTransport.phase(entry.sessionId, phase);
+        get().update(id, { phase: view.phase, error: undefined });
+      } else {
+        get().update(id, { phase, error: undefined });
+      }
     } catch (error) { get().update(id, { error: agentError(error) }); }
   },
   async send(id) {
@@ -136,6 +157,8 @@ export const useAiStore = create<AiState>((set, get) => ({
         get().update(id, { sessionId });
         const desiredMode = get().conversations.find(c => c.id === id)?.mode ?? 'read_only';
         if (desiredMode !== 'read_only') await agentTransport.mode(sessionId, desiredMode);
+        const desiredPhase = get().conversations.find(c => c.id === id)?.phase ?? 'plan';
+        if (desiredPhase !== 'plan') await agentTransport.phase(sessionId, desiredPhase);
       }
       const current = get().conversations.find(c => c.id === id); if (!current) { await agentTransport.stop(sessionId, true); return; }
       if (runEpochs.get(id) !== epoch) return;

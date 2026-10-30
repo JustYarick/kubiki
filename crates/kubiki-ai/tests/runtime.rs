@@ -153,10 +153,11 @@ async fn accept_executes_permitted_tool_once_and_returns_receipt_to_model() {
     let (client, requests, task) = provider(vec![call("scale_workload"), final_text()]).await;
     let session = session();
     session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
     let dispatched = Arc::new(AtomicUsize::new(0));
     run(
         session.clone(),
-        1,
+        2,
         client,
         "dynamic-model".into(),
         GenerationOptions::default(),
@@ -218,10 +219,11 @@ async fn plain_chat_omits_tools_and_rejects_unsolicited_tool_calls() {
     let (client, requests, task) = provider(vec![call("scale_workload")]).await;
     let session = session();
     session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
     let dispatched = Arc::new(AtomicUsize::new(0));
     let result = run(
         session,
-        1,
+        2,
         client,
         "model".into(),
         GenerationOptions {
@@ -278,11 +280,12 @@ async fn stream_disconnect_does_not_dispatch_partially_received_tools() {
     let (client, _, task) = provider(vec![fragment]).await;
     let session = session();
     session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
     let dispatched = Arc::new(AtomicUsize::new(0));
     assert!(
         run(
             session,
-            1,
+            2,
             client,
             "model".into(),
             GenerationOptions::default(),
@@ -332,6 +335,7 @@ async fn downgrade_invalidates_authorization_while_a_tool_waits_for_review() {
     let (client, _, server) = provider(vec![call("scale_workload")]).await;
     let session = session();
     session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
     let ready = Arc::new(tokio::sync::Notify::new());
     let proceed = Arc::new(tokio::sync::Notify::new());
     let writes = Arc::new(AtomicUsize::new(0));
@@ -342,7 +346,7 @@ async fn downgrade_invalidates_authorization_while_a_tool_waits_for_review() {
     });
     let running = tokio::spawn(run(
         session.clone(),
-        1,
+        2,
         client,
         "model".into(),
         GenerationOptions::default(),

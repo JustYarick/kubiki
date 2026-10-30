@@ -167,7 +167,7 @@ impl ToolExecutor for KubernetesTools {
             return Err("AI run was cancelled".into());
         }
         // Unknown, unadvertised and malformed tool calls fail closed.
-        if !tool_definitions(&state.policy, state.mode)
+        if !tool_definitions(&state.policy, state.mode, state.phase)
             .iter()
             .any(|t| t.name == call.name)
         {
@@ -496,6 +496,9 @@ impl KubernetesTools {
         emit: &EventSink,
     ) -> Result<Value, String> {
         let state = session.control()?;
+        if state.phase != AgentPhase::Action || state.mode == AgentMode::ReadOnly {
+            return Err("Kubernetes modifications are strictly prohibited during the Plan phase or in Read only mode".into());
+        }
         let (target, yaml, requested_op, replicas) = if call.name == "apply_manifest" {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]

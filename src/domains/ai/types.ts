@@ -1,4 +1,5 @@
 export type AgentMode = 'read_only' | 'ask' | 'accept';
+export type AgentPhase = 'plan' | 'action';
 export type ProviderProtocol = 'responses' | 'openai_compatible' | 'anthropic' | 'ollama';
 export type DataAccess = 'none' | 'metadata' | 'content';
 export type WriteOperation = 'create' | 'update' | 'delete' | 'scale' | 'restart';
@@ -20,7 +21,7 @@ export interface AiSettings {
   options: GenerationOptions; policy: AgentPolicy; instructions: string;
 }
 export interface SettingsView { settings: AiSettings; credentials: Record<string, boolean> }
-export interface SessionView { id: string; scope: AgentScope; mode: AgentMode; policy: AgentPolicy }
+export interface SessionView { id: string; scope: AgentScope; mode: AgentMode; phase: AgentPhase; policy: AgentPolicy }
 export interface ToolCall { id: string; name: string; arguments: Record<string, unknown> }
 export type AgentEvent =
   | { type: 'status'; status: string }
@@ -35,13 +36,14 @@ export interface ChatMessage {
 }
 export interface Conversation {
   id: string; sessionId?: string; title: string; scope: AgentScope;
-  providerId: string; model: string; mode: AgentMode; messages: ChatMessage[];
+  providerId: string; model: string; mode: AgentMode; phase: AgentPhase; messages: ChatMessage[];
   draft: string; status: string; error?: string; busy: boolean; invalidated?: boolean;
   inputTokens: number; outputTokens: number;
 }
 
 export const WRITE_OPERATIONS: WriteOperation[] = ['create', 'update', 'delete', 'scale', 'restart'];
 export const MODE_LABELS: Record<AgentMode, string> = { read_only: 'Read only', ask: 'Ask', accept: 'Accept' };
+export const PHASE_LABELS: Record<AgentPhase, string> = { plan: 'Plan', action: 'Action' };
 
 export function defaultPolicy(): AgentPolicy {
   return { resources: true, events: true, logs: false, metrics: true, clusterResources: false,

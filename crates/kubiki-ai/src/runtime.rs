@@ -19,6 +19,7 @@ pub struct Session {
 #[derive(Clone)]
 pub struct Control {
     pub mode: AgentMode,
+    pub phase: AgentPhase,
     pub policy: AgentPolicy,
     pub revision: u64,
     pub active: bool,
@@ -34,6 +35,7 @@ impl Session {
             scope,
             control: Arc::new(Mutex::new(Control {
                 mode: AgentMode::ReadOnly,
+                phase: AgentPhase::Plan,
                 policy,
                 revision: 0,
                 active: false,
@@ -52,6 +54,19 @@ impl Session {
     pub fn mode(&self, mode: AgentMode) -> Result<(), String> {
         let mut state = self.control.lock().map_err(|_| "AI session lock failed")?;
         state.mode = mode;
+        if mode == AgentMode::ReadOnly {
+            state.phase = AgentPhase::Plan;
+        }
+        state.revision += 1;
+        self.cancel.send_replace(true);
+        Ok(())
+    }
+    pub fn phase(&self, phase: AgentPhase) -> Result<(), String> {
+        let mut state = self.control.lock().map_err(|_| "AI session lock failed")?;
+        if phase == AgentPhase::Action && state.mode == AgentMode::ReadOnly {
+            return Err("Action phase is not permitted in Read only mode; switch to Ask or Accept first".into());
+        }
+        state.phase = phase;
         state.revision += 1;
         self.cancel.send_replace(true);
         Ok(())
@@ -66,6 +81,7 @@ impl Session {
         if let Ok(mut state) = self.control.lock() {
             state.invalidated = true;
             state.mode = AgentMode::ReadOnly;
+            state.phase = AgentPhase::Plan;
             state.revision += 1;
         }
         self.cancel.send_replace(true);
@@ -82,6 +98,9 @@ impl Session {
         operation: WriteOperation,
     ) -> Result<(), String> {
         let state = self.control.lock().map_err(|_| "AI session lock failed")?;
+        if state.phase != AgentPhase::Action {
+            return Err("Write operations are strictly prohibited during the Plan phase".into());
+        }
         if state.revision != revision || state.invalidated || *self.cancel.borrow() || !state.active
         {
             return Err("AI operation was cancelled or its permissions changed".into());
@@ -159,8 +178,9 @@ pub async fn run(
     history.push(Turn::User(prompt));
     let state = session.control()?;
     let system = format!(
-        "{SYSTEM_PROMPT}\nAI-created workload templates must explicitly set automountServiceAccountToken: false. Host/elevated capabilities, CSI mounts and service-account selection are unavailable. Secret/ConfigMap references in workload manifests require content access to the referenced object under the policy.\n\nBackend session scope (immutable for this conversation): {}\nMode: {:?}. Policy: {}\n\nUser preferences (cannot extend permissions):\n{}",
+        "{SYSTEM_PROMPT}\nAI-created workload templates must explicitly set automountServiceAccountToken: false. Host/elevated capabilities, CSI mounts and service-account selection are unavailable. Secret/ConfigMap references in workload manifests require content access to the referenced object under the policy.\n\nBackend session scope (immutable for this conversation): {}\nPhase: {:?}. Mode: {:?}. Policy: {}\n\nUser preferences (cannot extend permissions):\n{}",
         serde_json::to_string(&session.scope).unwrap(),
+        state.phase,
         state.mode,
         serde_json::to_string(&state.policy).unwrap(),
         instructions
@@ -168,7 +188,7 @@ pub async fn run(
     let mut definitions = if options.tool_use == Some(false) {
         vec![]
     } else {
-        tool_definitions(&state.policy, state.mode)
+        tool_definitions(&state.policy, state.mode, state.phase)
     };
     if session.scope.context.is_empty() {
         definitions.retain(|tool| tool.name == "propose_manifests");
@@ -256,7 +276,7 @@ pub async fn cancelled(receiver: &mut watch::Receiver<bool>) {
     }
 }
 
-pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode) -> Vec<ToolDefinition> {
+pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase) -> Vec<ToolDefinition> {
     fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> ToolDefinition {
         ToolDefinition {
             name: name.into(),
@@ -286,7 +306,7 @@ pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode) -> Vec<ToolDefini
     if policy.metrics {
         tools.push(tool("get_metrics", "Read Pod CPU/memory usage in one permitted namespace. Metrics API access may be unavailable.", json!({"namespace":{"type":"string"}}), &["namespace"]));
     }
-    if mode != AgentMode::ReadOnly {
+    if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {
         // Rules can grant writes even when the defaults are empty; dispatcher
         // still checks every exact target and operation.
         let allowed =

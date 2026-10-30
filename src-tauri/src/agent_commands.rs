@@ -316,6 +316,7 @@ pub struct SessionView {
     id: String,
     scope: AgentScope,
     mode: AgentMode,
+    phase: AgentPhase,
     policy: AgentPolicy,
 }
 
@@ -391,6 +392,7 @@ pub async fn ai_create_session(
         id,
         scope: request.scope,
         mode: AgentMode::ReadOnly,
+        phase: AgentPhase::Plan,
         policy: settings.policy,
     })
 }
@@ -401,8 +403,36 @@ pub fn ai_set_mode(
     mode: AgentMode,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, AgentManager>,
-) -> Result<(), String> {
-    manager.get(&session_id, window.label())?.session.mode(mode)
+) -> Result<SessionView, String> {
+    let managed = manager.get(&session_id, window.label())?;
+    managed.session.mode(mode)?;
+    let control = managed.session.control()?;
+    Ok(SessionView {
+        id: session_id,
+        scope: managed.session.scope.clone(),
+        mode: control.mode,
+        phase: control.phase,
+        policy: control.policy,
+    })
+}
+
+#[tauri::command]
+pub fn ai_set_phase(
+    session_id: String,
+    phase: AgentPhase,
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, AgentManager>,
+) -> Result<SessionView, String> {
+    let managed = manager.get(&session_id, window.label())?;
+    managed.session.phase(phase)?;
+    let control = managed.session.control()?;
+    Ok(SessionView {
+        id: session_id,
+        scope: managed.session.scope.clone(),
+        mode: control.mode,
+        phase: control.phase,
+        policy: control.policy,
+    })
 }
 
 #[tauri::command]

@@ -9,8 +9,8 @@ import { toast } from '../../../state/notifications_store';
 import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
 import { desktopAiAvailable } from '../transport';
-import { MODE_LABELS, type AgentMode, type ChatMessage, type Conversation } from '../types';
-import { AgentSettings } from './AgentSettings';
+import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type ChatMessage, type Conversation } from '../types';
+import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
 import '../ai.css';
 
 const statusLabels: Record<string, string> = {
@@ -22,6 +22,9 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
   const state = useAiStore();
   const conversation = state.conversations.find(c => c.id === state.activeId);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<AgentSettingsHandle>(null);
+  const [settingsStatus, setSettingsStatus] = useState<{ message?: string; error?: string; saving?: boolean }>({});
+
   useEffect(() => { void useAiStore.getState().load(); }, []);
   useEffect(() => () => {
     // Closing the workspace tab stops runs; hiding it preserves conversation state.
@@ -37,12 +40,23 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
       if (profile.id !== c.providerId || model !== c.model) state.update(c.id, { providerId: profile.id, model });
     }
   }, [state.settings, state.update]);
+
   const add = (create = false) => state.create(currentAgentScope(), create ? 'Create an application in Kubernetes. ' : '', create ? 'Create with AI' : undefined);
+
+  async function saveSettingsModal() {
+    if (settingsRef.current) {
+      const ok = await settingsRef.current.save();
+      if (ok) {
+        toast.success('Settings saved');
+      }
+    }
+  }
+
   return <section className="ai-workspace" aria-label="AI Agent workspace">
     <aside className="ai-conversations" aria-label="AI conversations">
       <div className="ai-form-line"><strong><Bot size={15} aria-hidden="true" />AI Agent</strong><Button size="sm" aria-label="New AI conversation" onClick={() => add()}><Plus size={13} aria-hidden="true" /></Button></div>
       <div className="ai-conversation-list">{state.conversations.map(c => <div key={c.id} className={`ai-conversation-row ${c.id === state.activeId ? 'is-active' : ''}`}>
-        <button type="button" aria-pressed={c.id === state.activeId} onClick={() => useAiStore.setState({ activeId: c.id })}><span>{c.title}</span><small>{c.scope.context || 'General chat'} · {MODE_LABELS[c.mode]}</small></button>
+        <button type="button" aria-pressed={c.id === state.activeId} onClick={() => useAiStore.setState({ activeId: c.id })}><span>{c.title}</span><small>{c.scope.context || 'General chat'} · {PHASE_LABELS[c.phase]} · {MODE_LABELS[c.mode]}</small></button>
         <Button variant="ghost" size="sm" aria-label={`Delete conversation ${c.title}`} onClick={() => void state.remove(c.id)}><Trash2 size={12} aria-hidden="true" /></Button>
       </div>)}</div>
       <p className="ai-help">Conversations stay in memory. Permissions and provider connections are saved on this device.</p>
@@ -62,10 +76,26 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
         <Bot size={30} aria-hidden="true" /><h2>Your Kubernetes assistant</h2>
         <p>Ask a question, investigate a failing resource, or describe the application you want to create.</p>
         <div className="ai-form-line"><Button variant="primary" onClick={() => add()}><Plus size={13} aria-hidden="true" />New conversation</Button><Button onClick={() => add(true)}><WandSparkles size={13} aria-hidden="true" />Create with AI</Button></div>
-        <p className="ai-help"><Shield size={13} aria-hidden="true" />Starts in Read only. Secret contents, ConfigMap contents and logs are excluded by default.</p>
+        <p className="ai-help"><Shield size={13} aria-hidden="true" />Starts in Plan and Read only. Secret contents, ConfigMap contents and logs are excluded by default.</p>
       </div>}
     </div>
-    <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="AI Agent settings" width={780} footer={<Button variant="primary" onClick={() => setSettingsOpen(false)}>Done</Button>}><AgentSettings /></Modal>
+    <Modal
+      open={settingsOpen}
+      onClose={() => setSettingsOpen(false)}
+      title="AI Agent settings"
+      width={780}
+      footer={<div className="flex items-center justify-between w-full">
+        <span className={`text-xs truncate max-w-[420px] ${settingsStatus.error ? 'text-[var(--status-danger)]' : 'text-emerald-400'}`} role="status">
+          {settingsStatus.message || settingsStatus.error}
+        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button size="sm" variant="primary" loading={settingsStatus.saving} disabled={!desktopAiAvailable() || settingsStatus.saving} onClick={() => void saveSettingsModal()}><Check size={12} aria-hidden="true" />Save</Button>
+          <Button size="sm" variant="secondary" onClick={() => setSettingsOpen(false)}>Done</Button>
+        </div>
+      </div>}
+    >
+      <AgentSettings ref={settingsRef} onStatusChange={setSettingsStatus} />
+    </Modal>
   </section>;
 }
 
@@ -80,37 +110,39 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   const nearBottom = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
   const [modePending, setModePending] = useState(false);
+
   useEffect(() => { if (c.providerId && !models && desktopAiAvailable() && !loading && !modelError) void refresh(c.providerId); }, [c.providerId, models, loading, modelError, refresh]);
   useEffect(() => {
     if (visible && nearBottom.current && transcript.current) transcript.current.scrollTop = c.messages.length ? transcript.current.scrollHeight : 0;
   }, [c.messages, c.status, visible]);
   useEffect(() => { nearBottom.current = true; if (visible) input.current?.focus(); }, [c.id, visible]);
-  async function mode(next: AgentMode) { setModePending(true); try { await useAiStore.getState().setMode(c.id, next); } finally { setModePending(false); } }
+
+  async function mode(next: AgentMode) {
+    setModePending(true);
+    try { await useAiStore.getState().setMode(c.id, next); }
+    finally { setModePending(false); }
+  }
+
+  async function phase(next: AgentPhase) {
+    setModePending(true);
+    try { await useAiStore.getState().setPhase(c.id, next); }
+    finally { setModePending(false); }
+  }
+
   const selectedModel = models?.find(m => m.id === c.model);
   useEffect(() => { if (selectedModel && c.model) void useAiStore.getState().inspectModel(c.providerId, c.model); }, [c.providerId, c.model, selectedModel]);
+
   return <>
     <header className="ai-chat-header">
-      <div className="ai-scope"><Shield size={14} aria-hidden="true" /><span title={c.scope.context}>{c.scope.context || 'General chat · no cluster'}</span><span>{c.scope.allNamespaces ? 'All namespaces' : c.scope.namespaces.join(', ') || 'No namespaces'}</span></div>
-      <div role="group" aria-label="AI execution mode" className="ai-modes">{(Object.entries(MODE_LABELS) as [AgentMode, string][]).map(([value, label]) => <button key={value} type="button" aria-pressed={c.mode === value} disabled={modePending || c.invalidated} onClick={() => void mode(value)}>{label}</button>)}</div>
+      <div className="ai-scope">
+        <Shield size={14} aria-hidden="true" />
+        <span title={c.scope.context}>{c.scope.context || 'General chat · no cluster'}</span>
+        <span>{c.scope.allNamespaces ? 'All namespaces' : c.scope.namespaces.join(', ') || 'No namespaces'}</span>
+      </div>
+      <span className="ai-grow" />
       <Button size="sm" variant="ghost" onClick={onSettings}><Settings size={13} aria-hidden="true" />Permissions</Button>
     </header>
-    <div className="ai-model-bar">
-      <label className="ai-field">Scope<Select className="ide-select" aria-label="AI conversation scope" disabled={!!c.sessionId || c.busy} value={c.scope.context ? 'cluster' : 'general'} onChange={e => update(c.id, { scope: e.target.value === 'general' ? { context: '', namespaces: [], allNamespaces: false } : currentAgentScope() })}>
-        <option value="general">General chat · no cluster</option><option value="cluster" disabled={!currentAgentScope().context}>Cluster: {c.scope.context || currentAgentScope().context || 'none'}</option>
-      </Select></label>
-      <label className="ai-field">Provider<Select className="ide-select" aria-label="Conversation AI provider" disabled={!!c.sessionId || c.busy} value={c.providerId} onChange={e => update(c.id, { providerId: e.target.value, model: e.target.value === settings.defaultProvider ? settings.defaultModel ?? '' : '' })}>
-        <option value="">Configure a provider</option>{settings.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </Select></label>
-      <label className="ai-field ai-grow">Model<Select className="ide-select" aria-label="Conversation AI model" disabled={!!c.sessionId || c.busy} value={c.model} onChange={e => update(c.id, { model: e.target.value })}>
-        <option value="">Select an available model</option>
-        {c.model && !models?.some(m => m.id === c.model) && <option value={c.model}>{c.model} (refresh to verify)</option>}
-        {models?.map(m => <option key={m.id} value={m.id}>{m.name === m.id ? m.id : `${m.name} · ${m.id}`}</option>)}
-      </Select></label>
-      <Button size="sm" aria-label="Refresh conversation models" loading={loading} disabled={!c.providerId || !desktopAiAvailable()} onClick={() => void refresh(c.providerId)}><RefreshCw size={12} aria-hidden="true" /></Button>
-    </div>
-    {modelError && <p role="alert" className="ai-error">{modelError}</p>}
-    {selectedModel?.tools === false && <p className="ai-notice">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
-    <div className="ai-mode-description">{c.mode === 'read_only' ? 'Read only: inspect permitted data and propose changes.' : c.mode === 'ask' ? 'Ask: review every permitted change before it runs.' : 'Accept: permitted changes run automatically.'} <span>Cluster and namespace scope stays pinned to this conversation.</span></div>
+
     <div ref={transcript} className="ai-transcript kubiki-scrollbar" role="log" aria-label="AI conversation messages" aria-live="off" onScroll={e => { const el = e.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {!c.messages.length && <div className="ai-empty-chat"><h2>{c.title === 'New conversation' ? 'What would you like to investigate?' : c.title}</h2>
         <p>Ask about Kubernetes, describe a deployment, or request evidence from this conversation's cluster.</p>
@@ -118,7 +150,84 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       </div>}
       {c.messages.map(message => <Message key={message.id} message={message} conversation={c} />)}
     </div>
+
     <footer className="ai-composer">
+      <div className="ai-composer-config">
+        <div className="ai-compact-inputs">
+          <label className="ai-compact-field">
+            <span className="sr-only">Scope</span>
+            <Select className="ide-select ai-compact-select" aria-label="AI conversation scope" disabled={!!c.sessionId || c.busy} value={c.scope.context ? 'cluster' : 'general'} onChange={e => update(c.id, { scope: e.target.value === 'general' ? { context: '', namespaces: [], allNamespaces: false } : currentAgentScope() })}>
+              <option value="general">General chat · no cluster</option>
+              <option value="cluster" disabled={!currentAgentScope().context}>Cluster: {c.scope.context || currentAgentScope().context || 'none'}</option>
+            </Select>
+          </label>
+          <label className="ai-compact-field">
+            <span className="sr-only">Provider</span>
+            <Select className="ide-select ai-compact-select" aria-label="Conversation AI provider" disabled={!!c.sessionId || c.busy} value={c.providerId} onChange={e => update(c.id, { providerId: e.target.value, model: e.target.value === settings.defaultProvider ? settings.defaultModel ?? '' : '' })}>
+              <option value="">Configure provider</option>
+              {settings.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          </label>
+          <label className="ai-compact-field ai-grow">
+            <span className="sr-only">Model</span>
+            <Select className="ide-select ai-compact-select" aria-label="Conversation AI model" disabled={!!c.sessionId || c.busy} value={c.model} onChange={e => update(c.id, { model: e.target.value })}>
+              <option value="">Select model</option>
+              {c.model && !models?.some(m => m.id === c.model) && <option value={c.model}>{c.model} (refresh to verify)</option>}
+              {models?.map(m => <option key={m.id} value={m.id}>{m.name === m.id ? m.id : `${m.name} · ${m.id}`}</option>)}
+            </Select>
+          </label>
+          <Button size="sm" aria-label="Refresh conversation models" loading={loading} disabled={!c.providerId || !desktopAiAvailable()} onClick={() => void refresh(c.providerId)}><RefreshCw size={12} aria-hidden="true" /></Button>
+        </div>
+
+        <div className="ai-composer-axes">
+          <div role="group" aria-label="AI execution phase" className="ai-phases">
+            {(Object.entries(PHASE_LABELS) as [AgentPhase, string][]).map(([value, label]) => {
+              const disabled = (value === 'action' && c.mode === 'read_only') || modePending || c.invalidated;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={c.phase === value}
+                  disabled={disabled}
+                  title={value === 'action' && c.mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
+                  onClick={() => void phase(value)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div role="group" aria-label="AI execution mode" className="ai-modes">
+            {(Object.entries(MODE_LABELS) as [AgentMode, string][]).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={c.mode === value}
+                disabled={modePending || c.invalidated}
+                onClick={() => void mode(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="ai-mode-description">
+        {c.phase === 'plan'
+          ? (c.mode === 'read_only'
+              ? 'Plan (Read only): Safely explore cluster and propose plans. Cluster changes are strictly blocked.'
+              : c.mode === 'ask'
+              ? 'Plan: Inspection and proposal mode. Switch to Action to review and apply proposed changes.'
+              : 'Plan: Inspection and proposal mode. Switch to Action to execute permitted changes.')
+          : (c.mode === 'ask'
+              ? 'Action (Ask): Changes require explicit native confirmation for each operation.'
+              : 'Action (Accept): Permitted changes execute automatically within policy bounds.')}
+      </div>
+
+      {modelError && <p role="alert" className="ai-error">{modelError}</p>}
+      {selectedModel?.tools === false && <p className="ai-notice">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
       {c.error && <p role="alert" className="ai-error">{c.error}</p>}
       {c.invalidated && <Button size="sm" onClick={() => useAiStore.getState().create(c.scope, c.draft, c.title)}>Start a new conversation</Button>}
       {!settings.providers.length && <p className="ai-help">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
