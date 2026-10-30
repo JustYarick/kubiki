@@ -106,7 +106,7 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.commands.filter((c: any) => c.command === 'ai_create_session').at(-1)?.args.request.scope.context)).toBe('');
   await agent.getByRole('button', { name: 'New AI conversation', exact: true }).click();
   await page.evaluate(() => { (window as any).__aiHarness.models = [{ id: 'newly-installed-local-model', name: 'New local model', contextWindow: 8192, maxOutputTokens: null, tools: false }]; });
-  await agent.getByRole('button', { name: 'Refresh conversation models' }).click();
+  await agent.getByRole('combobox', { name: 'Conversation AI model' }).click();
   await expect(agent.getByRole('combobox', { name: 'Conversation AI model' }).locator('option[value="newly-installed-local-model"]')).toHaveCount(1);
   await agent.getByRole('combobox', { name: 'Conversation AI model' }).selectOption('newly-installed-local-model');
   await expect(agent).toContainText('advertises no tool support');

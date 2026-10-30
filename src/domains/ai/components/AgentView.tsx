@@ -170,13 +170,20 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
           </label>
           <label className="ai-compact-field ai-grow">
             <span className="sr-only">Model</span>
-            <Select className="ide-select ai-compact-select" aria-label="Conversation AI model" disabled={!!c.sessionId || c.busy} value={c.model} onChange={e => update(c.id, { model: e.target.value })}>
-              <option value="">Select model</option>
+            <Select
+              className="ide-select ai-compact-select"
+              aria-label="Conversation AI model"
+              disabled={!!c.sessionId || c.busy}
+              value={c.model}
+              onChange={e => update(c.id, { model: e.target.value })}
+              onPointerDown={() => { if (c.providerId && desktopAiAvailable() && !loading) void refresh(c.providerId); }}
+              onFocus={() => { if (c.providerId && desktopAiAvailable() && !loading) void refresh(c.providerId); }}
+            >
+              <option value="">{loading ? 'Loading models…' : 'Select model'}</option>
               {c.model && !models?.some(m => m.id === c.model) && <option value={c.model}>{c.model} (refresh to verify)</option>}
               {models?.map(m => <option key={m.id} value={m.id}>{m.name === m.id ? m.id : `${m.name} · ${m.id}`}</option>)}
             </Select>
           </label>
-          <Button size="sm" aria-label="Refresh conversation models" loading={loading} disabled={!c.providerId || !desktopAiAvailable()} onClick={() => void refresh(c.providerId)}><RefreshCw size={12} aria-hidden="true" /></Button>
         </div>
 
         <div className="ai-composer-axes">
