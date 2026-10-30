@@ -157,6 +157,7 @@
 .ai-tool { border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-secondary); overflow: hidden; }
 .ai-tool.has-error { border-color: var(--status-danger); }
 .ai-tool.is-running { border-color: #f59e0b; }
+.ai-tool.is-awaiting-approval { border-color: rgba(245, 158, 11, 0.6); box-shadow: 0 0 16px rgba(245, 158, 11, 0.12); }
 .ai-tool-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--bg-surface); font-size: calc(11px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); }
 .ai-tool-content { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .ai-tool-executing-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 4px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); font-size: calc(11px * var(--ui-factor)); color: var(--text-primary); }

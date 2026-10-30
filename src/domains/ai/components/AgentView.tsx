@@ -40,7 +40,36 @@ import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentS
 import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
 import { getToolIntent } from '../tool_intents';
 import { getClusterTone } from '../../../core/cluster_color';
+import { stringify } from 'yaml';
 import '../ai.css';
+
+function getSavedModel(providerId: string, fallbackDefault?: string | null): string {
+  if (!providerId) return '';
+  try {
+    const saved = localStorage.getItem(`kubiki.ai.model.${providerId}`);
+    if (saved) return saved;
+  } catch {}
+  return fallbackDefault ?? '';
+}
+
+function formatManifestOrDiff(rawDiff: string, appliedYaml?: string): { code: string; language: 'yaml' | 'json' } {
+  if (appliedYaml && appliedYaml.trim()) {
+    return { code: appliedYaml.trim(), language: 'yaml' };
+  }
+  let text = (rawDiff || '').trim();
+  if (text.startsWith('CREATE object:\n')) {
+    text = text.slice('CREATE object:\n'.length).trim();
+  }
+  if (text.startsWith('{') && text.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(text);
+      return { code: stringify(parsed).trim(), language: 'yaml' };
+    } catch {
+      // keep text
+    }
+  }
+  return { code: text, language: 'yaml' };
+}
 
 const statusLabels: Record<string, string> = {
   idle: 'Ready', connecting: 'Connecting', running: 'Working', awaiting_approval: 'Waiting for your review',
@@ -146,7 +175,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   const [clusterUserChanged, setClusterUserChanged] = useState(false);
   const settings = useAiStore(s => s.settings);
   const [providerId, setProviderId] = useState(settings.defaultProvider ?? settings.providers[0]?.id ?? '');
-  const [model, setModel] = useState(settings.defaultModel ?? '');
+  const [model, setModel] = useState(() => getSavedModel(settings.defaultProvider ?? settings.providers[0]?.id ?? '', settings.defaultModel));
   const [phase, setPhase] = useState<AgentPhase>('plan');
   const [mode, setMode] = useState<AgentMode>('read_only');
   const [draft, setDraft] = useState('');
@@ -164,7 +193,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
     if (!providerId && (settings.defaultProvider || settings.providers[0]?.id)) {
       const pid = settings.defaultProvider ?? settings.providers[0]?.id ?? '';
       setProviderId(pid);
-      if (!model) setModel(pid === settings.defaultProvider ? settings.defaultModel ?? '' : '');
+      if (!model) setModel(getSavedModel(pid, pid === settings.defaultProvider ? settings.defaultModel : ''));
     }
   }, [settings, providerId, model]);
 
@@ -178,6 +207,22 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
       void refresh(providerId);
     }
   }, [providerId, models, modelsLoading, modelsError, refresh]);
+
+  useEffect(() => {
+    if (models && models.length > 0 && providerId) {
+      if (!model || !models.some(m => m.id === model)) {
+        const preferred = getSavedModel(providerId, providerId === settings.defaultProvider ? settings.defaultModel : '');
+        if (preferred && models.some(m => m.id === preferred)) {
+          setModel(preferred);
+        } else if (!model && models[0]) {
+          const autoModel = models[0].id;
+          setModel(autoModel);
+          try { localStorage.setItem(`kubiki.ai.model.${providerId}`, autoModel); } catch {}
+          void useAiStore.getState().saveDefaults(providerId, autoModel);
+        }
+      }
+    }
+  }, [models, model, providerId, settings]);
 
   async function handleStart() {
     if (!draft.trim() || sending) return;
@@ -196,7 +241,8 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
           allNamespaces: cur.context === selectedCluster ? cur.allNamespaces : true,
         };
       }
-      const id = useAiStore.getState().create(scope, draft, undefined, providerId, model, phase, mode);
+      const chosenModel = model || getSavedModel(providerId, settings.defaultModel);
+      const id = useAiStore.getState().create(scope, draft, undefined, providerId, chosenModel, phase, mode);
       await useAiStore.getState().send(id);
     } finally {
       setSending(false);
@@ -268,8 +314,11 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
                 aria-label="Conversation AI provider"
                 value={providerId}
                 onChange={e => {
-                  setProviderId(e.target.value);
-                  setModel(e.target.value === settings.defaultProvider ? settings.defaultModel ?? '' : '');
+                  const pid = e.target.value;
+                  setProviderId(pid);
+                  const preferred = getSavedModel(pid, pid === settings.defaultProvider ? settings.defaultModel : '');
+                  setModel(preferred);
+                  void useAiStore.getState().saveDefaults(pid, preferred || null);
                 }}
               >
                 <option value="">Configure provider</option>
@@ -282,7 +331,14 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
                 className="ide-select ai-compact-select"
                 aria-label="Conversation AI model"
                 value={model}
-                onChange={e => setModel(e.target.value)}
+                onChange={e => {
+                  const nextModel = e.target.value;
+                  setModel(nextModel);
+                  if (providerId) {
+                    try { localStorage.setItem(`kubiki.ai.model.${providerId}`, nextModel); } catch {}
+                    void useAiStore.getState().saveDefaults(providerId, nextModel);
+                  }
+                }}
                 onPointerDown={() => { if (providerId && desktopAiAvailable() && !modelsLoading) void refresh(providerId); }}
                 onFocus={() => { if (providerId && desktopAiAvailable() && !modelsLoading) void refresh(providerId); }}
               >
@@ -523,7 +579,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
           if (isAnswerToQuestion) return null;
           return <Message key={message.id} message={message} conversation={c} />;
         })}
-        {c.status === 'awaiting_approval' && mutationPending ? (
+        {c.status === 'awaiting_approval' && mutationPending && !c.messages.some(m => m.role === 'tool' && !m.result) ? (
           <ActionApprovalCard
             request={mutationPending}
             onResolve={approved => void resolveMutation(approved)}
@@ -594,7 +650,12 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
               aria-label="Conversation AI provider"
               disabled={!!c.sessionId || c.busy}
               value={c.providerId}
-              onChange={e => update(c.id, { providerId: e.target.value, model: e.target.value === settings.defaultProvider ? settings.defaultModel ?? '' : '' })}
+              onChange={e => {
+                const nextPid = e.target.value;
+                const preferred = getSavedModel(nextPid, nextPid === settings.defaultProvider ? settings.defaultModel : '');
+                update(c.id, { providerId: nextPid, model: preferred });
+                void useAiStore.getState().saveDefaults(nextPid, preferred || null);
+              }}
             >
               <option value="">Configure provider</option>
               {settings.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -607,7 +668,14 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
               aria-label="Conversation AI model"
               disabled={!!c.sessionId || c.busy}
               value={c.model}
-              onChange={e => update(c.id, { model: e.target.value })}
+              onChange={e => {
+                const nextModel = e.target.value;
+                update(c.id, { model: nextModel });
+                if (c.providerId) {
+                  try { localStorage.setItem(`kubiki.ai.model.${c.providerId}`, nextModel); } catch {}
+                  void useAiStore.getState().saveDefaults(c.providerId, nextModel);
+                }
+              }}
               onPointerDown={() => { if (c.providerId && desktopAiAvailable() && !loading) void refresh(c.providerId); }}
               onFocus={() => { if (c.providerId && desktopAiAvailable() && !loading) void refresh(c.providerId); }}
             >
@@ -717,6 +785,7 @@ function ActionApprovalCard({
   const title = simple?.title ?? (yaml ? 'Review and Approve YAML Mutation' : deleting ? 'Approve Resource Deletion' : 'Action Approval Required');
   const summary = simple ? review : details?.kind === 'batch' ? `Perform ${details.steps.length} operations on the selected resources.` : details?.steps[0]?.summary ?? review;
   const diffContent = yaml && details.steps[0]?.diff ? details.steps[0].diff : '';
+  const formatted = formatManifestOrDiff(diffContent);
 
   return (
     <div className="ai-action-approval-card my-3 p-4 rounded-lg border-2 border-amber-500/40 bg-[var(--bg-secondary)] shadow-lg animate-fade-in max-w-[900px] mx-auto">
@@ -742,12 +811,12 @@ function ActionApprovalCard({
         {summary}
       </p>
 
-      {diffContent ? (
+      {formatted.code ? (
         <div className="mb-3 rounded border border-[var(--border-default)] overflow-hidden">
           <CodeEditor
             ariaLabel="YAML Mutation Diff"
-            value={diffContent}
-            language="yaml"
+            value={formatted.code}
+            language={formatted.language}
             readOnly={true}
             height="min(38vh, 300px)"
             copyable={true}
@@ -1076,19 +1145,25 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
       return <QuestionCard message={m} conversation={c} />;
     }
 
+    const mutationPending = useMutationConfirmStore(s => s.pending);
+    const resolveMutation = useMutationConfirmStore(s => s.resolve);
+
     const result = m.result;
     const proposal = result?.proposal === true && typeof result.yaml === 'string';
     const error = typeof result?.error === 'string' ? result.error : undefined;
-    const isRunning = !result && c.busy;
+    const isAwaitingApproval = !result && c.status === 'awaiting_approval' && !!mutationPending;
+    const isRunning = !result && c.busy && !isAwaitingApproval;
     const args = (m.call?.arguments || {}) as Record<string, any>;
     const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
     const intent = getToolIntent(m.call?.name ?? '', args);
 
     return (
-      <article className={`ai-tool ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''}`} aria-label={`AI tool ${m.call?.name}`}>
+      <article className={`ai-tool ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''} ${isAwaitingApproval ? 'is-awaiting-approval' : ''}`} aria-label={`AI tool ${m.call?.name}`}>
         <div className="ai-tool-header">
           <div className="flex items-center gap-2 font-mono">
-            {isRunning ? (
+            {isAwaitingApproval ? (
+              <ShieldAlert size={12} className="text-amber-400 animate-pulse" aria-hidden="true" />
+            ) : isRunning ? (
               <RefreshCw size={12} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
             ) : error ? (
               <AlertCircle size={12} className="text-[var(--status-danger)]" aria-hidden="true" />
@@ -1107,8 +1182,10 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
             )}
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span className="ai-tool-status font-medium">
-              {isRunning
+            <span className={`ai-tool-status font-medium ${isAwaitingApproval ? 'text-amber-400 font-semibold' : ''}`}>
+              {isAwaitingApproval
+                ? 'Awaiting your approval'
+                : isRunning
                 ? 'Executing…'
                 : error
                 ? 'Denied or failed'
@@ -1128,22 +1205,83 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
 
         <div className="ai-tool-content">
           {/* Codex-Style Command Rationale Banner */}
-          <div className={`ai-command-rationale ${intent.destructive ? 'is-destructive' : ''}`}>
+          <div className={`ai-command-rationale ${intent.destructive || isAwaitingApproval ? 'is-destructive' : ''}`}>
             <div className="ai-command-rationale-header">
               <div className="flex items-center gap-1.5 font-medium">
-                <ShieldAlert size={12} className={intent.destructive ? 'text-rose-400' : 'text-sky-400'} aria-hidden="true" />
+                <ShieldAlert size={12} className={intent.destructive ? 'text-rose-400' : isAwaitingApproval ? 'text-amber-400' : 'text-sky-400'} aria-hidden="true" />
                 <span>Command Intent & Rationale</span>
               </div>
-              {intent.destructive && (
+              {isAwaitingApproval ? (
+                <span className="ai-destructive-pill text-amber-300 bg-amber-500/20 border-amber-500/40">Action Confirmation Required</span>
+              ) : intent.destructive ? (
                 <span className="ai-destructive-pill">Destructive action</span>
-              )}
+              ) : null}
             </div>
             <p className="ai-command-rationale-title">{intent.title}</p>
             <p className="ai-command-rationale-desc">{intent.description}</p>
           </div>
 
-          {/* Unified Execution Result */}
-          {isRunning ? (
+          {/* Unified Execution / Approval Result */}
+          {isAwaitingApproval && mutationPending ? (
+            <div className="space-y-3 pt-1">
+              {mutationPending.simple ? (
+                <p className="text-xs text-[var(--text-secondary)]">{mutationPending.review}</p>
+              ) : (
+                (() => {
+                  const appliedYaml = typeof m.call?.arguments?.yaml === 'string' ? m.call.arguments.yaml : undefined;
+                  const diffRaw = mutationPending.details?.steps[0]?.diff || '';
+                  const formatted = formatManifestOrDiff(diffRaw, appliedYaml);
+                  const isDeleting = mutationPending.details?.steps.some(step => step.operation === 'DELETE') ?? false;
+
+                  return (
+                    <div className="space-y-2">
+                      {formatted.code ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--text-secondary)]">
+                            <span>{appliedYaml ? 'Proposed YAML manifest to apply:' : 'Resource change preview:'}</span>
+                            <span className="font-mono text-[10px] text-[var(--text-muted)]">YAML</span>
+                          </div>
+                          <div className="rounded border border-[var(--border-default)] overflow-hidden">
+                            <CodeEditor
+                              ariaLabel="Cluster mutation preview"
+                              value={formatted.code}
+                              language={formatted.language}
+                              readOnly={true}
+                              height="min(38vh, 280px)"
+                              copyable={true}
+                              variant="field"
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-[var(--border-subtle)]">
+                        <span className="text-xs text-[var(--text-secondary)] font-medium">
+                          {isDeleting ? 'Confirm deletion of this resource?' : 'Approve applying this mutation to the cluster?'}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void resolveMutation(false)}
+                          >
+                            Decline
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={isDeleting ? 'danger' : 'primary'}
+                            onClick={() => void resolveMutation(true)}
+                          >
+                            {isDeleting ? 'Confirm & Delete' : 'Approve & Apply'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+          ) : isRunning ? (
             <div className="ai-tool-executing-banner">
               <RefreshCw size={13} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
               <span>Executing operation on Kubernetes cluster…</span>

@@ -9,6 +9,7 @@ interface AiState {
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
   load: () => Promise<void>; save: (settings: AiSettings) => Promise<void>;
+  saveDefaults: (defaultProvider?: string | null, defaultModel?: string | null) => Promise<void>;
   refreshModels: (providerId: string) => Promise<void>;
   inspectModel: (providerId: string, modelId: string) => Promise<void>;
   create: (scope: AgentScope, draft?: string, title?: string, providerId?: string, model?: string, phase?: AgentPhase, mode?: AgentMode) => string;
@@ -110,6 +111,20 @@ export const useAiStore = create<AiState>((set, get) => ({
       const view = await agentTransport.settings(); set({ settings: view.settings, credentials: view.credentials });
     } catch (error) { set({ error: agentError(error) }); throw error; }
     finally { set({ saving: false }); }
+  },
+  async saveDefaults(defaultProvider?: string | null, defaultModel?: string | null) {
+    const cur = get().settings;
+    const next = {
+      ...cur,
+      defaultProvider: defaultProvider !== undefined ? defaultProvider : cur.defaultProvider,
+      defaultModel: defaultModel !== undefined ? defaultModel : cur.defaultModel,
+    };
+    try {
+      await agentTransport.save(next);
+      set({ settings: next });
+    } catch (e) {
+      console.warn('Failed to save default AI model/provider:', e);
+    }
   },
   async refreshModels(providerId) {
     for (const key of inspectedModels) if (key.startsWith(`${providerId}:`)) inspectedModels.delete(key);
