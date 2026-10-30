@@ -31,7 +31,7 @@ import { retainResourceKinds } from '../state/resource_requirements';
 
 const NO_EVENTS = new Map<string, ResourceItem>();
 
-export function TopologyView({ item, namespace }: { item?: ResourceItem; namespace?: string }) {
+export function TopologyView({ item, namespace, visible = true }: { item?: ResourceItem; namespace?: string; visible?: boolean }) {
   const updateInterval = useUiStore(s => topologyRendering(s).updateIntervalMs);
   const resources = useResourceStore(useShallow((s) => ({ ...s.resources, Event: NO_EVENTS })));
   const syncMode = useResourceStore((s) => s.syncMode);
@@ -57,15 +57,15 @@ export function TopologyView({ item, namespace }: { item?: ResourceItem; namespa
   const diagramNamespace = scope === 'resource' ? item?.namespace ?? (item?.kind === 'Namespace' ? item.name : undefined)
     : graphScope === 'all' ? 'all' : diagramNamespaces.length ? namespaceScope(diagramNamespaces) : undefined;
   const outsideScope = graphScope === 'all' ? selectedNamespace !== 'all' : (diagramNamespaces.length ? diagramNamespaces : diagramNamespace ? [diagramNamespace] : []).some(name => namespaceIsOutsideScope(name, selectedNamespace, syncMode));
-  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, !outsideScope && !!graphScope && scope !== 'overview', updateInterval);
+  const { graph, notice, loading } = useTopologyGraph(resources, graphScope, item, depth, visible && !outsideScope && !!graphScope && scope !== 'overview', updateInterval);
   const requiredKinds = useMemo(() => outsideScope ? [] : topologyResourceKinds(graphScope, item, depth, graph), [graph, graphScope, item, depth, outsideScope]);
   const requirementKey = JSON.stringify(requiredKinds);
   const requestNamespace = diagramNamespace ?? selectedNamespace;
   useEffect(() => {
-    if (!context || !requiredKinds.length) return;
+    if (!visible || !context || !requiredKinds.length) return;
     return retainResourceKinds(context, JSON.parse(requirementKey) as ResourceKind[], requestNamespace);
-  }, [context, requirementKey, requestNamespace]);
-  const helm = useHelmGraph(diagramNamespace, !outsideScope && !!graphScope && scope !== 'overview');
+  }, [visible, context, requirementKey, requestNamespace]);
+  const helm = useHelmGraph(diagramNamespace, visible && !outsideScope && !!graphScope && scope !== 'overview');
   const namespaceLoaded = (name: string) => !namespaceIsOutsideScope(name, selectedNamespace, syncMode);
   const synchronizing = syncMode === 'watch' && Object.values(watchStates).some((state) => state?.phase === 'connecting' || state?.phase === 'syncing');
   const chooseScope = !graphScope || scope === 'overview';

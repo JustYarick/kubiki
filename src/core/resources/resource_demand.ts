@@ -5,6 +5,7 @@ import { inNamespaceScope, mergeNamespaceScopes, namespaceNames } from './namesp
 import type { ResourceGraph } from './relationships';
 import { resourceKey } from './identity';
 import { gitOpsReferences } from './gitops';
+import { areaHasInspector, workspaceArea } from '../workspace_areas';
 
 export const OVERVIEW_KINDS: readonly ResourceKind[] = ['Pod', 'Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Service', 'Node', 'Namespace', 'Event'];
 const WORKLOADS = new Set(['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController', 'Job', 'CronJob']);
@@ -162,8 +163,9 @@ export function resourceDemand(input: {
       for (const dependency of details[kind] ?? []) request(dependency, scope);
     }
   };
-  const active = input.tabs.find(tab => tab.id === input.activeTabId) ?? input.tabs[0];
-  const visible = input.tabs.filter(tab => tab === active || tab.id === input.splitTabId);
+  const active = input.tabs.find(tab => tab.id === input.activeTabId);
+  const area = active ? workspaceArea(active) : 'explorer';
+  const visible = input.tabs.filter(tab => tab === active || tab.id === input.splitTabId && workspaceArea(tab) === area);
   for (const tab of visible) {
     if (tab.context && tab.context !== input.context) continue;
     if (tab.type === 'overview') {
@@ -182,7 +184,7 @@ export function resourceDemand(input: {
       add(tab.kind, tab.type === 'resource-detail' && inScope, scope);
     }
   }
-  if (!input.inspectorCollapsed && input.selectedItem && inNamespaceScope(selectedNamespace, input.selectedItem.namespace)) {
+  if (areaHasInspector(area) && !input.inspectorCollapsed && input.selectedItem && inNamespaceScope(selectedNamespace, input.selectedItem.namespace)) {
     const item = input.selectedItem;
     const scope = item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? selectedNamespace;
     add(item.kind, true, scope);

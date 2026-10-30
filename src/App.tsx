@@ -23,6 +23,7 @@ import { useClusterStore } from './state/cluster_store';
 import { useResourceStore } from './state/resource_store';
 import { useUiStore } from './state/ui_store';
 import { useWorkspaceStore } from './state/workspace_store';
+import { activeWorkspaceArea, areaHasInspector } from './core/workspace_areas';
 import { usePfStore } from './state/pf_store';
 import { useDockStore } from './state/dock_store';
 import { k8s } from './providers/k8s_provider';
@@ -236,7 +237,11 @@ export default function App() {
         useUiStore.getState().setPaletteOpen(!useUiStore.getState().paletteOpen);
       } else if (key === 'b') {
         e.preventDefault();
-        useUiStore.getState().toggleSidebar();
+        const workspace = useWorkspaceStore.getState();
+        if (activeWorkspaceArea(workspace) !== 'explorer') {
+          workspace.activateArea('explorer');
+          useUiStore.setState({ sidebarCollapsed: false });
+        } else useUiStore.getState().toggleSidebar();
       } else if (key === 'j') {
         e.preventDefault();
         toggleDock();
@@ -253,13 +258,14 @@ export default function App() {
   }, [toggleDock]);
 
   const activeTabType = useWorkspaceStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.type);
-  const showInspector = !inspectorCollapsed;
+  const area = useWorkspaceStore(activeWorkspaceArea);
+  const showInspector = areaHasInspector(area) && !inspectorCollapsed;
   useEffect(() => {
     if (activeTabType === 'overview' && !inspectorPinned) useUiStore.setState({ inspectorCollapsed: true });
   }, [activeTabType, inspectorPinned]);
   const factor = uiFactor(uiScale);
   const logicalViewportWidth = viewportWidth / factor;
-  const showSidebar = !sidebarCollapsed;
+  const showSidebar = area === 'explorer' && !sidebarCollapsed;
   const compact = logicalViewportWidth < 760;
   const overlaySidebar = compact && showInspector;
   useEffect(() => {
@@ -290,14 +296,10 @@ export default function App() {
         <ActivityBar />
 
         {/* Left Tool Window (Cluster Explorer) */}
-        {showSidebar && (
-          <>
-            <div data-testid="explorer-panel" style={{ width: uiPixels(Math.min(sidebarWidth, logicalViewportWidth - 56)) }} className={`shrink-0 min-h-0 ${overlaySidebar ? "absolute left-[calc(40px*var(--ui-factor))] top-0 bottom-0 z-30 shadow-xl border-r border-[var(--border-default)]" : ""}`}>
-              <Sidebar />
-            </div>
-            {!overlaySidebar && <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d / factor)} />}
-          </>
-        )}
+        <div data-testid="explorer-panel" hidden={!showSidebar} style={{ width: uiPixels(Math.min(sidebarWidth, logicalViewportWidth - 56)) }} className={`shrink-0 min-h-0 ${overlaySidebar ? "absolute left-[calc(40px*var(--ui-factor))] top-0 bottom-0 z-30 shadow-xl border-r border-[var(--border-default)]" : ""}`}>
+          <Sidebar />
+        </div>
+        {showSidebar && !overlaySidebar && <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d / factor)} />}
 
         {/* Central Workspace: Tabs + Breadcrumbs + DataGrid/Editor + Bottom Dock */}
         <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">

@@ -1,4 +1,4 @@
-import { RegisteredPanel } from '../../core/workspace_panels';
+import { RegisteredPanel, openWorkspacePanel, usePanelRegistry } from '../../core/workspace_panels';
 import { useCustomResources } from '../../providers/use_custom_resources';
 import { useRetainedOverviewMetrics } from '../../providers/use_overview_metrics';
 import { customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
@@ -31,6 +31,7 @@ import { refreshResourceWatches } from '../../state/resource_watch';
 import { ResourceLoading } from '../ui/ResourceLoading';
 import { RESOURCE_TYPES, namespaceIsOutsideScope } from '../../core/resources/resource_types';
 import { matchesResourceRef } from '../../core/resources/identity';
+import { activeWorkspaceArea, workspaceArea } from '../../core/workspace_areas';
 
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
@@ -42,6 +43,8 @@ export const WorkspaceArea: React.FC<{
   onHeaderHeight?: (height: number) => void;
 }> = ({ onSelectContext, onHeaderHeight }) => {
   const { tabs, activeTabId, splitTabId } = useWorkspaceStore();
+  const area = useWorkspaceStore(activeWorkspaceArea);
+  const panel = usePanelRegistry(state => state.panels.find(panel => panel.id === area));
   const context = useClusterStore(state => state.currentContext);
   const namespace = useClusterStore(state => state.selectedNamespace);
   useRetainedOverviewMetrics(context, namespace === 'all' ? null : namespace, tabs.some(tab => tab.type === 'overview'));
@@ -60,8 +63,8 @@ export const WorkspaceArea: React.FC<{
     return () => observer.disconnect();
   }, [factor, onHeaderHeight]);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
-  const splitTab = splitTabId && splitTabId !== activeTab?.id ? tabs.find((t) => t.id === splitTabId) : null;
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  const splitTab = splitTabId && splitTabId !== activeTab?.id ? tabs.find((t) => t.id === splitTabId && workspaceArea(t) === area) : null;
 
   const [visited, setVisited] = useState<Set<string>>(new Set());
   useEffect(() => { setVisited((previous) => {
@@ -70,13 +73,17 @@ export const WorkspaceArea: React.FC<{
     if (next.size === previous.size && [...next].every((id) => previous.has(id))) return previous;
     return next;
   }); }, [tabs, activeTab?.id, splitTab?.id]);
-  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'analysis' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension')));
+  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'analysis' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension' || tab.type === 'topology')));
   return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
     <div ref={headerRef} className="shrink-0 flex flex-col">
       <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
     </div>
     <div className="flex-1 min-h-0 min-w-0 relative grid overflow-hidden" style={{ gridTemplateColumns: splitTab ? `minmax(0, ${splitRatio}fr) auto minmax(0, ${1 - splitRatio}fr)` : 'minmax(0, 1fr)', gridTemplateRows: 'minmax(0, 1fr)' }}>
-      {!activeTab && <TabContent />}
+      {!activeTab && (area === 'explorer' ? <TabContent /> : <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-[var(--text-secondary)]">
+        <h2 className="text-sm font-semibold text-[var(--text-primary)]">{panel?.title ?? 'Workspace'}</h2>
+        <p className="text-xs">{panel?.context === 'cluster' && !context ? 'Choose a cluster in the top bar to open this section.' : 'No open tabs in this section.'}</p>
+        {panel && <button type="button" disabled={panel.context === 'cluster' && !context} className="px-3 py-1.5 rounded border border-[var(--border-default)] text-xs hover:bg-[var(--bg-hover)] disabled:opacity-40" onClick={() => openWorkspacePanel(panel)}>Open {panel.title}</button>}
+      </div>)}
       {mounted.map((tab) => {
         const split = tab.id === splitTab?.id;
         const visible = tab.id === activeTab?.id || split;
@@ -85,7 +92,7 @@ export const WorkspaceArea: React.FC<{
         // no control ends up hidden behind it.
         const underOverlay = tab.type === 'resource-list';
         return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className={cx('min-h-0 min-w-0 flex-col overflow-hidden', !underOverlay && 'workspace-overlay-inset')} style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
-          {split && <div className="h-7 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center gap-2 text-xs text-[var(--text-muted)]"><span className="truncate flex-1">{tab.title}</span><span className="shrink-0">Split View</span><IconButton icon={X} size="sm" aria-label="Close split view" tooltip="Close split view" onClick={() => { useWorkspaceStore.getState().setSplit(null); document.getElementById(`workspace-tab-${encodeURIComponent(activeTab.id)}`)?.focus(); }} /></div>}
+          {split && <div className="h-7 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center gap-2 text-xs text-[var(--text-muted)]"><span className="truncate flex-1">{tab.title}</span><span className="shrink-0">Split View</span><IconButton icon={X} size="sm" aria-label="Close split view" tooltip="Close split view" onClick={() => { useWorkspaceStore.getState().setSplit(null); document.getElementById(`workspace-tab-${encodeURIComponent(activeTab?.id ?? '')}`)?.focus(); }} /></div>}
           <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
         </div>;
       })}

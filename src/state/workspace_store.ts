@@ -14,6 +14,13 @@ import { useYamlDraftStore, yamlDraftKey } from './yaml_draft_store';
 import type { ResourceRef } from '../core/resources/resource_types';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 import type { DockSession } from './dock_store';
+import { activeWorkspaceArea, workspaceArea } from '../core/workspace_areas';
+
+interface AreaSelection {
+  activeTabId: string;
+  splitTabId: string | null;
+  splitDirection: 'horizontal' | 'vertical';
+}
 
 export type WorkspaceTabType =
   | 'extension'
@@ -54,11 +61,14 @@ export interface WorkspaceTab {
 
 interface WorkspaceState {
   tabs: WorkspaceTab[];
+  activeArea: string;
+  areaSelections: Record<string, AreaSelection>;
   activeTabId: string;
   splitTabId: string | null;
   splitDirection: 'horizontal' | 'vertical';
 
   /* Actions */
+  activateArea: (area: string) => void;
   openTab: (tab: Omit<WorkspaceTab, 'id'> & { id?: string }) => void;
   openOverview: () => void;
   openTerminalSession: (session: DockSession) => void;
@@ -83,6 +93,20 @@ interface WorkspaceState {
   reorderTabs: (sourceIndex: number, destIndex: number) => void;
 }
 
+function selectArea(state: WorkspaceState, area: string, tabId?: string): Partial<WorkspaceState> {
+  const previousArea = activeWorkspaceArea(state);
+  const areaSelections = { ...state.areaSelections, [previousArea]: {
+    activeTabId: state.activeTabId, splitTabId: state.splitTabId, splitDirection: state.splitDirection,
+  } };
+  const saved = areaSelections[area];
+  const tabs = state.tabs.filter(tab => workspaceArea(tab) === area);
+  const activeTabId = tabId ?? tabs.find(tab => tab.id === saved?.activeTabId)?.id ?? tabs[tabs.length - 1]?.id ?? '';
+  let splitTabId = saved?.splitTabId ?? null;
+  if (splitTabId === activeTabId) splitTabId = saved?.activeTabId !== activeTabId ? saved?.activeTabId ?? null : null;
+  if (!tabs.some(tab => tab.id === splitTabId) || splitTabId === activeTabId) splitTabId = null;
+  return { activeArea: area, areaSelections, activeTabId, splitTabId, splitDirection: saved?.splitDirection ?? 'vertical' };
+}
+
 export function restoreWorkspace(persisted: unknown, current: WorkspaceState): WorkspaceState {
   const saved = persisted as Partial<WorkspaceState> | undefined;
   const tabs = (saved?.tabs ?? current.tabs).map(tab => {
@@ -92,7 +116,11 @@ export function restoreWorkspace(persisted: unknown, current: WorkspaceState): W
     return { ...tab, type: 'resource-detail' as const, kind: 'HelmRelease' as const, apiVersion: 'helm.sh/v1', uid,
       resource: { context: tab.context ?? '', group: 'helm.sh', version: 'v1', kind: 'HelmRelease', namespace: tab.namespace, name: tab.name, uid } };
   });
-  return { ...current, ...saved, tabs };
+  const restored = { ...current, ...saved, tabs };
+  const area = activeWorkspaceArea(restored);
+  const selection = restored.areaSelections[area];
+  const split = tabs.find(tab => tab.id === selection?.splitTabId && tab.id !== restored.activeTabId && workspaceArea(tab) === area);
+  return { ...restored, activeArea: area, splitTabId: split?.id ?? null, splitDirection: selection?.splitDirection ?? restored.splitDirection };
 }
 
 function clearDraftForTab(tab?: WorkspaceTab) {
@@ -108,9 +136,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set, get) => ({
       tabs: [],
+      activeArea: 'explorer',
+      areaSelections: {},
       activeTabId: '',
       splitTabId: null,
       splitDirection: 'vertical',
+
+      activateArea: area => set(state => selectArea(state, area)),
 
       openTab: (tabInput) => {
         const { tabs } = get();
@@ -134,10 +166,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           id,
         };
 
-        set({
-          tabs: [...tabs, newTab],
-          activeTabId: id,
-        });
+        set(state => ({ tabs: [...tabs, newTab], ...selectArea({ ...state, tabs: [...tabs, newTab] }, workspaceArea(newTab), id) }));
       },
 
       openOverview: () => get().openTab({ id: 'tab-overview', type: 'overview', title: 'Overview' }),
@@ -145,7 +174,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const id = `tab-${session.id}`;
         // Each terminal owns its process; two local shells must never collapse into one tab.
         if (get().tabs.some(tab => tab.id === id)) { get().setActiveTab(id); return; }
-        set(state => ({ tabs: [...state.tabs, { id, type: session.analysis ? 'analysis' : 'terminal-session', title: session.title, session: { ...session, id } }], activeTabId: id }));
+        const tab: WorkspaceTab = { id, type: session.analysis ? 'analysis' : 'terminal-session', title: session.title, session: { ...session, id } };
+        set(state => ({ tabs: [...state.tabs, tab], ...selectArea({ ...state, tabs: [...state.tabs, tab] }, 'explorer', id) }));
       },
       openGitOpsDashboard: (family) => get().openTab({ id: `tab-${family}-dashboard`, type: `${family}-dashboard`, title: `${family === 'flux' ? 'Flux' : 'Argo CD'} Overview` }),
       openHelm: (section) => get().openTab({ id: `tab-helm-${section}`, type: `helm-${section}`, title: section === 'releases' ? 'Helm Releases' : 'Helm Repositories' }),
@@ -169,10 +199,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             subtitle: definition?.group ?? namespace ?? 'all namespaces',
             kind: effectiveKind,
           };
-          set({
-            tabs: [...tabs, newTab],
-            activeTabId: id,
-          });
+          set(state => ({ tabs: [...tabs, newTab], ...selectArea({ ...state, tabs: [...tabs, newTab] }, 'explorer', id) }));
         }
       },
 
@@ -249,70 +276,54 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       }),
 
       closeTab: (id) => {
-        const { tabs, activeTabId, splitTabId } = get();
-        const target = tabs.find((t) => t.id === id);
+        const state = get();
+        const target = state.tabs.find(tab => tab.id === id);
         if (!target) return;
         clearDraftForTab(target);
-
-        const newTabs = tabs.filter((t) => t.id !== id);
-        if (newTabs.length === 0) {
-          set({
-            tabs: [],
-            activeTabId: '',
-            splitTabId: null,
-          });
-          return;
-        }
-
-        let nextActive = activeTabId;
-        if (activeTabId === id) {
-          const idx = tabs.findIndex((t) => t.id === id);
-          const candidate = newTabs[Math.max(0, idx - 1)] || newTabs[0];
-          nextActive = candidate.id;
-        }
-
-        set({
-          tabs: newTabs,
-          activeTabId: nextActive,
-          splitTabId: splitTabId === id || splitTabId === nextActive ? null : splitTabId,
+        const tabs = state.tabs.filter(tab => tab.id !== id);
+        const siblings = state.tabs.filter(tab => workspaceArea(tab) === workspaceArea(target));
+        const index = siblings.findIndex(tab => tab.id === id);
+        const nextActive = siblings[index - 1]?.id ?? siblings[index + 1]?.id ?? '';
+        set({ tabs,
+          activeTabId: state.activeTabId === id ? nextActive : state.activeTabId,
+          activeArea: activeWorkspaceArea(state),
+          splitTabId: state.splitTabId === id || (state.splitTabId === nextActive && state.activeTabId === id) ? null : state.splitTabId,
         });
       },
 
       closeOtherTabs: (id) => {
-        const { tabs } = get();
-        tabs.filter((t) => t.id !== id).forEach(clearDraftForTab);
-        const kept = tabs.filter((t) => t.id === id);
-        set({
-          tabs: kept,
-          activeTabId: id,
-          splitTabId: null,
-        });
+        const state = get();
+        const target = state.tabs.find(tab => tab.id === id);
+        if (!target) return;
+        const area = workspaceArea(target);
+        const removed = state.tabs.filter(tab => workspaceArea(tab) === area && tab.id !== id);
+        removed.forEach(clearDraftForTab);
+        const tabs = state.tabs.filter(tab => !removed.includes(tab));
+        set({ tabs, ...selectArea({ ...state, tabs }, area, id), splitTabId: null });
       },
 
       closeTabsToRight: (id) => {
-        const { tabs } = get();
-        const idx = tabs.findIndex((t) => t.id === id);
-        if (idx === -1) return;
-        tabs.slice(idx + 1).forEach(clearDraftForTab);
-        const kept = tabs.filter((_, i) => i <= idx);
-        set({
-          tabs: kept,
-          activeTabId: id,
-          splitTabId: get().splitTabId !== id && kept.some((t) => t.id === get().splitTabId) ? get().splitTabId : null,
-        });
+        const state = get();
+        const index = state.tabs.findIndex(tab => tab.id === id);
+        if (index === -1) return;
+        const area = workspaceArea(state.tabs[index]);
+        const removed = state.tabs.filter((tab, i) => i > index && workspaceArea(tab) === area);
+        removed.forEach(clearDraftForTab);
+        const tabs = state.tabs.filter(tab => !removed.includes(tab));
+        set({ tabs, ...selectArea({ ...state, tabs }, area, id) });
       },
 
       closeAllTabs: () => {
-        const { tabs } = get();
-        tabs.forEach(clearDraftForTab);
-        set({
-          tabs: [],
-          activeTabId: '',
-          splitTabId: null,
-        });
+        const state = get();
+        const area = activeWorkspaceArea(state);
+        state.tabs.filter(tab => workspaceArea(tab) === area).forEach(clearDraftForTab);
+        set({ tabs: state.tabs.filter(tab => workspaceArea(tab) !== area), activeArea: area, activeTabId: '', splitTabId: null });
       },
 
-      setActiveTab: (activeTabId) => set((state) => ({ activeTabId, splitTabId: state.splitTabId === activeTabId ? state.activeTabId === activeTabId ? null : state.activeTabId : state.splitTabId })),
+      setActiveTab: (id) => set(state => {
+        const tab = state.tabs.find(tab => tab.id === id);
+        return tab ? selectArea(state, workspaceArea(tab), id) : {};
+      }),
 
       togglePinTab: (id) => {
         set((state) => ({
@@ -328,7 +339,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       setSplit: (splitTabId, direction = 'vertical') => {
         const state = get();
-        const primary = splitTabId === state.activeTabId ? state.tabs.find((tab) => tab.id !== splitTabId)?.id : state.activeTabId;
+        const area = activeWorkspaceArea(state);
+        if (splitTabId && !state.tabs.some(tab => tab.id === splitTabId && workspaceArea(tab) === area)) return;
+        const primary = splitTabId === state.activeTabId ? state.tabs.find(tab => tab.id !== splitTabId && workspaceArea(tab) === area)?.id : state.activeTabId;
         set({ activeTabId: primary ?? state.activeTabId, splitTabId: primary ? splitTabId : null, splitDirection: direction });
       },
 
@@ -337,7 +350,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         if (splitTabId) {
           set({ splitTabId: null });
         } else {
-          const target = tabId || tabs.find((t) => t.id !== activeTabId)?.id;
+          const area = activeWorkspaceArea(get());
+          const target = tabId || tabs.find(t => t.id !== activeTabId && workspaceArea(t) === area)?.id;
           if (target) get().setSplit(target, 'vertical');
         }
       },
@@ -357,6 +371,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       partialize: (s) => ({
         tabs: s.tabs.map((t) => ({ ...t, item: undefined, session: undefined })), // Diagnostic snapshots and PTY sessions stay in memory.
         activeTabId: s.activeTabId,
+        activeArea: activeWorkspaceArea(s),
+        areaSelections: { ...s.areaSelections, [activeWorkspaceArea(s)]: { activeTabId: s.activeTabId, splitTabId: s.splitTabId, splitDirection: s.splitDirection } },
       }),
     }
   )

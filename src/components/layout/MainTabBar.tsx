@@ -21,10 +21,11 @@ import { FixedMenu, Popover, type MenuItem } from '../ui/Dropdown';
 import { Tooltip, IconButton } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
 import type { ResourceKind } from '../../types/k8s';
+import { activeWorkspaceArea, workspaceArea } from '../../core/workspace_areas';
 
 export const MainTabBar: React.FC = () => {
   const {
-    tabs,
+    tabs: allTabs,
     activeTabId,
     setActiveTab,
     closeTab,
@@ -36,6 +37,8 @@ export const MainTabBar: React.FC = () => {
     toggleSplit,
     openResourceList,
   } = useWorkspaceStore();
+  const area = useWorkspaceStore(activeWorkspaceArea);
+  const tabs = allTabs.filter(tab => workspaceArea(tab) === area);
 
   const tabRefs = useRef(new Map<string, HTMLDivElement>());
   const setActiveKind = useResourceStore((s) => s.setActiveKind);
@@ -220,7 +223,7 @@ export const MainTabBar: React.FC = () => {
       </div>
 
       {/* Right Tab Controls: New Tab (+), Split Pane, Overflow list */}
-      <div className="flex items-center px-1.5 gap-0.5 bg-[var(--bg-secondary)] border-l border-[var(--border-default)] shrink-0">
+      {area === 'explorer' && <div className="flex items-center px-1.5 gap-0.5 bg-[var(--bg-secondary)] border-l border-[var(--border-default)] shrink-0">
         {/* Split Editor Toggle */}
         <Tooltip label={splitTabId ? 'Close Split View' : 'Split View Right'} delay={300}>
           <IconButton
@@ -271,7 +274,7 @@ export const MainTabBar: React.FC = () => {
             </div>
           )}
         </Popover>
-      </div>
+      </div>}
 
       {/* Tab Context Menu */}
       {contextMenu && (

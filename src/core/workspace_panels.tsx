@@ -6,6 +6,7 @@ import { useWorkspaceStore, type WorkspaceTab } from '../state/workspace_store';
 import { useClusterStore } from '../state/cluster_store';
 import type { ResourceItem } from '../types/k8s';
 import { ResourceLoading } from '../components/ui/ResourceLoading';
+import { workspaceArea } from './workspace_areas';
 
 export interface WorkspacePanelProps { tab: WorkspaceTab; visible: boolean; item?: ResourceItem }
 /** Registration for bundled features. This does not load or grant permissions to external code. */
@@ -26,7 +27,7 @@ const extensions: WorkspacePanel = { id: 'extensions', title: 'Extensions', icon
 const topology: WorkspacePanel = {
   id: 'topology', title: 'Cluster topology', icon: GitBranch, context: 'cluster', tabType: 'topology',
   open: () => useWorkspaceStore.getState().openTopology(),
-  component: ({ tab, item }) => <TopologyView item={item} namespace={tab.namespace} />,
+  component: ({ tab, item, visible }) => <TopologyView item={item} namespace={tab.namespace} visible={visible} />,
 };
 export const usePanelRegistry = create<{ panels: readonly WorkspacePanel[] }>(() => ({ panels: [topology, agent, extensions] }));
 export function registerWorkspacePanel(panel: WorkspacePanel): () => void {
@@ -36,9 +37,14 @@ export function registerWorkspacePanel(panel: WorkspacePanel): () => void {
   return () => usePanelRegistry.setState(state => ({ panels: state.panels.filter(entry => entry !== panel) }));
 }
 export function openWorkspacePanel(panel: WorkspacePanel) {
-  if (panel.open) { panel.open(); return; }
   const context = panel.context === 'cluster' ? useClusterStore.getState().currentContext : null;
   if (panel.context === 'cluster' && !context) return;
+  const workspace = useWorkspaceStore.getState();
+  const candidates = workspace.tabs.filter(tab => workspaceArea(tab) === panel.id && (!context || tab.context === context));
+  const remembered = workspace.areaSelections[panel.id]?.activeTabId;
+  const existing = candidates.find(tab => tab.id === workspace.activeTabId) ?? candidates.find(tab => tab.id === remembered) ?? candidates[candidates.length - 1];
+  if (existing) { workspace.setActiveTab(existing.id); return; }
+  if (panel.open) { panel.open(); return; }
   useWorkspaceStore.getState().openTab({ id: `panel:${panel.id}:${encodeURIComponent(context ?? '')}`, type: 'extension', panelId: panel.id, title: panel.title, context });
 }
 export function RegisteredPanel(props: WorkspacePanelProps) {

@@ -71,7 +71,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/cluster_store.ts` | Available contexts, active context, namespace scope, and discovered resource availability. |
 | `src/state/resource_store.ts` | Resource cache and synchronization state consumed by views. |
 | `src/state/resource_watch.ts` | Starting, stopping, refreshing, and rescoping resource watch sessions. |
-| `src/state/workspace_store.ts` | Workspace tabs, split panes, and resource navigation. |
+| `src/state/workspace_store.ts` | Workspace sections, remembered documents/splits per section, and resource navigation. |
 | `src/state/dock_store.ts` | Bottom-panel sessions and selection. |
 | `src/state/ui_store.ts` | Appearance, layout, developer mode, selected AI agent and starting instructions. |
 | `src/state/yaml_draft_store.ts` | In-memory editor drafts keyed by context and resource identity. |
@@ -234,6 +234,14 @@ the same registry. Trusted application components receive a workspace tab,
 visibility and an optional resolved Kubernetes resource. External panels receive
 the public SDK contract in an opaque-origin iframe. Unknown or removed
 registrations show an unavailable-panel state instead of a resource table.
+
+`src/core/workspace_areas.ts` assigns documents to top-level sections: Explorer,
+Topology and each registered panel. Switching sections hides the Explorer tree
+outside Explorer and restores each section's selected document and split. Tab
+closing actions stay within their section. Visited AI and topology panels remain
+mounted to retain conversation/scope state; hidden topology suspends its graph
+worker and data requirements. AI hides the resource inspector. Explorer tree
+filter state survives section changes.
 
 `src/extensions/registry.tsx` maps enabled extension contributions to those adapters;
 `ExtensionPanel.tsx` owns iframe CSP and the validated message bridge. Developer

@@ -27,6 +27,12 @@ and Stop. Agent Rust tests do not call paid providers or a live cluster. Core
 an actual write. These fixtures do not establish real model quality or OS keyring
 behavior on every platform.
 
+`workspace_areas.test.ts` covers section selection, split restoration, scoped tab
+closing, persisted workspace migration and resource demand from hidden views.
+`sidebar_navigation.spec.ts` checks whole-workspace switching, tree filters,
+topology scope and AI drafts. AI browser scenarios also verify that section
+navigation preserves a running conversation without stopping it.
+
 The suite uses two workers across independent files. Tests within one file stay
 sequential. On a small machine, use `pnpm test:e2e --workers=1`.
 The default browser is Chromium; `PLAYWRIGHT_BROWSER=webkit` selects WebKit when

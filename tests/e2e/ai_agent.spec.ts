@@ -143,6 +143,10 @@ test('resource entry points create conversations with pinned scope and YAML prop
   await expect(agent).toContainText('Proposal · not executed');
   await captureScreenshot(page, { path: 'test-results/ai-agent-proposal.png' });
   await expect(agent.getByRole('button', { name: 'Ask agent to apply proposal' })).toHaveCount(0);
+  await expect(page.getByTestId('explorer-panel')).not.toBeVisible();
+  await expect(page.getByTestId('inspector-panel')).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'AI Agent', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Cluster Explorer', exact: true }).click();
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Services(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'Create with AI', exact: true }).click();
   await expect(agent.getByRole('textbox', { name: 'Message AI agent' })).toHaveValue(/Create a Service in Kubernetes/);
@@ -150,16 +154,25 @@ test('resource entry points create conversations with pinned scope and YAML prop
   expect(errors).toEqual([]);
 });
 
-test('Stop interrupts a running conversation and the chat fits a narrow split pane', async ({ page }) => {
+test('a running conversation survives section navigation, Stop interrupts it and the chat adapts to narrow workspaces', async ({ page }) => {
   const errors = await setup(page); const agent = await openAgent(page);
   await page.evaluate(() => { (window as any).__aiHarness.hold = true; });
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Investigate this cluster');
   await agent.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(agent).toContainText('Collecting permitted evidence');
+  await page.getByRole('button', { name: 'Cluster Explorer', exact: true }).click();
+  await expect(agent).not.toBeVisible();
+  await expect(page.getByTestId('explorer-panel')).toBeVisible();
+  await page.getByRole('button', { name: 'AI Agent', exact: true }).click();
+  await expect(agent).toContainText('Collecting permitted evidence');
+  expect(await page.evaluate(() => (window as any).__aiHarness.stops.length)).toBe(0);
   await agent.getByRole('button', { name: 'Stop', exact: true }).click();
   await expect(agent.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.stops.length)).toBe(1);
   await page.setViewportSize({ width: 900, height: 800 });
+  await expect(agent.getByRole('complementary', { name: 'AI conversations', exact: true })).toBeVisible();
+  expect(await agent.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 740, height: 800 });
   await expect(agent.getByRole('combobox', { name: 'Active AI conversation' })).toBeVisible();
   expect(await agent.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   expect(errors).toEqual([]);
