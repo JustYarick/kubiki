@@ -57,6 +57,32 @@
 .details-scaler { display: flex; align-items: center; justify-content: space-between; gap: var(--detail-gap); }
 .details-scaler > div { min-width: 0; gap: var(--detail-gap); }
 
+/* Each Pod container appears once, with live usage next to its state and actions. */
+.pod-containers-list { display: flex; flex-direction: column; gap: var(--detail-gap); min-width: 0; }
+.container-card { min-width: 0; }
+.container-card-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: var(--detail-gap); padding: calc(4px * var(--ui-factor)) var(--detail-inset); background: var(--bg-secondary); }
+.container-card-toggle { grid-column: 1; grid-row: 1; display: flex; align-items: center; flex-wrap: wrap; gap: var(--detail-gap); min-width: 0; min-height: calc(26px * var(--ui-factor)); text-align: left; padding: calc(2px * var(--ui-factor)); border-radius: calc(3px * var(--ui-factor)); cursor: pointer; }
+.container-card-toggle:hover { background: var(--bg-hover); }
+.container-card-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.container-card-toggle > svg { flex-shrink: 0; color: var(--text-secondary); }
+.container-card-name { min-width: 0; font: 600 calc(11px * var(--ui-factor))/1.45 var(--font-mono); color: var(--text-primary); overflow-wrap: anywhere; }
+.container-card-role { flex-shrink: 0; padding: calc(1px * var(--ui-factor)) calc(5px * var(--ui-factor)); border: 1px solid var(--border-default); border-radius: calc(3px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); }
+.container-card-meta { grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: calc(4px * var(--ui-factor)) calc(10px * var(--ui-factor)); min-width: 0; padding: calc(3px * var(--ui-factor)) calc(2px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); }
+.container-card-meta:empty { display: none; }
+.container-card-state { color: var(--text-primary); text-transform: capitalize; overflow-wrap: anywhere; }
+.container-card-state[data-tone="warn"], .container-card-stale { color: var(--status-warn); }
+.container-card-state[data-tone="danger"] { color: var(--status-danger); }
+.container-card-restarts { color: var(--text-secondary); white-space: nowrap; }
+.container-card-usage { display: flex; align-items: baseline; flex-wrap: wrap; gap: calc(4px * var(--ui-factor)) calc(10px * var(--ui-factor)); margin-left: auto; color: var(--text-secondary); }
+.container-card-usage > span { white-space: nowrap; }
+.container-card-usage b { font-family: var(--font-mono); font-weight: 500; color: var(--text-primary); }
+.container-card-actions { grid-column: 2; grid-row: 1; display: flex; gap: calc(4px * var(--ui-factor)); }
+@container (min-width: 64em) {
+  .container-card-header { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .container-card-meta { grid-column: 2; grid-row: 1; }
+  .container-card-actions { grid-column: 3; }
+}
+
 /* Headline numbers of a details panel: label above, value below, tone on the edge. */
 .details-stat-tiles { margin-bottom: var(--detail-inset); }
 .details-stat-tile { display: flex; flex-direction: column; gap: calc(2px * var(--ui-factor)); min-width: 0; padding: calc(4px * var(--ui-factor)) calc(6px * var(--ui-factor)); border: 1px solid var(--border-subtle); border-left: 2px solid var(--border-default); border-radius: calc(3px * var(--ui-factor)); background: var(--bg-canvas); }

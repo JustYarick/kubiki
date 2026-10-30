@@ -34,3 +34,13 @@ Node details include independently sampled CPU and memory histories, usage relat
 Scheduling state, provider ID, Pod CIDRs, region/zone, machine/system/boot identity, cached image-group counts and volume information accompany the existing capacity, runtime, addresses, taints, conditions and Pod details. Node Pod inventory covers all namespaces; permission failures are displayed as incomplete data.
 
 Metrics Server supplies CPU and memory, not disk/network performance rates or historical data from before the application collected it. Missing or denied usage is shown as unavailable. Unknown capacities and system fields remain unknown.
+
+## Pod details and shared charts
+
+Pod details include CPU and memory histories, requests and effective limits, usage relative to the limit, and individual container usage. Range, fixed scale, pause/resume and refresh work as in node details. Reads share the namespace Metrics API subscription. Only viewed Pods retain history, limited to 32 identities and 120 observations per Pod. Context, namespace and Pod UID separate histories; source observations predating Pod creation are rejected. Missing, stale or denied metrics are identified in the interface.
+
+Performance contains Pod totals only. A single container list follows it, ordered by application, native sidecar, init and ephemeral roles. Each row shows its role, state, restart count and CPU/RAM usage alongside Logs/Shell actions; unavailable usage is a dash, and retained values after metric errors are labelled as the last sample. Expanding a row exposes its image, detailed state, resources, ports, probes, environment and mounts. Native sidecar definitions and states are resolved from the init arrays by name. The charts and rows use one snapshot and pause control, avoiding duplicate reads and duplicate container lists.
+
+Overview, node and Pod charts display a single measurement as a horizontal preview, explicitly labelled as the first measurement. It remains one sample in the data and tooltip. Once a second measurement arrives, the line joins the real observations, including across pauses or missing measurements. The time axis preserves the elapsed interval. These connecting lines do not add synthetic observations or zeroes; tooltips and sample counts use actual measurements only.
+
+The shared SVG chart measures its rendered area with ResizeObserver and uses the same coordinate scale on both axes. Lines retain their stroke width and markers remain circular on narrow panes and ultrawide monitors. Pointer selection accounts for the chart's plot padding; keyboard arrows and Home/End inspect the same actual observations.
