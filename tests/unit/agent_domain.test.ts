@@ -9,6 +9,7 @@ vi.mock('../../src/domains/ai/transport', () => ({
 import { agentTransport } from '../../src/domains/ai/transport';
 import { applyAgentEvent, useAiStore } from '../../src/domains/ai/store';
 import { openAiChat } from '../../src/domains/ai/navigation';
+import { getToolIntent } from '../../src/domains/ai/tool_intents';
 import { useClusterStore } from '../../src/state/cluster_store';
 
 const scope = { context: 'prod', namespaces: ['apps'], allNamespaces: false };
@@ -128,5 +129,51 @@ describe('AI domain conversations', () => {
     pending.resolve([{ id: 'stale', name: 'Stale', contextWindow: null, maxOutputTokens: null, tools: null }]);
     await refresh;
     expect(useAiStore.getState().models.provider).toBeUndefined();
+  });
+
+  it('maps tool intents with clear Codex-style rationale and descriptions', () => {
+    const scaleIntent = getToolIntent('scale_workload', { kind: 'Deployment', name: 'web', namespace: 'prod', replicas: 3 });
+    expect(scaleIntent.title).toContain('Scale Deployment "web" in namespace "prod" to 3 replicas');
+    expect(scaleIntent.description).toContain('spec.replicas');
+    expect(scaleIntent.badge).toBe('SCALE');
+
+    const deleteIntent = getToolIntent('delete_resource', { kind: 'Service', name: 'legacy-api', namespace: 'default' });
+    expect(deleteIntent.title).toContain('Delete Service "legacy-api"');
+    expect(deleteIntent.destructive).toBe(true);
+    expect(deleteIntent.color).toBe('rose');
+
+    const questionIntent = getToolIntent('ask_user', { question: 'Which namespace to target?' });
+    expect(questionIntent.title).toBe('Which namespace to target?');
+    expect(questionIntent.badge).toBe('QUESTION');
+
+    const unknownIntent = getToolIntent('custom_action');
+    expect(unknownIntent.title).toContain('custom_action');
+    expect(unknownIntent.badge).toBe('CUSTOM_ACT');
+  });
+
+  it('handles ask_user tool events with options and status in conversation store', () => {
+    const id = useAiStore.getState().create(scope);
+    let c = useAiStore.getState().conversations.find(c => c.id === id)!;
+    c = applyAgentEvent(c, {
+      type: 'tool_started',
+      call: {
+        id: 'ask-1',
+        name: 'ask_user',
+        arguments: { question: 'Apply change?', options: ['Yes', 'No'] },
+      },
+    });
+    c = applyAgentEvent(c, {
+      type: 'tool_completed',
+      id: 'ask-1',
+      result: {
+        question: 'Apply change?',
+        options: ['Yes', 'No'],
+        allow_other: true,
+        status: 'awaiting_user_selection',
+      },
+    });
+    expect(c.messages).toHaveLength(1);
+    expect(c.messages[0].call?.name).toBe('ask_user');
+    expect(c.messages[0].result?.status).toBe('awaiting_user_selection');
   });
 });

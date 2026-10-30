@@ -9,12 +9,14 @@ import {
   Cpu,
   FileCode,
   FileText,
+  HelpCircle,
   Plus,
   RefreshCw,
   Send,
   Server,
   Settings,
   Shield,
+  ShieldAlert,
   Sparkles,
   Square,
   WandSparkles,
@@ -32,6 +34,7 @@ import { useAiStore } from '../store';
 import { desktopAiAvailable } from '../transport';
 import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
 import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
+import { getToolIntent } from '../tool_intents';
 import '../ai.css';
 
 const statusLabels: Record<string, string> = {
@@ -671,14 +674,108 @@ function LiveThinkingIndicator({ status }: { status: string }) {
   );
 }
 
+function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation }) {
+  const [otherText, setOtherText] = useState('');
+  const args = (m.call?.arguments || {}) as Record<string, any>;
+  const result = m.result;
+  const question = String(args.question || result?.question || 'What would you like to do next?');
+  const options: string[] = Array.isArray(result?.options)
+    ? result.options
+    : Array.isArray(args.options)
+    ? args.options
+    : ['Yes', 'No'];
+  const allowOther = (result?.allow_other ?? args.allow_other) !== false;
+
+  const msgIndex = c.messages.findIndex(item => item.id === m.id);
+  const isAnswered = msgIndex >= 0 && c.messages.slice(msgIndex + 1).some(item => item.role === 'user');
+
+  const handleSelect = (optionText: string) => {
+    if (c.busy) return;
+    useAiStore.getState().update(c.id, { draft: optionText });
+    void useAiStore.getState().send(c.id);
+  };
+
+  const handleOtherSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otherText.trim() || c.busy) return;
+    const text = otherText.trim();
+    setOtherText('');
+    useAiStore.getState().update(c.id, { draft: text });
+    void useAiStore.getState().send(c.id);
+  };
+
+  return (
+    <article
+      className={`ai-question-card ${isAnswered ? 'is-answered' : ''}`}
+      aria-label="AI tool ask_user"
+    >
+      <div className="ai-question-header">
+        <div className="flex items-center gap-2 font-medium">
+          <HelpCircle size={14} className={isAnswered ? 'text-[var(--text-muted)]' : 'text-indigo-400'} aria-hidden="true" />
+          <span>Agent Question</span>
+        </div>
+        <span className={`ai-question-badge ${isAnswered ? 'is-answered' : ''}`}>
+          {isAnswered ? 'Answered' : 'Awaiting input'}
+        </span>
+      </div>
+
+      <p className="ai-question-text">{question}</p>
+
+      {options.length > 0 && (
+        <div className="ai-question-options" role="group" aria-label="Suggested responses">
+          {options.map((opt, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className="ai-question-option-btn"
+              disabled={c.busy || isAnswered}
+              onClick={() => handleSelect(opt)}
+            >
+              <span className="ai-question-choice-dot" aria-hidden="true" />
+              <span>{opt}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {allowOther && !isAnswered && (
+        <form onSubmit={handleOtherSubmit} className="ai-question-other">
+          <input
+            type="text"
+            className="ide-input ai-question-other-input"
+            placeholder="Type other response…"
+            value={otherText}
+            disabled={c.busy}
+            onChange={e => setOtherText(e.target.value)}
+          />
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!otherText.trim() || c.busy}
+            type="submit"
+          >
+            <Send size={12} aria-hidden="true" />
+            <span>Reply</span>
+          </Button>
+        </form>
+      )}
+    </article>
+  );
+}
+
 function Message({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation }) {
   if (m.role === 'tool') {
+    if (m.call?.name === 'ask_user') {
+      return <QuestionCard message={m} conversation={c} />;
+    }
+
     const result = m.result;
     const proposal = result?.proposal === true && typeof result.yaml === 'string';
     const error = typeof result?.error === 'string' ? result.error : undefined;
     const isRunning = !result && c.busy;
-    const args = m.call?.arguments as Record<string, any> | undefined;
+    const args = (m.call?.arguments || {}) as Record<string, any>;
     const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
+    const intent = getToolIntent(m.call?.name ?? '', args);
 
     return (
       <article className={`ai-tool ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''}`} aria-label={`AI tool ${m.call?.name}`}>
@@ -694,7 +791,8 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
               ) : (
                 <Check size={12} className="text-emerald-400" aria-hidden="true" />
               )}
-              <span>{m.call?.name}</span>
+              <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
+              <span className="font-mono">{m.call?.name}</span>
               {targetSummary && (
                 <span className="ai-tool-badge font-mono truncate max-w-[200px]" title={targetSummary}>
                   {targetSummary}
@@ -716,6 +814,22 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
               <ChevronDown size={12} className="text-[var(--text-muted)]" aria-hidden="true" />
             </div>
           </summary>
+
+          {/* Codex-Style Command Rationale Banner */}
+          <div className={`ai-command-rationale ${intent.destructive ? 'is-destructive' : ''}`}>
+            <div className="ai-command-rationale-header">
+              <div className="flex items-center gap-1.5 font-medium">
+                <ShieldAlert size={12} className={intent.destructive ? 'text-rose-400' : 'text-sky-400'} aria-hidden="true" />
+                <span>Command Intent & Rationale</span>
+              </div>
+              {intent.destructive && (
+                <span className="ai-destructive-pill">Destructive action</span>
+              )}
+            </div>
+            <p className="ai-command-rationale-title">{intent.title}</p>
+            <p className="ai-command-rationale-desc">{intent.description}</p>
+          </div>
+
           {error ? (
             <p className="ai-error p-3">{error}</p>
           ) : proposal ? (
