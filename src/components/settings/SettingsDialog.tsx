@@ -27,6 +27,7 @@ import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_rendering';
 import { cx } from '../../core/utils/cx';
 import { AI_AGENTS, ANALYSIS_INSTRUCTIONS, ANALYSIS_PROMPT_LIMIT, type AiAgent } from '../../core/ai_analysis';
+import { AgentSettings } from '../../domains/ai/components/AgentSettings';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
   entryMatches, filterPages, findEntry, findPage, firstMatchingPage,
@@ -615,6 +616,9 @@ function AiPage({ sectionTitle }: { sectionTitle: string }) {
   const setPrompt = useUiStore(state => state.setAiAnalysisPrompt);
   const [draft, setDraft] = useState(prompt);
   return <div><SectionTitle>{sectionTitle}</SectionTitle>
+    <Row entry={findEntry('ai.providers')} wide><AgentSettings section="providers" /></Row>
+    <Row entry={findEntry('ai.permissions')} wide><AgentSettings section="permissions" /></Row>
+    <SectionTitle>External snapshot analysis</SectionTitle>
     <Row entry={findEntry('ai.agent')}><Select aria-label="Analysis agent" className="ide-select w-40" value={agent} onChange={event => setAgent(event.target.value as AiAgent)}>{AI_AGENTS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</Select></Row>
     <Row entry={findEntry('ai.starting-prompt')} wide>
       <label htmlFor="ai-starting-prompt" className="sr-only">Starting prompt</label>

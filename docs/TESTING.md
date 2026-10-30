@@ -20,6 +20,13 @@ pnpm test:e2e
 
 ## Browser runtime and isolation
 
+`tests/e2e/ai_agent.spec.ts` uses mocked native IPC for dynamic model discovery,
+credentials, permission editing, streamed chat, resource entry points, proposals
+and Stop. Agent Rust tests do not call paid providers or a live cluster. Core
+`revocable_mutation_tests` verifies cancellation after commit's final read prevents
+an actual write. These fixtures do not establish real model quality or OS keyring
+behavior on every platform.
+
 The suite uses two workers across independent files. Tests within one file stay
 sequential. On a small machine, use `pnpm test:e2e --workers=1`.
 The default browser is Chromium; `PLAYWRIGHT_BROWSER=webkit` selects WebKit when

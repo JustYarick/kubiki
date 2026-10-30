@@ -8,6 +8,7 @@ import { useUiStore } from '../../../../state/ui_store';
 import type { ResourceItem } from '../../../../types/k8s';
 import { resourceIssues } from '../../../../core/resources/diagnostics';
 import { cx } from '../../../../core/utils/cx';
+import { openAiChat } from '../../../../domains/ai';
 
 interface ProblemsBannerProps {
   item: ResourceItem;
@@ -201,6 +202,7 @@ export function ProblemsBanner({ item, className }: ProblemsBannerProps) {
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
+        <Button size="sm" onClick={() => { openAiChat({ resource: item }); useUiStore.setState({ inspectorCollapsed: true }); }}><Bot size={14} aria-hidden="true" />Investigate with AI</Button>
         <Button variant="danger" size="sm" onClick={() => {
           const context = useClusterStore.getState().currentContext;
           const prompt = buildAnalysisPrompt(item, context, useResourceStore.getState().resources.Event.values(), diagnoses, useUiStore.getState().aiAnalysisPrompt);

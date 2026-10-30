@@ -1,5 +1,10 @@
 # Resource analysis
 
+For the integrated chat, resource investigation, YAML generation, API providers
+and backend-enforced execution modes, see [Integrated AI agent](AI_AGENT.md).
+The external CLI snapshot workflow below has its own controls and is not governed
+by the integrated agent's permissions.
+
 Select Codex, OpenCode or Claude Code under **Settings → AI assistant**. The CLI
 must already be installed on the host's PATH and signed in. Kubiki uses the
 agent's configured account and model; it does not manage model credentials.

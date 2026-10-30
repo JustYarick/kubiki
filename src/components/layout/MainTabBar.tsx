@@ -68,6 +68,7 @@ export const MainTabBar: React.FC = () => {
   };
 
   const getTabIcon = (tab: WorkspaceTab) => {
+    if (tab.panelId === 'ai-agent') return <Bot aria-hidden="true" size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'analysis') return <Bot aria-hidden="true" size={14} className="text-[var(--status-danger)] shrink-0" />;
     if (tab.type === 'terminal-session') return <TermIcon aria-hidden="true" size={14} className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Anchor aria-hidden="true" size={13} className="text-[var(--accent)] shrink-0" />;

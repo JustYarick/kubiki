@@ -5,6 +5,7 @@ import { useResourceTableModel } from '../components/k8s/table/useResourceTableM
 import { useColumnLayout } from '../components/k8s/table/useColumnLayout';
 import { CellValue } from '../components/k8s/table/CellValue';
 import { NewResourceDialog } from '../components/dialogs/NewResourceDialog';
+import { openAiChat } from '../domains/ai';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { useShallow } from 'zustand/react/shallow';
 import { useTableView } from '../state/table_view_store';
@@ -15,7 +16,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { resourceType } from '../core/resources/resource_types';
 import { customResourcePlacement, customResourceType, type CustomResourceType } from '../core/resources/custom_resource_types';
 import { useCustomResources } from '../providers/use_custom_resources';
-import { defaultNamespace } from '../core/resources/namespace_scope';
+import { defaultNamespace, namespaceNames } from '../core/resources/namespace_scope';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowDown,
@@ -46,6 +47,7 @@ import {
   Play,
   Share2,
   ShieldAlert,
+  WandSparkles,
 } from 'lucide-react';
 import { findWorkloadPods, preferredWorkloadPod } from '../core/resources/workload_pods';
 import { hasWorkloadPodColumn, workloadPodActivity } from '../core/resources/workload_pod_activity';
@@ -679,6 +681,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
           <IconButton icon={RefreshCw} size="sm" onClick={refresh} className={cx(spinning && 'animate-[spin_0.7s_linear_infinite]')} aria-label="Refresh" />
         </Tooltip>
 
+        <Button size="sm" onClick={() => openAiChat({ create: true, kind: displayKind, namespace: namespaceNames(selectedNamespace)?.length === 1 ? namespaceNames(selectedNamespace)![0] : undefined })}><WandSparkles size={13} aria-hidden="true" />Create with AI</Button>
         <Button variant="primary" size="sm" disabled={!canCreate} title={canCreate ? `Create ${displayKind}` : 'Open the desktop application to create resources'} onClick={() => setNewOpen(true)}>
           <Plus size="calc(13px * var(--ui-factor))" />
           New

@@ -8,6 +8,7 @@ Kubiki is a desktop Kubernetes workspace built with React 19, TypeScript, Tauri 
 - [Frontend](#frontend)
 - [Desktop shell](#desktop-shell)
 - [Kubernetes engine](#kubernetes-engine)
+- [AI domain](#ai-domain)
 - [Resource synchronization](#resource-synchronization)
 - [Resource mutations](#resource-mutations)
 - [Diagnostic sessions](#diagnostic-sessions)
@@ -23,7 +24,8 @@ kubiki/
 ├── src/                        React interface, providers, state, resource logic
 ├── src-tauri/                  Tauri desktop shell and Rust IPC handlers
 ├── crates/
-│   └── kubiki-core/            Rust Kubernetes engine
+│   ├── kubiki-core/            Rust Kubernetes engine
+│   └── kubiki-ai/              AI policy, sessions, runtime and provider protocols
 ├── packages/                   Extension SDK, author tools and Node controller/workers
 ├── extensions/                 Bundled SDK Diagnostics package
 ├── scripts/                    Builds, runtime preparation and release validation
@@ -132,6 +134,25 @@ The desktop shell owns transport and application lifecycle concerns. Kubernetes 
 `src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`. Helm confirmation has no expiry; uninstall operates on the confirmed context, namespace and release name, while upgrades and rollbacks check the release revision/state.
 
 The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reuses the library. The desktop application does not depend on that executable.
+
+## AI domain
+
+`crates/kubiki-ai/` is a separate headless domain for execution modes, data/tool
+permissions, sessions, provider protocols and the bounded agent loop. It has no
+Tauri or Kubernetes dependency. `src/domains/ai/` owns chat/settings UI, in-memory
+conversations and its native adapter. The workspace panel registry opens the same
+domain used by resource investigation and creation actions.
+
+`src-tauri/src/agent_commands.rs` composes window ownership, keyring credentials,
+native settings and session lifecycle. `agent_tools.rs` supplies typed Kubernetes
+tools and reuses core mutation preparation, the shared `MutationGuard` and native
+consent. `PreparedMutation::commit_guarded` rechecks revocable authorization after
+the final live reads, immediately before writing. Mode changes invalidate pending
+authorization; dispatched requests still return operation receipts.
+
+See [Integrated AI agent](AI_AGENT.md) for defaults, protocols, scope boundaries,
+storage, research and limitations. The external terminal-based Analyze workflow
+remains separate from the integrated domain's permissions.
 
 ## Resource synchronization
 
