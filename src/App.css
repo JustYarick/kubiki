@@ -288,6 +288,11 @@ details[open] > summary::before { transform: rotate(90deg); }
   border-right: none;
 }
 
+.datagrip-th[data-column-drop="before"] { box-shadow: inset 2px 0 var(--accent); }
+.datagrip-th[data-column-drop="after"] { box-shadow: inset -2px 0 var(--accent); }
+body.column-layout-resizing, body.column-layout-resizing * { cursor: col-resize !important; user-select: none !important; }
+body.column-layout-reordering, body.column-layout-reordering * { cursor: grabbing !important; user-select: none !important; }
+
 .datagrip-cell {
   border-bottom: 1px solid var(--border-grid);
   border-right: 1px solid var(--border-grid);

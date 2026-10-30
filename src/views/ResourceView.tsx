@@ -109,7 +109,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const { selectedNamespace, selectNamespace, isConnected, isLoading } = useClusterStore();
   const {
     density, uiScale, hiddenColumns, setHiddenColumns,
-    columnOrder, setColumnOrder, resetColumnOrder,
+    columnOrder, resetColumnOrder,
     setRightTab, activePerspective, inspectorCollapsed, toggleInspector,
   } = useUiStore();
   const { openYamlEditor, openResourceDetail, openLogsTab, openTerminalTab, toggleSplit } = useWorkspaceStore();
@@ -148,8 +148,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const [menu, setMenu] = useState<{ item: ResourceItem; x: number; y: number } | null>(null);
   const [headerMenu, setHeaderMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
   const [filterMenu, setFilterMenu] = useState<{ colId: string; x: number; y: number } | null>(null);
-  const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [pfFor, setPfFor] = useState<ResourceItem | null>(null);
   const [scaleFor, setScaleFor] = useState<ResourceItem | null>(null);
 
@@ -277,7 +275,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   };
 
   /* ------------------- Column widths (Lens-style) ------------------- */
-  const { widthFor, moveColumn, resetColumn, resetWidths, startColResize, resizeColumnWithKeyboard } = useColumnLayout({ effectiveKind, columns: rows.cols, uiScale, tableRef, paneRef });
+  const { widthFor, moveColumn, resetColumn, resetWidths, startColResize, resizeColumnWithKeyboard, draggingColumn, dropTarget, startColReorder, ignoreHeaderClick } = useColumnLayout({ effectiveKind, columns: rows.cols, uiScale, tableRef, paneRef });
 
   /* ------------------- Sorting & filtering ------------------- */
 
@@ -733,9 +731,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
           />
         ) : (
           <table
-            style={{ minWidth: uiPixels(widthFor('__index') + rows.cols.reduce((sum, col) => sum + widthFor(col.id), 0)) }}
+            style={{ width: uiPixels(widthFor('__index') + rows.cols.reduce((sum, col) => sum + widthFor(col.id), 0)) }}
             aria-rowcount={rows.list.length + 1}
-            className="datagrip-grid table-fixed w-full min-w-full"
+            className="datagrip-grid table-fixed"
             onClick={() => tableRef.current?.focus({ preventScroll: true })}
           >
             <colgroup>
@@ -776,43 +774,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                   return (
                     <th
                       key={c.id}
+                      data-column-id={c.id}
+                      data-column-drop={dropTarget?.id === c.id ? dropTarget.edge : undefined}
                       aria-label={c.label}
                       aria-sort={key ? (key.statusFirst !== undefined ? 'other' : key.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
                       tabIndex={0}
-                      draggable
-                      onDragStart={(event) => {
-                        const target = event.target as HTMLElement;
-                        if (target.closest('[role="separator"]') || target.closest('[data-column-caret]')) {
-                          event.preventDefault();
-                          return;
-                        }
-                        event.dataTransfer.effectAllowed = 'move';
-                        event.dataTransfer.setData('text/plain', c.id);
-                        setDraggingColumn(c.id);
-                      }}
-                      onDragOver={(event) => {
-                        if (!draggingColumn) return;
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = 'move';
-                        setDropTarget(c.id);
-                      }}
-                      onDragLeave={() => setDropTarget((current) => (current === c.id ? null : current))}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        const source = draggingColumn;
-                        setDraggingColumn(null);
-                        setDropTarget(null);
-                        if (!source || source === c.id) return;
-                        const order = rows.cols.map((column) => column.id);
-                        const from = order.indexOf(source);
-                        const to = order.indexOf(c.id);
-                        if (from === -1 || to === -1) return;
-                        const next = [...order];
-                        next.splice(to, 0, ...next.splice(from, 1));
-                        setColumnOrder(effectiveKind, next);
-                      }}
-                      onDragEnd={() => { setDraggingColumn(null); setDropTarget(null); }}
+                      onPointerDown={event => startColReorder(event, c.id)}
+                      onDragStart={event => event.preventDefault()}
                       onKeyDown={event => {
+                        if (event.target !== event.currentTarget) return;
                         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); cycleSort(c.id); }
                         if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                           event.preventDefault();
@@ -823,7 +793,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                       title={key?.statusFirst ? `${key.statusFirst} first` : c.hint}
                       style={{ width: uiPixels(widthFor(c.id)) }}
                       onClick={event => {
-                        if ((event.target as HTMLElement).closest('[data-column-caret]')) return;
+                        if ((event.target as HTMLElement).closest('button, [role="separator"]') || ignoreHeaderClick()) return;
                         cycleSort(c.id);
                       }}
                       onContextMenu={(event) => {
@@ -834,7 +804,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                         'datagrip-th select-none relative font-medium cursor-pointer hover:text-[var(--text-primary)] transition-colors',
                         c.align === 'right' ? 'text-right pl-[calc(22px*var(--ui-factor))] pr-2.5' : 'text-left pl-2.5 pr-[calc(24px*var(--ui-factor))]',
                         draggingColumn === c.id && 'opacity-50',
-                        dropTarget === c.id && draggingColumn && draggingColumn !== c.id && 'ring-1 ring-inset ring-[var(--accent)]',
                       )}
                     >
                       <span className="inline-flex items-center gap-1 min-w-0 max-w-full">

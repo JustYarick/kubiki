@@ -58,6 +58,8 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 
 `src/components/layout/` contains the explorer, workspace, tabs, inspector, and bottom panel. `src/components/k8s/details/` contains resource-specific detail views and reusable field blocks. Dialogs and diagnostic panes live under `src/components/dialogs/` and `src/components/k8s/`.
 
+Resource table column geometry lives in `src/components/k8s/table/useColumnLayout.ts`. Actual table width is the sum of its columns, so the browser does not redistribute saved widths. Automatic fitting observes the scroll viewport and does not rerun just because the order changed. Resizing anchors its guide to the rendered header and accounts for UI scale and scrolling. `useColumnReorder.ts` uses pointer gestures with a movement threshold, before/after drop indicators and horizontal edge scrolling; resize handles and menu buttons do not initiate reordering. Escape, pointer cancellation, lost capture and unmount release the gesture without saving unfinished changes. Header menus and keyboard resizing remain available as drag alternatives.
+
 ### Application state
 
 Zustand stores separate workspace state from cached Kubernetes data and session state.
