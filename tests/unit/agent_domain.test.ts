@@ -205,4 +205,18 @@ describe('AI domain conversations', () => {
     });
     expect(c.messages[0].result?.multi_select).toBe(true);
   });
+
+  it('maps deep diagnostics tool intents (pod, workload, events_timeline)', () => {
+    const podIntent = getToolIntent('get_pod_diagnostics', { name: 'crash-pod', namespace: 'default' });
+    expect(podIntent.badge).toBe('POD DIAG');
+    expect(podIntent.title).toContain('crash-pod');
+
+    const workloadIntent = getToolIntent('get_workload_diagnostics', { kind: 'Deployment', name: 'web', namespace: 'prod' });
+    expect(workloadIntent.badge).toBe('WORKLOAD');
+    expect(workloadIntent.title).toContain('Deployment "web"');
+
+    const timelineIntent = getToolIntent('get_events_timeline', { name: 'web-pod', namespace: 'prod' });
+    expect(timelineIntent.badge).toBe('TIMELINE');
+    expect(timelineIntent.title).toContain('web-pod');
+  });
 });

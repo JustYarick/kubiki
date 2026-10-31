@@ -1349,6 +1349,258 @@ function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; c
   );
 }
 
+function ContainerRow({ container: c }: { container: any }) {
+  const isOk = c.ready && c.state === 'running';
+  const isCrash = c.state === 'waiting' && (c.stateDetails?.reason === 'CrashLoopBackOff' || c.stateDetails?.reason?.includes('ImagePull'));
+  const isTerminated = c.state === 'terminated';
+  const statusColor = isOk ? 'text-emerald-400' : isCrash || isTerminated ? 'text-rose-400' : 'text-amber-400';
+
+  return (
+    <div className="ai-diag-row">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 font-mono text-xs">
+          <span className={`w-1.5 h-1.5 rounded-full ${isOk ? 'bg-emerald-400' : isCrash ? 'bg-rose-400 animate-pulse' : 'bg-amber-400'}`} />
+          <span className="font-semibold text-[var(--text-primary)]">{c.name}</span>
+          <span className={`text-[10px] ${statusColor}`}>[{c.state}]</span>
+          {c.restartCount > 0 && (
+            <span className="text-[10px] text-amber-400 font-semibold">
+              Restarts: {c.restartCount}
+            </span>
+          )}
+        </div>
+        {c.ready ? (
+          <span className="text-[10px] text-emerald-400">Ready</span>
+        ) : (
+          <span className="text-[10px] text-[var(--text-muted)]">Not Ready</span>
+        )}
+      </div>
+
+      {c.stateDetails?.reason && (
+        <div className="text-[11px] text-[var(--text-secondary)] pl-3.5">
+          <span className="font-semibold">{c.stateDetails.reason}:</span> {c.stateDetails.message || 'No additional details'}
+        </div>
+      )}
+
+      {c.lastTermination && (
+        <div className="text-[10px] text-[var(--text-muted)] pl-3.5 font-mono">
+          Last exit: code {c.lastTermination.exitCode} ({c.lastTermination.reason || 'None'})
+          {c.lastTermination.oomKilled && <span className="text-rose-400 font-bold ml-1">OOMKILLED</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PodDiagnosticsView({ data }: { data: any }) {
+  const issues: string[] = data.issuesSummary || [];
+  const containers: any[] = data.containers || [];
+  const initContainers: any[] = data.initContainers || [];
+  const evidence = data.evidence || {};
+
+  return (
+    <div className="ai-diag-card">
+      <div className="ai-diag-header">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-xs text-[var(--text-primary)]">
+            Pod Health: {evidence.name || 'Pod'}
+          </span>
+          <span className={`ai-diag-pill is-${data.phase === 'Running' ? 'emerald' : data.phase === 'Pending' ? 'amber' : 'rose'}`}>
+            {data.phase}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)] font-mono">
+          {data.nodeName && <span>Node: {data.nodeName}</span>}
+          {data.podIP && <span>IP: {data.podIP}</span>}
+        </div>
+      </div>
+
+      {issues.length > 0 && (
+        <div className="ai-diag-issues">
+          <div className="flex items-center gap-1.5 font-semibold text-[11px] text-rose-400 mb-1">
+            <AlertCircle size={12} aria-hidden="true" />
+            <span>Detected Problems ({issues.length})</span>
+          </div>
+          <ul className="list-disc pl-4 space-y-0.5 text-xs text-[var(--text-primary)]">
+            {issues.map((issue, idx) => (
+              <li key={idx}>{issue}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {initContainers.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Init Containers</div>
+          {initContainers.map(c => (
+            <ContainerRow key={c.name} container={c} />
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Containers</div>
+        {containers.map(c => (
+          <ContainerRow key={c.name} container={c} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkloadDiagnosticsView({ data }: { data: any }) {
+  const reps = data.replicas || {};
+  const issues: string[] = data.issuesSummary || [];
+  const replicaSets: any[] = data.replicaSets || [];
+  const childPods: any[] = data.childPods || [];
+  const evidence = data.evidence || {};
+  const rolloutState = data.rolloutState || 'healthy';
+
+  const stateColor = rolloutState === 'healthy' ? 'emerald' : rolloutState === 'progressing' ? 'sky' : 'rose';
+
+  return (
+    <div className="ai-diag-card">
+      <div className="ai-diag-header">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-xs text-[var(--text-primary)]">
+            {evidence.kind} Rollout: {evidence.name}
+          </span>
+          <span className={`ai-diag-pill is-${stateColor}`}>
+            {rolloutState.toUpperCase()}
+          </span>
+        </div>
+        <div className="text-[10px] text-[var(--text-muted)] font-mono">
+          Generation: {evidence.generation} / Observed: {evidence.observedGeneration}
+        </div>
+      </div>
+
+      <div className="ai-diag-grid">
+        <div className="ai-diag-stat">
+          <span className="ai-diag-stat-label">Desired</span>
+          <span className="ai-diag-stat-val">{reps.desired ?? '-'}</span>
+        </div>
+        <div className="ai-diag-stat">
+          <span className="ai-diag-stat-label">Ready</span>
+          <span className={`ai-diag-stat-val ${(reps.ready ?? 0) < (reps.desired ?? 0) ? 'text-amber-400' : 'text-emerald-400'}`}>
+            {reps.ready ?? 0}
+          </span>
+        </div>
+        <div className="ai-diag-stat">
+          <span className="ai-diag-stat-label">Available</span>
+          <span className="ai-diag-stat-val">{reps.available ?? 0}</span>
+        </div>
+        <div className="ai-diag-stat">
+          <span className="ai-diag-stat-label">Updated</span>
+          <span className="ai-diag-stat-val">{reps.updated ?? 0}</span>
+        </div>
+      </div>
+
+      {issues.length > 0 && (
+        <div className="ai-diag-issues">
+          <div className="flex items-center gap-1.5 font-semibold text-[11px] text-rose-400 mb-1">
+            <AlertCircle size={12} aria-hidden="true" />
+            <span>Rollout Issues ({issues.length})</span>
+          </div>
+          <ul className="list-disc pl-4 space-y-0.5 text-xs text-[var(--text-primary)]">
+            {issues.map((issue, idx) => (
+              <li key={idx}>{issue}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {replicaSets.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">ReplicaSets</div>
+          <div className="space-y-1">
+            {replicaSets.map(rs => (
+              <div key={rs.name} className="ai-diag-row flex items-center justify-between text-xs font-mono">
+                <div>
+                  <span className="font-semibold text-[var(--text-primary)]">{rs.name}</span>
+                  {rs.revision && <span className="text-[10px] text-[var(--text-muted)] ml-2">rev: {rs.revision}</span>}
+                </div>
+                <div className="text-[11px] text-[var(--text-secondary)]">
+                  Ready: {rs.ready}/{rs.desired}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {childPods.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Child Pods ({childPods.length})</div>
+          <div className="flex flex-wrap gap-1.5">
+            {childPods.map(pod => (
+              <span
+                key={pod.name}
+                className={`ai-cluster-badge ${pod.issue ? 'text-rose-400 border-rose-500/40 bg-rose-500/10' : pod.phase === 'Running' ? 'text-emerald-400 border-emerald-500/40' : 'text-amber-400'}`}
+                title={pod.issue ? `${pod.name}: ${pod.issue}` : pod.name}
+              >
+                {pod.name.split('-').slice(-2).join('-')} {pod.issue ? `(${pod.issue})` : `[${pod.phase}]`}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EventsTimelineView({ data }: { data: any }) {
+  const timeline: any[] = data.timeline || [];
+  const evidence = data.evidence || {};
+
+  return (
+    <div className="ai-diag-card">
+      <div className="ai-diag-header">
+        <span className="font-semibold text-xs text-[var(--text-primary)]">
+          Events Timeline ({timeline.length} recorded events)
+        </span>
+        <span className="text-[10px] text-[var(--text-muted)] font-mono">
+          {evidence.completeness === 'partial' ? 'Partial / Capped' : 'Complete timeline'}
+        </span>
+      </div>
+
+      {timeline.length === 0 ? (
+        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No recent cluster events found.</p>
+      ) : (
+        <div className="space-y-1.5 max-h-[320px] overflow-y-auto pr-1 kubiki-scrollbar">
+          {timeline.map((item, idx) => {
+            const isWarning = item.type === 'Warning';
+            return (
+              <div key={idx} className={`ai-timeline-item ${isWarning ? 'is-warning' : 'is-normal'}`}>
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className={`ai-diag-pill is-${isWarning ? 'rose' : 'slate'}`}>
+                      {item.type}
+                    </span>
+                    <span className="font-semibold text-[var(--text-primary)]">{item.reason}</span>
+                    {item.count > 1 && (
+                      <span className="text-[10px] text-amber-400 font-bold">×{item.count}</span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-[var(--text-muted)] font-mono">
+                    {item.lastTimestamp ? new Date(item.lastTimestamp).toLocaleTimeString() : ''}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5 leading-snug">
+                  {item.message}
+                </p>
+                {item.involvedObject?.kind && (
+                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">
+                    {item.involvedObject.kind}/{item.involvedObject.name}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Message({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation }) {
   if (m.role === 'tool') {
     if (m.call?.name === 'ask_user') {
@@ -1549,6 +1801,13 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                   {result.operationId ? <span>Receipt ID: {String(result.operationId)}</span> : null}
                   {result.status ? <span>Status: {String(result.status)}</span> : null}
                 </div>
+              ) : null}
+              {result?.diagnostic === 'pod_diagnostics' ? (
+                <PodDiagnosticsView data={result} />
+              ) : result?.diagnostic === 'workload_diagnostics' ? (
+                <WorkloadDiagnosticsView data={result} />
+              ) : result?.diagnostic === 'events_timeline' ? (
+                <EventsTimelineView data={result} />
               ) : null}
               <details>
                 <summary className="text-xs text-[var(--text-muted)] cursor-pointer select-none py-0.5">

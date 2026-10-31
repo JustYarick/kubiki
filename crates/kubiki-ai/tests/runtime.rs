@@ -476,3 +476,30 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
     task.await.unwrap();
 }
 
+#[tokio::test]
+async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
+    let policy = AgentPolicy {
+        resources: true,
+        events: true,
+        ..Default::default()
+    };
+
+    // Plan phase in Read-only mode
+    let plan_tools = tool_definitions(&policy, AgentMode::ReadOnly, AgentPhase::Plan);
+    let plan_tool_names: Vec<String> = plan_tools.iter().map(|t| t.name.clone()).collect();
+
+    assert!(plan_tool_names.contains(&"get_pod_diagnostics".to_string()));
+    assert!(plan_tool_names.contains(&"get_workload_diagnostics".to_string()));
+    assert!(plan_tool_names.contains(&"get_events_timeline".to_string()));
+    assert!(!plan_tool_names.contains(&"apply_manifest".to_string()));
+
+    // Action phase in Ask mode
+    let action_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action);
+    let action_tool_names: Vec<String> = action_tools.iter().map(|t| t.name.clone()).collect();
+
+    assert!(action_tool_names.contains(&"get_pod_diagnostics".to_string()));
+    assert!(action_tool_names.contains(&"get_workload_diagnostics".to_string()));
+    assert!(action_tool_names.contains(&"get_events_timeline".to_string()));
+    assert!(action_tool_names.contains(&"apply_manifest".to_string()));
+}
+

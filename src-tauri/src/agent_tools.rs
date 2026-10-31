@@ -279,8 +279,21 @@ impl ToolExecutor for KubernetesTools {
             };
             return tokio::select! { biased; _=cancelled(&mut cancellation)=>Err("Namespace discovery cancelled".into()), result=tokio::time::timeout(Duration::from_secs(20),read)=>result.map_err(|_| "Namespace discovery timed out")? };
         }
-        if ["get_logs", "get_events", "get_metrics"].contains(&call.name.as_str()) {
+        if [
+            "get_logs",
+            "get_events",
+            "get_metrics",
+            "get_events_timeline",
+        ]
+        .contains(&call.name.as_str())
+        {
             return self.read_diagnostic(session, call, client).await;
+        }
+        if call.name == "get_pod_diagnostics" {
+            return self.read_pod_diagnostics(session, call, client).await;
+        }
+        if call.name == "get_workload_diagnostics" {
+            return self.read_workload_diagnostics(session, call, client).await;
         }
         if [
             "apply_manifest",
@@ -405,6 +418,7 @@ impl KubernetesTools {
             uid: Option<String>,
             container: Option<String>,
             previous: Option<bool>,
+            limit: Option<u32>,
         }
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid diagnostic arguments")?;
@@ -412,7 +426,7 @@ impl KubernetesTools {
         let target = Target {
             group: "".into(),
             version: "v1".into(),
-            kind: if call.name == "get_events" {
+            kind: if call.name == "get_events" || call.name == "get_events_timeline" {
                 "Event"
             } else {
                 "Pod"
@@ -445,7 +459,7 @@ impl KubernetesTools {
                 if !state.policy.events {
                     return Err("Events are disabled by policy".into());
                 }
-                if args.uid.is_some() || args.container.is_some() || args.previous.is_some() {
+                if args.uid.is_some() || args.container.is_some() || args.previous.is_some() || args.limit.is_some() {
                     return Err("Unexpected Event arguments".into());
                 }
                 let (api, _) = api(client, &target).await?;
@@ -470,12 +484,87 @@ impl KubernetesTools {
                 bounded_result(
                     json!({"capturedAt":stamp(),"items":items,"hasMore":page.metadata.continue_.is_some_and(|s| !s.is_empty()),"coverage":"First 50 matching Events; may include previous resource incarnations; compare involvedObject.uid"}),
                 )
+            } else if call.name == "get_events_timeline" {
+                if !state.policy.events {
+                    return Err("Events are disabled by policy".into());
+                }
+                if args.container.is_some() || args.previous.is_some() {
+                    return Err("Unexpected arguments for events timeline".into());
+                }
+                let (api, _) = api(client, &target).await?;
+                let limit = args.limit.unwrap_or(40).clamp(1, 100);
+                let mut params = ListParams::default().limit(limit);
+                if !target.name.is_empty() {
+                    params = params.fields(&format!("involvedObject.name={}", target.name));
+                }
+                let page = api.list(&params).await.map_err(|_| "Cannot read Events for timeline")?;
+                let mut timeline = Vec::new();
+                for item in page.items {
+                    if let Some(ref target_uid) = args.uid {
+                        let item_uid = item.data.get("involvedObject").and_then(|io| io.get("uid")).and_then(Value::as_str);
+                        if item_uid != Some(target_uid.as_str()) {
+                            continue;
+                        }
+                    }
+                    let actual = Target {
+                        name: item.metadata.name.clone().unwrap_or_default(),
+                        ..target.clone()
+                    };
+                    if state.policy.access(&actual, true) == DataAccess::None {
+                        continue;
+                    }
+                    let data = item.data;
+                    let event_type = data.get("type").and_then(Value::as_str).unwrap_or("Normal").to_string();
+                    let reason = data.get("reason").and_then(Value::as_str).unwrap_or("").to_string();
+                    let message = data.get("message").and_then(Value::as_str).unwrap_or("").to_string();
+                    let count = data.get("count").and_then(Value::as_i64).unwrap_or(1);
+                    let first_ts = data.get("firstTimestamp").and_then(Value::as_str).map(|s| s.to_string());
+                    let last_ts = data.get("lastTimestamp").and_then(Value::as_str).map(|s| s.to_string())
+                        .or_else(|| data.get("eventTime").and_then(Value::as_str).map(|s| s.to_string()));
+                    let involved = data.get("involvedObject").cloned().unwrap_or(json!({}));
+                    let component = data.get("source").and_then(|s| s.get("component")).and_then(Value::as_str).unwrap_or("").to_string();
+
+                    timeline.push(json!({
+                        "type": event_type,
+                        "reason": reason,
+                        "message": message,
+                        "count": count,
+                        "firstTimestamp": first_ts,
+                        "lastTimestamp": last_ts,
+                        "involvedObject": {
+                            "kind": involved.get("kind"),
+                            "name": involved.get("name"),
+                            "uid": involved.get("uid"),
+                            "fieldPath": involved.get("fieldPath"),
+                        },
+                        "component": component,
+                    }));
+                }
+                // Sort by lastTimestamp descending so newest events appear first
+                timeline.sort_by(|a, b| {
+                    let ts_a = a.get("lastTimestamp").and_then(Value::as_str).unwrap_or("");
+                    let ts_b = b.get("lastTimestamp").and_then(Value::as_str).unwrap_or("");
+                    ts_b.cmp(ts_a)
+                });
+                bounded_result(json!({
+                    "diagnostic": "events_timeline",
+                    "evidence": {
+                        "namespace": args.namespace,
+                        "name": args.name,
+                        "uid": args.uid,
+                        "capturedAt": stamp(),
+                        "total": timeline.len(),
+                        "completeness": if page.metadata.continue_.is_some_and(|s| !s.is_empty()) { "partial" } else { "complete" }
+                    },
+                    "timeline": timeline,
+                }))
             } else {
                 if !state.policy.metrics
                     || args.name.is_some()
                     || args.uid.is_some()
                     || args.container.is_some()
                     || args.previous.is_some()
+                    || args.limit.is_some()
                 {
                     return Err("Metrics are disabled or arguments are invalid".into());
                 }
@@ -504,6 +593,393 @@ impl KubernetesTools {
             }
         };
         tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Read cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Diagnostic read timed out")? }
+    }
+
+    async fn read_pod_diagnostics(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid pod diagnostics arguments")?;
+        let state = session.control()?;
+        if !state.policy.resources {
+            return Err("Resource access is disabled by policy".into());
+        }
+        let target = Target {
+            group: "".into(),
+            version: "v1".into(),
+            kind: "Pod".into(),
+            namespace: Some(args.namespace.clone()),
+            name: args.name.clone(),
+        };
+        validate_target(&target, true)?;
+        state.policy.check_scope(&session.scope, &target)?;
+        if state.policy.access(&target, true) == DataAccess::None {
+            return Err("Pod read is disabled by policy".into());
+        }
+
+        let mut cancellation = session.cancellation();
+        let read = async {
+            let (api_dyn, _) = api(client.clone(), &target).await?;
+            let pod = api_dyn.get(&args.name).await.map_err(|_| "Pod not found or access denied")?;
+
+            let spec = pod.data.get("spec").cloned().unwrap_or(json!({}));
+            let status = pod.data.get("status").cloned().unwrap_or(json!({}));
+            let uid = pod.metadata.uid.clone().unwrap_or_default();
+            let resource_version = pod.metadata.resource_version.clone().unwrap_or_default();
+
+            let phase = status.get("phase").and_then(Value::as_str).unwrap_or("Unknown").to_string();
+            let pod_ip = status.get("podIP").and_then(Value::as_str).map(|s| s.to_string());
+            let host_ip = status.get("hostIP").and_then(Value::as_str).map(|s| s.to_string());
+            let node_name = spec.get("nodeName").and_then(Value::as_str).map(|s| s.to_string());
+            let restart_policy = spec.get("restartPolicy").and_then(Value::as_str).unwrap_or("Always").to_string();
+
+            let mut issues = Vec::new();
+
+            // Conditions
+            let mut conditions_summary = Vec::new();
+            if let Some(conditions) = status.get("conditions").and_then(Value::as_array) {
+                for c in conditions {
+                    let c_type = c.get("type").and_then(Value::as_str).unwrap_or("");
+                    let c_status = c.get("status").and_then(Value::as_str).unwrap_or("");
+                    let c_reason = c.get("reason").and_then(Value::as_str).unwrap_or("");
+                    let c_msg = c.get("message").and_then(Value::as_str).unwrap_or("");
+                    if c_status == "False" && !c_msg.is_empty() {
+                        issues.push(format!("Condition '{}' is False: {}", c_type, c_msg));
+                    }
+                    conditions_summary.push(json!({
+                        "type": c_type,
+                        "status": c_status,
+                        "reason": c_reason,
+                        "message": c_msg,
+                        "lastTransitionTime": c.get("lastTransitionTime"),
+                    }));
+                }
+            }
+
+            let map_statuses = |statuses: &Value, is_init: bool, issues: &mut Vec<String>| -> Vec<Value> {
+                let mut result = Vec::new();
+                if let Some(arr) = statuses.as_array() {
+                    for cs in arr {
+                        let name = cs.get("name").and_then(Value::as_str).unwrap_or("");
+                        let image = cs.get("image").and_then(Value::as_str).unwrap_or("");
+                        let ready = cs.get("ready").and_then(Value::as_bool).unwrap_or(false);
+                        let restart_count = cs.get("restartCount").and_then(Value::as_i64).unwrap_or(0);
+
+                        let mut state_name = "unknown";
+                        let mut state_details = json!({});
+                        let mut last_termination_details = json!(null);
+
+                        if let Some(state) = cs.get("state") {
+                            if let Some(w) = state.get("waiting") {
+                                state_name = "waiting";
+                                let reason = w.get("reason").and_then(Value::as_str).unwrap_or("");
+                                let message = w.get("message").and_then(Value::as_str).unwrap_or("");
+                                state_details = json!({ "reason": reason, "message": message });
+                                issues.push(format!(
+                                    "{}Container '{}' is waiting: {} ({})",
+                                    if is_init { "Init " } else { "" },
+                                    name,
+                                    reason,
+                                    if message.is_empty() { "no details" } else { message }
+                                ));
+                            } else if let Some(r) = state.get("running") {
+                                state_name = "running";
+                                state_details = json!({ "startedAt": r.get("startedAt") });
+                            } else if let Some(t) = state.get("terminated") {
+                                state_name = "terminated";
+                                let exit_code = t.get("exitCode").and_then(Value::as_i64).unwrap_or(-1);
+                                let reason = t.get("reason").and_then(Value::as_str).unwrap_or("");
+                                let message = t.get("message").and_then(Value::as_str).unwrap_or("");
+                                let oom = exit_code == 137 || reason == "OOMKilled";
+                                state_details = json!({
+                                    "exitCode": exit_code,
+                                    "reason": reason,
+                                    "message": message,
+                                    "oomKilled": oom,
+                                    "finishedAt": t.get("finishedAt"),
+                                });
+                                issues.push(format!(
+                                    "{}Container '{}' terminated with exit code {} (reason: {}, OOM: {})",
+                                    if is_init { "Init " } else { "" },
+                                    name,
+                                    exit_code,
+                                    if reason.is_empty() { "none" } else { reason },
+                                    oom
+                                ));
+                            }
+                        }
+
+                        if let Some(last_state) = cs.get("lastState") {
+                            if let Some(t) = last_state.get("terminated") {
+                                let exit_code = t.get("exitCode").and_then(Value::as_i64).unwrap_or(-1);
+                                let reason = t.get("reason").and_then(Value::as_str).unwrap_or("");
+                                let message = t.get("message").and_then(Value::as_str).unwrap_or("");
+                                let oom = exit_code == 137 || reason == "OOMKilled";
+                                last_termination_details = json!({
+                                    "exitCode": exit_code,
+                                    "reason": reason,
+                                    "message": message,
+                                    "oomKilled": oom,
+                                    "finishedAt": t.get("finishedAt"),
+                                });
+                                if restart_count > 0 {
+                                    issues.push(format!(
+                                        "{}Container '{}' has restarted {} time(s). Last exit: code {} ({}, OOM: {})",
+                                        if is_init { "Init " } else { "" },
+                                        name,
+                                        restart_count,
+                                        exit_code,
+                                        if reason.is_empty() { "none" } else { reason },
+                                        oom
+                                    ));
+                                }
+                            }
+                        }
+
+                        result.push(json!({
+                            "name": name,
+                            "image": image,
+                            "ready": ready,
+                            "restartCount": restart_count,
+                            "state": state_name,
+                            "stateDetails": state_details,
+                            "lastTermination": last_termination_details,
+                        }));
+                    }
+                }
+                result
+            };
+
+            let init_containers = map_statuses(&status.get("initContainerStatuses").cloned().unwrap_or(json!([])), true, &mut issues);
+            let containers = map_statuses(&status.get("containerStatuses").cloned().unwrap_or(json!([])), false, &mut issues);
+
+            bounded_result(json!({
+                "diagnostic": "pod_diagnostics",
+                "evidence": {
+                    "kind": "Pod",
+                    "namespace": args.namespace,
+                    "name": args.name,
+                    "uid": uid,
+                    "resourceVersion": resource_version,
+                    "capturedAt": stamp(),
+                    "completeness": "complete"
+                },
+                "phase": phase,
+                "nodeName": node_name,
+                "podIP": pod_ip,
+                "hostIP": host_ip,
+                "restartPolicy": restart_policy,
+                "issuesSummary": issues,
+                "conditions": conditions_summary,
+                "initContainers": init_containers,
+                "containers": containers,
+            }))
+        };
+        tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Pod diagnostics cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Pod diagnostics timed out")? }
+    }
+
+    async fn read_workload_diagnostics(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Args {
+            group: String,
+            version: String,
+            kind: String,
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid workload diagnostics arguments")?;
+        let state = session.control()?;
+        if !state.policy.resources {
+            return Err("Resource access is disabled by policy".into());
+        }
+        let target = Target {
+            group: args.group,
+            version: args.version,
+            kind: args.kind,
+            namespace: Some(args.namespace.clone()),
+            name: args.name.clone(),
+        };
+        validate_target(&target, true)?;
+        state.policy.check_scope(&session.scope, &target)?;
+        if state.policy.access(&target, true) == DataAccess::None {
+            return Err("Workload read is disabled by policy".into());
+        }
+
+        let mut cancellation = session.cancellation();
+        let read = async {
+            let (api_dyn, _) = api(client.clone(), &target).await?;
+            let obj = api_dyn.get(&args.name).await.map_err(|_| "Workload not found or access denied")?;
+
+            let spec = obj.data.get("spec").cloned().unwrap_or(json!({}));
+            let status = obj.data.get("status").cloned().unwrap_or(json!({}));
+            let uid = obj.metadata.uid.clone().unwrap_or_default();
+            let generation = obj.metadata.generation.unwrap_or(0);
+            let obs_gen = status.get("observedGeneration").and_then(Value::as_i64).unwrap_or(0);
+
+            let mut issues = Vec::new();
+            let mut rollout_state = "healthy".to_string();
+
+            if generation != obs_gen && generation > 0 {
+                issues.push(format!("Rollout update in progress or stalled: generation is {} but observedGeneration is {}", generation, obs_gen));
+                rollout_state = "progressing".into();
+            }
+
+            let desired = spec.get("replicas").and_then(Value::as_i64).unwrap_or(1);
+            let current = status.get("replicas").and_then(Value::as_i64).unwrap_or(0);
+            let ready = status.get("readyReplicas").and_then(Value::as_i64).unwrap_or(0);
+            let updated = status.get("updatedReplicas").and_then(Value::as_i64).unwrap_or(0);
+            let available = status.get("availableReplicas").and_then(Value::as_i64).unwrap_or(0);
+
+            if ready < desired {
+                issues.push(format!("Replica degradation: desired {}, ready {} (available: {})", desired, ready, available));
+                if rollout_state == "healthy" {
+                    rollout_state = "degraded".into();
+                }
+            }
+
+            let mut conditions_summary = Vec::new();
+            if let Some(conditions) = status.get("conditions").and_then(Value::as_array) {
+                for c in conditions {
+                    let c_type = c.get("type").and_then(Value::as_str).unwrap_or("");
+                    let c_status = c.get("status").and_then(Value::as_str).unwrap_or("");
+                    let c_reason = c.get("reason").and_then(Value::as_str).unwrap_or("");
+                    let c_msg = c.get("message").and_then(Value::as_str).unwrap_or("");
+                    if (c_type == "Progressing" && c_status == "False") || (c_type == "ReplicaFailure" && c_status == "True") {
+                        issues.push(format!("Condition '{}' indicates failure: {}", c_type, c_msg));
+                        rollout_state = "failed".into();
+                    }
+                    conditions_summary.push(json!({
+                        "type": c_type,
+                        "status": c_status,
+                        "reason": c_reason,
+                        "message": c_msg,
+                    }));
+                }
+            }
+
+            // Child ReplicaSets for Deployment
+            let mut replica_sets_summary = Vec::new();
+            if target.kind == "Deployment" {
+                let rs_target = Target {
+                    group: "apps".into(),
+                    version: "v1".into(),
+                    kind: "ReplicaSet".into(),
+                    namespace: Some(args.namespace.clone()),
+                    name: "".into(),
+                };
+                if let Ok((rs_api, _)) = api(client.clone(), &rs_target).await {
+                    if let Ok(page) = rs_api.list(&ListParams::default().limit(20)).await {
+                        for rs in page.items {
+                            let is_owned = rs.metadata.owner_references.as_ref().is_some_and(|refs| {
+                                refs.iter().any(|r| r.uid == uid)
+                            });
+                            if is_owned {
+                                let rs_name = rs.metadata.name.clone().unwrap_or_default();
+                                let rs_spec = rs.data.get("spec");
+                                let rs_status = rs.data.get("status");
+                                let rs_desired = rs_spec.and_then(|s| s.get("replicas")).and_then(Value::as_i64).unwrap_or(0);
+                                let rs_current = rs_status.and_then(|s| s.get("replicas")).and_then(Value::as_i64).unwrap_or(0);
+                                let rs_ready = rs_status.and_then(|s| s.get("readyReplicas")).and_then(Value::as_i64).unwrap_or(0);
+                                let revision = rs.metadata.annotations.as_ref().and_then(|a| a.get("deployment.kubernetes.io/revision").cloned()).unwrap_or_default();
+                                replica_sets_summary.push(json!({
+                                    "name": rs_name,
+                                    "revision": revision,
+                                    "desired": rs_desired,
+                                    "current": rs_current,
+                                    "ready": rs_ready,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Child Pods summary
+            let mut child_pods_summary = Vec::new();
+            if let Some(match_labels) = spec.get("selector").and_then(|s| s.get("matchLabels")).and_then(Value::as_object) {
+                let label_selector = match_labels.iter().map(|(k, v)| format!("{}={}", k, v.as_str().unwrap_or(""))).collect::<Vec<_>>().join(",");
+                if !label_selector.is_empty() {
+                    let pod_target = Target {
+                        group: "".into(),
+                        version: "v1".into(),
+                        kind: "Pod".into(),
+                        namespace: Some(args.namespace.clone()),
+                        name: "".into(),
+                    };
+                    if let Ok((pod_api, _)) = api(client.clone(), &pod_target).await {
+                        if let Ok(pod_page) = pod_api.list(&ListParams::default().labels(&label_selector).limit(30)).await {
+                            for pod in pod_page.items {
+                                let pod_name = pod.metadata.name.clone().unwrap_or_default();
+                                let pod_phase = pod.data.get("status").and_then(|s| s.get("phase")).and_then(Value::as_str).unwrap_or("Unknown").to_string();
+                                let mut pod_issue = None;
+                                if let Some(css) = pod.data.get("status").and_then(|s| s.get("containerStatuses")).and_then(Value::as_array) {
+                                    for cs in css {
+                                        if let Some(w) = cs.get("state").and_then(|st| st.get("waiting")) {
+                                            let r = w.get("reason").and_then(Value::as_str).unwrap_or("");
+                                            if !r.is_empty() { pod_issue = Some(r.to_string()); break; }
+                                        }
+                                        if let Some(t) = cs.get("state").and_then(|st| st.get("terminated")) {
+                                            let r = t.get("reason").and_then(Value::as_str).unwrap_or("");
+                                            if !r.is_empty() { pod_issue = Some(r.to_string()); break; }
+                                        }
+                                    }
+                                }
+                                child_pods_summary.push(json!({
+                                    "name": pod_name,
+                                    "phase": pod_phase,
+                                    "issue": pod_issue,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+
+            bounded_result(json!({
+                "diagnostic": "workload_diagnostics",
+                "evidence": {
+                    "kind": target.kind,
+                    "group": target.group,
+                    "version": target.version,
+                    "namespace": args.namespace,
+                    "name": args.name,
+                    "uid": uid,
+                    "generation": generation,
+                    "observedGeneration": obs_gen,
+                    "capturedAt": stamp(),
+                    "completeness": "complete"
+                },
+                "rolloutState": rollout_state,
+                "replicas": {
+                    "desired": desired,
+                    "current": current,
+                    "ready": ready,
+                    "updated": updated,
+                    "available": available,
+                },
+                "issuesSummary": issues,
+                "conditions": conditions_summary,
+                "replicaSets": replica_sets_summary,
+                "childPods": child_pods_summary,
+            }))
+        };
+        tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Workload diagnostics cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Workload diagnostics timed out")? }
     }
 
     async fn mutate(

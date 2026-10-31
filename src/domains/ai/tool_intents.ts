@@ -80,6 +80,34 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
         color: 'indigo',
       };
     }
+    case 'get_pod_diagnostics': {
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `Deep diagnostics for Pod "${args.name || ''}"${ns}`,
+        description: `Analyzes termination exit codes, OOMKilled events, CrashLoopBackOff waiting states, probe health, and scheduling conditions.`,
+        badge: 'POD DIAG',
+        color: 'purple',
+      };
+    }
+    case 'get_workload_diagnostics': {
+      const kind = args.kind || 'Workload';
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `Rollout & replica diagnostics for ${kind} "${args.name || ''}"${ns}`,
+        description: `Inspects rollout progression, desired vs ready replicas, condition failures, and child ReplicaSets/Pods.`,
+        badge: 'WORKLOAD',
+        color: 'indigo',
+      };
+    }
+    case 'get_events_timeline': {
+      const target = args.name ? ` for "${args.name}"` : args.namespace ? ` in "${args.namespace}"` : '';
+      return {
+        title: `Chronological events timeline${target}`,
+        description: `Builds a structured, deduplicated timeline of Warning and Normal events with occurrence counts and timestamps.`,
+        badge: 'TIMELINE',
+        color: 'amber',
+      };
+    }
     case 'get_logs': {
       const container = args.container ? ` container "${args.container}"` : '';
       const pod = args.name ? ` in Pod "${args.name}"` : '';

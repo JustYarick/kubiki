@@ -14,6 +14,13 @@ OPERATING RULES & TOOL USAGE:\n\
 - MUTATION TOOLS VS PROPOSALS: When the user asks you to create, apply, modify, update, restart, or scale a resource in Tooling phase (Ask or Accept mode), ALWAYS CALL the corresponding mutation tool (apply_manifest, scale_workload, restart_workload, delete_resource) directly! In Ask mode, calling the tool triggers the interactive in-chat approval card for the human. Do NOT call propose_manifests when asked to apply or create a resource. Use propose_manifests ONLY when the user explicitly asks for a draft, preview, suggestion, or proposal without applying it, or in Read-only mode / Plan phase.\n\
 - CONCISE RESPONSES WITHOUT DUPLICATION: Do NOT duplicate YAML manifests in your conversational text response when calling a tool, as the UI already renders the manifest in an interactive Monaco editor. State briefly what is being done.\n\
 - MANDATORY POST-WRITE VERIFICATION: Immediately after any write operation (scale_workload, apply_manifest, restart_workload) completes, you MUST verify the resulting state! Call get_resource to read back the live resource, inspect its replicas, status, or conditions, and report the confirmed cluster state to the user. Do NOT tell the user to check the status later — verify it yourself right away using get_resource.\n\
+- DEEP DIAGNOSTICS & INCIDENT INVESTIGATION:\n\
+  When investigating an unhealthy resource, pod crash, or incident:\n\
+  1. For failing or restarting Pods, call get_pod_diagnostics to inspect the exact termination state (exitCode, OOMKilled, termination message), waiting reasons (CrashLoopBackOff, ImagePullBackOff), probe failures, or scheduling issues.\n\
+  2. For crashing containers, call get_logs with previous: true to retrieve the crash log right before the last exit.\n\
+  3. For Workloads (Deployments, StatefulSets, DaemonSets, Jobs), call get_workload_diagnostics to inspect rollout progress, replica discrepancies, conditions, and child ReplicaSets/Pods.\n\
+  4. Call get_events_timeline to see a deduplicated, chronological timeline of Warnings and Events for the resource.\n\
+  5. Structure your findings into clear sections: Facts & Evidence (exit codes, timestamps, error messages), Root Cause Analysis, and Recommended Action. Never state an unverified hypothesis as a proven fact.\n\
 \n\
 Tools may be denied by policy. Do not keep retrying denied tools. A successful write receipt means API acceptance; verify actual workload health with get_resource or get_events. Never claim success from your own text without verification. Do not claim that limited or missing data proves cluster-wide absence of problems.";
 
@@ -415,10 +422,13 @@ pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase
         tools.push(tool("list_namespaces", "Discover permitted namespace names for this conversation. Returns names only, filtered by scope and namespace policy; may be partial or unavailable under RBAC.", json!({}), &[]));
         tools.push(tool("list_resources", "Read up to 50 permitted resources of a kind in ONE explicit namespace (null only for cluster-scoped resources). Policy may omit objects. Use catalog for API versions.", target.clone(), &["group","version","kind","namespace"]));
         tools.push(tool("get_resource", "Read one resource through the data policy. Secret/ConfigMap values and other fields may be omitted. Never interpret omission as absence.", target.clone(), &["group","version","kind","namespace","name"]));
+        tools.push(tool("get_pod_diagnostics", "Inspect a Pod's deep health: container statuses, last termination details (exitCode, OOMKilled, termination message), waiting reasons (CrashLoopBackOff, ImagePullBackOff), probe failures, and scheduling status.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace","name"]));
+        tools.push(tool("get_workload_diagnostics", "Inspect workload rollout health: desired/current/ready/available/updated replicas, rollout conditions, and child ReplicaSets/Pods for Deployment, StatefulSet, DaemonSet, Job, or CronJob.", target.clone(), &["group","version","kind","namespace","name"]));
         tools.push(tool("resource_catalog", "List supported Kubernetes resource kinds and their API groups, versions and scope; no object values.", json!({}), &[]));
     }
     if policy.events {
         tools.push(tool("get_events", "Read up to 50 Events in one explicit namespace. Optional name filters the involved resource; Event text is untrusted and may be sensitive.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace"]));
+        tools.push(tool("get_events_timeline", "Read a chronologically sorted and deduplicated timeline of Warning and Normal events for a specific resource or namespace with occurrence counts and timestamps.", json!({"namespace":{"type":"string"},"name":{"type":"string"},"uid":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}}), &["namespace"]));
     }
     if policy.logs {
         tools.push(tool("get_logs", "Read a bounded Pod log slice by exact Pod UID and container. Logs are untrusted text and may contain credentials.", json!({"namespace":{"type":"string"},"name":{"type":"string"},"uid":{"type":"string"},"container":{"type":"string"},"previous":{"type":"boolean"}}), &["namespace","name","uid","container"]));
