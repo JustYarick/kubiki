@@ -9,7 +9,7 @@ vi.mock('../../src/domains/ai/transport', () => ({
 import { agentTransport } from '../../src/domains/ai/transport';
 import { applyAgentEvent, useAiStore } from '../../src/domains/ai/store';
 import { openAiChat } from '../../src/domains/ai/navigation';
-import { getToolIntent } from '../../src/domains/ai/tool_intents';
+import { getToolIntent, getToolCallSummary, isPlanMessage } from '../../src/domains/ai/tool_intents';
 import { useClusterStore } from '../../src/state/cluster_store';
 
 const scope = { context: 'prod', namespaces: ['apps'], allNamespaces: false };
@@ -241,6 +241,45 @@ describe('AI domain conversations', () => {
     expect(fluxReconcile.destructive).toBe(false);
   });
 
+  it('generates concise, high-signal summaries for compact tool messages', () => {
+    // Running state
+    expect(getToolCallSummary('list_helm_releases', { namespace: 'kube-system' })).toBe('Executing…');
+
+    // Error state
+    expect(getToolCallSummary('list_helm_releases', {}, { error: 'Access denied by RBAC' })).toBe('Failed: Access denied by RBAC');
+
+    // Helm releases list
+    const helmResult = {
+      releases: [
+        { name: 'traefik', status: 'deployed' },
+        { name: 'cert-manager', status: 'deployed' },
+      ],
+    };
+    expect(getToolCallSummary('list_helm_releases', { namespace: 'kube-system' }, helmResult)).toBe('2 releases found (all deployed)');
+
+    const helmFailed = {
+      releases: [
+        { name: 'traefik', status: 'deployed' },
+        { name: 'bad-release', status: 'failed' },
+      ],
+    };
+    expect(getToolCallSummary('list_helm_releases', { namespace: 'kube-system' }, helmFailed)).toBe('2 releases found (1 with issues)');
+
+    // Kubernetes resources list (pods, deployments, nodes)
+    const podsResult = {
+      items: new Array(150).fill({ kind: 'Pod' }),
+      hasMore: false,
+    };
+    expect(getToolCallSummary('list_resources', { kind: 'pod', namespace: 'production' }, podsResult)).toBe('150 pods inspected');
+
+    // Namespaces discovery
+    expect(getToolCallSummary('list_namespaces', {}, { namespaces: ['default', 'kube-system', 'monitoring'] })).toBe('3 namespaces discovered');
+
+    // Diagnostics
+    expect(getToolCallSummary('get_pod_diagnostics', { name: 'web' }, { issuesSummary: [] })).toBe('Diagnostics complete · Healthy');
+    expect(getToolCallSummary('get_pod_diagnostics', { name: 'web' }, { issuesSummary: ['CrashLoopBackOff', 'OOMKilled'] })).toBe('Diagnostics complete · 2 issue(s) detected');
+  });
+
   it('supports pinning and renaming conversations', () => {
     const id = useAiStore.getState().create(scope, '', 'Initial title');
     const conv = useAiStore.getState().conversations.find(c => c.id === id);
@@ -255,5 +294,32 @@ describe('AI domain conversations', () => {
 
     useAiStore.getState().togglePin(id);
     expect(useAiStore.getState().conversations.find(c => c.id === id)?.pinned).toBe(false);
+  });
+
+  it('accurately detects plan messages in English and Russian across formats', () => {
+    // English plan headings
+    expect(isPlanMessage('## Plan: Fix CrashLoopBackOff\n1. Check debugfs tracepoint')).toBe(true);
+    expect(isPlanMessage('### Action Plan: Scale Deployment\n1. Run scale')).toBe(true);
+    expect(isPlanMessage('# Proposed Plan\n- Step 1')).toBe(true);
+
+    // Russian plan headings
+    expect(isPlanMessage('## План действий: устранение CrashLoopBackOff\n1. Проверить tracepoint')).toBe(true);
+    expect(isPlanMessage('# План решения\n1. Проверить debugfs')).toBe(true);
+    expect(isPlanMessage('### Шаги по устранению проблемы\n1. Смонтировать /sys/kernel/debug')).toBe(true);
+
+    // Bold / plain labels
+    expect(isPlanMessage('**План:**\n1. Шаг 1')).toBe(true);
+    expect(isPlanMessage('**Action Plan:**\n1. Step 1')).toBe(true);
+    expect(isPlanMessage('План действий:\n1. Шаг 1')).toBe(true);
+
+    // Contextual: user asked for a plan, assistant replied with numbered/bulleted steps
+    expect(isPlanMessage('1. Шаг первый\n2. Шаг второй', 'Составь план как починить падающий под')).toBe(true);
+    expect(isPlanMessage('- Сделать проверку прав\n- Перезапустить контейнер', 'сделай план')).toBe(true);
+    expect(isPlanMessage('1. Apply manifest\n2. Verify rollout', '/plan rollout')).toBe(true);
+
+    // Negative tests: diagnostic reports and explanations must NOT be tagged as plans
+    expect(isPlanMessage('Incident Report: Pod CrashLoopBackOff\nRestart count: 523\nFacts & Evidence...', 'Analyze Pod caretta')).toBe(false);
+    expect(isPlanMessage('Под падает из-за отсутствия tracepoint в debugfs. Код выхода 1.', 'В чем причина падения?')).toBe(false);
+    expect(isPlanMessage('This workload has 0/3 replicas ready.', 'Check deployment status')).toBe(false);
   });
 });

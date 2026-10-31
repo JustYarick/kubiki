@@ -8,6 +8,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Copy,
   Cpu,
   FileCode,
@@ -39,7 +40,7 @@ import { useAiStore } from '../store';
 import { desktopAiAvailable } from '../transport';
 import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
 import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
-import { getToolIntent } from '../tool_intents';
+import { getToolIntent, getToolCallSummary, isPlanMessage } from '../tool_intents';
 import { getClusterTone } from '../../../core/cluster_color';
 import { stringify } from 'yaml';
 import '../ai.css';
@@ -1349,392 +1350,123 @@ function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; c
   );
 }
 
-function ContainerRow({ container: c }: { container: any }) {
-  const isOk = c.ready && c.state === 'running';
-  const isCrash = c.state === 'waiting' && (c.stateDetails?.reason === 'CrashLoopBackOff' || c.stateDetails?.reason?.includes('ImagePull'));
-  const isTerminated = c.state === 'terminated';
-  const statusColor = isOk ? 'text-emerald-400' : isCrash || isTerminated ? 'text-rose-400' : 'text-amber-400';
+
+function CompactToolMessage({
+  message: m,
+  conversation: c,
+}: {
+  message: ChatMessage;
+  conversation: Conversation;
+}) {
+  const result = m.result;
+  const error = typeof result?.error === 'string' ? result.error : undefined;
+  const isRunning = !result && c.busy;
+  const args = (m.call?.arguments || {}) as Record<string, any>;
+  const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
+  const intent = getToolIntent(m.call?.name ?? '', args);
+  const summary = getToolCallSummary(m.call?.name ?? '', args, result);
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const rawJson = result ? JSON.stringify(result, null, 2) : JSON.stringify(m.call?.arguments ?? {}, null, 2);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void navigator.clipboard.writeText(rawJson).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   return (
-    <div className="ai-diag-row">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 font-mono text-xs">
-          <span className={`w-1.5 h-1.5 rounded-full ${isOk ? 'bg-emerald-400' : isCrash ? 'bg-rose-400 animate-pulse' : 'bg-amber-400'}`} />
-          <span className="font-semibold text-[var(--text-primary)]">{c.name}</span>
-          <span className={`text-[10px] ${statusColor}`}>[{c.state}]</span>
-          {c.restartCount > 0 && (
-            <span className="text-[10px] text-amber-400 font-semibold">
-              Restarts: {c.restartCount}
+    <article
+      className={`ai-tool-compact ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''}`}
+      aria-label={`AI tool ${m.call?.name}`}
+    >
+      <div
+        className="ai-tool-compact-bar"
+        onClick={() => !isRunning && setExpanded(!expanded)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (!isRunning) setExpanded(!expanded);
+          }
+        }}
+      >
+        <div className="ai-tool-compact-left">
+          {isRunning ? (
+            <RefreshCw size={12} className="ai-thinking-spinner text-amber-400 shrink-0" aria-hidden="true" />
+          ) : error ? (
+            <AlertCircle size={12} className="text-[var(--status-danger)] shrink-0" aria-hidden="true" />
+          ) : (
+            <Check size={12} className="text-emerald-400 shrink-0" aria-hidden="true" />
+          )}
+
+          <span className="ai-tooling-badge">TOOL</span>
+          <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
+          <span className="font-mono font-semibold text-[var(--text-primary)] text-xs">{m.call?.name}</span>
+
+          {targetSummary && (
+            <span className="ai-tool-badge font-mono truncate max-w-[180px]" title={targetSummary}>
+              {targetSummary}
+            </span>
+          )}
+
+          <span className="ai-tool-compact-arrow" aria-hidden="true">→</span>
+          <span className={`ai-tool-compact-summary truncate ${error ? 'text-[var(--status-danger)]' : 'text-[var(--text-secondary)]'}`}>
+            {summary}
+          </span>
+        </div>
+
+        <div className="ai-tool-compact-right">
+          {m.durationMs ? (
+            <span className="text-[var(--text-muted)] font-mono text-[10.5px]">
+              {(m.durationMs / 1000).toFixed(1)}s
+            </span>
+          ) : null}
+
+          {!isRunning && (
+            <span className="ai-tool-expand-btn" title={expanded ? 'Hide raw output' : 'Show raw output'}>
+              {expanded ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
             </span>
           )}
         </div>
-        {c.ready ? (
-          <span className="text-[10px] text-emerald-400">Ready</span>
-        ) : (
-          <span className="text-[10px] text-[var(--text-muted)]">Not Ready</span>
-        )}
       </div>
 
-      {c.stateDetails?.reason && (
-        <div className="text-[11px] text-[var(--text-secondary)] pl-3.5">
-          <span className="font-semibold">{c.stateDetails.reason}:</span> {c.stateDetails.message || 'No additional details'}
-        </div>
-      )}
-
-      {c.lastTermination && (
-        <div className="text-[10px] text-[var(--text-muted)] pl-3.5 font-mono">
-          Last exit: code {c.lastTermination.exitCode} ({c.lastTermination.reason || 'None'})
-          {c.lastTermination.oomKilled && <span className="text-rose-400 font-bold ml-1">OOMKILLED</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PodDiagnosticsView({ data }: { data: any }) {
-  const issues: string[] = data.issuesSummary || [];
-  const containers: any[] = data.containers || [];
-  const initContainers: any[] = data.initContainers || [];
-  const evidence = data.evidence || {};
-
-  return (
-    <div className="ai-diag-card">
-      <div className="ai-diag-header">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-xs text-[var(--text-primary)]">
-            Pod Health: {evidence.name || 'Pod'}
-          </span>
-          <span className={`ai-diag-pill is-${data.phase === 'Running' ? 'emerald' : data.phase === 'Pending' ? 'amber' : 'rose'}`}>
-            {data.phase}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)] font-mono">
-          {data.nodeName && <span>Node: {data.nodeName}</span>}
-          {data.podIP && <span>IP: {data.podIP}</span>}
-        </div>
-      </div>
-
-      {issues.length > 0 && (
-        <div className="ai-diag-issues">
-          <div className="flex items-center gap-1.5 font-semibold text-[11px] text-rose-400 mb-1">
-            <AlertCircle size={12} aria-hidden="true" />
-            <span>Detected Problems ({issues.length})</span>
+      {expanded && (
+        <div className="ai-tool-expanded-drawer">
+          <div className="ai-tool-drawer-header">
+            <div className="text-[11px] text-[var(--text-secondary)] flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-[var(--text-primary)]">{intent.title}</span>
+              {intent.description && (
+                <span className="text-[10px] text-[var(--text-muted)]">
+                  · {intent.description}
+                </span>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleCopy}
+              className="h-6 px-2 text-[10.5px] shrink-0"
+            >
+              {copied ? (
+                <span className="text-emerald-400 flex items-center gap-1">
+                  <Check size={11} aria-hidden="true" /> Copied
+                </span>
+              ) : (
+                <span className="flex items-center gap-1">
+                  <Copy size={11} aria-hidden="true" /> Copy Output
+                </span>
+              )}
+            </Button>
           </div>
-          <ul className="list-disc pl-4 space-y-0.5 text-xs text-[var(--text-primary)]">
-            {issues.map((issue, idx) => (
-              <li key={idx}>{issue}</li>
-            ))}
-          </ul>
+          <pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre>
         </div>
       )}
-
-      {initContainers.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Init Containers</div>
-          {initContainers.map(c => (
-            <ContainerRow key={c.name} container={c} />
-          ))}
-        </div>
-      )}
-
-      <div className="space-y-1">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Containers</div>
-        {containers.map(c => (
-          <ContainerRow key={c.name} container={c} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WorkloadDiagnosticsView({ data }: { data: any }) {
-  const reps = data.replicas || {};
-  const issues: string[] = data.issuesSummary || [];
-  const replicaSets: any[] = data.replicaSets || [];
-  const childPods: any[] = data.childPods || [];
-  const evidence = data.evidence || {};
-  const rolloutState = data.rolloutState || 'healthy';
-
-  const stateColor = rolloutState === 'healthy' ? 'emerald' : rolloutState === 'progressing' ? 'sky' : 'rose';
-
-  return (
-    <div className="ai-diag-card">
-      <div className="ai-diag-header">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-xs text-[var(--text-primary)]">
-            {evidence.kind} Rollout: {evidence.name}
-          </span>
-          <span className={`ai-diag-pill is-${stateColor}`}>
-            {rolloutState.toUpperCase()}
-          </span>
-        </div>
-        <div className="text-[10px] text-[var(--text-muted)] font-mono">
-          Generation: {evidence.generation} / Observed: {evidence.observedGeneration}
-        </div>
-      </div>
-
-      <div className="ai-diag-grid">
-        <div className="ai-diag-stat">
-          <span className="ai-diag-stat-label">Desired</span>
-          <span className="ai-diag-stat-val">{reps.desired ?? '-'}</span>
-        </div>
-        <div className="ai-diag-stat">
-          <span className="ai-diag-stat-label">Ready</span>
-          <span className={`ai-diag-stat-val ${(reps.ready ?? 0) < (reps.desired ?? 0) ? 'text-amber-400' : 'text-emerald-400'}`}>
-            {reps.ready ?? 0}
-          </span>
-        </div>
-        <div className="ai-diag-stat">
-          <span className="ai-diag-stat-label">Available</span>
-          <span className="ai-diag-stat-val">{reps.available ?? 0}</span>
-        </div>
-        <div className="ai-diag-stat">
-          <span className="ai-diag-stat-label">Updated</span>
-          <span className="ai-diag-stat-val">{reps.updated ?? 0}</span>
-        </div>
-      </div>
-
-      {issues.length > 0 && (
-        <div className="ai-diag-issues">
-          <div className="flex items-center gap-1.5 font-semibold text-[11px] text-rose-400 mb-1">
-            <AlertCircle size={12} aria-hidden="true" />
-            <span>Rollout Issues ({issues.length})</span>
-          </div>
-          <ul className="list-disc pl-4 space-y-0.5 text-xs text-[var(--text-primary)]">
-            {issues.map((issue, idx) => (
-              <li key={idx}>{issue}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {replicaSets.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">ReplicaSets</div>
-          <div className="space-y-1">
-            {replicaSets.map(rs => (
-              <div key={rs.name} className="ai-diag-row flex items-center justify-between text-xs font-mono">
-                <div>
-                  <span className="font-semibold text-[var(--text-primary)]">{rs.name}</span>
-                  {rs.revision && <span className="text-[10px] text-[var(--text-muted)] ml-2">rev: {rs.revision}</span>}
-                </div>
-                <div className="text-[11px] text-[var(--text-secondary)]">
-                  Ready: {rs.ready}/{rs.desired}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {childPods.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Child Pods ({childPods.length})</div>
-          <div className="flex flex-wrap gap-1.5">
-            {childPods.map(pod => (
-              <span
-                key={pod.name}
-                className={`ai-cluster-badge ${pod.issue ? 'text-rose-400 border-rose-500/40 bg-rose-500/10' : pod.phase === 'Running' ? 'text-emerald-400 border-emerald-500/40' : 'text-amber-400'}`}
-                title={pod.issue ? `${pod.name}: ${pod.issue}` : pod.name}
-              >
-                {pod.name.split('-').slice(-2).join('-')} {pod.issue ? `(${pod.issue})` : `[${pod.phase}]`}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EventsTimelineView({ data }: { data: any }) {
-  const timeline: any[] = data.timeline || [];
-  const evidence = data.evidence || {};
-
-  return (
-    <div className="ai-diag-card">
-      <div className="ai-diag-header">
-        <span className="font-semibold text-xs text-[var(--text-primary)]">
-          Events Timeline ({timeline.length} recorded events)
-        </span>
-        <span className="text-[10px] text-[var(--text-muted)] font-mono">
-          {evidence.completeness === 'partial' ? 'Partial / Capped' : 'Complete timeline'}
-        </span>
-      </div>
-
-      {timeline.length === 0 ? (
-        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No recent cluster events found.</p>
-      ) : (
-        <div className="space-y-1.5 max-h-[320px] overflow-y-auto pr-1 kubiki-scrollbar">
-          {timeline.map((item, idx) => {
-            const isWarning = item.type === 'Warning';
-            return (
-              <div key={idx} className={`ai-timeline-item ${isWarning ? 'is-warning' : 'is-normal'}`}>
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-1.5 font-mono">
-                    <span className={`ai-diag-pill is-${isWarning ? 'rose' : 'slate'}`}>
-                      {item.type}
-                    </span>
-                    <span className="font-semibold text-[var(--text-primary)]">{item.reason}</span>
-                    {item.count > 1 && (
-                      <span className="text-[10px] text-amber-400 font-bold">×{item.count}</span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-[var(--text-muted)] font-mono">
-                    {item.lastTimestamp ? new Date(item.lastTimestamp).toLocaleTimeString() : ''}
-                  </span>
-                </div>
-                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5 leading-snug">
-                  {item.message}
-                </p>
-                {item.involvedObject?.kind && (
-                  <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">
-                    {item.involvedObject.kind}/{item.involvedObject.name}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function HelmReleasesView({ data }: { data: any }) {
-  const releases: any[] = data.releases || [];
-  return (
-    <div className="ai-diag-card">
-      <div className="ai-diag-header">
-        <span className="font-semibold text-xs text-[var(--text-primary)]">
-          Helm Releases ({releases.length})
-        </span>
-        <span className="text-[10px] text-[var(--text-muted)] font-mono">
-          {data.evidence?.namespace || 'All namespaces'}
-        </span>
-      </div>
-      {releases.length === 0 ? (
-        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No Helm releases found.</p>
-      ) : (
-        <div className="space-y-1 max-h-[300px] overflow-y-auto kubiki-scrollbar">
-          {releases.map((rel, idx) => {
-            const isDeployed = rel.status === 'deployed';
-            return (
-              <div key={idx} className="ai-diag-row flex items-center justify-between gap-2 text-xs">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[var(--text-primary)]">{rel.name}</span>
-                    <span className="text-[10px] text-[var(--text-muted)] font-mono">({rel.namespace})</span>
-                    <span className={`ai-diag-pill is-${isDeployed ? 'emerald' : 'rose'}`}>{rel.status}</span>
-                  </div>
-                  <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                    Chart: {rel.chart} {rel.app_version ? `· App v${rel.app_version}` : ''}
-                  </div>
-                </div>
-                <div className="text-[10px] text-[var(--text-muted)] font-mono text-right">
-                  <div>rev: {rel.revision}</div>
-                  <div>{rel.updated ? rel.updated.split(' ')[0] : ''}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ArgoCdAppsView({ data }: { data: any }) {
-  const apps: any[] = data.applications || [];
-  return (
-    <div className="ai-diag-card">
-      <div className="ai-diag-header">
-        <span className="font-semibold text-xs text-[var(--text-primary)]">
-          Argo CD Applications ({apps.length})
-        </span>
-        <span className="text-[10px] text-[var(--text-muted)] font-mono">argoproj.io/v1alpha1</span>
-      </div>
-      {apps.length === 0 ? (
-        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No Argo CD applications found.</p>
-      ) : (
-        <div className="space-y-1 max-h-[300px] overflow-y-auto kubiki-scrollbar">
-          {apps.map((app, idx) => {
-            const isHealthy = app.health === 'Healthy';
-            const isSynced = app.sync === 'Synced';
-            return (
-              <div key={idx} className="ai-diag-row flex items-center justify-between gap-2 text-xs">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[var(--text-primary)]">{app.name}</span>
-                    {app.namespace && <span className="text-[10px] text-[var(--text-muted)] font-mono">({app.namespace})</span>}
-                    <span className={`ai-diag-pill is-${isHealthy ? 'emerald' : app.health === 'Progressing' ? 'sky' : 'rose'}`}>{app.health}</span>
-                    <span className={`ai-diag-pill is-${isSynced ? 'emerald' : 'amber'}`}>{app.sync}</span>
-                  </div>
-                  {app.repoURL && (
-                    <div className="text-[10px] text-[var(--text-muted)] truncate max-w-[320px] font-mono mt-0.5">
-                      {app.repoURL} {app.path ? `(${app.path})` : ''}
-                    </div>
-                  )}
-                </div>
-                {app.destinationNamespace && (
-                  <div className="text-[10px] text-[var(--text-muted)] font-mono text-right">
-                    dest: {app.destinationNamespace}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FluxResourcesView({ data }: { data: any }) {
-  const resources: any[] = data.resources || [];
-  return (
-    <div className="ai-diag-card">
-      <div className="ai-diag-header">
-        <span className="font-semibold text-xs text-[var(--text-primary)]">
-          Flux Delivery Resources ({resources.length})
-        </span>
-        <span className="text-[10px] text-[var(--text-muted)] font-mono">toolkit.fluxcd.io</span>
-      </div>
-      {resources.length === 0 ? (
-        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No Flux delivery resources found.</p>
-      ) : (
-        <div className="space-y-1 max-h-[300px] overflow-y-auto kubiki-scrollbar">
-          {resources.map((res, idx) => {
-            const isReady = res.ready === 'True';
-            return (
-              <div key={idx} className="ai-diag-row flex items-center justify-between gap-2 text-xs">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase font-bold text-indigo-400 font-mono">[{res.kind}]</span>
-                    <span className="font-semibold text-[var(--text-primary)]">{res.name}</span>
-                    {res.namespace && <span className="text-[10px] text-[var(--text-muted)] font-mono">({res.namespace})</span>}
-                    <span className={`ai-diag-pill is-${isReady ? 'emerald' : 'rose'}`}>
-                      {isReady ? 'Ready' : 'Not Ready'}
-                    </span>
-                    {res.suspended && <span className="ai-diag-pill is-slate">Suspended</span>}
-                  </div>
-                  {res.message && (
-                    <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                      {res.message}
-                    </div>
-                  )}
-                </div>
-                {res.lastAppliedRevision && (
-                  <div className="text-[10px] text-[var(--text-muted)] font-mono text-right truncate max-w-[120px]">
-                    rev: {res.lastAppliedRevision}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    </article>
   );
 }
 
@@ -1749,79 +1481,46 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
 
     const result = m.result;
     const proposal = result?.proposal === true && typeof result.yaml === 'string';
-    const error = typeof result?.error === 'string' ? result.error : undefined;
     const isAwaitingApproval = !result && c.status === 'awaiting_approval' && !!mutationPending;
-    const isRunning = !result && c.busy && !isAwaitingApproval;
     const args = (m.call?.arguments || {}) as Record<string, any>;
     const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
     const intent = getToolIntent(m.call?.name ?? '', args);
 
-    return (
-      <article className={`ai-tool ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''} ${isAwaitingApproval ? 'is-awaiting-approval' : ''}`} aria-label={`AI tool ${m.call?.name}`}>
-        <div className="ai-tool-header">
-          <div className="flex items-center gap-2 font-mono">
-            {isAwaitingApproval ? (
+    if (isAwaitingApproval && mutationPending) {
+      return (
+        <article className="ai-tool is-awaiting-approval" aria-label={`AI tool ${m.call?.name}`}>
+          <div className="ai-tool-header">
+            <div className="flex items-center gap-2 font-mono">
               <ShieldAlert size={12} className="text-amber-400 animate-pulse" aria-hidden="true" />
-            ) : isRunning ? (
-              <RefreshCw size={12} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
-            ) : error ? (
-              <AlertCircle size={12} className="text-[var(--status-danger)]" aria-hidden="true" />
-            ) : proposal ? (
-              <FileCode size={12} className="text-cyan-400" aria-hidden="true" />
-            ) : (
-              <Check size={12} className="text-emerald-400" aria-hidden="true" />
-            )}
-            <span className="ai-tooling-badge">TOOLING</span>
-            <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
-            <span className="font-semibold">{m.call?.name}</span>
-            {targetSummary && (
-              <span className="ai-tool-badge font-mono truncate max-w-[200px]" title={targetSummary}>
-                {targetSummary}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className={`ai-tool-status font-medium ${isAwaitingApproval ? 'text-amber-400 font-semibold' : ''}`}>
-              {isAwaitingApproval
-                ? 'Awaiting your approval'
-                : isRunning
-                ? 'Executing…'
-                : error
-                ? 'Denied or failed'
-                : typeof result?.status === 'string'
-                ? result.status
-                : proposal
-                ? 'Proposal · not executed'
-                : 'Complete'}
-            </span>
-            {m.durationMs ? (
-              <span className="text-[var(--text-muted)] font-mono">
-                {(m.durationMs / 1000).toFixed(1)}s
-              </span>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="ai-tool-content">
-          {/* Codex-Style Command Rationale Banner */}
-          <div className={`ai-command-rationale ${intent.destructive || isAwaitingApproval ? 'is-destructive' : ''}`}>
-            <div className="ai-command-rationale-header">
-              <div className="flex items-center gap-1.5 font-medium">
-                <ShieldAlert size={12} className={intent.destructive ? 'text-rose-400' : isAwaitingApproval ? 'text-amber-400' : 'text-sky-400'} aria-hidden="true" />
-                <span>Command Intent & Rationale</span>
-              </div>
-              {isAwaitingApproval ? (
-                <span className="ai-destructive-pill text-amber-300 bg-amber-500/20 border-amber-500/40">Action Confirmation Required</span>
-              ) : intent.destructive ? (
-                <span className="ai-destructive-pill">Destructive action</span>
-              ) : null}
+              <span className="ai-tooling-badge">TOOLING</span>
+              <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
+              <span className="font-semibold">{m.call?.name}</span>
+              {targetSummary && (
+                <span className="ai-tool-badge font-mono truncate max-w-[200px]" title={targetSummary}>
+                  {targetSummary}
+                </span>
+              )}
             </div>
-            <p className="ai-command-rationale-title">{intent.title}</p>
-            <p className="ai-command-rationale-desc">{intent.description}</p>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="ai-tool-status font-medium text-amber-400 font-semibold">
+                Awaiting your approval
+              </span>
+            </div>
           </div>
 
-          {/* Unified Execution / Approval Result */}
-          {isAwaitingApproval && mutationPending ? (
+          <div className="ai-tool-content">
+            <div className="ai-command-rationale is-destructive">
+              <div className="ai-command-rationale-header">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <ShieldAlert size={12} className="text-amber-400" aria-hidden="true" />
+                  <span>Action Confirmation Required</span>
+                </div>
+                <span className="ai-destructive-pill text-amber-300 bg-amber-500/20 border-amber-500/40">Action Confirmation Required</span>
+              </div>
+              <p className="ai-command-rationale-title">{intent.title}</p>
+              <p className="ai-command-rationale-desc">{intent.description}</p>
+            </div>
+
             <div className="space-y-3 pt-1">
               {mutationPending.simple ? (
                 <p className="text-xs text-[var(--text-secondary)]">{mutationPending.review}</p>
@@ -1880,14 +1579,27 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                 })()
               )}
             </div>
-          ) : isRunning ? (
-            <div className="ai-tool-executing-banner">
-              <RefreshCw size={13} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
-              <span>Executing operation on Kubernetes cluster…</span>
+          </div>
+        </article>
+      );
+    }
+
+    if (proposal) {
+      return (
+        <article className="ai-tool" aria-label={`AI tool ${m.call?.name}`}>
+          <div className="ai-tool-header">
+            <div className="flex items-center gap-2 font-mono">
+              <FileCode size={12} className="text-cyan-400" aria-hidden="true" />
+              <span className="ai-tooling-badge">TOOLING</span>
+              <span className="ai-tool-intent-badge is-emerald">PROPOSAL</span>
+              <span className="font-semibold">{String(result.title ?? m.call?.name)}</span>
             </div>
-          ) : error ? (
-            <p className="ai-error p-2">{error}</p>
-          ) : proposal ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="ai-tool-status font-medium">Proposal · not executed</span>
+            </div>
+          </div>
+
+          <div className="ai-tool-content">
             <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="text-xs font-semibold text-[var(--text-primary)]">{String(result.title ?? 'Proposed Kubernetes Manifest')}</h4>
@@ -1915,62 +1627,22 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                 </div>
               )}
             </div>
-          ) : (
-            <div className="space-y-2">
-              {m.call?.name === 'apply_manifest' && m.call?.arguments?.yaml ? (
-                <div className="space-y-1.5 my-2">
-                  <div className="text-[11px] font-semibold text-[var(--text-secondary)]">Manifest to Apply:</div>
-                  <div className="rounded border border-[var(--border-default)] overflow-hidden">
-                    <CodeEditor
-                      ariaLabel="Applied Manifest YAML"
-                      value={String(m.call.arguments.yaml)}
-                      language="yaml"
-                      readOnly={true}
-                      height="min(35vh, 260px)"
-                      copyable={true}
-                      variant="field"
-                    />
-                  </div>
-                </div>
-              ) : null}
-              {result && (result.operationId || result.status) ? (
-                <div className="ai-tool-receipt-box">
-                  {result.operationId ? <span>Receipt ID: {String(result.operationId)}</span> : null}
-                  {result.status ? <span>Status: {String(result.status)}</span> : null}
-                </div>
-              ) : null}
-              {result?.diagnostic === 'pod_diagnostics' ? (
-                <PodDiagnosticsView data={result} />
-              ) : result?.diagnostic === 'workload_diagnostics' ? (
-                <WorkloadDiagnosticsView data={result} />
-              ) : result?.diagnostic === 'events_timeline' ? (
-                <EventsTimelineView data={result} />
-              ) : result?.diagnostic === 'helm_releases' ? (
-                <HelmReleasesView data={result} />
-              ) : result?.diagnostic === 'argocd_apps' ? (
-                <ArgoCdAppsView data={result} />
-              ) : result?.diagnostic === 'flux_resources' ? (
-                <FluxResourcesView data={result} />
-              ) : null}
-              <details>
-                <summary className="text-xs text-[var(--text-muted)] cursor-pointer select-none py-0.5">
-                  View raw parameters & output
-                </summary>
-                <pre className="ai-tool-result mt-1">{result ? JSON.stringify(result, null, 2) : JSON.stringify(m.call?.arguments, null, 2)}</pre>
-              </details>
-            </div>
-          )}
-        </div>
-      </article>
-    );
+          </div>
+        </article>
+      );
+    }
+
+    return <CompactToolMessage message={m} conversation={c} />;
   }
 
   const isUser = m.role === 'user';
-  const isPlan = !isUser && (m.phase === 'plan' || /^(#+ Plan|Proposed Plan|Plan:)/im.test(m.text));
   const isStreaming = c.busy && c.messages[c.messages.length - 1]?.id === m.id;
   const { thinking, isThinkingActive, content } = !isUser ? parseThinking(m.text, isStreaming) : { isThinkingActive: false, content: m.text };
+  const rawText = content || m.text;
+  const msgIndex = c.messages.findIndex(x => x.id === m.id);
+  const prevUserMsg = msgIndex > 0 ? c.messages.slice(0, msgIndex).reverse().find(msg => msg.role === 'user') : undefined;
+  const isPlan = !isUser && isPlanMessage(rawText, prevUserMsg?.text);
   const [copied, setCopied] = useState(false);
-  const isDocument = !isUser && Boolean(content && (content.includes('# ') || content.includes('| ---') || content.includes('## ')));
 
   if (!isUser && !content.trim() && !thinking && !isThinkingActive && !isStreaming) {
     return null;
@@ -1985,7 +1657,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
 
   return (
     <article
-      className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''} ${isDocument ? 'is-document-report' : ''}`}
+      className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''}`}
       aria-label={isUser ? 'Your message' : 'Agent response'}
     >
       <div className="ai-message-heading">
@@ -1995,9 +1667,9 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           ) : (
             <>
               <Bot size={13} className={isPlan ? 'text-emerald-400' : 'text-indigo-400'} aria-hidden="true" />
-              <strong>Kubiki AI</strong>
+              <strong>Agent</strong>
               {isPlan ? (
-                <span className="ai-plan-badge" title="Strategic plan proposal phase">
+                <span className="ai-plan-badge" title="Strategic plan proposal">
                   <FileText size={10} aria-hidden="true" />
                   Plan
                 </span>
@@ -2006,20 +1678,14 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                   Tooling
                 </span>
               ) : null}
-              {isDocument && (
-                <span className="ai-report-badge" title="Formatted report / document">
-                  <FileText size={10} aria-hidden="true" />
-                  Report
-                </span>
-              )}
             </>
           )}
         </div>
         <Button
           variant="ghost"
           size="sm"
-          aria-label={isDocument ? "Copy report markdown" : "Copy message"}
-          title={isDocument ? "Copy report / document markdown" : "Copy message"}
+          aria-label="Copy message"
+          title="Copy message"
           onClick={handleCopy}
           className={copied ? "text-emerald-400" : undefined}
         >
@@ -2031,7 +1697,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           ) : (
             <span className="flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[10.5px]">
               <Copy size={12} aria-hidden="true" />
-              {isDocument && <span>Copy Report</span>}
+              <span>Copy</span>
             </span>
           )}
         </Button>
@@ -2067,6 +1733,20 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           {content || (isThinkingActive ? '' : m.text)}
         </Markdown>
       </div>
+
+      {isPlan && c.phase === 'plan' && c.mode !== 'read_only' && !c.busy && (
+        <div className="ai-plan-action-bar">
+          <span className="text-xs text-[var(--text-secondary)]">Ready to execute this plan?</span>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => void useAiStore.getState().setPhase(c.id, 'action')}
+          >
+            <Zap size={11} className="text-amber-300" aria-hidden="true" />
+            Switch to Tooling to execute
+          </Button>
+        </div>
+      )}
 
       {!isUser && (
         <div className="ai-message-footer">

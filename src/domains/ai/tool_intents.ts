@@ -236,3 +236,116 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
     }
   }
 }
+
+export function getToolCallSummary(name: string, args: Record<string, any> = {}, result?: Record<string, any>): string {
+  if (!result) return 'Executing…';
+  if (result.error && typeof result.error === 'string') return `Failed: ${result.error}`;
+
+  switch (name) {
+    case 'list_helm_releases': {
+      const releases = Array.isArray(result.releases) ? result.releases : [];
+      const deployed = releases.filter((r: any) => r.status === 'deployed').length;
+      const issues = releases.length - deployed;
+      return `${releases.length} release${releases.length === 1 ? '' : 's'} found${issues > 0 ? ` (${issues} with issues)` : ' (all deployed)'}`;
+    }
+    case 'get_helm_release': {
+      const rel = result.release;
+      if (rel) {
+        return `Chart ${rel.chart || ''} · v${rel.app_version || ''} (status: ${rel.status || 'unknown'})`;
+      }
+      return 'Release details retrieved';
+    }
+    case 'list_resources': {
+      const items = Array.isArray(result.items) ? result.items : [];
+      const kind = args.kind || 'resource';
+      return `${items.length} ${kind}${items.length === 1 ? '' : 's'} inspected${result.hasMore ? ' (capped at 50)' : ''}`;
+    }
+    case 'get_resource': {
+      const kind = args.kind || 'Resource';
+      const name = args.name || '';
+      return `${kind} "${name}" retrieved`;
+    }
+    case 'list_namespaces': {
+      const nss = Array.isArray(result.namespaces) ? result.namespaces : Array.isArray(result.items) ? result.items : [];
+      return `${nss.length} namespace${nss.length === 1 ? '' : 's'} discovered`;
+    }
+    case 'list_argocd_apps': {
+      const apps = Array.isArray(result.applications) ? result.applications : [];
+      const healthy = apps.filter((a: any) => a.health === 'Healthy').length;
+      return `${apps.length} application${apps.length === 1 ? '' : 's'} discovered (${healthy} healthy)`;
+    }
+    case 'get_argocd_app': {
+      return `Application "${args.name || ''}" status retrieved`;
+    }
+    case 'list_flux_resources': {
+      const res = Array.isArray(result.resources) ? result.resources : [];
+      const ready = res.filter((r: any) => r.ready === 'True').length;
+      return `${res.length} resource${res.length === 1 ? '' : 's'} discovered (${ready} ready)`;
+    }
+    case 'get_flux_resource': {
+      return `Flux ${args.kind || 'resource'} "${args.name || ''}" inspected`;
+    }
+    case 'get_pod_diagnostics': {
+      const issues = Array.isArray(result.issuesSummary) ? result.issuesSummary.length : 0;
+      return issues > 0 ? `Diagnostics complete · ${issues} issue(s) detected` : 'Diagnostics complete · Healthy';
+    }
+    case 'get_workload_diagnostics': {
+      const state = result.rolloutState || 'healthy';
+      const issues = Array.isArray(result.issuesSummary) ? result.issuesSummary.length : 0;
+      return `Rollout ${state}${issues > 0 ? ` · ${issues} issue(s)` : ''}`;
+    }
+    case 'get_events_timeline': {
+      const events = Array.isArray(result.timeline) ? result.timeline : [];
+      return `${events.length} event${events.length === 1 ? '' : 's'} recorded in timeline`;
+    }
+    case 'get_events': {
+      const events = Array.isArray(result.events) ? result.events : [];
+      return `${events.length} event${events.length === 1 ? '' : 's'} retrieved`;
+    }
+    case 'get_logs': {
+      const lines = typeof result.logs === 'string' ? result.logs.split('\n').filter(Boolean).length : 0;
+      return `Fetched ${lines} log line${lines === 1 ? '' : 's'}`;
+    }
+    case 'scale_workload': {
+      return `Scaled to ${args.replicas ?? '?'} replicas`;
+    }
+    case 'restart_workload': {
+      return `Rolling restart triggered`;
+    }
+    case 'delete_resource': {
+      return `Resource deleted`;
+    }
+    case 'apply_manifest': {
+      return `Manifest applied${result.operationId ? ` (Receipt: ${result.operationId})` : ''}`;
+    }
+    default: {
+      if (typeof result.status === 'string') return result.status;
+      return 'Complete';
+    }
+  }
+}
+
+/**
+ * Detects whether an assistant message represents a structured action plan.
+ * Recognizes English and Russian markdown headings, labeled plan sections,
+ * and conversational context where the user explicitly requested a plan.
+ */
+export function isPlanMessage(text: string, userPrompt?: string): boolean {
+  if (!text) return false;
+  // 1. Any markdown heading containing Plan or План or remediation steps
+  if (/(?:^|\n)#+\s*.*(?:plan|план|шаги\s+(?:по\s+)?(?:устранению|исправлению|решению)|steps\s+to|action\s+items)/i.test(text)) {
+    return true;
+  }
+  // 2. Bold or labeled line starting with Plan / План
+  if (/(?:^|\n)(?:\*\*)?(?:action\s+plan|proposed\s+plan|strategic\s+plan|plan|пошаговый\s+план|план(?:\s+действий|\s+решения|\s+работ)?)(?:\*\*)?\s*[:—\-]/i.test(text)) {
+    return true;
+  }
+  // 3. User explicitly requested a plan in their prompt and response contains numbered steps or bullet lists
+  if (userPrompt && /(?:^|\s)(?:\/plan\b|plan\b|план|составь\s+план|сделай\s+план|(?:сделай|составь|напиши|дай|предложи|разработай|нужен|make|create|write|give|propose|draft|need|provide)\s+.*(?:план|plan))/i.test(userPrompt)) {
+    if (/(?:^|\n)\s*(?:\d+[\.\)]|\-|\*)\s+/.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
