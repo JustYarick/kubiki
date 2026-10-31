@@ -15,6 +15,7 @@ import type { ResourceRef } from '../core/resources/resource_types';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 import type { DockSession } from './dock_store';
 import { activeWorkspaceArea, workspaceArea } from '../core/workspace_areas';
+import { useAiStore } from '../domains/ai/store';
 
 interface AreaSelection {
   activeTabId: string;
@@ -280,6 +281,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const target = state.tabs.find(tab => tab.id === id);
         if (!target) return;
         clearDraftForTab(target);
+        if (target.panelId === 'ai-agent' || id === 'panel:ai-agent') {
+          useAiStore.setState({ activeId: null });
+        }
         const tabs = state.tabs.filter(tab => tab.id !== id);
         const siblings = state.tabs.filter(tab => workspaceArea(tab) === workspaceArea(target));
         const index = siblings.findIndex(tab => tab.id === id);
@@ -298,6 +302,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const area = workspaceArea(target);
         const removed = state.tabs.filter(tab => workspaceArea(tab) === area && tab.id !== id);
         removed.forEach(clearDraftForTab);
+        if (removed.some(t => t.panelId === 'ai-agent' || t.id === 'panel:ai-agent')) {
+          useAiStore.setState({ activeId: null });
+        }
         const tabs = state.tabs.filter(tab => !removed.includes(tab));
         set({ tabs, ...selectArea({ ...state, tabs }, area, id), splitTabId: null });
       },
@@ -309,6 +316,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const area = workspaceArea(state.tabs[index]);
         const removed = state.tabs.filter((tab, i) => i > index && workspaceArea(tab) === area);
         removed.forEach(clearDraftForTab);
+        if (removed.some(t => t.panelId === 'ai-agent' || t.id === 'panel:ai-agent')) {
+          useAiStore.setState({ activeId: null });
+        }
         const tabs = state.tabs.filter(tab => !removed.includes(tab));
         set({ tabs, ...selectArea({ ...state, tabs }, area, id) });
       },
@@ -316,7 +326,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       closeAllTabs: () => {
         const state = get();
         const area = activeWorkspaceArea(state);
-        state.tabs.filter(tab => workspaceArea(tab) === area).forEach(clearDraftForTab);
+        const removed = state.tabs.filter(tab => workspaceArea(tab) === area);
+        removed.forEach(clearDraftForTab);
+        if (removed.some(t => t.panelId === 'ai-agent' || t.id === 'panel:ai-agent')) {
+          useAiStore.setState({ activeId: null });
+        }
         set({ tabs: state.tabs.filter(tab => workspaceArea(tab) !== area), activeArea: area, activeTabId: '', splitTabId: null });
       },
 

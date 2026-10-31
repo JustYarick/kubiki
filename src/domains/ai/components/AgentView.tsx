@@ -308,7 +308,8 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   const [model, setModel] = useState(() => getSavedModel(settings.defaultProvider ?? settings.providers[0]?.id ?? '', settings.defaultModel));
   const [phase, setPhase] = useState<AgentPhase>('plan');
   const [mode, setMode] = useState<AgentMode>('read_only');
-  const [draft, setDraft] = useState('');
+  const draft = useAiStore(s => s.homeDraft);
+  const setDraft = useAiStore(s => s.setHomeDraft);
   const [sending, setSending] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
 
@@ -372,6 +373,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
         };
       }
       const chosenModel = model || getSavedModel(providerId, settings.defaultModel);
+      useAiStore.setState({ homeDraft: '' });
       const id = useAiStore.getState().create(scope, draft, undefined, providerId, chosenModel, phase, mode);
       await useAiStore.getState().send(id);
     } finally {
@@ -382,7 +384,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   const selectedModel = models?.find(m => m.id === model);
 
   return (
-    <div className="ai-home kubiki-scrollbar">
+    <div className="ai-home ai-transcript kubiki-scrollbar">
       <div className="ai-home-hero">
         <div className="ai-home-brand-logo flex items-center justify-center select-none">
           <img

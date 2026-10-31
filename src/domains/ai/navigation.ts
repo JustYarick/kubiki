@@ -31,9 +31,14 @@ export function openAiChat(options: { resource?: ResourceItem; create?: boolean;
     );
   };
   const store = useAiStore.getState();
-  if (resource || options.create || !store.conversations.length) {
-    if (store.loaded) create();
-    else void store.load().then(create);
+  if (resource || options.create) {
+    create();
+    if (!store.loaded) void store.load();
+  } else {
+    const isTabOpen = useWorkspaceStore.getState().tabs.some(t => t.id === 'panel:ai-agent');
+    if (!isTabOpen) {
+      useAiStore.setState({ activeId: null });
+    }
   }
   useWorkspaceStore.getState().openTab({ id: 'panel:ai-agent', type: 'extension', panelId: 'ai-agent', title: 'AI Agent', context: null });
 }

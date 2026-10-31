@@ -6,6 +6,8 @@ interface AiState {
   settings: AiSettings; credentials: Record<string, boolean>; loaded: boolean; loading: boolean; saving: boolean; error?: string;
   models: Record<string, ModelInfo[]>; modelLoading: Record<string, boolean>; modelErrors: Record<string, string | undefined>;
   conversations: Conversation[]; activeId: string | null;
+  homeDraft: string;
+  setHomeDraft: (draft: string) => void;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
   load: () => Promise<void>; save: (settings: AiSettings) => Promise<void>;
@@ -86,6 +88,8 @@ const runEpochs = new Map<string, number>();
 export const useAiStore = create<AiState>((set, get) => ({
   settings: defaultSettings(), credentials: {}, loaded: false, loading: false, saving: false,
   models: {}, modelLoading: {}, modelErrors: {}, conversations: [], activeId: null,
+  homeDraft: '',
+  setHomeDraft: (draft) => set({ homeDraft: draft }),
   settingsOpen: false,
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   async load() {
