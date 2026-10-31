@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, Bot, HelpCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, HelpCircle } from 'lucide-react';
 import { Button } from '../../../ui/Button';
 import { useUiStore } from '../../../../state/ui_store';
 import type { ResourceItem } from '../../../../types/k8s';
@@ -204,8 +204,7 @@ export function ProblemsBanner({ item, className }: ProblemsBannerProps) {
             useUiStore.setState({ inspectorCollapsed: true });
           }}
         >
-          <Bot size={13} aria-hidden="true" />
-          Analyze
+          Investigate with AI
         </Button>
         <span className="text-[length:calc(10.5px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
           Kubiki AI Agent
