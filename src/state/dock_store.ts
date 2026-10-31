@@ -6,13 +6,11 @@ import { useResourceStore } from './resource_store';
 import { defaultContainer, podContainers } from '../core/resources/containers';
 import { findWorkloadPods, preferredWorkloadPod } from '../core/resources/workload_pods';
 import { useClusterStore } from './cluster_store';
-import type { AnalysisRequest } from '../core/ai_analysis';
 
 export type DockSessionType = 'terminal' | 'logs' | 'ports' | 'events';
 export type DockTargetType = 'local' | 'pod' | 'node';
 
 export interface DockSession {
-  analysis?: AnalysisRequest;
   id: string;
   context?: string | null;
   uid?: string;

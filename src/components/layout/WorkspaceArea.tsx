@@ -18,7 +18,6 @@ import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
 import { FullManifest } from '../../views/FullManifest';
 import { k8s } from '../../providers/k8s_provider';
-import { AnalysisView } from '../../views/AnalysisView';
 import { IconButton } from '../ui/Button';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
@@ -73,7 +72,7 @@ export const WorkspaceArea: React.FC<{
     if (next.size === previous.size && [...next].every((id) => previous.has(id))) return previous;
     return next;
   }); }, [tabs, activeTab?.id, splitTab?.id]);
-  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'analysis' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension' || tab.type === 'topology')));
+  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension' || tab.type === 'topology')));
   return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
     <div ref={headerRef} className="shrink-0 flex flex-col">
       <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
@@ -115,13 +114,12 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none bg-[var(--bg-canvas)]">
         <img
-          src="/brand/kubiki-mark-gray-dark.svg"
-          alt=""
-          aria-hidden="true"
-          width={96}
-          height={96}
+          src="/brand/kubiki-logo-gray-dark.svg"
+          alt="Kubiki"
+          width={360}
+          height={128}
           draggable={false}
-          className="w-12 h-12 mb-3 shrink-0"
+          className="h-14 w-auto max-w-full mb-3 shrink-0"
         />
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">No Open Tabs</h2>
         <p className="text-xs text-[var(--text-muted)] mt-1 max-w-sm">
@@ -175,9 +173,8 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     return <RegisteredPanel tab={tab} visible={visible} />;
   }
   if (tab.type === 'overview') return <OverviewView />;
-  if (tab.type === 'terminal-session' || tab.type === 'analysis') {
-    if (!tab.session) return <div className="p-4 text-sm text-[var(--text-secondary)]">This terminal session has ended. Open a new terminal or analyze the resource again.</div>;
-    if (tab.session.analysis) return <AnalysisView session={tab.session} visible={visible} />;
+  if (tab.type === 'terminal-session') {
+    if (!tab.session) return <div className="p-4 text-sm text-[var(--text-secondary)]">This terminal session has ended.</div>;
     if (tab.session.targetType !== 'local' && tab.session.context && tab.session.context !== context) return <p className="p-4 text-sm text-[var(--text-secondary)]">This terminal belongs to context {tab.session.context}. Switch back to that context to reconnect.</p>;
     return <TerminalSessionPane session={tab.session} visible={visible} onContainerChange={name => useWorkspaceStore.setState(state => ({ tabs: state.tabs.map(entry => entry.id === tab.id ? { ...entry, session: { ...entry.session!, container: name } } : entry) }))} />;
   }

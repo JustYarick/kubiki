@@ -19,50 +19,11 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
-#[test]
-fn analysis_launch_passes_untrusted_prompt_as_one_argument_and_enforces_limits() {
-    use kubiki_core::pod_ops::host_terminal::{AnalysisAgent, AnalysisRequest, analysis_command};
-    let prompt = "analyze 'quotes' $(touch /tmp/never-run)\n; kubectl delete pods";
-    for agent in [
-        AnalysisAgent::Codex,
-        AnalysisAgent::Opencode,
-        AnalysisAgent::Claude,
-    ] {
-        let command = analysis_command(&AnalysisRequest {
-            agent,
-            prompt: prompt.into(),
-        })
-        .unwrap();
-        assert_eq!(command.get_argv().last().unwrap(), prompt);
-        assert!(!command.get_argv().iter().any(|argument| argument == "-c"));
-    }
-    let codex = analysis_command(&AnalysisRequest {
-        agent: AnalysisAgent::Codex,
-        prompt: prompt.into(),
-    })
-    .unwrap();
-    assert!(
-        codex
-            .get_argv()
-            .iter()
-            .any(|argument| argument == "read-only")
-    );
-    for prompt in [String::new(), "x".repeat(65537), "x\0y".into()] {
-        assert!(
-            analysis_command(&AnalysisRequest {
-                agent: AnalysisAgent::Codex,
-                prompt
-            })
-            .is_err()
-        );
-    }
-}
 fn request() -> HostTerminalRequest {
     HostTerminalRequest {
         shell: Some("/bin/sh".into()),
         cols: 80,
         rows: 24,
-        analysis: None,
     }
 }
 #[tokio::test]

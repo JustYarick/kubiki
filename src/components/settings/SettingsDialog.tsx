@@ -26,7 +26,6 @@ import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_rendering';
 import { cx } from '../../core/utils/cx';
-import { AI_AGENTS, ANALYSIS_INSTRUCTIONS, ANALYSIS_PROMPT_LIMIT, type AiAgent } from '../../core/ai_analysis';
 import { AgentSettings } from '../../domains/ai/components/AgentSettings';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
@@ -570,19 +569,18 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
       <Row entry={findEntry('about.kubiki')} wide>
-        <div className="flex items-start gap-3 p-3 rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-surface)]">
-          <img
-            src="/brand/kubiki-mark-gray-dark.svg"
-            alt=""
-            aria-hidden="true"
-            width={96}
-            height={96}
-            draggable={false}
-            className="w-9 h-9 shrink-0"
-          />
+        <div className="p-3 rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-surface)]">
           <div className="min-w-0">
-            <div className="text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">
-              Kubiki <span className="text-[var(--text-muted)] font-normal">{APP_VERSION}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <img
+                src="/brand/kubiki-logo-gray-dark.svg"
+                alt="Kubiki"
+                width={360}
+                height={128}
+                draggable={false}
+                className="block h-10 w-auto max-w-full shrink-0 select-none"
+              />
+              <span className="text-[length:calc(13px*var(--ui-factor))] text-[var(--text-muted)]">{APP_VERSION}</span>
             </div>
             <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] mt-0.5">
               Desktop Kubernetes IDE · Apache License 2.0
@@ -610,26 +608,13 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
 }
 
 function AiPage({ sectionTitle }: { sectionTitle: string }) {
-  const agent = useUiStore(state => state.aiAgent);
-  const setAgent = useUiStore(state => state.setAiAgent);
-  const prompt = useUiStore(state => state.aiAnalysisPrompt);
-  const setPrompt = useUiStore(state => state.setAiAnalysisPrompt);
-  const [draft, setDraft] = useState(prompt);
-  return <div><SectionTitle>{sectionTitle}</SectionTitle>
-    <Row entry={findEntry('ai.providers')} wide><AgentSettings section="providers" /></Row>
-    <Row entry={findEntry('ai.permissions')} wide><AgentSettings section="permissions" /></Row>
-    <SectionTitle>External snapshot analysis</SectionTitle>
-    <Row entry={findEntry('ai.agent')}><Select aria-label="Analysis agent" className="ide-select w-40" value={agent} onChange={event => setAgent(event.target.value as AiAgent)}>{AI_AGENTS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</Select></Row>
-    <Row entry={findEntry('ai.starting-prompt')} wide>
-      <label htmlFor="ai-starting-prompt" className="sr-only">Starting prompt</label>
-      <textarea id="ai-starting-prompt" className="ide-textarea w-full font-mono" rows={12} maxLength={ANALYSIS_PROMPT_LIMIT} spellCheck={false} value={draft} aria-describedby="ai-prompt-hint" onChange={event => { setDraft(event.target.value); setPrompt(event.target.value); }} onBlur={() => setDraft(useUiStore.getState().aiAnalysisPrompt)} />
-      <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
-        <p id="ai-prompt-hint" className="text-xs text-[var(--text-muted)]">Empty uses the default instructions. {draft.length}/{ANALYSIS_PROMPT_LIMIT}</p>
-        <Button size="sm" disabled={draft === ANALYSIS_INSTRUCTIONS} onClick={() => { setPrompt(ANALYSIS_INSTRUCTIONS); setDraft(ANALYSIS_INSTRUCTIONS); }}><RotateCcw size={12} aria-hidden="true" />Restore default prompt</Button>
-      </div>
-    </Row>
-    <Row entry={findEntry('ai.analysis-policy')} wide><p className="text-xs text-[var(--text-secondary)] leading-relaxed">A new terminal tab opens for every analysis. The selected agent uses its existing account and model settings. Diagnostic information is sent to that agent’s configured model provider.</p></Row>
-  </div>;
+  return (
+    <div>
+      <SectionTitle>{sectionTitle}</SectionTitle>
+      <Row entry={findEntry('ai.providers')} wide><AgentSettings section="providers" /></Row>
+      <Row entry={findEntry('ai.permissions')} wide><AgentSettings section="permissions" /></Row>
+    </div>
+  );
 }
 
 function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {

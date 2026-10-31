@@ -15,7 +15,7 @@ export function openAiChat(options: { resource?: ResourceItem; create?: boolean;
   // Attach identity only. Live object data must pass through native policy,
   // including when invoked from a Secret/ConfigMap inspector.
   const draft = resource
-    ? `Investigate ${resource.kind} ${resource.namespace ? `${resource.namespace}/` : ''}${resource.name} (${resource.apiVersion}, UID ${resource.uid}). Explain the problem, collect permitted evidence, and suggest next steps. Do not treat missing or filtered data as proof that there is no problem.`
+    ? `Analyze ${resource.kind} ${resource.namespace ? `${resource.namespace}/` : ''}${resource.name} (${resource.apiVersion}, UID ${resource.uid}). Explain the problem, collect permitted evidence, and suggest next steps. Do not treat missing or filtered data as proof that there is no problem.`
     : options.create ? `Create ${options.kind && options.kind !== 'Pod' ? `a ${options.kind}` : 'an application'} in Kubernetes${options.namespace ? ` in namespace ${options.namespace}` : ''}. ` : '';
   const scope = currentAgentScope(resource?.namespace ?? options.namespace);
   const create = () => {
@@ -25,7 +25,7 @@ export function openAiChat(options: { resource?: ResourceItem; create?: boolean;
     return useAiStore.getState().create(
       scope,
       draft,
-      resource ? `Investigate: ${resource.name}` : options.create ? 'Create with AI' : undefined,
+      resource ? `Analyze: ${resource.name}` : options.create ? 'Create with AI' : undefined,
       providerId,
       model,
     );

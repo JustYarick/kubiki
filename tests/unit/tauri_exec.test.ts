@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { connectPodExec, connectHostTerminal, connectAiAnalysis, getHostTerminalInfo, resetExecSessions, closeExecConnections, type ExecBatch } from '../../src/providers/tauri_exec';
+import { connectPodExec, connectHostTerminal, getHostTerminalInfo, resetExecSessions, closeExecConnections, type ExecBatch } from '../../src/providers/tauri_exec';
 import { resourceQuery } from '../../src/core/resources/resource_types';
 const mock = vi.hoisted(() => ({ invoke: vi.fn(), channels: [] as Array<{ id: number; onmessage: (batch: ExecBatch) => void }> }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mock.invoke, Channel: class { id = mock.channels.length + 1; onmessage = (_batch: ExecBatch) => {}; constructor() { mock.channels.push(this); } } }));
@@ -57,25 +57,6 @@ it('routes host shell IO/resize/ACK/exit to independent host commands with no Ku
   expect(mock.invoke).toHaveBeenCalledWith('ack_host_terminal', { sessionId: id, sequence: 1 });expect(unregister).toHaveBeenCalledOnce();
 });
 
-it('starts analysis through mandatory agent IPC and keeps the host PTY lifecycle', async () => {
-  const analysis = { agent: 'opencode' as const, prompt: 'Analyze only: Pending Pod', cols: 100, rows: 32 };
-  const conn = await connectAiAnalysis(analysis, vi.fn(), new AbortController().signal);
-  const start = mock.invoke.mock.calls.find(([command]) => command === 'start_ai_analysis')!;
-  expect(start[1].request).toEqual(analysis);
-  expect(mock.invoke.mock.calls.some(([command]) => command === 'start_host_terminal')).toBe(false);
-  conn.write('follow-up\r'); conn.resize(120, 40);
-  await vi.waitFor(() => expect(mock.invoke).toHaveBeenCalledWith('write_host_terminal', { sessionId: start[1].sessionId, data: 'follow-up\r' }));
-  expect(mock.invoke).toHaveBeenCalledWith('resize_host_terminal', { sessionId: start[1].sessionId, cols: 120, rows: 40 });
-  conn.close();
-  expect(mock.invoke).toHaveBeenCalledWith('close_host_terminal', { sessionId: start[1].sessionId });
-});
-
-it('rejects old native backends explicitly and never falls back to a plain shell', async () => {
-  mock.invoke.mockImplementation(command => command === 'start_ai_analysis' ? Promise.reject('Command start_ai_analysis not found') : Promise.resolve());
-  await expect(connectAiAnalysis({ agent: 'codex', prompt: 'Analyze only', cols: 80, rows: 24 }, vi.fn(), new AbortController().signal)).rejects.toMatchObject({ code: 'unsupported', message: expect.stringContaining('Rebuild and restart Kubiki') });
-  expect(mock.invoke.mock.calls.some(([command]) => command === 'start_host_terminal')).toBe(false);
-  expect(unregister).toHaveBeenCalledOnce();
-});
 it('loads real shell metadata and reset stops both Pod and host transports', async () => {
   mock.invoke.mockResolvedValue({ shells: ['/bin/zsh'], default_shell: '/bin/zsh', cwd: '/home/user' });
   expect(await getHostTerminalInfo()).toEqual({ shells: ['/bin/zsh'], default_shell: '/bin/zsh', cwd: '/home/user' });

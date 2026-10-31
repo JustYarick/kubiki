@@ -36,7 +36,6 @@ export type WorkspaceTabType =
   | 'logs'            // Pod log stream
   | 'terminal'
   | 'terminal-session'
-  | 'analysis'
   | 'topology';       // Pod interactive terminal session
 
 export interface WorkspaceTab {
@@ -175,7 +174,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const id = `tab-${session.id}`;
         // Each terminal owns its process; two local shells must never collapse into one tab.
         if (get().tabs.some(tab => tab.id === id)) { get().setActiveTab(id); return; }
-        const tab: WorkspaceTab = { id, type: session.analysis ? 'analysis' : 'terminal-session', title: session.title, session: { ...session, id } };
+        const tab: WorkspaceTab = { id, type: 'terminal-session', title: session.title, session: { ...session, id } };
         set(state => ({ tabs: [...state.tabs, tab], ...selectArea({ ...state, tabs: [...state.tabs, tab] }, 'explorer', id) }));
       },
       openGitOpsDashboard: (family) => get().openTab({ id: `tab-${family}-dashboard`, type: `${family}-dashboard`, title: `${family === 'flux' ? 'Flux' : 'Argo CD'} Overview` }),

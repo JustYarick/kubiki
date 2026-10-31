@@ -160,9 +160,9 @@ test('resource entry points create conversations with pinned scope and YAML prop
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByTestId('resource-search-toolbar').getByRole('textbox').fill('payment-worker-67f98b984-pv4n8');
   await page.getByTestId('resource-table').getByText('payment-worker-67f98b984-pv4n8', { exact: true }).click();
-  await page.getByRole('button', { name: 'Investigate with AI', exact: true }).click();
+  await page.getByRole('button', { name: 'Analyze', exact: true }).click();
   const agent = page.getByRole('region', { name: 'AI Agent workspace', exact: true });
-  await expect(agent.getByRole('textbox', { name: 'Message AI agent' })).toHaveValue(/Investigate Pod backend\/payment-worker/);
+  await expect(agent.getByRole('textbox', { name: 'Message AI agent' })).toHaveValue(/Analyze Pod backend\/payment-worker/);
   await expect(agent.locator('.ai-scope')).toContainText('backend');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Create a Nexus deployment with persistent storage');
   await agent.getByRole('button', { name: 'Send', exact: true }).click();

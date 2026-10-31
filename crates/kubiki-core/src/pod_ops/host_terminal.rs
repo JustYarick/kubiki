@@ -31,72 +31,8 @@ pub struct HostTerminalRequest {
     pub shell: Option<String>,
     pub cols: u16,
     pub rows: u16,
-    #[serde(default)]
-    pub analysis: Option<AnalysisRequest>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AnalysisAgent {
-    Codex,
-    Opencode,
-    Claude,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AnalysisRequest {
-    pub agent: AnalysisAgent,
-    pub prompt: String,
-}
-
-/// The prompt is a single argv value; resource text never becomes shell code.
-pub fn analysis_command(request: &AnalysisRequest) -> Result<CommandBuilder, ApiError> {
-    if request.prompt.trim().is_empty()
-        || request.prompt.len() > 65536
-        || request.prompt.contains('\0')
-    {
-        return Err(error(
-            400,
-            "Analysis prompt must contain 1–65536 bytes without NUL characters",
-        ));
-    }
-    let mut command = match request.agent {
-        AnalysisAgent::Codex => {
-            let mut command = CommandBuilder::new("codex");
-            command.args(["--sandbox", "read-only", "--ask-for-approval", "never"]);
-            command.arg(&request.prompt);
-            command
-        }
-        AnalysisAgent::Opencode => {
-            let mut command = CommandBuilder::new("opencode");
-            command.arg("--prompt");
-            command.arg(&request.prompt);
-            command.env(
-                "OPENCODE_PERMISSION",
-                r#"{"*":"deny","bash":"deny","edit":"deny","task":"deny","webfetch":"deny"}"#,
-            );
-            command.env("OPENCODE_DISABLE_AUTOUPDATE", "true");
-            command
-        }
-        AnalysisAgent::Claude => {
-            let mut command = CommandBuilder::new("claude");
-            command.args([
-                "--permission-mode",
-                "plan",
-                "--tools",
-                "",
-                "--strict-mcp-config",
-                "--mcp-config",
-                r#"{"mcpServers":{}}"#,
-                "--",
-            ]);
-            command.arg(&request.prompt);
-            command
-        }
-    };
-    command.env("KUBIKI_ANALYSIS_ONLY", "1");
-    Ok(command)
-}
 fn error(status: u16, message: impl Into<String>) -> ApiError {
     ApiError::from_status(status, message, "host_terminal", None)
 }
@@ -188,9 +124,6 @@ impl HostTerminalManager {
         request: HostTerminalRequest,
     ) -> Result<ExecSubscription, ApiError> {
         size(request.cols, request.rows)?;
-        if let Some(analysis) = &request.analysis {
-            analysis_command(analysis)?;
-        }
         if id.is_empty()
             || id.len() > 128
             || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
@@ -451,20 +384,14 @@ fn run(
             return Err(internal(std::io::Error::last_os_error().to_string()));
         }
     }
-    let mut command = if let Some(analysis) = &request.analysis {
-        analysis_command(analysis)?
-    } else {
-        CommandBuilder::new(shell)
-    };
+    let mut command = CommandBuilder::new(shell);
     command.cwd(&info.cwd);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     #[cfg(unix)]
     {
-        if request.analysis.is_none() {
-            command.arg("-l");
-            command.arg("-i");
-        }
+        command.arg("-l");
+        command.arg("-i");
     }
     let child = pair
         .slave

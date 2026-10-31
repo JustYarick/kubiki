@@ -30,9 +30,6 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'ai.providers', label: 'Integrated agent providers', description: 'Cloud and local API connections, dynamic model discovery and generation options.', keywords: 'openai anthropic ollama lm studio vllm gemini deepseek openrouter groq mistral endpoint models API key' },
       { id: 'ai.permissions', label: 'Integrated agent permissions', description: 'Control resource access, Secrets, ConfigMaps, logs, namespaces, write operations and field exclusions.', keywords: 'read only ask accept safety policy rules secret config security agent' },
-      { id: 'ai.agent', label: 'Analysis agent', description: 'Analyze opens this locally installed CLI with a diagnostic snapshot. Install and sign in to the agent before using it.', keywords: 'codex opencode claude AI analyze agent assistant diagnostics' },
-      { id: 'ai.starting-prompt', label: 'Starting prompt', description: 'Instructions sent before the diagnostic snapshot for every new analysis. Changes are saved on this device and apply to all analysis agents.', keywords: 'system initial prompt instructions custom edit language' },
-      { id: 'ai.analysis-policy', label: 'Diagnostic snapshot', description: 'Only currently loaded resource data and matching events are included. Secret contents and environment values are excluded.', keywords: 'read only safety permissions snapshot' },
     ],
   },
   {
