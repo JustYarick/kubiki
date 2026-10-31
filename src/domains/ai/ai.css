@@ -4,6 +4,17 @@
 .ai-conversations strong { display: flex; align-items: center; gap: 7px; }
 .ai-conversation-list { flex: 1; overflow-y: auto; min-height: 0; }
 .ai-cluster-tags { display: flex; gap: 4px; overflow-x: auto; padding: 2px 0 4px; flex-shrink: 0; margin-bottom: 2px; }
+.ai-search-container { position: relative; display: flex; align-items: center; width: 100%; margin-bottom: 4px; }
+.ai-search-icon { position: absolute; left: 8px; color: var(--text-muted); pointer-events: none; }
+.ai-search-input { width: 100%; height: calc(26px * var(--ui-factor)); padding: 0 24px 0 26px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: calc(3px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); color: var(--text-primary); outline: none; transition: border-color 150ms ease; }
+.ai-search-input:focus { border-color: var(--focus-ring); }
+.ai-search-clear { position: absolute; right: 6px; background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: flex; align-items: center; justify-content: center; }
+.ai-search-clear:hover { color: var(--text-primary); }
+.ai-search-match { font-size: calc(9.5px * var(--ui-factor)); color: var(--text-muted); font-style: italic; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+.ai-conv-actions { display: flex; align-items: center; gap: 1px; opacity: 0; transition: opacity 120ms ease; }
+.ai-conversation-row:hover .ai-conv-actions, .ai-conversation-row.is-active .ai-conv-actions, .ai-conv-actions.is-pinned { opacity: 1; }
+.ai-pinned-indicator { color: #f59e0b; }
+.ai-rename-input { width: 100%; font-size: calc(11px * var(--ui-factor)); padding: 2px 5px; background: var(--bg-surface); border: 1px solid var(--accent); border-radius: 3px; color: var(--text-primary); outline: none; }
 .ai-cluster-tag { display: inline-flex; items-center: center; gap: 4px; padding: 2px 6px; border-radius: calc(3px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); background: var(--bg-surface); border: 1px solid var(--border-default); color: var(--text-secondary); cursor: pointer; transition: all 120ms ease; flex-shrink: 0; }
 .ai-cluster-tag:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
 .ai-cluster-tag.is-active { background: var(--bg-selection); border-color: var(--accent); color: white; font-weight: 500; }
@@ -75,6 +86,8 @@
 .ai-message-heading strong { font-weight: 600; color: var(--text-primary); }
 .ai-plan-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
 .ai-action-badge, .ai-tooling-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.35); }
+.ai-report-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); }
+.ai-message.is-document-report { border-color: rgba(56, 189, 248, 0.25); background: linear-gradient(180deg, var(--bg-surface) 0%, rgba(56, 189, 248, 0.03) 100%); }
 .ai-thinking-block { border: 1px solid var(--border-default); border-left: 3px solid var(--accent); border-radius: calc(6px * var(--ui-factor)); background: var(--bg-canvas); margin: 6px 0 12px; overflow: hidden; }
 .ai-thinking-block.is-active { border-left-color: #f59e0b; box-shadow: 0 0 10px rgba(245, 158, 11, 0.08); }
 .ai-thinking-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--bg-surface); cursor: pointer; user-select: none; font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); }

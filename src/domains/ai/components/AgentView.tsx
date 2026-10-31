@@ -388,9 +388,9 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
       <div className="ai-home-hero">
         <div className="ai-home-brand-logo flex items-center justify-center select-none">
           <img
-            src="/brand/kubiki-logo-color-dark.svg"
-            alt="kubiki"
-            width={360}
+            src="/brand/kubiki-agent-logo-color-dark.svg"
+            alt="Kubiki agent"
+            width={560}
             height={128}
             draggable={false}
             className="h-10 sm:h-12 w-auto shrink-0 select-none drop-shadow-md"
@@ -1969,14 +1969,23 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
   const isPlan = !isUser && (m.phase === 'plan' || /^(#+ Plan|Proposed Plan|Plan:)/im.test(m.text));
   const isStreaming = c.busy && c.messages[c.messages.length - 1]?.id === m.id;
   const { thinking, isThinkingActive, content } = !isUser ? parseThinking(m.text, isStreaming) : { isThinkingActive: false, content: m.text };
+  const [copied, setCopied] = useState(false);
+  const isDocument = !isUser && Boolean(content && (content.includes('# ') || content.includes('| ---') || content.includes('## ')));
 
   if (!isUser && !content.trim() && !thinking && !isThinkingActive && !isStreaming) {
     return null;
   }
 
+  const handleCopy = () => {
+    const textToCopy = isUser ? m.text : (content || m.text);
+    copy(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <article
-      className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''}`}
+      className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''} ${isDocument ? 'is-document-report' : ''}`}
       aria-label={isUser ? 'Your message' : 'Agent response'}
     >
       <div className="ai-message-heading">
@@ -1997,11 +2006,34 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                   Tooling
                 </span>
               ) : null}
+              {isDocument && (
+                <span className="ai-report-badge" title="Formatted report / document">
+                  <FileText size={10} aria-hidden="true" />
+                  Report
+                </span>
+              )}
             </>
           )}
         </div>
-        <Button variant="ghost" size="sm" aria-label="Copy message" onClick={() => copy(m.text)}>
-          <Copy size={12} aria-hidden="true" />
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={isDocument ? "Copy report markdown" : "Copy message"}
+          title={isDocument ? "Copy report / document markdown" : "Copy message"}
+          onClick={handleCopy}
+          className={copied ? "text-emerald-400" : undefined}
+        >
+          {copied ? (
+            <span className="flex items-center gap-1 text-emerald-400 text-[10.5px]">
+              <Check size={12} aria-hidden="true" />
+              <span>Copied!</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[10.5px]">
+              <Copy size={12} aria-hidden="true" />
+              {isDocument && <span>Copy Report</span>}
+            </span>
+          )}
         </Button>
       </div>
 

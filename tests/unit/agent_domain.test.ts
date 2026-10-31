@@ -240,4 +240,20 @@ describe('AI domain conversations', () => {
     expect(fluxReconcile.title).toContain('Reconcile Flux Kustomization "apps"');
     expect(fluxReconcile.destructive).toBe(false);
   });
+
+  it('supports pinning and renaming conversations', () => {
+    const id = useAiStore.getState().create(scope, '', 'Initial title');
+    const conv = useAiStore.getState().conversations.find(c => c.id === id);
+    expect(conv?.title).toBe('Initial title');
+    expect(conv?.pinned).toBe(false);
+
+    useAiStore.getState().togglePin(id);
+    expect(useAiStore.getState().conversations.find(c => c.id === id)?.pinned).toBe(true);
+
+    useAiStore.getState().rename(id, 'Incident #104: Payment crash');
+    expect(useAiStore.getState().conversations.find(c => c.id === id)?.title).toBe('Incident #104: Payment crash');
+
+    useAiStore.getState().togglePin(id);
+    expect(useAiStore.getState().conversations.find(c => c.id === id)?.pinned).toBe(false);
+  });
 });

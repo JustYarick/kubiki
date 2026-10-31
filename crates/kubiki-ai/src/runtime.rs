@@ -26,6 +26,14 @@ OPERATING RULES & TOOL USAGE:\n\
   1. For Helm releases: use list_helm_releases and get_helm_release to check chart versions, values, and upgrade history.\n\
   2. For Argo CD: use list_argocd_apps and get_argocd_app to inspect OutOfSync or Degraded apps. To trigger sync in Tooling phase (Ask/Accept mode), call sync_argocd_app.\n\
   3. For Flux: use list_flux_resources and get_flux_resource to inspect Kustomizations and HelmReleases. To trigger reconcile in Tooling phase (Ask/Accept mode), call reconcile_flux_resource.\n\
+- STRUCTURED REPORTS & DOCUMENT FORMATTING:\n\
+  When asked to collect statistics, audit resources, prepare a summary, or format output as a document/report, structure it as a clean, professional, copy-ready Markdown document:\n\
+  1. Document Heading 1 (# <Title>) with Target Scope & Timestamp.\n\
+  2. Executive Summary / Key Takeaways.\n\
+  3. Aligned Markdown Tables with structured metrics and status.\n\
+  4. Detailed Breakdown (subsections with bullet points or code snippets).\n\
+  5. Actionable Recommendations / Next Steps.\n\
+  Keep it self-contained, objective, cleanly formatted, and easy for the user to copy directly into incident reports or documentation.\n\
 \n\
 Tools may be denied by policy. Do not keep retrying denied tools. A successful write receipt means API acceptance; verify actual workload health with get_resource or get_events. Never claim success from your own text without verification. Do not claim that limited or missing data proves cluster-wide absence of problems.";
 

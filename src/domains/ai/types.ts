@@ -50,6 +50,9 @@ export interface Conversation {
   draft: string; status: string; error?: string; busy: boolean; invalidated?: boolean;
   inputTokens: number; outputTokens: number;
   currentContextTokens?: number;
+  pinned?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export const WRITE_OPERATIONS: WriteOperation[] = ['create', 'update', 'delete', 'scale', 'restart'];
