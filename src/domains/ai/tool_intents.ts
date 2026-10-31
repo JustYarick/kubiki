@@ -240,25 +240,34 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
 export function getToolCallSummary(name: string, args: Record<string, any> = {}, result?: Record<string, any>): string {
   if (!result) return 'Executing…';
   if (result.error && typeof result.error === 'string') return `Failed: ${result.error}`;
+  if (result.payloadOmitted) return result.operationId ? `Historical operation ${result.status ?? 'outcome unknown'} · Receipt: ${result.operationId}` : 'Historical tool payload omitted · refresh evidence';
+  if (result.executed === false) return result.deferred ? 'Deferred pending user input' : 'Not executed';
+  if (['scale_workload', 'restart_workload', 'delete_resource', 'apply_manifest', 'sync_argocd_app', 'reconcile_flux_resource'].includes(name)) {
+    if (result.status === 'accepted') return `API accepted the request · verify outcome${result.operationId ? ` · Receipt: ${result.operationId}` : ''}`;
+    if (['failed', 'cancelled', 'uncertain'].includes(result.status)) return `Change ${result.status}${result.operationId ? ` · Receipt: ${result.operationId}` : ''}`;
+    return 'Change outcome unverified';
+  }
+
 
   switch (name) {
     case 'list_helm_releases': {
       const releases = Array.isArray(result.releases) ? result.releases : [];
-      const deployed = releases.filter((r: any) => r.status === 'deployed').length;
-      const issues = releases.length - deployed;
-      return `${releases.length} release${releases.length === 1 ? '' : 's'} found${issues > 0 ? ` (${issues} with issues)` : ' (all deployed)'}`;
+      const status = (release: any) => typeof release.status === 'string' ? release.status : release.metadata?.labels?.status;
+      const deployed = releases.filter((r: any) => status(r) === 'deployed').length;
+      const failed = releases.filter((r: any) => ['failed', 'pending-install', 'pending-upgrade', 'pending-rollback'].includes(status(r))).length;
+      return `${releases.length} release${releases.length === 1 ? '' : 's'} inspected · ${deployed} observed deployed · ${failed} reported failed/pending${result.evidence?.completeness === 'partial' ? ' (partial coverage)' : ''}`;
     }
-    case 'get_helm_release': {
-      const rel = result.release;
-      if (rel) {
-        return `Chart ${rel.chart || ''} · v${rel.app_version || ''} (status: ${rel.status || 'unknown'})`;
-      }
-      return 'Release details retrieved';
+    case 'get_helm_release': return `Release "${typeof result.release === 'string' ? result.release : args.name ?? ''}" permitted details retrieved`;
+    case 'verify_workload': return `Controller verification ${result.verification ?? 'unknown'} · application health unverified`;
+    case 'summarize_resources': {
+      return `${result.objectsExamined ?? 0} resources summarized${result.completeness === 'partial' ? ' (partial coverage)' : ''}`;
     }
+    case 'set_working_scope': return `Investigation scope: ${result.workingScope?.namespace ?? 'explicit queries'}`;
+    case 'get_evidence': return 'Historical evidence retrieved';
     case 'list_resources': {
       const items = Array.isArray(result.items) ? result.items : [];
       const kind = args.kind || 'resource';
-      return `${items.length} ${kind}${items.length === 1 ? '' : 's'} inspected${result.hasMore ? ' (capped at 50)' : ''}`;
+      return `${items.length} ${kind}${items.length === 1 ? '' : 's'} inspected${result.hasMore ? ' (partial page)' : ''}`;
     }
     case 'get_resource': {
       const kind = args.kind || 'Resource';
@@ -287,10 +296,11 @@ export function getToolCallSummary(name: string, args: Record<string, any> = {},
     }
     case 'get_pod_diagnostics': {
       const issues = Array.isArray(result.issuesSummary) ? result.issuesSummary.length : 0;
-      return issues > 0 ? `Diagnostics complete · ${issues} issue(s) detected` : 'Diagnostics complete · Healthy';
+      const partial = result.evidence?.completeness !== 'complete';
+      return issues > 0 ? `Diagnostics ${partial ? 'partial' : 'complete'} · ${issues} issue(s) detected` : 'No issues found in available evidence · health unverified';
     }
     case 'get_workload_diagnostics': {
-      const state = result.rolloutState || 'healthy';
+      const state = result.rolloutState || 'unknown';
       const issues = Array.isArray(result.issuesSummary) ? result.issuesSummary.length : 0;
       return `Rollout ${state}${issues > 0 ? ` · ${issues} issue(s)` : ''}`;
     }
@@ -299,24 +309,12 @@ export function getToolCallSummary(name: string, args: Record<string, any> = {},
       return `${events.length} event${events.length === 1 ? '' : 's'} recorded in timeline`;
     }
     case 'get_events': {
-      const events = Array.isArray(result.events) ? result.events : [];
+      const events = Array.isArray(result.items) ? result.items : Array.isArray(result.events) ? result.events : [];
       return `${events.length} event${events.length === 1 ? '' : 's'} retrieved`;
     }
     case 'get_logs': {
       const lines = typeof result.logs === 'string' ? result.logs.split('\n').filter(Boolean).length : 0;
       return `Fetched ${lines} log line${lines === 1 ? '' : 's'}`;
-    }
-    case 'scale_workload': {
-      return `Scaled to ${args.replicas ?? '?'} replicas`;
-    }
-    case 'restart_workload': {
-      return `Rolling restart triggered`;
-    }
-    case 'delete_resource': {
-      return `Resource deleted`;
-    }
-    case 'apply_manifest': {
-      return `Manifest applied${result.operationId ? ` (Receipt: ${result.operationId})` : ''}`;
     }
     default: {
       if (typeof result.status === 'string') return result.status;

@@ -148,6 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let host = Arc::new(LiveKubeExecutor);
     let options = GenerationOptions {
+        context_budget_tokens: None,
         max_output_tokens: None,
         temperature: Some(0.7),
         tool_use: Some(true),

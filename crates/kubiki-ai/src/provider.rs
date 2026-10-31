@@ -873,6 +873,7 @@ mod tests {
     fn local_generation_settings_use_ollama_options_without_leaking_to_cloud_requests() {
         let options = GenerationOptions {
             context_tokens: Some(8192),
+            context_budget_tokens: Some(4096),
             max_output_tokens: Some(1024),
             temperature: Some(0.3),
             tool_use: Some(true),
@@ -898,6 +899,8 @@ mod tests {
             &[],
         );
         assert!(cloud.get("options").is_none());
+        assert!(cloud.get("context_budget_tokens").is_none());
+        assert!(local.get("context_budget_tokens").is_none());
         assert_eq!(cloud["max_output_tokens"], 1024);
     }
 

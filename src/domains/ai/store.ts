@@ -1,3 +1,4 @@
+import { persistedMessage, migrateAiHistory } from './persistence';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { agentError, agentTransport, desktopAiAvailable } from './transport';
@@ -29,6 +30,7 @@ interface AiState {
 
 /** One conversation entry owns its stream, independent of mounted/visible views. */
 export function applyAgentEvent(conversation: Conversation, event: AgentEvent): Conversation {
+  if (event.type === 'context') return { ...conversation, currentContextTokens: event.estimatedInputTokens, contextBudgetTokens: event.budgetTokens, reservedOutputTokens: event.reservedOutputTokens, contextEstimated: true };
   if (event.type === 'status') return { ...conversation, status: event.status };
   if (event.type === 'error') return { ...conversation, error: event.message };
   const messages = [...conversation.messages];
@@ -52,8 +54,9 @@ export function applyAgentEvent(conversation: Conversation, event: AgentEvent): 
         tokensPerSec,
       };
     }
-    const currentContextTokens = (event.inputTokens ?? 0) + (event.outputTokens ?? 0);
-    return { ...conversation, inputTokens: nextInput, outputTokens: nextOutput, currentContextTokens, messages };
+    const known = event.inputTokens != null;
+    const currentContextTokens = known ? event.inputTokens! + (event.outputTokens ?? 0) : conversation.currentContextTokens;
+    return { ...conversation, inputTokens: nextInput, outputTokens: nextOutput, currentContextTokens, contextEstimated: known ? false : conversation.contextEstimated, messages };
   }
   if (event.type === 'text_delta') {
     const last = messages[messages.length - 1];
@@ -260,7 +263,7 @@ export const useAiStore = create<AiState>()(
           let sessionId = entry.sessionId;
           if (!sessionId) {
             const metadata = get().models[entry.providerId]?.find(m => m.id === entry.model);
-            const options = { ...get().settings.options, ...(metadata?.tools === false ? { toolUse: false } : {}) };
+            const options = { ...get().settings.options, ...(metadata?.contextWindow && metadata.contextWindow >= 1024 ? { contextBudgetTokens: Math.min(metadata.contextWindow, 262144) } : {}), ...(metadata?.tools === false ? { toolUse: false } : {}) };
             const crds = useResourceStore.getState().resources.CustomResourceDefinition;
             const crdList = crds ? [...crds.values()] : [];
             const capabilities = {
@@ -271,7 +274,7 @@ export const useAiStore = create<AiState>()(
             const session = await agentTransport.create(entry.scope, entry.providerId, entry.model, options, capabilities);
             sessionId = session.id;
             if (runEpochs.get(id) !== epoch) { await agentTransport.stop(sessionId, true); return; }
-            get().update(id, { sessionId });
+            get().update(id, { sessionId, contextBudgetTokens: Math.min(options.contextTokens || 16384, options.contextBudgetTokens || 262144) });
             const desiredMode = get().conversations.find(c => c.id === id)?.mode ?? 'read_only';
             if (desiredMode !== 'read_only') await agentTransport.mode(sessionId, desiredMode);
             const desiredPhase = get().conversations.find(c => c.id === id)?.phase ?? 'plan';
@@ -324,6 +327,8 @@ export const useAiStore = create<AiState>()(
     }),
     {
       name: 'kubiki.ai_conversations.v1',
+      version: 1,
+      migrate: migrateAiHistory,
       partialize: (state) => ({
         conversations: state.conversations.map(c => ({
           id: c.id,
@@ -333,7 +338,7 @@ export const useAiStore = create<AiState>()(
           model: c.model,
           mode: 'read_only' as const,
           phase: 'plan' as const,
-          messages: c.messages,
+          messages: c.messages.map(persistedMessage),
           draft: '',
           status: 'idle',
           busy: false,
@@ -343,6 +348,7 @@ export const useAiStore = create<AiState>()(
           inputTokens: c.inputTokens ?? 0,
           outputTokens: c.outputTokens ?? 0,
           currentContextTokens: c.currentContextTokens,
+          contextBudgetTokens: c.contextBudgetTokens,
         })),
         activeId: state.activeId,
       }),

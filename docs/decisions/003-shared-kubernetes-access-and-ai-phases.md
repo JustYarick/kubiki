@@ -1,6 +1,8 @@
 # 003: Общий Kubernetes-доступ и фазы Plan / Action
 
-Дата: 2026-10-30. Статус: **принято как целевая архитектура; реализация запланирована**.
+Дата: 2026-10-30. Уточнено: 2026-10-31.
+Статус: **принято; частично реализовано**. Backend Plan/Action и запрет writes
+в Plan существуют; общий access service и единый query contract ещё предстоят.
 Владелец: сопровождающие Kubiki desktop/core и AI-домена.
 Уточняет [ADR-002](002-integrated-ai-agent.md) в части доступа к Kubernetes,
 режимов исполнения и порядка дальнейшей разработки. Остальные решения сохраняются.
@@ -83,3 +85,31 @@ ownership остаются у desktop/core; отключение новой AI-�
 доступ пользователя. Изменения кластера не откатываются отключением функции.
 
 Подробные этапы, критерии и backlog: [AI_ROADMAP.md](../AI_ROADMAP.md).
+
+## Уточнение 2026-10-31: эффективные запросы
+
+Новые требования детализированы в [AI_QUERY_DESIGN.md](../AI_QUERY_DESIGN.md).
+Топология и владелец подключения не меняются. В общий access service входят
+query planner, ограниченные fields/profiles, server-side selectors, cursor,
+working scope, budgets и policy-aware cache. Projection уменьшает контекст модели;
+metadata-only/selectors/cache и выбор LIST/GET отдельно оптимизируют Kubernetes I/O.
+
+Observed pressure: generic list сейчас делает metadata LIST + до 50 последовательных
+GET; selectors/fields/cursor отсутствуют. Это основание для внутреннего query layer,
+не для нового сервиса. Проверка решения: HTTP calls/bytes, tokens, p50/p95 latency,
+точность диагноза и влияние на UI на одинаковых fixtures до/после. Если cache не даёт
+выигрыша или ухудшает свежесть/память, его расширение отложить, сохранив bounded reads.
+
+Обязательные инварианты: forbidden bodies не загружаются, requested fields не
+расширяют policy, cursor не выходит за scope, partial не выдаётся за complete,
+параллельные reads не меняют порядок writes/verification. Реализация мигрирует
+по семействам с контрактными тестами и отключаемым новым AI-путём без обходного
+fallback. Политика first-match этим уточнением не меняется.
+
+## Реализация 2026-11-01
+
+[ADR-005](005-bounded-ai-resource-queries.md) фиксирует реализованные контракты
+ResourceAccess, field queries, cursors, рабочий scope, budgets/cache и память.
+AI-адаптер больше не создаёт kube::Api/Discovery; UI/AI используют core reads.
+Client generation проверяется перед tools/HTTP, включая retries; смена kubeconfig
+инвалидирует сессии. PlanArtifact и последующие продуктовые этапы остаются в roadmap.

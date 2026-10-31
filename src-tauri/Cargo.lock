@@ -2655,6 +2655,7 @@ dependencies = [
  "either",
  "futures",
  "http",
+ "http-body",
  "k8s-openapi",
  "kube",
  "libc",

@@ -47,6 +47,7 @@ pub fn get_kubeconfig_path(pool: tauri::State<'_, ClusterClientPool>) -> Result<
 #[tauri::command]
 pub async fn set_kubeconfig_path(
     path: Option<String>,
+    agents: tauri::State<'_, crate::agent_commands::AgentManager>,
     pool: tauri::State<'_, ClusterClientPool>,
 ) -> Result<Vec<KubeContextInfo>, ApiError> {
     let path_buf = path.and_then(|p| {
@@ -67,6 +68,7 @@ pub async fn set_kubeconfig_path(
             ));
         }
     }
+    agents.invalidate();
     pool.set_custom_kubeconfig_path(path_buf);
     pool.invalidate_all().await;
     pool.get_config_manager()

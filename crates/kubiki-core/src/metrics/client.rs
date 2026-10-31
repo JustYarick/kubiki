@@ -121,70 +121,94 @@ impl MetricsService {
             .await
             .map_err(KubikiError::from)?;
 
-        let mut metrics = Vec::new();
-        for item in list {
-            let name = item.metadata.name.unwrap_or_default();
-            let ns = item.metadata.namespace.unwrap_or_default();
-            let timestamp = item
-                .data
-                .get("timestamp")
-                .and_then(|t| t.as_str())
+        list.into_iter().map(parse_pod_metric).collect()
+    }
+
+    pub async fn get_pod_metric(
+        client: &Client,
+        namespace: &str,
+        name: &str,
+    ) -> Result<PodMetricsInfo, KubikiError> {
+        if [namespace, name].iter().any(|s| {
+            s.is_empty()
+                || s.len() > 253
+                || !s
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c))
+        }) {
+            return Err(KubikiError::Internal("Invalid metrics identity".into()));
+        }
+        let ar = ApiResource {
+            group: "metrics.k8s.io".into(),
+            version: "v1beta1".into(),
+            api_version: "metrics.k8s.io/v1beta1".into(),
+            kind: "PodMetrics".into(),
+            plural: "pods".into(),
+        };
+        let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+        parse_pod_metric(api.get(name).await.map_err(KubikiError::from)?)
+    }
+}
+
+fn parse_pod_metric(item: DynamicObject) -> Result<PodMetricsInfo, KubikiError> {
+    let name = item.metadata.name.unwrap_or_default();
+    let ns = item.metadata.namespace.unwrap_or_default();
+    let timestamp = item
+        .data
+        .get("timestamp")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let window = item
+        .data
+        .get("window")
+        .and_then(|w| w.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let mut containers = Vec::new();
+    if let Some(cont_list) = item.data.get("containers").and_then(|c| c.as_array()) {
+        for c in cont_list {
+            let c_name = c
+                .get("name")
+                .and_then(|n| n.as_str())
                 .unwrap_or_default()
                 .to_string();
-            let window = item
-                .data
-                .get("window")
-                .and_then(|w| w.as_str())
-                .unwrap_or_default()
+            let usage = c.get("usage");
+            let cpu = usage
+                .and_then(|u| u.get("cpu"))
+                .and_then(|val| val.as_str())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    KubikiError::Internal(
+                        "Metrics API returned a missing CPU or memory quantity".into(),
+                    )
+                })?
+                .to_string();
+            let memory = usage
+                .and_then(|u| u.get("memory"))
+                .and_then(|val| val.as_str())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    KubikiError::Internal(
+                        "Metrics API returned a missing CPU or memory quantity".into(),
+                    )
+                })?
                 .to_string();
 
-            let mut containers = Vec::new();
-            if let Some(cont_list) = item.data.get("containers").and_then(|c| c.as_array()) {
-                for c in cont_list {
-                    let c_name = c
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let usage = c.get("usage");
-                    let cpu = usage
-                        .and_then(|u| u.get("cpu"))
-                        .and_then(|val| val.as_str())
-                        .filter(|v| !v.is_empty())
-                        .ok_or_else(|| {
-                            KubikiError::Internal(
-                                "Metrics API returned a missing CPU or memory quantity".into(),
-                            )
-                        })?
-                        .to_string();
-                    let memory = usage
-                        .and_then(|u| u.get("memory"))
-                        .and_then(|val| val.as_str())
-                        .filter(|v| !v.is_empty())
-                        .ok_or_else(|| {
-                            KubikiError::Internal(
-                                "Metrics API returned a missing CPU or memory quantity".into(),
-                            )
-                        })?
-                        .to_string();
-
-                    containers.push(ContainerMetric {
-                        name: c_name,
-                        cpu,
-                        memory,
-                    });
-                }
-            }
-
-            metrics.push(PodMetricsInfo {
-                name,
-                namespace: ns,
-                timestamp,
-                window,
-                containers,
+            containers.push(ContainerMetric {
+                name: c_name,
+                cpu,
+                memory,
             });
         }
-
-        Ok(metrics)
     }
+
+    Ok(PodMetricsInfo {
+        name,
+        namespace: ns,
+        timestamp,
+        window,
+        containers,
+    })
 }

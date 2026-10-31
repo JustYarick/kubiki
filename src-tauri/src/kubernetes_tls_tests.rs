@@ -91,3 +91,81 @@ async fn current_cluster_version_is_reachable_before_and_after_ai() {
         after.git_version
     );
 }
+
+#[tokio::test]
+async fn invalidated_connection_rejects_a_pinned_agent_client_before_dispatch() {
+    use kubiki_core::{ClusterClientPool, KubeConfigManager};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let _ai = ai_client();
+    let path = std::env::temp_dir().join(format!(
+        "kubiki-agent-lease-{}-{}.yaml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(path.clone());
+    std::fs::write(&path,"apiVersion: v1\nkind: Config\ncurrent-context: fixture\nclusters:\n- name: local\n  cluster:\n    server: http://127.0.0.1:9\ncontexts:\n- name: fixture\n  context:\n    cluster: local\n    namespace: apps\nusers: []\n").unwrap();
+    let pool = ClusterClientPool::new(KubeConfigManager::with_custom_path(path));
+    let (client, generation) = pool.get_client_with_generation("fixture").await.unwrap();
+    assert_eq!(
+        pool.get_client_with_generation("fixture").await.unwrap().1,
+        generation
+    );
+    let invalid = Arc::new(AtomicBool::new(false));
+    let signal = invalid.clone();
+    let pinned = pool.pin_client(
+        client,
+        "fixture".into(),
+        generation,
+        Arc::new(move || {
+            signal.store(true, Ordering::SeqCst);
+        }),
+        Arc::new(|| true),
+    );
+    let revoked = Arc::new(AtomicBool::new(false));
+    let signal = revoked.clone();
+    let (raw, _) = pool.get_client_with_generation("fixture").await.unwrap();
+    let guarded = pool.pin_client(
+        raw,
+        "fixture".into(),
+        generation,
+        Arc::new(|| {}),
+        Arc::new(move || {
+            signal.store(true, Ordering::SeqCst);
+            false
+        }),
+    );
+    let request = kube::core::Request::new("/api/v1/namespaces/apps/pods")
+        .delete("web", &kube::api::DeleteParams::default())
+        .unwrap()
+        .map(kube::client::Body::from);
+    assert!(guarded.send(request).await.is_err());
+    assert!(
+        revoked.load(Ordering::SeqCst),
+        "permissions must be rechecked after async generation validation, before write dispatch"
+    );
+    pool.invalidate("fixture").await;
+    let new_generation = pool.get_client_with_generation("fixture").await.unwrap().1;
+    assert_ne!(new_generation, generation);
+    let api: kube::Api<k8s_openapi::api::core::v1::Pod> = kube::Api::namespaced(pinned, "apps");
+    assert!(
+        api.list_metadata(&kube::api::ListParams::default())
+            .await
+            .is_err()
+    );
+    assert!(
+        invalid.load(Ordering::SeqCst),
+        "old client must revoke its owning session before an HTTP dispatch"
+    );
+}

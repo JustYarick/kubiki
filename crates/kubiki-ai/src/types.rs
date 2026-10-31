@@ -48,11 +48,19 @@ pub struct ProviderProfile {
 pub struct GenerationOptions {
     pub tool_use: Option<bool>,
     pub context_tokens: Option<u32>,
+    /// Budget hint from model metadata; never a provider runtime allocation.
+    pub context_budget_tokens: Option<u32>,
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<f64>,
 }
 impl GenerationOptions {
     pub fn validate(&self) -> Result<(), String> {
+        if self
+            .context_budget_tokens
+            .is_some_and(|v| !(1024..=262144).contains(&v))
+        {
+            return Err("Model context budget must be 1024–262144 tokens or omitted".into());
+        }
         if self
             .context_tokens
             .is_some_and(|v| !(1024..=262144).contains(&v))
@@ -156,6 +164,11 @@ pub enum AgentEvent {
     ToolCompleted {
         id: String,
         result: Value,
+    },
+    Context {
+        estimated_input_tokens: u64,
+        budget_tokens: u64,
+        reserved_output_tokens: u64,
     },
     Usage {
         input_tokens: Option<u64>,

@@ -370,12 +370,7 @@ async fn downgrade_invalidates_authorization_while_a_tool_waits_for_review() {
 struct AskHost;
 #[async_trait]
 impl ToolExecutor for AskHost {
-    async fn execute(
-        &self,
-        _: &Session,
-        call: &ToolCall,
-        _: &EventSink,
-    ) -> Result<Value, String> {
+    async fn execute(&self, _: &Session, call: &ToolCall, _: &EventSink) -> Result<Value, String> {
         assert_eq!(call.name, "ask_user");
         Ok(json!({"status": "awaiting_user_selection"}))
     }
@@ -404,7 +399,10 @@ async fn ask_user_completes_turn_without_subsequent_model_call() {
             "finish_reason": "tool_calls"
         }]
     });
-    let fragment = format!("data: {}\n\ndata: [DONE]\n\n", serde_json::to_string(&call_json).unwrap());
+    let fragment = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        serde_json::to_string(&call_json).unwrap()
+    );
     let (client, _, task) = provider(vec![fragment]).await;
     let events = Arc::new(Mutex::new(Vec::new()));
     let events_sink = events.clone();
@@ -443,7 +441,7 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
     for i in 0..25 {
         initial_turns.push(Turn::User(format!("User query {i} regarding deployment details with lots of extra padding content for sizing purposes {}", "x".repeat(100))));
         initial_turns.push(Turn::Assistant(Completion {
-            text: format!("Assistant analysis {i} for pod logs and cluster health check with extra padding content {}", "y".repeat(100)),
+            text: format!("Assistant analysis {i} for pod logs and cluster health check with extra padding content {}", "y".repeat(3000)),
             calls: vec![],
             native: json!({}),
             input_tokens: Some(100),
@@ -459,7 +457,7 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
         client,
         "model".into(),
         GenerationOptions {
-            context_tokens: Some(1024),
+            context_tokens: Some(16_384),
             ..Default::default()
         },
         String::new(),
@@ -472,7 +470,10 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
     let history = s.inspect_history().await;
     let first = &history[0];
     match first {
-        Turn::User(summary) => assert!(summary.contains("Context Summary"), "Expected compacted context summary"),
+        Turn::User(summary) => assert!(
+            summary.contains("Context Summary"),
+            "Expected compacted context summary"
+        ),
         _ => panic!("Expected Turn::User with context summary"),
     }
     task.await.unwrap();
@@ -487,7 +488,12 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     };
 
     // Plan phase in Read-only mode
-    let plan_tools = tool_definitions(&policy, AgentMode::ReadOnly, AgentPhase::Plan, &ClusterCapabilities::all());
+    let plan_tools = tool_definitions(
+        &policy,
+        AgentMode::ReadOnly,
+        AgentPhase::Plan,
+        &ClusterCapabilities::all(),
+    );
     let plan_tool_names: Vec<String> = plan_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(plan_tool_names.contains(&"get_pod_diagnostics".to_string()));
@@ -496,13 +502,18 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     assert!(!plan_tool_names.contains(&"apply_manifest".to_string()));
 
     // Action phase in Ask mode
-    let action_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &ClusterCapabilities::all());
+    let action_tools = tool_definitions(
+        &policy,
+        AgentMode::Ask,
+        AgentPhase::Action,
+        &ClusterCapabilities::all(),
+    );
     let action_tool_names: Vec<String> = action_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(action_tool_names.contains(&"get_pod_diagnostics".to_string()));
     assert!(action_tool_names.contains(&"get_workload_diagnostics".to_string()));
     assert!(action_tool_names.contains(&"get_events_timeline".to_string()));
-    assert!(action_tool_names.contains(&"apply_manifest".to_string()));
+    assert!(!action_tool_names.contains(&"apply_manifest".to_string()));
 }
 
 #[tokio::test]
@@ -515,7 +526,12 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     };
 
     // Plan phase in Read-only mode: read tools available, write/sync tools omitted
-    let plan_tools = tool_definitions(&policy, AgentMode::ReadOnly, AgentPhase::Plan, &ClusterCapabilities::all());
+    let plan_tools = tool_definitions(
+        &policy,
+        AgentMode::ReadOnly,
+        AgentPhase::Plan,
+        &ClusterCapabilities::all(),
+    );
     let plan_names: Vec<String> = plan_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(plan_names.contains(&"list_helm_releases".to_string()));
@@ -527,12 +543,17 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     assert!(!plan_names.contains(&"sync_argocd_app".to_string()));
     assert!(!plan_names.contains(&"reconcile_flux_resource".to_string()));
 
-    // Action phase in Ask mode: sync and reconcile tools are offered
-    let action_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &ClusterCapabilities::all());
+    // Native writes exclude GitOps CRDs, so these operations must not be advertised.
+    let action_tools = tool_definitions(
+        &policy,
+        AgentMode::Ask,
+        AgentPhase::Action,
+        &ClusterCapabilities::all(),
+    );
     let action_names: Vec<String> = action_tools.iter().map(|t| t.name.clone()).collect();
 
-    assert!(action_names.contains(&"sync_argocd_app".to_string()));
-    assert!(action_names.contains(&"reconcile_flux_resource".to_string()));
+    assert!(!action_names.contains(&"sync_argocd_app".to_string()));
+    assert!(!action_names.contains(&"reconcile_flux_resource".to_string()));
 
     // Auto mode with selective cluster capabilities
     policy.helm = OptionalToolMode::Auto;
@@ -558,7 +579,12 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     policy.argocd = OptionalToolMode::Disabled;
     policy.flux = OptionalToolMode::Disabled;
 
-    let disabled_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &ClusterCapabilities::all());
+    let disabled_tools = tool_definitions(
+        &policy,
+        AgentMode::Ask,
+        AgentPhase::Action,
+        &ClusterCapabilities::all(),
+    );
     let disabled_names: Vec<String> = disabled_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(!disabled_names.contains(&"list_helm_releases".to_string()));
@@ -568,4 +594,195 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     assert!(!disabled_names.contains(&"reconcile_flux_resource".to_string()));
 }
 
+#[test]
+fn action_catalog_requires_operation_grants_in_ask_and_accept() {
+    for mode in [AgentMode::Ask, AgentMode::Accept] {
+        let mut policy = AgentPolicy::default();
+        let names = |policy: &AgentPolicy| {
+            tool_definitions(
+                policy,
+                mode,
+                AgentPhase::Action,
+                &ClusterCapabilities::all(),
+            )
+            .into_iter()
+            .map(|t| t.name)
+            .collect::<Vec<_>>()
+        };
+        let mutations = [
+            "apply_manifest",
+            "scale_workload",
+            "restart_workload",
+            "delete_resource",
+        ];
+        assert!(
+            names(&policy)
+                .iter()
+                .all(|n| !mutations.contains(&n.as_str()))
+        );
+        policy.writes = vec![WriteOperation::Scale];
+        let granted = names(&policy);
+        assert!(granted.iter().any(|n| n == "scale_workload"));
+        assert!(!granted.iter().any(|n| {
+            ["apply_manifest", "restart_workload", "delete_resource"].contains(&n.as_str())
+        }));
+        policy.rules.push(ResourceRule {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            namespace: "apps".into(),
+            name: "web".into(),
+            read: DataAccess::Content,
+            writes: vec![WriteOperation::Update],
+        });
+        assert!(names(&policy).iter().any(|n| n == "apply_manifest"));
+        policy.writes = vec![WriteOperation::Create, WriteOperation::Update];
+        let granted = names(&policy);
+        assert!(
+            !granted
+                .iter()
+                .any(|n| ["sync_argocd_app", "reconcile_flux_resource"].contains(&n.as_str()))
+        );
+    }
+}
 
+#[tokio::test]
+async fn asking_a_question_defers_companion_calls_and_keeps_provider_history_complete() {
+    let fragment = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        json!({"choices":[{"delta":{"tool_calls":[
+        {"index":0,"id":"question","type":"function","function":{"name":"ask_user","arguments":"{}"}},
+        {"index":1,"id":"deferred","type":"function","function":{"name":"get_resource","arguments":"{}"}}
+    ]},"finish_reason":"tool_calls"}]})
+    );
+    let (client, requests, task) = provider(vec![fragment, final_text()]).await;
+    let session = session();
+    let revision = session.control().unwrap().revision;
+    run(
+        session.clone(),
+        revision,
+        client.clone(),
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Investigate".into(),
+        Arc::new(AskHost),
+        sink(),
+    )
+    .await
+    .unwrap();
+    let history = session.inspect_history().await;
+    let deferred = history
+        .iter()
+        .find_map(|turn| match turn {
+            Turn::Tool { call, result } if call.id == "deferred" => Some(result),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(deferred["executed"], false);
+    run(
+        session,
+        revision,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Continue".into(),
+        Arc::new(AskHost),
+        sink(),
+    )
+    .await
+    .unwrap();
+    task.await.unwrap();
+    let requests = requests.lock().unwrap();
+    let tools: Vec<_> = requests[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .collect();
+    assert_eq!(tools.len(), 2);
+}
+
+struct UncertainHost(Arc<AtomicUsize>);
+#[async_trait]
+impl ToolExecutor for UncertainHost {
+    async fn execute(&self, _: &Session, _: &ToolCall, _: &EventSink) -> Result<Value, String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(json!({"status":"uncertain","operationId":"op-first"}))
+    }
+}
+#[tokio::test]
+async fn an_uncertain_write_stops_the_batch_without_replaying_or_dispatching_companions() {
+    let fragment = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        json!({"choices":[{"delta":{"tool_calls":[
+        {"index":0,"id":"first","type":"function","function":{"name":"scale_workload","arguments":"{}"}},
+        {"index":1,"id":"second","type":"function","function":{"name":"scale_workload","arguments":"{}"}}
+    ]},"finish_reason":"tool_calls"}]})
+    );
+    let (provider, _, task) = provider(vec![fragment]).await;
+    let session = session();
+    session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
+    let revision = session.control().unwrap().revision;
+    let calls = Arc::new(AtomicUsize::new(0));
+    assert!(
+        run(
+            session.clone(),
+            revision,
+            provider,
+            "model".into(),
+            GenerationOptions::default(),
+            String::new(),
+            "Scale workloads".into(),
+            Arc::new(UncertainHost(calls.clone())),
+            sink()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let history = session.inspect_history().await;
+    assert!(history.iter().any(|turn|matches!(turn,Turn::Tool {call,result} if call.id=="first" && result["operationId"]=="op-first")));
+    assert!(history.iter().any(|turn|matches!(turn,Turn::Tool {call,result} if call.id=="second" && result["executed"]==false)));
+    task.await.unwrap();
+}
+
+struct LongApprovalHost;
+#[async_trait]
+impl ToolExecutor for LongApprovalHost {
+    async fn execute(
+        &self,
+        session: &Session,
+        _: &ToolCall,
+        _: &EventSink,
+    ) -> Result<Value, String> {
+        tokio::time::pause();
+        tokio::time::advance(std::time::Duration::from_secs(3600)).await;
+        session.exclude_approval_wait(std::time::Duration::from_secs(3600));
+        tokio::time::resume();
+        Ok(json!({"status":"accepted","operationId":"after-human-review"}))
+    }
+}
+#[tokio::test]
+async fn a_long_human_approval_wait_does_not_expire_post_write_generation() {
+    let (provider, _, task) = provider(vec![call("scale_workload"), final_text()]).await;
+    let session = session();
+    session.mode(AgentMode::Ask).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
+    let revision = session.control().unwrap().revision;
+    run(
+        session,
+        revision,
+        provider,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Scale after review".into(),
+        Arc::new(LongApprovalHost),
+        sink(),
+    )
+    .await
+    .unwrap();
+    task.await.unwrap();
+}

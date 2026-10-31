@@ -286,3 +286,50 @@ fn wildcard_matching_does_not_interpret_regular_expressions() {
         assert_eq!(matches(pattern, value), expected, "{pattern} / {value}");
     }
 }
+
+#[test]
+fn full_collection_reads_are_only_used_when_no_identity_exception_can_apply() {
+    let mut policy = AgentPolicy::default();
+    let pod = target("Pod");
+    assert!(policy.collection_content_allowed(&pod, true));
+    assert!(!policy.collection_content_allowed(&target("Secret"), true));
+    policy.rules.push(ResourceRule {
+        group: "*".into(),
+        kind: "Pod".into(),
+        namespace: "apps".into(),
+        name: "private-*".into(),
+        read: DataAccess::None,
+        writes: vec![],
+    });
+    assert!(!policy.collection_content_allowed(&pod, true));
+    assert!(policy.collection_content_allowed(&target("Deployment"), true));
+}
+
+#[test]
+fn prompt_policy_summary_stays_small_without_disclosing_exact_resource_rules() {
+    let mut policy = AgentPolicy::default();
+    for i in 0..100 {
+        policy.rules.push(ResourceRule {
+            group: "*".into(),
+            kind: "Secret".into(),
+            namespace: "apps".into(),
+            name: format!("private-resource-{i}"),
+            read: DataAccess::None,
+            writes: vec![],
+        });
+    }
+    let summary = policy.prompt_summary();
+    assert!(summary.to_string().len() < 1024);
+    assert_eq!(summary["resourceRuleCount"], 100);
+    assert!(!summary.to_string().contains("private-resource"));
+    assert_eq!(
+        policy.access(
+            &Target {
+                name: "private-resource-0".into(),
+                ..target("Secret")
+            },
+            true
+        ),
+        DataAccess::None
+    );
+}

@@ -38,6 +38,7 @@ struct ManagedSession {
     options: GenerationOptions,
     instructions: String,
     client: Option<kube::Client>,
+    connection_generation: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -45,6 +46,7 @@ pub struct AgentManager {
     sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
     settings_gate: Arc<AsyncMutex<()>>,
     runs: Arc<Semaphore>,
+    read_permits: Arc<Semaphore>,
 }
 impl Default for AgentManager {
     fn default() -> Self {
@@ -52,6 +54,7 @@ impl Default for AgentManager {
             sessions: Arc::default(),
             settings_gate: Arc::default(),
             runs: Arc::new(Semaphore::new(2)),
+            read_permits: Arc::new(Semaphore::new(2)),
         }
     }
 }
@@ -68,7 +71,7 @@ impl AgentManager {
             });
         }
     }
-    fn invalidate(&self) {
+    pub(crate) fn invalidate(&self) {
         if let Ok(sessions) = self.sessions.lock() {
             for s in sessions.values() {
                 s.session.invalidate();
@@ -373,26 +376,35 @@ pub async fn ai_create_session(
         .find(|p| p.id == request.provider_id)
         .ok_or("Configure an AI provider first")?
         .clone();
-    let client = if request.scope.context.is_empty() {
+    let connection = if request.scope.context.is_empty() {
         None
     } else {
         Some(
             tokio::time::timeout(
                 std::time::Duration::from_secs(15),
-                pool.get_client(&request.scope.context),
+                pool.get_client_with_generation(&request.scope.context),
             )
             .await
             .map_err(|_| "Cluster connection timed out")?
             .map_err(|_| "Cannot connect this conversation to the selected Kubernetes context")?,
         )
     };
+    let connection_generation = connection.as_ref().map(|(_, generation)| *generation);
+    let client = connection.map(|(client, _)| client);
     let mut capabilities = request.capabilities.unwrap_or_default();
     if let Some(ref client) = client {
         capabilities.helm = true;
         if !capabilities.argocd || !capabilities.flux {
             if let Ok(Ok(discovery)) = tokio::time::timeout(
                 std::time::Duration::from_secs(4),
-                kube::Discovery::new(client.clone()).run(),
+                kube::Discovery::new(client.clone())
+                    .filter(&[
+                        "argoproj.io",
+                        "helm.toolkit.fluxcd.io",
+                        "kustomize.toolkit.fluxcd.io",
+                        "source.toolkit.fluxcd.io",
+                    ])
+                    .run(),
             )
             .await
             {
@@ -432,6 +444,7 @@ pub async fn ai_create_session(
             options: request.options,
             instructions: settings.instructions,
             client,
+            connection_generation,
         }),
     );
     Ok(SessionView {
@@ -521,9 +534,52 @@ pub async fn ai_send_message(
         .app_data_dir()
         .map_err(|_| "Cannot locate AI operation journal")?
         .join("ai/operations.jsonl");
+    let budget = Arc::new(kubiki_core::core::read_budget::ReadBudget::new(
+        128,
+        16 * 1024 * 1024,
+        4 * 1024 * 1024,
+        std::time::Duration::from_secs(180),
+    ));
+    let read_cache = Arc::new(kubiki_core::core::read_cache::ReadCache::default());
+    let pool = window.state::<ClusterClientPool>().inner().clone();
+    let invalidated_session = managed.session.clone();
+    let callback: Arc<dyn Fn() + Send + Sync> = Arc::new(move || invalidated_session.invalidate());
+    let write_rejected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let rejected_signal = write_rejected.clone();
+    let guarded_session = managed.session.clone();
+    let before_write: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+        let valid = guarded_session.control().is_ok_and(|state| {
+            state.active
+                && !state.invalidated
+                && state.revision == revision
+                && state.phase == AgentPhase::Action
+                && state.mode != AgentMode::ReadOnly
+                && !*guarded_session.cancellation().borrow()
+        });
+        if !valid {
+            rejected_signal.store(true, Ordering::SeqCst);
+        }
+        valid
+    });
+    let pinned_client = managed.client.clone().map(|client| {
+        let pinned = pool.pin_client(
+            client,
+            managed.session.scope.context.clone(),
+            managed
+                .connection_generation
+                .expect("cluster sessions have a generation"),
+            callback,
+            before_write,
+        );
+        read_cache.wrap(budget.wrap(pinned))
+    });
     let host = Arc::new(crate::agent_tools::KubernetesTools {
         window,
-        client: managed.client.clone(),
+        client: pinned_client,
+        connection_generation: managed.connection_generation,
+        budget: budget.clone(),
+        write_rejected,
+        read_permits: manager.read_permits.clone(),
         journal,
     });
     let session = managed.session.clone();

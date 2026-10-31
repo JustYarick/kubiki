@@ -12,7 +12,7 @@ export interface ClusterCapabilities {
 }
 
 export interface ProviderProfile { id: string; name: string; protocol: ProviderProtocol; baseUrl: string }
-export interface GenerationOptions { maxOutputTokens?: number | null; temperature?: number | null; toolUse?: boolean | null; contextTokens?: number | null }
+export interface GenerationOptions { maxOutputTokens?: number | null; temperature?: number | null; toolUse?: boolean | null; contextTokens?: number | null; contextBudgetTokens?: number | null }
 export interface ModelInfo { id: string; name: string; contextWindow: number | null; maxOutputTokens: number | null; tools: boolean | null }
 export interface AgentScope { context: string; namespaces: string[]; allNamespaces: boolean }
 export interface ResourceRule { group: string; kind: string; namespace: string; name: string; read: DataAccess; writes: WriteOperation[] }
@@ -36,6 +36,7 @@ export type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_started'; call: ToolCall }
   | { type: 'tool_completed'; id: string; result: Record<string, unknown> }
+  | { type: 'context'; estimatedInputTokens: number; budgetTokens: number; reservedOutputTokens: number }
   | { type: 'usage'; inputTokens: number | null; outputTokens: number | null }
   | { type: 'error'; message: string };
 export interface ChatMessage {
@@ -57,6 +58,9 @@ export interface Conversation {
   draft: string; status: string; error?: string; busy: boolean; invalidated?: boolean;
   inputTokens: number; outputTokens: number;
   currentContextTokens?: number;
+  contextBudgetTokens?: number;
+  contextEstimated?: boolean;
+  reservedOutputTokens?: number;
   pinned?: boolean;
   createdAt?: number;
   updatedAt?: number;
@@ -64,13 +68,13 @@ export interface Conversation {
 
 export const WRITE_OPERATIONS: WriteOperation[] = ['create', 'update', 'delete', 'scale', 'restart'];
 export const MODE_LABELS: Record<AgentMode, string> = { read_only: 'Read only', ask: 'Ask', accept: 'Accept' };
-export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'Tooling', action: 'Tooling' };
+export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'Action', action: 'Action' };
 
 export function defaultPolicy(): AgentPolicy {
   return { resources: true, events: true, logs: false, metrics: true, clusterResources: false,
     secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false,
     customResources: 'metadata', helm: 'auto', argocd: 'auto', flux: 'auto', contexts: ['*'], namespaces: ['*'],
-    writes: ['create', 'update', 'delete', 'scale', 'restart'], maxReplicas: 10,
+    writes: [], maxReplicas: 10,
     rules: [], deniedPaths: [] };
 }
 export function defaultSettings(): AiSettings {

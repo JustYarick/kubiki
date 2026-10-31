@@ -4,7 +4,11 @@ use kube::config::{KubeConfigOptions, Kubeconfig};
 use kube::{Client, Config};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
 use tokio::sync::{OnceCell, RwLock};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -19,6 +23,7 @@ pub struct ClusterVersionInfo {
 struct ClientSlot {
     client: Arc<OnceCell<Client>>,
     fingerprint: u64,
+    generation: u64,
 }
 
 #[derive(Clone, Default)]
@@ -92,6 +97,15 @@ impl ClusterClientPool {
     /// Load or reuse an existing kube::Client for a specific context.
     /// If configuration has changed for this context, a fresh client is constructed.
     pub async fn get_client(&self, context: &str) -> Result<Client, KubikiError> {
+        self.get_client_with_generation(context)
+            .await
+            .map(|(client, _)| client)
+    }
+
+    pub async fn get_client_with_generation(
+        &self,
+        context: &str,
+    ) -> Result<(Client, u64), KubikiError> {
         let manager = self.config_mgr.clone();
         let cache = self.config_cache.clone();
         let kubeconfig = tokio::task::spawn_blocking(move || {
@@ -114,53 +128,75 @@ impl ClusterClientPool {
         let fp = context_fingerprint(&kubeconfig, context);
 
         let slot = {
-            let guard = self.clients.read().await;
-            if let Some(slot) = guard.get(context) {
-                if slot.fingerprint == fp {
-                    Some(slot.client.clone())
-                } else {
-                    None
+            let mut guard = self.clients.write().await;
+            match guard.get(context) {
+                Some(slot) if slot.fingerprint == fp => slot.clone(),
+                _ => {
+                    let slot = ClientSlot {
+                        client: Arc::new(OnceCell::new()),
+                        fingerprint: fp,
+                        generation: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
+                    };
+                    guard.insert(context.to_owned(), slot.clone());
+                    slot
                 }
-            } else {
-                None
             }
         };
+        let client = slot
+            .client
+            .get_or_try_init(|| self.build_client(kubeconfig, context))
+            .await?
+            .clone();
+        Ok((client, slot.generation))
+    }
 
-        let slot = match slot {
-            Some(s) => s,
-            None => {
-                let mut guard = self.clients.write().await;
-                if let Some(existing) = guard.get(context) {
-                    if existing.fingerprint == fp {
-                        existing.client.clone()
-                    } else {
-                        let cell = Arc::new(OnceCell::new());
-                        guard.insert(
-                            context.to_owned(),
-                            ClientSlot {
-                                client: cell.clone(),
-                                fingerprint: fp,
-                            },
-                        );
-                        cell
+    /// Validate the pinned connection before every HTTP request, including cached
+    /// responses. A request already sent before invalidation may still finish.
+    pub fn pin_client(
+        &self,
+        client: Client,
+        context: String,
+        generation: u64,
+        on_invalid: Arc<dyn Fn() + Send + Sync>,
+        before_write: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Client {
+        let namespace = client.default_namespace().to_owned();
+        let pool = self.clone();
+        Client::new(
+            tower::service_fn(move |request: http::Request<kube::client::Body>| {
+                let pool = pool.clone();
+                let context = context.clone();
+                let client = client.clone();
+                let on_invalid = on_invalid.clone();
+                let before_write = before_write.clone();
+                async move {
+                    let valid = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        pool.get_client_with_generation(&context),
+                    )
+                    .await;
+                    if !matches!(valid,Ok(Ok((_,current))) if current==generation) {
+                        on_invalid();
+                        if request.method() != http::Method::GET {
+                            let _ = before_write();
+                        }
+                        return Err(kube::Error::Api(kube::error::ErrorResponse {status:"Failure".into(),code:409,reason:"ConnectionChanged".into(),message:"Pinned cluster connection changed or became unavailable; start a new conversation".into()}));
                     }
-                } else {
-                    let cell = Arc::new(OnceCell::new());
-                    guard.insert(
-                        context.to_owned(),
-                        ClientSlot {
-                            client: cell.clone(),
-                            fingerprint: fp,
-                        },
-                    );
-                    cell
+                    // Generation validation awaited filesystem/config work. Re-check
+                    // authorization after that await, at the dispatch linearization point.
+                    if request.method() != http::Method::GET && !before_write() {
+                        return Err(kube::Error::Api(kube::error::ErrorResponse {
+                            status: "Failure".into(),
+                            code: 409,
+                            reason: "AuthorizationRevoked".into(),
+                            message: "Write revoked before HTTP dispatch".into(),
+                        }));
+                    }
+                    client.send(request).await
                 }
-            }
-        };
-
-        slot.get_or_try_init(|| self.build_client(kubeconfig, context))
-            .await
-            .cloned()
+            }),
+            namespace,
+        )
     }
 
     async fn build_client(

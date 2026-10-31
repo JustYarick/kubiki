@@ -1,19 +1,23 @@
 # План развития AI-агента Kubiki
 
-Дата: 2026-10-30. Статус: согласованные требования и план следующих этапов.
+Дата обновления: 2026-11-01. Статус: оптимизации P0–P3 и offline-часть P4 реализованы;
+условный informer reuse, live-валидация и последующие продуктовые этапы открыты.
 
-Документ описывает **целевое поведение**, а не перечень уже реализованных возможностей.
+Документ разделяет выполненные оптимизации и **целевое поведение** следующих этапов.
 Текущее состояние описано в [AI_AGENT.md](AI_AGENT.md), архитектурное решение —
 в [ADR-003](decisions/003-shared-kubernetes-access-and-ai-phases.md).
+Новые требования к запросам, большим кластерам и prompt подробно определены в
+[AI_QUERY_DESIGN.md](AI_QUERY_DESIGN.md); основные контракты реализованы расширением
+get_resource/list_resources, без отдельного query_resources.
 
 ## Приоритеты
 
-1. Общий доступ к Kubernetes и обязательные ограничения Plan на backend.
-2. Глубокая диагностика с проверяемыми источниками и объяснением причин.
-3. Гибкие и понятные правила доступа.
-4. Оформление планов и результатов в Markdown.
-5. Удобный чат: история, сессии, поиск и управление контекстом.
-6. Ограниченные действия над существующими объектами.
+1. Достоверность диагностики: единая policy, честная completeness и корректные связи.
+2. Общий Kubernetes access и экономные запросы: fields, selectors, pagination, working scope.
+3. Быстрые расследования: bounded parallel reads, budgets, cache и компактный контекст.
+4. Глубокая диагностика с evidence и оценкой качества на больших кластерах.
+5. Гибкие правила, планы, история/поиск и контролируемое хранение данных.
+6. Ограниченные действия над существующими объектами и проверка результата.
 7. **Создание ресурсов, установка приложений и развёртывание — в последнюю очередь.**
 
 Архитектурная подготовка первого этапа должна обслуживать диагностику и не
@@ -25,11 +29,93 @@
 | Область | Сейчас | Следующее изменение |
 | --- | --- | --- |
 | AI-домен | `crates/kubiki-ai` и `src/domains/ai` | Сохранить отдельный домен без собственного Kubernetes-ядра |
-| Подключение | AI получает клиент из общего `ClusterClientPool` | Убрать прямые Kubernetes reads/discovery из AI-адаптера за общий сервис операций |
-| Доступ | Read only / Ask / Accept и backend policy | Добавить независимый Plan / Action с жёстким запретом изменений в Plan |
-| Чат | Streaming и Markdown с таблицами, разговоры в памяти | Типизированные блоки планов, история сессий, поиск, управление контекстом |
-| Диагностика | Get/list, Events, ограниченные логи, Pod metrics | Связанные расследования, предыдущие логи, timeline, сравнение состояния, evidence |
+| Подключение | Общий `ClusterClientPool`, ResourceAccess, generation-bound transport | Live reconnect/TLS/auth проверка под нагрузкой |
+| Доступ | Read only / Ask / Accept, Plan/Action в UI/prompt, запрет writes в Plan; каталог по operation grants | Расширенные профили и объяснение прав |
+| Чат | Streaming, Markdown, фильтрованная localStorage история, evidence и полный estimated token budget | Native searchable history/retention и UI управления контекстом |
+| Диагностика | Policy-projected diagnostics/GitOps/Helm, per-kind health, verify_workload | Richer network/storage workflows, historical metrics и live model evals |
+| Запросы | Fields/profiles/selectors/cursors, ResourceAccess, working scope и summaries | Расширение специализированной child pagination по необходимости |
+| Масштаб | Bounded concurrency/API budgets/cache, summaries и evidence | Live latency/quality baseline; optional informer reuse после freshness/generation контракта |
 | Правила | Переключатели и упорядоченные правила ресурсов | Профили, объяснение решения, проверка конфликтов, раздельные права на поля и инструменты |
+
+## Прогресс реализации 2026-11-01
+
+| Пункт | Реализовано и проверено offline |
+| --- | --- |
+| P0: достоверность | Общая projection для Pod/workload/Events/GitOps, Helm values как структурированные данные; per-kind health, неизвестное вместо нулей, исправлены OOM/SIGKILL и normal completion |
+| P0: права и lifecycle | Content до body GET, metadata-only discovery, owner UID через разрешённые поля, default writes выключены, generation pinned в сессии и проверяется перед транспортом |
+| P1: queries | Fields/профили, selectors, pageSize, cursor с TTL/binding/byte-tail, один LIST при равномерных правах |
+| P1: scope/prompt | Namespace/selectorKind/root/rootUid и причина расследования; defaults не расширяют права; сокращённый prompt и capability summary вместо всей policy |
+| P1: общий доступ | ResourceAccess в core для UI/AI; AI-адаптер не создаёт kube::Api/Discovery, HelmReader использует общий kubeconfig/context |
+| P2: скорость и budgets | Read-only batches до 4, global desktop AI cap 2 с резервом UI, HTTP request/byte/time caps, один bounded retry 429/503, discovery cache и in-flight coalescing |
+| P3: сводки и память | summarize_resources, bounded evidence store/get_evidence, полный estimated request budget, целые tool exchanges, сохранение пользовательских ограничений и receipts |
+| P4: verification/evals | verify_workload с UID/generation/replicas, fixtures Pending/CrashLoop/OOM/ImagePull и scale 1/10/1000/10000, исправлены ложные Healthy в UI |
+| Хранение и UX | Tool payloads/YAML не сохраняются; migration старой истории, restore Read only + Plan; UI использует Action с совместимым wire tooling |
+| Action lifecycle | После async lease validation повторно проверяются phase/revision/cancel; human approval не расходует time budgets; failed/declined/uncertain останавливает очередь; неподдерживаемые GitOps writes не предлагаются |
+
+Измерение fixture: для 10000 Pods policy-filtered baseline 21 400 000 байт,
+выборка image/name/phase 1 940 000 байт (−90,9%), агрегат 568 байт. Это не замер
+Kubernetes API/LLM latency или качества рассуждений модели.
+
+Не выдавать за выполненную live-валидацию: реальные TLS/auth/reconnect под нагрузкой,
+API p50/p95/UI latency, диагностику платной/локальной моделью и запись в тестовый
+кластер. Транспортные, runtime, UI и browser fixtures проверяются локально.
+
+Итоговый offline-прогон (2026-11-01):
+
+- `cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml` — 63 теста.
+- `cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml` — весь набор core.
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` — 32 passed,
+  один live `/version` probe оставлен ignored.
+- `pnpm test` — 555 тестов; `pnpm test:e2e tests/e2e/ai_agent.spec.ts` — 4 сценария.
+- `pnpm build` — typecheck и production-сборка успешны.
+
+Отложено с явным основанием: raw informer reuse (native ResourceStore сейчас
+выключен и не несёт безопасного generation/freshness контракта); историческое
+rightsizing (нет подключённого источника временных рядов). В этих случаях агент
+использует live reads/разрешённые evidence и сообщает неизвестное. Дублирующий
+watch всего кластера или новая metrics DB не добавляются ради этого этапа.
+
+Pagination list_namespaces также реализована с policy projection имён.
+Специализированные child readers остаются ограниченными:
+для полного расследования доступны generic cursors; специализированные ответы partial.
+PlanArtifact, расширенные профили прав и native searchable history — отдельные
+последующие продуктовые этапы ниже; создание/deployment не расширяются этим изменением.
+
+## Первоочередные исправления и оптимизация запросов
+
+Полный контракт и сценарии проверки: [AI_QUERY_DESIGN.md](AI_QUERY_DESIGN.md).
+Чекбоксы ниже обозначают готовность целевого поведения целиком; существующий
+инструмент не означает, что все требования к нему выполнены.
+
+- [x] P0: применять metadata-only/content/denied paths и child-resource rules ко
+  всем diagnostics, Events, Helm/GitOps; запрещённые bodies не загружать.
+- [x] P0: убрать ложный `complete` при лимитах/ошибках; отличать denied/unavailable
+  от пустой выборки; health считать по типу workload.
+- [x] P0: корректные ReplicaSet/Pod связи через selectors (включая expressions)
+  и owner UID; не искать владельцев только в первых 20 RS namespace.
+- [x] P1: fields и компактные profiles для exact/group reads; ограниченный язык
+  путей и сохранение структуры контейнеров; policy применяется раньше проекции.
+- [x] P1: server-side selectors и cursor; отсутствие потерь при byte truncation
+  посреди страницы, явная обработка expiry/410 и изменения policy/подключения.
+- [x] P1: exact GET для имён, LIST без N+1 при разрешении всей выборки; при
+  точечных разрешениях сохранить metadata discovery + разрешённые GET.
+- [x] P1: allowed scope отдельно от working scope; начинать с минимального
+  namespace/workload, расширять только по evidence в пределах прав.
+- [x] P1: обновить prompt под доступные инструменты — гипотеза → минимальная
+  проверка → evidence; единая терминология Action, без обязательных лишних reads.
+- [x] P2: bounded parallel reads, per-connection semaphore с резервом UI,
+  deduplication и discovery cache; API calls/bytes/pages/time/token budgets.
+- [x] P3: агрегаты и top examples вместо тысяч объектов в модели; bounded discovery
+  cache/coalescing и projected evidence reuse.
+- [ ] Условный следующий этап: raw informer reuse только после generation/readiness/
+  freshness контракта и замеров памяти; сейчас live fallback вместо неподтверждённого cache.
+- [x] P3: бюджет полного provider request и памяти расследования; сохранять
+  receipts и целые tool exchanges, подгружать evidence по ссылке.
+
+Критерии: ноль forbidden bodies/fields, честное покрытие, один LIST для одной
+равномерно разрешённой страницы без GET каждого объекта, воспроизводимый диагноз.
+Снижение tool-output tokens ≥70% для выборок нескольких полей — цель эксперимента,
+а не установленный результат. Latency и влияние на UI сравнить с baseline.
 
 ## Единая точка доступа к Kubernetes
 
@@ -81,6 +167,11 @@ HTTP-запросов. Если пользователь выбирает дру
 общее для его интерфейса и агента.
 
 ## Две независимые оси: фаза работы и разрешение изменений
+
+Backend-фазы и запрет writes в Plan уже реализованы. Ниже — полный целевой
+контракт, включая оставшиеся lifecycle/UI/plan-artifact проверки. Сейчас UI использует Action, wire
+enum сохраняет tooling; `action` принимается как alias. Унифицировать
+на Action с совместимостью сохранённых данных и IPC.
 
 **Фаза работы:** `plan | action`. **Режим доступа:** `read_only | ask | accept`.
 Один не заменяет другой.
@@ -138,7 +229,10 @@ Explorer / Topology / AI сохраняет разговор и не означ�
   противоречия в настройках только в пределах разрешённого чтения. Поля Pod spec,
   env, annotations и логи тоже могут содержать секреты.
 - [ ] CRD/GitOps/Helm: сначала диагностическое чтение статусов и ссылок через
-  общие сервисы приложения. Reconcile, upgrade и install пока не добавлять.
+  общие сервисы приложения. Refresh Argo CD и reconcile Flux не предлагаются:
+  native allowlist пока не разрешает записи этих CRD;
+  проверить их scope/policy/receipt и не расширять writes до закрытия P0/P1.
+  Upgrade/install остаются последующим этапом.
 
 ### Как агент должен расследовать
 
@@ -236,6 +330,11 @@ workload в одном namespace без Secret content и исключить о�
 
 ## Развитие чата и сессий
 
+Сейчас Zustand сохраняет messages и метаданные в localStorage, восстановленные
+mode/phase сбрасываются в Read only + Plan. Native run/approval не восстанавливаются.
+Сначала ввести retention/opt-out для чувствительных payloads и план миграции
+существующего `kubiki.ai_conversations.v1`; не описывать текущий чат как memory-only.
+
 - [ ] История сессий: названия, переименование, закрепление, архивирование,
   удаление, группировка по cluster/namespace и дата последней активности.
 - [ ] Поиск: по заголовку и тексту, в текущем разговоре и по сохранённым сессиям,
@@ -272,13 +371,20 @@ receipt и разрешённой проверкой результата. Об�
 
 | Этап | Результат | Условие завершения |
 | --- | --- | --- |
-| 0. Общий доступ и фазы | Общий сервис, Read only + Plan по умолчанию | Нет прямых Kubernetes вызовов в AI-адаптере; негативные тесты Plan и смены подключения |
-| 1. Диагностика | Инструменты чтения и evidence | Базовые сценарии выше проходят, partial/denied не выдаются за полный результат |
-| 2. Правила | Профили, preview и объяснение решений | Правила одинаково действуют при чтении, отправке модели и экспорте |
-| 3. Представление плана | Версионированная Markdown-карточка | План читается/экспортируется и не превращается в неявное разрешение |
-| 4. Чат | Сессии, поиск, хранение и контекст | Восстановление безопасно; удаление охватывает историю, индекс и артефакты |
-| 5. Ограниченный Action | Действия над существующими объектами | Права, approvals, cancellation и receipts проверены в гонках |
-| 6. Создание и deployment | Приложения и цепочки ресурсов | Готовы все предыдущие этапы и проверки частичного результата |
+| P0. Достоверность | Policy parity, ошибки/полнота, per-kind health, baseline | Ноль запрещённых bodies/fields; partial/denied не выдаются за complete |
+| P1. Экономные queries | Общий read service, fields/profiles, selectors/cursors, working scope и prompt | Нет лишних GET для разрешённого LIST, нет потерь страниц, корректное сужение scope |
+| P2. Скорость | Bounded reads, discovery cache, deduplication, budgets | Число API calls/bytes/time ограничено; UI не голодает |
+| P3. Масштаб и память | Агрегаты, informer reuse, evidence memory | Fixtures до 10000 Pods, stale-cache/cursor/compaction проверки |
+| P4. Диагностическое качество | Связанные сценарии, verification, история metrics | Точность/evidence не ухудшаются; измерены latency/tokens относительно baseline |
+| 5. Правила и планы | Профили, preview прав, версионированный PlanArtifact | Экспорт/план не обходят policy и не становятся approval |
+| 6. Чат | Native history, retention, поиск, миграция localStorage | Восстановление безопасно; удаление охватывает историю, индекс и evidence |
+| 7. Ограниченный Action | Укрепление существующих действий и verification | Права, approvals, cancellation и receipts проверены в гонках |
+| 8. Создание и deployment | Приложения и цепочки ресурсов | Готовы предыдущие этапы и проверки частичного результата |
+
+P0–P4 уточняют приоритет диагностической ветки. Уже существующие backend phase
+checks сохраняются на каждом этапе; перенос в общий сервис идёт по семействам,
+а не требует переписать все операции до первого улучшения. Существующие write
+инструменты не считаются новым этапом разработки и не расширяются автоматически.
 
 ## Проверка, эксплуатация и сопровождение
 

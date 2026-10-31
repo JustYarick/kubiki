@@ -64,7 +64,10 @@ impl<'de> Deserialize<'de> for OptionalToolMode {
                 "auto" => Ok(OptionalToolMode::Auto),
                 "enabled" | "enable" | "on" | "true" => Ok(OptionalToolMode::Enabled),
                 "disabled" | "disable" | "off" | "false" => Ok(OptionalToolMode::Disabled),
-                _ => Err(serde::de::Error::custom(format!("Invalid tool mode: {}", s))),
+                _ => Err(serde::de::Error::custom(format!(
+                    "Invalid tool mode: {}",
+                    s
+                ))),
             },
             Helper::Bool(b) => Ok(if b {
                 OptionalToolMode::Enabled
@@ -209,6 +212,11 @@ pub fn matches(pattern: &str, value: &str) -> bool {
 }
 
 impl AgentPolicy {
+    /// The model needs capabilities and limits, not the full authorization database.
+    pub fn prompt_summary(&self) -> Value {
+        json!({"resources":self.resources,"events":self.events,"logs":self.logs,"metrics":self.metrics,"clusterResources":self.cluster_resources,"secrets":self.secrets,"configMaps":self.config_maps,"customResources":self.custom_resources,"workloadConfiguration":self.workload_configuration,"annotations":self.annotations,"writes":self.writes,"maxReplicas":self.max_replicas,"resourceRuleCount":self.rules.len(),"excludedPathCount":self.denied_paths.len(),"note":"Exact rules and field exclusions are enforced by the backend. Defaults are not grants for every object; omitted fields remain unknown."})
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.contexts.len() > 100
             || self.namespaces.len() > 100
@@ -272,6 +280,17 @@ impl AgentPolicy {
         }
     }
 
+    /// Conservative proof that content access is uniform across this collection.
+    /// Any potentially applicable resource rule forces per-identity authorization.
+    pub fn collection_content_allowed(&self, target: &Target, builtin: bool) -> bool {
+        self.access(target, builtin) == DataAccess::Content
+            && !self.rules.iter().any(|r| {
+                matches(&r.group, &target.group)
+                    && matches(&r.kind, &target.kind)
+                    && matches(&r.namespace, target.namespace.as_deref().unwrap_or(""))
+            })
+    }
+
     pub fn check_write(
         &self,
         mode: AgentMode,
@@ -318,6 +337,7 @@ impl AgentPolicy {
         let mut result = json!({"apiVersion": source["apiVersion"], "kind": source["kind"], "metadata": {
             "name": metadata["name"], "namespace": metadata["namespace"], "uid": metadata["uid"],
             "resourceVersion": metadata["resourceVersion"], "creationTimestamp": metadata["creationTimestamp"],
+            "generation": metadata["generation"],
             "ownerReferences": metadata["ownerReferences"], "labels": metadata["labels"]
         }});
         if access == DataAccess::Content {

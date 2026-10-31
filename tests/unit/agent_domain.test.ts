@@ -1,3 +1,5 @@
+import { defaultPolicy } from '../../src/domains/ai/types';
+import { persistedMessage, migrateAiHistory } from '../../src/domains/ai/persistence';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultSettings, type AgentEvent } from '../../src/domains/ai/types';
 
@@ -255,7 +257,7 @@ describe('AI domain conversations', () => {
         { name: 'cert-manager', status: 'deployed' },
       ],
     };
-    expect(getToolCallSummary('list_helm_releases', { namespace: 'kube-system' }, helmResult)).toBe('2 releases found (all deployed)');
+    expect(getToolCallSummary('list_helm_releases', { namespace: 'kube-system' }, helmResult)).toBe('2 releases inspected · 2 observed deployed · 0 reported failed/pending');
 
     const helmFailed = {
       releases: [
@@ -263,7 +265,7 @@ describe('AI domain conversations', () => {
         { name: 'bad-release', status: 'failed' },
       ],
     };
-    expect(getToolCallSummary('list_helm_releases', { namespace: 'kube-system' }, helmFailed)).toBe('2 releases found (1 with issues)');
+    expect(getToolCallSummary('list_helm_releases', { namespace: 'kube-system' }, helmFailed)).toBe('2 releases inspected · 1 observed deployed · 1 reported failed/pending');
 
     // Kubernetes resources list (pods, deployments, nodes)
     const podsResult = {
@@ -276,8 +278,8 @@ describe('AI domain conversations', () => {
     expect(getToolCallSummary('list_namespaces', {}, { namespaces: ['default', 'kube-system', 'monitoring'] })).toBe('3 namespaces discovered');
 
     // Diagnostics
-    expect(getToolCallSummary('get_pod_diagnostics', { name: 'web' }, { issuesSummary: [] })).toBe('Diagnostics complete · Healthy');
-    expect(getToolCallSummary('get_pod_diagnostics', { name: 'web' }, { issuesSummary: ['CrashLoopBackOff', 'OOMKilled'] })).toBe('Diagnostics complete · 2 issue(s) detected');
+    expect(getToolCallSummary('get_pod_diagnostics', { name: 'web' }, { issuesSummary: [] })).toBe('No issues found in available evidence · health unverified');
+    expect(getToolCallSummary('get_pod_diagnostics', { name: 'web' }, { issuesSummary: ['CrashLoopBackOff', 'OOMKilled'] })).toBe('Diagnostics partial · 2 issue(s) detected');
   });
 
   it('supports pinning and renaming conversations', () => {
@@ -322,4 +324,43 @@ describe('AI domain conversations', () => {
     expect(isPlanMessage('Под падает из-за отсутствия tracepoint в debugfs. Код выхода 1.', 'В чем причина падения?')).toBe(false);
     expect(isPlanMessage('This workload has 0/3 replicas ready.', 'Check deployment status')).toBe(false);
   });
+});
+
+describe('AI history evidence retention', () => {
+  it('omits tool data and manifest arguments while keeping operation receipts', () => {
+    const message = persistedMessage({ id: '1', role: 'tool', text: 'secret text', call: { id: 'c', name: 'apply_manifest', arguments: { namespace: 'apps', yaml: 'secret manifest' } }, result: { operationId: 'op1', status: 'accepted', values: 'private' } });
+    expect(message.result?.operationId).toBe('op1');
+    expect(message.call?.arguments).toEqual({ namespace: 'apps' });
+    expect(JSON.stringify(message)).not.toContain('secret');
+    expect(JSON.stringify(message)).not.toContain('private');
+  });
+  it('migrates legacy tool outputs without restoring execution authority', () => {
+    const history = migrateAiHistory({ conversations: [{ id: 'c', sessionId: 'old', mode: 'accept', phase: 'tooling', busy: true, messages: [{ id: 'm', role: 'tool', text: 'get_logs', result: { logs: 'private' } }] }], activeId: 'c' });
+    expect(history.conversations[0].sessionId).toBeUndefined();
+    expect(history.conversations[0].mode).toBe('read_only');
+    expect(history.conversations[0].phase).toBe('plan');
+    expect(JSON.stringify(history)).not.toContain('private');
+  });
+});
+
+it('keeps frontend default write grants disabled like the native policy', () => {
+  expect(defaultPolicy().writes).toEqual([]);
+});
+
+it('distinguishes API acceptance, uncertainty and historical payloads from verified success', () => {
+  expect(getToolCallSummary('apply_manifest', {}, { status: 'accepted', operationId: 'op1' })).toContain('verify outcome');
+  expect(getToolCallSummary('apply_manifest', {}, { status: 'uncertain', operationId: 'op1' })).toContain('uncertain');
+  expect(getToolCallSummary('get_resource', {}, { payloadOmitted: true })).toContain('Historical');
+  expect(getToolCallSummary('get_workload_diagnostics', {}, {})).toContain('unknown');
+  expect(getToolCallSummary('list_helm_releases', {}, { releases: [{}] })).not.toContain('all deployed');
+});
+
+it('retains the backend context estimate when a provider omits token usage', () => {
+  const id=useAiStore.getState().create(scope);
+  let conversation=useAiStore.getState().conversations.find(c=>c.id===id)!;
+  conversation=applyAgentEvent(conversation,{type:'context',estimatedInputTokens:1200,budgetTokens:8192,reservedOutputTokens:1024});
+  conversation=applyAgentEvent(conversation,{type:'usage',inputTokens:null,outputTokens:null});
+  expect(conversation.currentContextTokens).toBe(1200);
+  expect(conversation.contextEstimated).toBe(true);
+  expect(conversation.contextBudgetTokens).toBe(8192);
 });

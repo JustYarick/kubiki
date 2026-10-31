@@ -449,7 +449,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
                     type="button"
                     aria-pressed={isSelected}
                     disabled={disabled}
-                    title={isTooling && mode === 'read_only' ? 'Tooling is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
+                    title={isTooling && mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
                     onClick={() => setPhase(key as AgentPhase)}
                   >
                     {label}
@@ -689,8 +689,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   };
 
   const selectedModel = models?.find(m => m.id === c.model);
-  const DEFAULT_CONTEXT_WINDOW = 262144; // 256k default when provider provides no contextWindow
-  const maxContextTokens = settings.options.contextTokens || selectedModel?.contextWindow || DEFAULT_CONTEXT_WINDOW;
+  const DEFAULT_CONTEXT_WINDOW = 16384;
+  const maxContextTokens = c.contextBudgetTokens || Math.min(settings.options.contextTokens || DEFAULT_CONTEXT_WINDOW, selectedModel?.contextWindow || 262144);
   const currentContext = c.currentContextTokens || (c.inputTokens > 0 ? c.inputTokens : 0);
   const contextPercent = maxContextTokens && currentContext > 0
     ? Math.min(100, Math.round((currentContext / maxContextTokens) * 100))
@@ -874,7 +874,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
                     type="button"
                     aria-pressed={isSelected}
                     disabled={disabled}
-                    title={isTooling && c.mode === 'read_only' ? 'Tooling is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
+                    title={isTooling && c.mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
                     onClick={() => void phase(key as AgentPhase)}
                   >
                     {label}
@@ -929,7 +929,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
             {maxContextTokens ? (
               <span
                 className="ai-context-indicator inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-mono text-[10.5px]"
-                title={`Context window usage: ${currentContext.toLocaleString()} used of ${maxContextTokens.toLocaleString()} tokens maximum (${contextPercent}%)`}
+                title={`${c.contextEstimated ? 'Estimated input context' : 'Context window usage'}: ${currentContext.toLocaleString()} of ${maxContextTokens.toLocaleString()} tokens (${contextPercent}%). Output reserve: ${(c.reservedOutputTokens ?? 4096).toLocaleString()} tokens.`}
               >
                 <span className="text-[var(--text-muted)]">Context:</span>
                 <span className={contextPercent > 80 ? 'text-amber-400 font-semibold' : 'text-[var(--text-secondary)]'}>
@@ -1359,7 +1359,7 @@ function CompactToolMessage({
   conversation: Conversation;
 }) {
   const result = m.result;
-  const error = typeof result?.error === 'string' ? result.error : undefined;
+  const error = typeof result?.error === 'string' ? result.error : ['failed', 'cancelled', 'uncertain'].includes(String(result?.status)) ? `Change ${result?.status}; inspect the recorded outcome` : undefined;
   const isRunning = !result && c.busy;
   const args = (m.call?.arguments || {}) as Record<string, any>;
   const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
@@ -1492,7 +1492,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           <div className="ai-tool-header">
             <div className="flex items-center gap-2 font-mono">
               <ShieldAlert size={12} className="text-amber-400 animate-pulse" aria-hidden="true" />
-              <span className="ai-tooling-badge">TOOLING</span>
+              <span className="ai-tooling-badge">ACTION</span>
               <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
               <span className="font-semibold">{m.call?.name}</span>
               {targetSummary && (
@@ -1590,7 +1590,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           <div className="ai-tool-header">
             <div className="flex items-center gap-2 font-mono">
               <FileCode size={12} className="text-cyan-400" aria-hidden="true" />
-              <span className="ai-tooling-badge">TOOLING</span>
+              <span className="ai-tooling-badge">ACTION</span>
               <span className="ai-tool-intent-badge is-emerald">PROPOSAL</span>
               <span className="font-semibold">{String(result.title ?? m.call?.name)}</span>
             </div>
@@ -1674,8 +1674,8 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                   Plan
                 </span>
               ) : (m.phase === 'tooling' || m.phase === 'action') ? (
-                <span className="ai-tooling-badge" title="Tooling execution phase">
-                  Tooling
+                <span className="ai-tooling-badge" title="Action execution phase">
+                  Action
                 </span>
               ) : null}
             </>
@@ -1743,7 +1743,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
             onClick={() => void useAiStore.getState().setPhase(c.id, 'action')}
           >
             <Zap size={11} className="text-amber-300" aria-hidden="true" />
-            Switch to Tooling to execute
+            Switch to Action to execute
           </Button>
         </div>
       )}
