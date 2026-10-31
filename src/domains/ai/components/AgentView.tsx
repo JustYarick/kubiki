@@ -569,11 +569,12 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   const resolveMutation = useMutationConfirmStore(s => s.resolve);
   const transcript = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
+  const lastScrollTop = useRef(0);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const [modePending, setModePending] = useState(false);
 
-  const AT_BOTTOM_THRESHOLD = 120;
+  const AT_BOTTOM_THRESHOLD = 30;
 
   const scrollToBottom = (smooth = false) => {
     userScrolledUp.current = false;
@@ -584,19 +585,20 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       } else {
         transcript.current.scrollTop = transcript.current.scrollHeight;
       }
+      lastScrollTop.current = transcript.current.scrollTop;
     }
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (e.deltaY < 0) {
-      // User is scrolling up with mousewheel: instantly decouple auto-scroll
+      // User is scrolling up with mousewheel/trackpad: instantly decouple auto-scroll
       userScrolledUp.current = true;
       setShowScrollBottom(true);
     } else if (e.deltaY > 0 && transcript.current) {
       const el = transcript.current;
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distFromBottom <= 180) {
-        // User is rolling wheel down and close to bottom: re-engage auto-scroll
+      if (distFromBottom <= AT_BOTTOM_THRESHOLD) {
+        // User scrolled all the way to the bottom
         userScrolledUp.current = false;
         setShowScrollBottom(false);
       }
@@ -605,11 +607,21 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
-    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distFromBottom <= AT_BOTTOM_THRESHOLD) {
+    const currentScrollTop = el.scrollTop;
+    const isScrollingUp = currentScrollTop < lastScrollTop.current;
+    lastScrollTop.current = currentScrollTop;
+
+    const distFromBottom = el.scrollHeight - currentScrollTop - el.clientHeight;
+
+    if (isScrollingUp) {
+      // Any upward movement decouples auto-scroll immediately
+      userScrolledUp.current = true;
+      setShowScrollBottom(true);
+    } else if (distFromBottom <= AT_BOTTOM_THRESHOLD) {
+      // Reached bottom moving downwards or stationary at bottom
       userScrolledUp.current = false;
       setShowScrollBottom(false);
-    } else {
+    } else if (distFromBottom > AT_BOTTOM_THRESHOLD + 10) {
       userScrolledUp.current = true;
       setShowScrollBottom(true);
     }
@@ -619,13 +631,17 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   useEffect(() => {
     if (visible && !userScrolledUp.current && transcript.current) {
       transcript.current.scrollTop = c.messages.length ? transcript.current.scrollHeight : 0;
+      lastScrollTop.current = transcript.current.scrollTop;
     }
   }, [c.messages, c.status, visible]);
   useEffect(() => {
     userScrolledUp.current = false;
     setShowScrollBottom(false);
     if (visible) {
-      if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+      if (transcript.current) {
+        transcript.current.scrollTop = transcript.current.scrollHeight;
+        lastScrollTop.current = transcript.current.scrollTop;
+      }
       input.current?.focus();
     }
   }, [c.id, visible]);
