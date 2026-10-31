@@ -25,7 +25,6 @@ impl ProviderClient {
             client: Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(180))
                 .build()
                 .map_err(|_| "Cannot initialize the AI HTTP client")?,
         })
@@ -61,6 +60,7 @@ impl ProviderClient {
         } else {
             request
         }
+        .timeout(Duration::from_secs(60))
         .send()
         .await
         .map_err(|_| "Cannot connect to the AI endpoint; check address, network and TLS")?;
@@ -157,12 +157,12 @@ impl ProviderClient {
         let mut accumulator = Accumulator::default();
         let mut stream = response.bytes_stream();
         let mut total = 0;
-        while let Some(chunk) = tokio::time::timeout(Duration::from_secs(60), stream.next())
+        while let Some(chunk) = tokio::time::timeout(Duration::from_secs(120), stream.next())
             .await
-            .map_err(|_| "AI provider has not sent data for 60 seconds")?
+            .map_err(|_| "AI provider has not sent data for 120 seconds")?
         {
             let chunk =
-                chunk.map_err(|_| "AI stream disconnected; no further tools were executed")?;
+                chunk.map_err(|e| format!("AI stream disconnected ({e}); no further tools were executed"))?;
             total += chunk.len();
             if total > 4 * 1024 * 1024 {
                 return Err("AI response exceeds the 4 MiB run limit".into());
@@ -419,6 +419,7 @@ struct Accumulator {
     output: Option<u64>,
     done: bool,
     truncated: bool,
+    in_thinking: bool,
 }
 impl Accumulator {
     fn delta(&mut self, text: &str, emit: &EventSink) {
@@ -519,10 +520,29 @@ impl Accumulator {
                 _ => {}
             },
             ProviderProtocol::Ollama => {
+                if let Some(thinking) = value["message"]["thinking"].as_str() {
+                    if !thinking.is_empty() {
+                        if !self.in_thinking {
+                            self.in_thinking = true;
+                            self.delta("<think>", emit);
+                        }
+                        self.delta(thinking, emit);
+                    }
+                }
                 if let Some(text) = value["message"]["content"].as_str() {
-                    self.delta(text, emit);
+                    if !text.is_empty() {
+                        if self.in_thinking {
+                            self.in_thinking = false;
+                            self.delta("</think>\n", emit);
+                        }
+                        self.delta(text, emit);
+                    }
                 }
                 if let Some(calls) = value["message"]["tool_calls"].as_array() {
+                    if self.in_thinking {
+                        self.in_thinking = false;
+                        self.delta("</think>\n", emit);
+                    }
                     let blocks = if let Some(blocks) = self.native.as_array_mut() {
                         blocks
                     } else {
@@ -532,6 +552,10 @@ impl Accumulator {
                     blocks.extend(calls.iter().cloned());
                 }
                 if value["done"] == true {
+                    if self.in_thinking {
+                        self.in_thinking = false;
+                        self.delta("</think>\n", emit);
+                    }
                     self.done = true;
                     self.truncated = value["done_reason"] == "length";
                     self.input = value["prompt_eval_count"].as_u64();
@@ -542,10 +566,32 @@ impl Accumulator {
                 if value["kubiki_done"] == true {
                     self.done = true;
                 }
+                if let Some(reasoning) = value["choices"][0]["delta"]["reasoning_content"]
+                    .as_str()
+                    .or_else(|| value["choices"][0]["delta"]["thinking"].as_str())
+                {
+                    if !reasoning.is_empty() {
+                        if !self.in_thinking {
+                            self.in_thinking = true;
+                            self.delta("<think>", emit);
+                        }
+                        self.delta(reasoning, emit);
+                    }
+                }
                 if let Some(text) = value["choices"][0]["delta"]["content"].as_str() {
-                    self.delta(text, emit);
+                    if !text.is_empty() {
+                        if self.in_thinking {
+                            self.in_thinking = false;
+                            self.delta("</think>\n", emit);
+                        }
+                        self.delta(text, emit);
+                    }
                 }
                 if let Some(calls) = value["choices"][0]["delta"]["tool_calls"].as_array() {
+                    if self.in_thinking {
+                        self.in_thinking = false;
+                        self.delta("</think>\n", emit);
+                    }
                     for call in calls {
                         let index = call["index"].as_u64().ok_or("Tool call has no index")?;
                         let entry = self.calls.entry(index).or_default();
@@ -561,6 +607,10 @@ impl Accumulator {
                     }
                 }
                 if let Some(reason) = value["choices"][0]["finish_reason"].as_str() {
+                    if self.in_thinking {
+                        self.in_thinking = false;
+                        self.delta("</think>\n", emit);
+                    }
                     self.done = true;
                     self.truncated = reason == "length" || reason == "content_filter";
                 }
@@ -573,6 +623,10 @@ impl Accumulator {
         Ok(())
     }
     fn finish(mut self, protocol: ProviderProtocol) -> Result<Completion, String> {
+        if self.in_thinking {
+            self.in_thinking = false;
+            self.text.push_str("</think>\n");
+        }
         if !self.done || self.truncated {
             return Err("The AI response was interrupted or reached its output limit. No tools from this response were executed".into());
         }
@@ -866,5 +920,20 @@ mod tests {
             };
             assert_eq!(validate_profile(&profile).is_ok(), ok, "{url}");
         }
+    }
+
+    #[test]
+    fn ollama_stream_wraps_thinking_in_think_tags_and_preserves_content() {
+        let mut stream = Accumulator::default();
+        for frame in [
+            json!({"message":{"content":"","thinking":"Checking pod "},"done":false}),
+            json!({"message":{"content":"","thinking":"diagnostics"},"done":false}),
+            json!({"message":{"content":"The pod has failed.","thinking":""},"done":false}),
+            json!({"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":25}),
+        ] {
+            stream.frame(ProviderProtocol::Ollama, &frame, &sink()).unwrap();
+        }
+        let completion = stream.finish(ProviderProtocol::Ollama).unwrap();
+        assert_eq!(completion.text, "<think>Checking pod diagnostics</think>\nThe pod has failed.");
     }
 }
