@@ -663,6 +663,19 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     void useAiStore.getState().send(c.id);
   };
 
+  const handleStartNew = () => {
+    const validProvider = settings.providers.some(p => p.id === c.providerId) ? c.providerId : undefined;
+    useAiStore.getState().create(
+      c.scope,
+      c.draft,
+      c.title,
+      validProvider,
+      c.model,
+      c.phase,
+      c.mode
+    );
+  };
+
   const selectedModel = models?.find(m => m.id === c.model);
   const DEFAULT_CONTEXT_WINDOW = 262144; // 256k default when provider provides no contextWindow
   const maxContextTokens = settings.options.contextTokens || selectedModel?.contextWindow || DEFAULT_CONTEXT_WINDOW;
@@ -732,13 +745,62 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     </div>
 
     <footer className="ai-composer">
-      {modelError && <p role="alert" className="ai-error">{modelError}</p>}
-      {selectedModel?.tools === false && <p className="ai-notice">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
-      {c.error && <p role="alert" className="ai-error">{c.error}</p>}
-      {c.invalidated && <Button size="sm" onClick={() => useAiStore.getState().create(c.scope, c.draft, c.title)}>Start a new conversation</Button>}
-      {!settings.providers.length && <p className="ai-help">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
+      <div className="ai-composer-alerts">
+        {modelError && <p role="alert" className="ai-error">{modelError}</p>}
+        {selectedModel?.tools === false && <p className="ai-notice">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
+        {c.error && !c.invalidated && <p role="alert" className="ai-error">{c.error}</p>}
+        {!settings.providers.length && <p className="ai-help">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
+      </div>
 
-      <div className="ai-composer-card">
+      {c.invalidated ? (
+        <div
+          className="ai-composer-card ai-composer-invalidated-card"
+          onClick={handleStartNew}
+          role="button"
+          tabIndex={0}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleStartNew();
+            }
+          }}
+          aria-label="Settings changed. Start a new conversation to use updated permissions and provider"
+        >
+          <div className="ai-invalidated-content">
+            <div className="ai-invalidated-icon-wrapper">
+              <RefreshCw size={20} aria-hidden="true" />
+            </div>
+            <div className="ai-invalidated-text">
+              <div className="ai-invalidated-title">
+                Settings changed
+              </div>
+              <div className="ai-invalidated-description">
+                {c.error || 'Settings changed. Start a new conversation to use the updated permissions and provider.'}
+              </div>
+              {c.draft.trim() && (
+                <div className="ai-invalidated-draft">
+                  Draft &ldquo;{c.draft.length > 60 ? c.draft.slice(0, 57) + '...' : c.draft}&rdquo; will be transferred.
+                </div>
+              )}
+            </div>
+            <div className="ai-invalidated-action">
+              <Button
+                variant="primary"
+                size="md"
+                onClick={e => {
+                  e.stopPropagation();
+                  handleStartNew();
+                }}
+                className="ai-invalidated-btn"
+              >
+                <Plus size={15} aria-hidden="true" />
+                <span>Start a new conversation</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="ai-composer-card">
         {/* Top Controls: Cluster, Provider & Model buttons ON TOP OF input */}
         <div className="ai-composer-card-top">
           <div className="ai-composer-card-controls">
@@ -896,7 +958,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
           </div>
         </div>
       </div>
-    </footer>
+    )}
+  </footer>
   </>;
 }
 
