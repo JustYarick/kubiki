@@ -12,6 +12,17 @@ Explain evidence and uncertainty. For resource creation, clarify missing storage
 \n\n\
 OPERATING RULES & TOOL USAGE:\n\
 - MUTATION TOOLS VS PROPOSALS: When the user asks you to create, apply, modify, update, restart, or scale a resource in Tooling phase (Ask or Accept mode), ALWAYS CALL the corresponding mutation tool (apply_manifest, scale_workload, restart_workload, delete_resource) directly! In Ask mode, calling the tool triggers the interactive in-chat approval card for the human. Do NOT call propose_manifests when asked to apply or create a resource. Use propose_manifests ONLY when the user explicitly asks for a draft, preview, suggestion, or proposal without applying it, or in Read-only mode / Plan phase.\n\
+- ARCHITECTURAL PHASES (PLAN VS DIRECT ANSWER):\n\
+  1. Informational & Diagnostic Requests: When the user asks a question, requests an explanation, or asks to investigate/analyze an issue (e.g. \"Analyze Pod...\", \"Explain the problem\", \"Why did it crash?\", \"What does this Service do?\"):\n\
+     - Directly answer the question with technical evidence, logs, and root cause analysis.\n\
+     - Do NOT format your response as an Action Plan unless an action plan was explicitly requested.\n\
+  2. Action Plan Requests in Plan Phase: When the user asks to fix an issue, execute a multi-step task, accomplish a goal, or explicitly requests a plan (e.g. \"How do I fix this?\", \"Make a plan\", \"Deploy X\", \"Fix the crash\", \"Составь план\", \"План действий\"):\n\
+     - Because write tools are disabled in Plan phase, formulate a clear, structured Action Plan titled \"## Plan: <Goal>\" (or in Russian \"## План: <Цель>\" or \"## План действий: <Цель>\").\n\
+     - Structure it with numbered, concrete steps: required configuration changes, exact YAML manifests, and post-change verification checks.\n\
+     - Note that the user can switch to Tooling phase to execute mutations on the cluster.\n\
+  3. Execution in Tooling (Build) Phase: When in Tooling phase and asked to carry out actions or fix an issue:\n\
+     - Directly call the corresponding mutation tools (apply_manifest, scale_workload, restart_workload, delete_resource) to implement the solution.\n\
+     - Verify the cluster state immediately using get_resource.\n\
 - CONCISE RESPONSES WITHOUT DUPLICATION: Do NOT duplicate YAML manifests in your conversational text response when calling a tool, as the UI already renders the manifest in an interactive Monaco editor. State briefly what is being done.\n\
 - MANDATORY POST-WRITE VERIFICATION: Immediately after any write operation (scale_workload, apply_manifest, restart_workload) completes, you MUST verify the resulting state! Call get_resource to read back the live resource, inspect its replicas, status, or conditions, and report the confirmed cluster state to the user. Do NOT tell the user to check the status later — verify it yourself right away using get_resource.\n\
 - DEEP DIAGNOSTICS & INCIDENT INVESTIGATION:\n\
@@ -168,7 +179,7 @@ impl Drop for Running {
     }
 }
 
-pub const OPENCODE_COMPACTION_PROMPT: &str = "\
+pub const ANCHORED_COMPACTION_PROMPT: &str = "\
 You are an anchored context summarization assistant for coding and Kubernetes operations sessions. \
 Summarize only the conversation history given to you. Preserve exact file paths, technical identifiers, \
 error logs, Kubernetes resources (Kind, namespace, name, UIDs), and user-stated constraints. \
@@ -230,7 +241,7 @@ fn compact_history(history: &mut Vec<Turn>, max_bytes: usize) {
     }
 
     let summary = format!(
-        "[Context Summary: OpenCode-style compaction]\n\
+        "[Context Summary: Context compaction]\n\
          ## 1. Primary Goal & Task Objective\n- {}\n\n\
          ## 2. What Has Been Done & Investigated\n{}\n\n\
          ## 3. Key Technical Context\n{}\n\n\

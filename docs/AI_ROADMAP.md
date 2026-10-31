@@ -322,6 +322,6 @@ failed deployment recovery time, change fail rate и deployment rework rate;
 автоматическое исправление в фоне и multi-agent orchestration в этот план не входят.
 Свой AI-домен остаётся логическим модулем существующего приложения.
 
-Ориентир интерфейса фаз — [OpenCode Plan/Build](https://opencode.ai/docs/agents/#built-in).
+Ориентир интерфейса фаз — разделение на фазы планирования (Plan) и исполнения (Action).
 В Kubiki пользовательское имя исполняющей фазы — **Action**, стартовая фаза —
 **Plan**; жёсткий backend запрет изменений в Plan задаётся требованиями Kubiki.
