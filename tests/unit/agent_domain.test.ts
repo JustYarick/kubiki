@@ -219,4 +219,25 @@ describe('AI domain conversations', () => {
     expect(timelineIntent.badge).toBe('TIMELINE');
     expect(timelineIntent.title).toContain('web-pod');
   });
+
+  it('maps GitOps and Helm tool intents and sets default policies', () => {
+    const policy = defaultSettings().policy;
+    expect(policy.helm).toBe(true);
+    expect(policy.argocd).toBe(true);
+    expect(policy.flux).toBe(true);
+
+    const helmList = getToolIntent('list_helm_releases', { namespace: 'kube-system' });
+    expect(helmList.badge).toBe('HELM');
+    expect(helmList.title).toContain('List Helm releases in namespace "kube-system"');
+
+    const argoSync = getToolIntent('sync_argocd_app', { name: 'frontend', namespace: 'argocd', hard: true });
+    expect(argoSync.badge).toBe('ARGO SYNC');
+    expect(argoSync.title).toContain('Sync / Refresh Argo CD Application "frontend"');
+    expect(argoSync.destructive).toBe(false);
+
+    const fluxReconcile = getToolIntent('reconcile_flux_resource', { kind: 'Kustomization', name: 'apps', namespace: 'flux-system' });
+    expect(fluxReconcile.badge).toBe('RECONCILE');
+    expect(fluxReconcile.title).toContain('Reconcile Flux Kustomization "apps"');
+    expect(fluxReconcile.destructive).toBe(false);
+  });
 });

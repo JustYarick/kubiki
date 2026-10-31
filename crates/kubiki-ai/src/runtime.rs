@@ -21,6 +21,11 @@ OPERATING RULES & TOOL USAGE:\n\
   3. For Workloads (Deployments, StatefulSets, DaemonSets, Jobs), call get_workload_diagnostics to inspect rollout progress, replica discrepancies, conditions, and child ReplicaSets/Pods.\n\
   4. Call get_events_timeline to see a deduplicated, chronological timeline of Warnings and Events for the resource.\n\
   5. Structure your findings into clear sections: Facts & Evidence (exit codes, timestamps, error messages), Root Cause Analysis, and Recommended Action. Never state an unverified hypothesis as a proven fact.\n\
+- GITOPS & PACKAGE MANAGERS (HELM, ARGO CD, FLUX):\n\
+  When managing or diagnosing deployed applications:\n\
+  1. For Helm releases: use list_helm_releases and get_helm_release to check chart versions, values, and upgrade history.\n\
+  2. For Argo CD: use list_argocd_apps and get_argocd_app to inspect OutOfSync or Degraded apps. To trigger sync in Tooling phase (Ask/Accept mode), call sync_argocd_app.\n\
+  3. For Flux: use list_flux_resources and get_flux_resource to inspect Kustomizations and HelmReleases. To trigger reconcile in Tooling phase (Ask/Accept mode), call reconcile_flux_resource.\n\
 \n\
 Tools may be denied by policy. Do not keep retrying denied tools. A successful write receipt means API acceptance; verify actual workload health with get_resource or get_events. Never claim success from your own text without verification. Do not claim that limited or missing data proves cluster-wide absence of problems.";
 
@@ -435,6 +440,24 @@ pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase
     }
     if policy.metrics {
         tools.push(tool("get_metrics", "Read Pod CPU/memory usage in one permitted namespace. Metrics API access may be unavailable.", json!({"namespace":{"type":"string"}}), &["namespace"]));
+    }
+    if policy.helm {
+        tools.push(tool("list_helm_releases", "List installed Helm releases in a namespace (or null for all permitted namespaces) with chart name, revision, status, and app version.", json!({"namespace":{"type":["string","null"]}}), &[]));
+        tools.push(tool("get_helm_release", "Inspect details, user-supplied values, and revision history of an installed Helm release.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace","name"]));
+    }
+    if policy.argocd {
+        tools.push(tool("list_argocd_apps", "List Argo CD Applications with health status (Healthy, Degraded, Progressing), sync status (Synced, OutOfSync), target revision, and repo URL.", json!({"namespace":{"type":["string","null"]}}), &[]));
+        tools.push(tool("get_argocd_app", "Inspect an Argo CD Application's sync status, health conditions, source repository, and managed resource tree.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace","name"]));
+        if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {
+            tools.push(tool("sync_argocd_app", "Request an immediate Argo CD Application refresh or sync. In Ask mode, opens interactive in-chat approval.", json!({"namespace":{"type":"string"},"name":{"type":"string"},"hard":{"type":["boolean","null"]}}), &["namespace","name"]));
+        }
+    }
+    if policy.flux {
+        tools.push(tool("list_flux_resources", "List Flux GitOps delivery resources (Kustomizations, HelmReleases, GitRepositories) with ready conditions, suspend status, and revisions.", json!({"namespace":{"type":["string","null"]},"kind":{"type":["string","null"]}}), &[]));
+        tools.push(tool("get_flux_resource", "Inspect a Flux Kustomization or HelmRelease: status conditions, failure reasons, last applied revision, and inventory.", json!({"kind":{"type":"string"},"namespace":{"type":"string"},"name":{"type":"string"}}), &["kind","namespace","name"]));
+        if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {
+            tools.push(tool("reconcile_flux_resource", "Trigger an immediate reconcile for a Flux Kustomization or HelmRelease by setting reconcile.fluxcd.io/requestedAt. In Ask mode, opens interactive in-chat approval.", json!({"kind":{"type":"string"},"namespace":{"type":"string"},"name":{"type":"string"}}), &["kind","namespace","name"]));
+        }
     }
     if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {
         // Rules can grant writes even when the defaults are empty; dispatcher

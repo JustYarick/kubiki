@@ -80,6 +80,76 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
         color: 'indigo',
       };
     }
+    case 'list_helm_releases': {
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : ' (all namespaces)';
+      return {
+        title: `List Helm releases${ns}`,
+        description: `Discovers installed Helm chart releases, release status (deployed, failed, pending), revisions, and chart versions.`,
+        badge: 'HELM',
+        color: 'sky',
+      };
+    }
+    case 'get_helm_release': {
+      return {
+        title: `Inspect Helm release "${args.name || ''}" in "${args.namespace || ''}"`,
+        description: `Reads user-supplied values.yaml and revision history for the specified Helm release to diagnose misconfigurations.`,
+        badge: 'HELM',
+        color: 'sky',
+      };
+    }
+    case 'list_argocd_apps': {
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `List Argo CD Applications${ns}`,
+        description: `Lists Argo CD GitOps applications with health status (Healthy, Degraded), sync status (Synced, OutOfSync), and target repos.`,
+        badge: 'ARGOCD',
+        color: 'amber',
+      };
+    }
+    case 'get_argocd_app': {
+      return {
+        title: `Inspect Argo CD Application "${args.name || ''}"`,
+        description: `Retrieves deep sync status, health conditions, source repository, and managed resource tree for the Argo CD application.`,
+        badge: 'ARGOCD',
+        color: 'amber',
+      };
+    }
+    case 'sync_argocd_app': {
+      return {
+        title: `Sync / Refresh Argo CD Application "${args.name || ''}"`,
+        description: `Triggers an Argo CD application sync or hard refresh against the Git repository to reconcile desired state.`,
+        destructive: false,
+        badge: 'ARGO SYNC',
+        color: 'amber',
+      };
+    }
+    case 'list_flux_resources': {
+      const kind = args.kind ? `${args.kind}s` : 'GitOps resources';
+      const ns = args.namespace ? ` in "${args.namespace}"` : '';
+      return {
+        title: `List Flux ${kind}${ns}`,
+        description: `Discovers Flux delivery and source resources (Kustomizations, HelmReleases, GitRepositories) and their Ready conditions.`,
+        badge: 'FLUX',
+        color: 'indigo',
+      };
+    }
+    case 'get_flux_resource': {
+      return {
+        title: `Inspect Flux ${args.kind || 'resource'} "${args.name || ''}"`,
+        description: `Inspects detailed status conditions, error messages, last applied revision, and inventory for the Flux delivery resource.`,
+        badge: 'FLUX',
+        color: 'indigo',
+      };
+    }
+    case 'reconcile_flux_resource': {
+      return {
+        title: `Reconcile Flux ${args.kind || 'resource'} "${args.name || ''}"`,
+        description: `Requests an immediate Flux reconciliation by setting reconcile.fluxcd.io/requestedAt annotation to sync with Git/Helm repository.`,
+        destructive: false,
+        badge: 'RECONCILE',
+        color: 'indigo',
+      };
+    }
     case 'get_pod_diagnostics': {
       const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
       return {

@@ -295,11 +295,31 @@ impl ToolExecutor for KubernetesTools {
         if call.name == "get_workload_diagnostics" {
             return self.read_workload_diagnostics(session, call, client).await;
         }
+        if call.name == "list_helm_releases" {
+            return self.list_helm_releases(session, call, client).await;
+        }
+        if call.name == "get_helm_release" {
+            return self.get_helm_release(session, call, client).await;
+        }
+        if call.name == "list_argocd_apps" {
+            return self.list_argocd_apps(session, call, client).await;
+        }
+        if call.name == "get_argocd_app" {
+            return self.get_argocd_app(session, call, client).await;
+        }
+        if call.name == "list_flux_resources" {
+            return self.list_flux_resources(session, call, client).await;
+        }
+        if call.name == "get_flux_resource" {
+            return self.get_flux_resource(session, call, client).await;
+        }
         if [
             "apply_manifest",
             "scale_workload",
             "restart_workload",
             "delete_resource",
+            "sync_argocd_app",
+            "reconcile_flux_resource",
         ]
         .contains(&call.name.as_str())
         {
@@ -982,6 +1002,349 @@ impl KubernetesTools {
         tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Workload diagnostics cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Workload diagnostics timed out")? }
     }
 
+    async fn list_helm_releases(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        _client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: Option<String>,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid list_helm_releases arguments")?;
+        let state = session.control()?;
+        if !state.policy.helm {
+            return Err("Helm operations are disabled by policy".into());
+        }
+        let ns = args.namespace.as_deref().or_else(|| {
+            if session.scope.all_namespaces {
+                Some("all")
+            } else {
+                session.scope.namespaces.first().map(String::as_str)
+            }
+        });
+        let releases = kubiki_core::helm::client::HelmClient::list_releases(ns)
+            .await
+            .unwrap_or_default();
+        bounded_result(json!({
+            "diagnostic": "helm_releases",
+            "evidence": {
+                "scope": session.scope.context,
+                "namespace": ns,
+                "capturedAt": stamp(),
+                "completeness": "complete"
+            },
+            "releases": releases,
+            "count": releases.len(),
+        }))
+    }
+
+    async fn get_helm_release(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        _client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid get_helm_release arguments")?;
+        let state = session.control()?;
+        if !state.policy.helm {
+            return Err("Helm operations are disabled by policy".into());
+        }
+        let target = Target {
+            group: "helm.sh".into(),
+            version: "v1".into(),
+            kind: "Release".into(),
+            namespace: Some(args.namespace.clone()),
+            name: args.name.clone(),
+        };
+        state.policy.check_scope(&session.scope, &target)?;
+
+        let values = kubiki_core::helm::client::HelmClient::get_values(&args.name, &args.namespace)
+            .await
+            .unwrap_or_else(|_| "Values unavailable".into());
+        let history = kubiki_core::helm::client::HelmClient::get_history(&args.name, &args.namespace)
+            .await
+            .unwrap_or_default();
+        bounded_result(json!({
+            "diagnostic": "helm_release_details",
+            "evidence": {
+                "name": args.name,
+                "namespace": args.namespace,
+                "capturedAt": stamp(),
+                "completeness": "complete"
+            },
+            "release": args.name,
+            "namespace": args.namespace,
+            "valuesYaml": values,
+            "history": history,
+        }))
+    }
+
+    async fn list_argocd_apps(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: Option<String>,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid list_argocd_apps arguments")?;
+        let state = session.control()?;
+        if !state.policy.argocd {
+            return Err("Argo CD operations are disabled by policy".into());
+        }
+        let ns = args.namespace.or_else(|| {
+            if session.scope.all_namespaces {
+                None
+            } else {
+                session.scope.namespaces.first().cloned()
+            }
+        });
+        let target = Target {
+            group: "argoproj.io".into(),
+            version: "v1alpha1".into(),
+            kind: "Application".into(),
+            namespace: ns,
+            name: "".into(),
+        };
+        let (api, _) = api(client, &target)
+            .await
+            .map_err(|_| "Argo CD CRD (argoproj.io/v1alpha1 Application) not installed on this cluster")?;
+        let page = api.list(&ListParams::default().limit(50)).await.map_err(|_| "Cannot list Argo CD applications")?;
+        let mut apps = Vec::new();
+        for item in page.items {
+            let name = item.metadata.name.clone().unwrap_or_default();
+            let ns = item.metadata.namespace.clone().unwrap_or_default();
+            let spec = item.data.get("spec");
+            let status = item.data.get("status");
+            let health = status.and_then(|s| s.get("health")).and_then(|h| h.get("status")).and_then(Value::as_str).unwrap_or("Unknown");
+            let sync = status.and_then(|s| s.get("sync")).and_then(|sy| sy.get("status")).and_then(Value::as_str).unwrap_or("Unknown");
+            let repo_url = spec.and_then(|s| s.get("source")).and_then(|src| src.get("repoURL")).and_then(Value::as_str).unwrap_or("");
+            let path = spec.and_then(|s| s.get("source")).and_then(|src| src.get("path")).and_then(Value::as_str).unwrap_or("");
+            let dest = spec.and_then(|s| s.get("destination")).and_then(|d| d.get("namespace")).and_then(Value::as_str).unwrap_or("");
+            apps.push(json!({
+                "name": name,
+                "namespace": ns,
+                "health": health,
+                "sync": sync,
+                "repoURL": repo_url,
+                "path": path,
+                "destinationNamespace": dest,
+            }));
+        }
+        bounded_result(json!({
+            "diagnostic": "argocd_apps",
+            "evidence": {
+                "capturedAt": stamp(),
+                "total": apps.len(),
+                "completeness": if page.metadata.continue_.is_some_and(|s| !s.is_empty()) { "partial" } else { "complete" }
+            },
+            "applications": apps,
+            "count": apps.len(),
+        }))
+    }
+
+    async fn get_argocd_app(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid get_argocd_app arguments")?;
+        let state = session.control()?;
+        if !state.policy.argocd {
+            return Err("Argo CD operations are disabled by policy".into());
+        }
+        let target = Target {
+            group: "argoproj.io".into(),
+            version: "v1alpha1".into(),
+            kind: "Application".into(),
+            namespace: Some(args.namespace),
+            name: args.name,
+        };
+        validate_target(&target, true)?;
+        state.policy.check_scope(&session.scope, &target)?;
+        let (api, _) = api(client, &target).await.map_err(|_| "Argo CD CRD not available")?;
+        let app = api.get(&target.name).await.map_err(|_| "Argo CD Application not found")?;
+        let spec = app.data.get("spec").cloned().unwrap_or(json!({}));
+        let status = app.data.get("status").cloned().unwrap_or(json!({}));
+        let conditions = status.get("conditions").cloned().unwrap_or(json!([]));
+        let resources = status.get("resources").cloned().unwrap_or(json!([]));
+        bounded_result(json!({
+            "diagnostic": "argocd_app_details",
+            "evidence": {
+                "name": target.name,
+                "namespace": target.namespace,
+                "capturedAt": stamp(),
+                "completeness": "complete"
+            },
+            "application": target.name,
+            "namespace": target.namespace,
+            "health": status.get("health"),
+            "sync": status.get("sync"),
+            "source": spec.get("source"),
+            "destination": spec.get("destination"),
+            "conditions": conditions,
+            "managedResourcesSummary": resources.as_array().map(|r| r.len()).unwrap_or(0),
+            "managedResources": resources,
+        }))
+    }
+
+    async fn list_flux_resources(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: Option<String>,
+            kind: Option<String>,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid list_flux_resources arguments")?;
+        let state = session.control()?;
+        if !state.policy.flux {
+            return Err("Flux operations are disabled by policy".into());
+        }
+        let kinds_to_query: Vec<(&str, &str, &str)> = match args.kind.as_deref() {
+            Some("HelmRelease") => vec![("helm.toolkit.fluxcd.io", "v2", "HelmRelease")],
+            Some("Kustomization") => vec![("kustomize.toolkit.fluxcd.io", "v1", "Kustomization")],
+            Some("GitRepository") => vec![("source.toolkit.fluxcd.io", "v1", "GitRepository")],
+            _ => vec![
+                ("kustomize.toolkit.fluxcd.io", "v1", "Kustomization"),
+                ("helm.toolkit.fluxcd.io", "v2", "HelmRelease"),
+                ("source.toolkit.fluxcd.io", "v1", "GitRepository"),
+            ],
+        };
+        let mut items = Vec::new();
+        for (group, version, kind) in kinds_to_query {
+            let target = Target {
+                group: group.into(),
+                version: version.into(),
+                kind: kind.into(),
+                namespace: args.namespace.clone(),
+                name: "".into(),
+            };
+            if let Ok((api, _)) = api(client.clone(), &target).await {
+                if let Ok(page) = api.list(&ListParams::default().limit(30)).await {
+                    for item in page.items {
+                        let name = item.metadata.name.clone().unwrap_or_default();
+                        let ns = item.metadata.namespace.clone().unwrap_or_default();
+                        let spec = item.data.get("spec");
+                        let status = item.data.get("status");
+                        let suspended = spec.and_then(|s| s.get("suspend")).and_then(Value::as_bool).unwrap_or(false);
+                        let conditions = status.and_then(|s| s.get("conditions")).and_then(Value::as_array);
+                        let ready_cond = conditions.and_then(|cs| cs.iter().find(|c| c.get("type").and_then(Value::as_str) == Some("Ready")));
+                        let ready_status = ready_cond.and_then(|c| c.get("status")).and_then(Value::as_str).unwrap_or("Unknown");
+                        let ready_msg = ready_cond.and_then(|c| c.get("message")).and_then(Value::as_str).unwrap_or("");
+                        let last_rev = status.and_then(|s| s.get("lastAppliedRevision")).and_then(Value::as_str).unwrap_or("");
+                        items.push(json!({
+                            "kind": kind,
+                            "name": name,
+                            "namespace": ns,
+                            "ready": ready_status,
+                            "message": ready_msg,
+                            "suspended": suspended,
+                            "lastAppliedRevision": last_rev,
+                        }));
+                    }
+                }
+            }
+        }
+        bounded_result(json!({
+            "diagnostic": "flux_resources",
+            "evidence": {
+                "capturedAt": stamp(),
+                "total": items.len(),
+                "completeness": "complete"
+            },
+            "resources": items,
+            "count": items.len(),
+        }))
+    }
+
+    async fn get_flux_resource(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            kind: String,
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid get_flux_resource arguments")?;
+        let state = session.control()?;
+        if !state.policy.flux {
+            return Err("Flux operations are disabled by policy".into());
+        }
+        let (group, version) = match args.kind.as_str() {
+            "HelmRelease" => ("helm.toolkit.fluxcd.io", "v2"),
+            "Kustomization" => ("kustomize.toolkit.fluxcd.io", "v1"),
+            "GitRepository" => ("source.toolkit.fluxcd.io", "v1"),
+            _ => return Err("kind must be 'HelmRelease', 'Kustomization', or 'GitRepository'".into()),
+        };
+        let target = Target {
+            group: group.into(),
+            version: version.into(),
+            kind: args.kind.clone(),
+            namespace: Some(args.namespace),
+            name: args.name,
+        };
+        validate_target(&target, true)?;
+        state.policy.check_scope(&session.scope, &target)?;
+        let (api, _) = api(client, &target).await.map_err(|_| "Flux CRD not installed")?;
+        let obj = api.get(&target.name).await.map_err(|_| "Flux resource not found")?;
+        let spec = obj.data.get("spec").cloned().unwrap_or(json!({}));
+        let status = obj.data.get("status").cloned().unwrap_or(json!({}));
+        bounded_result(json!({
+            "diagnostic": "flux_resource_details",
+            "evidence": {
+                "kind": args.kind,
+                "name": target.name,
+                "namespace": target.namespace,
+                "capturedAt": stamp(),
+                "completeness": "complete"
+            },
+            "kind": args.kind,
+            "name": target.name,
+            "namespace": target.namespace,
+            "suspended": spec.get("suspend").and_then(Value::as_bool).unwrap_or(false),
+            "sourceRef": spec.get("sourceRef"),
+            "conditions": status.get("conditions"),
+            "lastAppliedRevision": status.get("lastAppliedRevision"),
+            "lastAttemptedRevision": status.get("lastAttemptedRevision"),
+            "inventory": status.get("inventory"),
+        }))
+    }
+
     async fn mutate(
         &self,
         session: &Session,
@@ -1037,6 +1400,48 @@ impl KubernetesTools {
                 return Err("HPA maximum replicas exceeds the AI policy limit".into());
             }
             (target, Some(args.yaml), None, None)
+        } else if call.name == "sync_argocd_app" {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                namespace: String,
+                name: String,
+                #[allow(dead_code)]
+                hard: Option<bool>,
+            }
+            let args: Args = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "Invalid sync_argocd_app arguments")?;
+            let target = Target {
+                group: "argoproj.io".into(),
+                version: "v1alpha1".into(),
+                kind: "Application".into(),
+                namespace: Some(args.namespace),
+                name: args.name,
+            };
+            (target, None, Some(WriteOperation::Update), None)
+        } else if call.name == "reconcile_flux_resource" {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                kind: String,
+                namespace: String,
+                name: String,
+            }
+            let args: Args = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "Invalid reconcile_flux_resource arguments")?;
+            let (group, version) = match args.kind.as_str() {
+                "HelmRelease" => ("helm.toolkit.fluxcd.io", "v2"),
+                "Kustomization" => ("kustomize.toolkit.fluxcd.io", "v1"),
+                _ => return Err("kind must be 'HelmRelease' or 'Kustomization'".into()),
+            };
+            let target = Target {
+                group: group.into(),
+                version: version.into(),
+                kind: args.kind,
+                namespace: Some(args.namespace),
+                name: args.name,
+            };
+            (target, None, Some(WriteOperation::Update), None)
         } else {
             let args: ResourceArgs = serde_json::from_value(call.arguments.clone())
                 .map_err(|_| "Invalid mutation arguments")?;
@@ -1124,6 +1529,33 @@ impl KubernetesTools {
                     resource: pinned.clone(),
                     resource_version: version,
                 },
+                WriteOperation::Update if call.name == "sync_argocd_app" => {
+                    let hard = call.arguments.get("hard").and_then(Value::as_bool).unwrap_or(false);
+                    MutationIntent::Action {
+                        resource: pinned.clone(),
+                        resource_version: version,
+                        action: ResourceAction::ArgoRefresh { hard },
+                    }
+                }
+                WriteOperation::Update if call.name == "reconcile_flux_resource" => {
+                    let mut after = before.as_ref().cloned().ok_or("Target not found")?;
+                    let now = chrono::Utc::now().to_rfc3339();
+                    if after.data.get("metadata").is_none() {
+                        after.data["metadata"] = json!({});
+                    }
+                    if after.data["metadata"].get("annotations").is_none() {
+                        after.data["metadata"]["annotations"] = json!({});
+                    }
+                    after.data["metadata"]["annotations"]["reconcile.fluxcd.io/requestedAt"] = json!(now);
+                    MutationIntent::Manifest {
+                        context: session.scope.context.clone(),
+                        manifest: serde_yaml::to_string(&after.data).map_err(|_| "Failed to format manifest")?,
+                        target: Some(ManifestTarget {
+                            resource: pinned.clone(),
+                            resource_version: version.clone(),
+                        }),
+                    }
+                }
                 _ => return Err("Unsupported AI mutation".into()),
             }
         };

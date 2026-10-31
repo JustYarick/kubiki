@@ -13,6 +13,7 @@ export interface AgentPolicy {
   resources: boolean; events: boolean; logs: boolean; metrics: boolean;
   clusterResources: boolean; secrets: DataAccess; configMaps: DataAccess;
   workloadConfiguration: boolean; annotations: boolean; customResources: DataAccess;
+  helm: boolean; argocd: boolean; flux: boolean;
   contexts: string[]; namespaces: string[]; writes: WriteOperation[];
   maxReplicas: number; rules: ResourceRule[]; deniedPaths: string[];
 }
@@ -58,7 +59,7 @@ export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'To
 export function defaultPolicy(): AgentPolicy {
   return { resources: true, events: true, logs: false, metrics: true, clusterResources: false,
     secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false,
-    customResources: 'metadata', contexts: ['*'], namespaces: ['*'],
+    customResources: 'metadata', helm: true, argocd: true, flux: true, contexts: ['*'], namespaces: ['*'],
     writes: ['create', 'update', 'delete', 'scale', 'restart'], maxReplicas: 10,
     rules: [], deniedPaths: [] };
 }

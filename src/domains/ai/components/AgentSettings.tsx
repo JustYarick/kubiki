@@ -4,6 +4,7 @@ import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { CheckboxRow } from '../../../components/ui/Checkbox';
+import { useResourceStore } from '../../../state/resource_store';
 import { invalidateAiConversations, useAiStore } from '../store';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 import { PROVIDER_PRESETS, WRITE_OPERATIONS, type AgentPolicy, type AiSettings, type DataAccess, type ModelInfo, type ProviderProfile, type ProviderProtocol, type WriteOperation } from '../types';
@@ -240,6 +241,11 @@ function PolicySettings({
     }
   });
 
+  const crds = useResourceStore(s => s.resources.CustomResourceDefinition);
+  const crdList = crds ? [...crds.values()] : [];
+  const hasArgoCd = crdList.some(c => c.name?.includes('argoproj.io'));
+  const hasFlux = crdList.some(c => c.name?.includes('toolkit.fluxcd.io') || c.name?.includes('fluxcd.io'));
+
   return <section className="ai-settings-section" aria-label="AI access policy">
     <div className="ai-section-header">
       <div>
@@ -252,6 +258,31 @@ function PolicySettings({
     </div>
 
     <fieldset className="ai-fieldset" disabled={saving}>
+      <div className="ai-settings-card">
+        <h4>GitOps & Package Managers (Argo CD, Flux, Helm)</h4>
+        <p className="ai-help mb-2">Controls whether the agent can discover and manage GitOps pipelines and Helm releases. Tools are dynamically enabled when detected in the cluster.</p>
+        <div className="ai-permission-checks">
+          <CheckboxRow
+            label="Helm Releases & Values"
+            trailing={<small className="text-[10px] text-emerald-400 font-mono ml-1.5">[Available]</small>}
+            checked={policy.helm}
+            onChange={e => patch({ helm: e.target.checked })}
+          />
+          <CheckboxRow
+            label="Argo CD Integration"
+            trailing={<small className={`text-[10px] font-mono ml-1.5 ${hasArgoCd ? 'text-emerald-400' : 'text-[var(--text-muted)]'}`}>[{hasArgoCd ? 'Detected in cluster' : 'Not detected'}]</small>}
+            checked={policy.argocd}
+            onChange={e => patch({ argocd: e.target.checked })}
+          />
+          <CheckboxRow
+            label="Flux GitOps Delivery"
+            trailing={<small className={`text-[10px] font-mono ml-1.5 ${hasFlux ? 'text-emerald-400' : 'text-[var(--text-muted)]'}`}>[{hasFlux ? 'Detected in cluster' : 'Not detected'}]</small>}
+            checked={policy.flux}
+            onChange={e => patch({ flux: e.target.checked })}
+          />
+        </div>
+      </div>
+
       <div className="ai-settings-card">
         <h4>Telemetry & Read Access</h4>
         <div className="ai-permission-checks">

@@ -1601,6 +1601,143 @@ function EventsTimelineView({ data }: { data: any }) {
   );
 }
 
+function HelmReleasesView({ data }: { data: any }) {
+  const releases: any[] = data.releases || [];
+  return (
+    <div className="ai-diag-card">
+      <div className="ai-diag-header">
+        <span className="font-semibold text-xs text-[var(--text-primary)]">
+          Helm Releases ({releases.length})
+        </span>
+        <span className="text-[10px] text-[var(--text-muted)] font-mono">
+          {data.evidence?.namespace || 'All namespaces'}
+        </span>
+      </div>
+      {releases.length === 0 ? (
+        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No Helm releases found.</p>
+      ) : (
+        <div className="space-y-1 max-h-[300px] overflow-y-auto kubiki-scrollbar">
+          {releases.map((rel, idx) => {
+            const isDeployed = rel.status === 'deployed';
+            return (
+              <div key={idx} className="ai-diag-row flex items-center justify-between gap-2 text-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[var(--text-primary)]">{rel.name}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono">({rel.namespace})</span>
+                    <span className={`ai-diag-pill is-${isDeployed ? 'emerald' : 'rose'}`}>{rel.status}</span>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                    Chart: {rel.chart} {rel.app_version ? `· App v${rel.app_version}` : ''}
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)] font-mono text-right">
+                  <div>rev: {rel.revision}</div>
+                  <div>{rel.updated ? rel.updated.split(' ')[0] : ''}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ArgoCdAppsView({ data }: { data: any }) {
+  const apps: any[] = data.applications || [];
+  return (
+    <div className="ai-diag-card">
+      <div className="ai-diag-header">
+        <span className="font-semibold text-xs text-[var(--text-primary)]">
+          Argo CD Applications ({apps.length})
+        </span>
+        <span className="text-[10px] text-[var(--text-muted)] font-mono">argoproj.io/v1alpha1</span>
+      </div>
+      {apps.length === 0 ? (
+        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No Argo CD applications found.</p>
+      ) : (
+        <div className="space-y-1 max-h-[300px] overflow-y-auto kubiki-scrollbar">
+          {apps.map((app, idx) => {
+            const isHealthy = app.health === 'Healthy';
+            const isSynced = app.sync === 'Synced';
+            return (
+              <div key={idx} className="ai-diag-row flex items-center justify-between gap-2 text-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[var(--text-primary)]">{app.name}</span>
+                    {app.namespace && <span className="text-[10px] text-[var(--text-muted)] font-mono">({app.namespace})</span>}
+                    <span className={`ai-diag-pill is-${isHealthy ? 'emerald' : app.health === 'Progressing' ? 'sky' : 'rose'}`}>{app.health}</span>
+                    <span className={`ai-diag-pill is-${isSynced ? 'emerald' : 'amber'}`}>{app.sync}</span>
+                  </div>
+                  {app.repoURL && (
+                    <div className="text-[10px] text-[var(--text-muted)] truncate max-w-[320px] font-mono mt-0.5">
+                      {app.repoURL} {app.path ? `(${app.path})` : ''}
+                    </div>
+                  )}
+                </div>
+                {app.destinationNamespace && (
+                  <div className="text-[10px] text-[var(--text-muted)] font-mono text-right">
+                    dest: {app.destinationNamespace}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FluxResourcesView({ data }: { data: any }) {
+  const resources: any[] = data.resources || [];
+  return (
+    <div className="ai-diag-card">
+      <div className="ai-diag-header">
+        <span className="font-semibold text-xs text-[var(--text-primary)]">
+          Flux Delivery Resources ({resources.length})
+        </span>
+        <span className="text-[10px] text-[var(--text-muted)] font-mono">toolkit.fluxcd.io</span>
+      </div>
+      {resources.length === 0 ? (
+        <p className="text-xs text-[var(--text-muted)] py-2 text-center">No Flux delivery resources found.</p>
+      ) : (
+        <div className="space-y-1 max-h-[300px] overflow-y-auto kubiki-scrollbar">
+          {resources.map((res, idx) => {
+            const isReady = res.ready === 'True';
+            return (
+              <div key={idx} className="ai-diag-row flex items-center justify-between gap-2 text-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold text-indigo-400 font-mono">[{res.kind}]</span>
+                    <span className="font-semibold text-[var(--text-primary)]">{res.name}</span>
+                    {res.namespace && <span className="text-[10px] text-[var(--text-muted)] font-mono">({res.namespace})</span>}
+                    <span className={`ai-diag-pill is-${isReady ? 'emerald' : 'rose'}`}>
+                      {isReady ? 'Ready' : 'Not Ready'}
+                    </span>
+                    {res.suspended && <span className="ai-diag-pill is-slate">Suspended</span>}
+                  </div>
+                  {res.message && (
+                    <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                      {res.message}
+                    </div>
+                  )}
+                </div>
+                {res.lastAppliedRevision && (
+                  <div className="text-[10px] text-[var(--text-muted)] font-mono text-right truncate max-w-[120px]">
+                    rev: {res.lastAppliedRevision}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Message({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation }) {
   if (m.role === 'tool') {
     if (m.call?.name === 'ask_user') {
@@ -1808,6 +1945,12 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                 <WorkloadDiagnosticsView data={result} />
               ) : result?.diagnostic === 'events_timeline' ? (
                 <EventsTimelineView data={result} />
+              ) : result?.diagnostic === 'helm_releases' ? (
+                <HelmReleasesView data={result} />
+              ) : result?.diagnostic === 'argocd_apps' ? (
+                <ArgoCdAppsView data={result} />
+              ) : result?.diagnostic === 'flux_resources' ? (
+                <FluxResourcesView data={result} />
               ) : null}
               <details>
                 <summary className="text-xs text-[var(--text-muted)] cursor-pointer select-none py-0.5">
