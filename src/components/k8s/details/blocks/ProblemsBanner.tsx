@@ -206,9 +206,6 @@ export function ProblemsBanner({ item, className }: ProblemsBannerProps) {
         >
           Investigate with AI
         </Button>
-        <span className="text-[length:calc(10.5px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
-          Kubiki AI Agent
-        </span>
       </div>
     </div>
   );

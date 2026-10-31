@@ -188,7 +188,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
         <div className="app-titlebar-brand flex items-center gap-1.5 px-1">
           <img
             src="/brand/kubiki-logo-color-dark.svg"
-            alt="kubiki"
+            alt="Kubiki"
             width={360}
             height={128}
             draggable={false}

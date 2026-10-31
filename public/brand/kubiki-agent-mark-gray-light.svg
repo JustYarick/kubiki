@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="96" height="96" viewBox="0 0 96 96">
+  <title>kubiki-agent-mark-gray-light</title>
+  <g id="Kubiki_Agent___Identity_board" data-name="Kubiki Agent / Identity board">
+  </g>
+  <g id="kubiki-agent-mark-color">
+  </g>
+  <g id="kubiki-agent-mark-gray-light">
+    <g id="Kubiki_Agent___mark-gray-light" data-name="Kubiki Agent / mark-gray-light">
+      <path id="K_stem" data-name="K stem" d="M20 8 C26.627 8 32 13.373 32 20 L32 35.009 C32 38.731 34.068 42.146 37.367 43.871 L82.096 67.252 C87.48 70.066 89.563 76.712 86.748 82.096 C83.934 87.48 77.288 89.563 71.904 86.748 L40 70.071 C36.455 68.218 32 70 32 74 L32 76 C32 82.627 26.627 88 20 88 C13.373 88 8 82.627 8 76 L8 20 C8 13.373 13.373 8 20 8 Z" fill="#6d737f"/>
+      <path id="K_upper_arm" data-name="K upper arm" d="M39.635 31.783 L69.995 9.519 C74.894 5.926 81.778 6.985 85.37 11.884 C88.963 16.783 87.904 23.667 83.005 27.259 L58.69 45.091 C57.152 46.218 55.107 46.373 53.417 45.49 L40.147 38.553 C38.827 37.864 38 36.498 38 35.009 C38 33.734 38.607 32.536 39.635 31.783 Z" fill="#6d737f"/>
+    </g>
+  </g>
+  <g id="kubiki-agent-mark-gray-dark">
+  </g>
+  <g id="kubiki-agent-app-icon">
+  </g>
+  <g id="kubiki-agent-logo-color-light">
+  </g>
+  <g id="kubiki-agent-logo-color-dark">
+  </g>
+  <g id="kubiki-agent-logo-gray-light">
+  </g>
+  <g id="kubiki-agent-logo-gray-dark">
+  </g>
+</svg>
