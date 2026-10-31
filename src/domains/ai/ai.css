@@ -475,6 +475,25 @@
   background: transparent;
 }
 
+.ai-composer-permissions-btn {
+  border-radius: 9999px !important;
+  font-size: calc(11.5px * var(--ui-factor)) !important;
+  color: var(--text-muted) !important;
+  padding: 4px 10px !important;
+  height: 26px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  transition: all 140ms ease !important;
+  border: 1px solid transparent !important;
+}
+
+.ai-composer-permissions-btn:hover {
+  color: var(--text-primary) !important;
+  background: var(--bg-hover) !important;
+  border-color: var(--border-subtle) !important;
+}
+
 .ai-send-round-btn {
   width: 30px;
   height: 30px;

@@ -493,9 +493,21 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
           }}
         />
 
-        {/* Bottom bar with circular send button */}
+        {/* Bottom bar with permissions button and circular send button */}
         <div className="ai-composer-card-bottom">
-          <div className="ai-composer-card-meta" />
+          <div className="ai-composer-card-meta">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ai-composer-permissions-btn"
+              onClick={onSettings}
+              title="AI agent permissions and settings"
+              aria-label="AI permissions"
+            >
+              <Settings size={13} aria-hidden="true" />
+              <span>Permissions</span>
+            </Button>
+          </div>
 
           <div className="ai-composer-card-actions">
             <button
