@@ -493,12 +493,9 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
           }}
         />
 
-        {/* Bottom bar with status and circular send button */}
+        {/* Bottom bar with circular send button */}
         <div className="ai-composer-card-bottom">
-          <div className="text-xs text-[var(--text-muted)] flex items-center gap-1.5">
-            <Sparkles size={11} className="text-amber-400" aria-hidden="true" />
-            <span>Ready · Type prompt and press Enter</span>
-          </div>
+          <div className="ai-composer-card-meta" />
 
           <div className="ai-composer-card-actions">
             <button
