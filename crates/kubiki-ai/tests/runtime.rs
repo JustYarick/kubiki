@@ -121,6 +121,7 @@ fn session() -> Session {
             writes: vec![WriteOperation::Scale],
             ..Default::default()
         },
+        ClusterCapabilities::all(),
     )
 }
 fn sink() -> EventSink {
@@ -250,6 +251,7 @@ async fn general_chat_never_advertises_cluster_tools() {
         "window".into(),
         AgentScope::default(),
         AgentPolicy::default(),
+        ClusterCapabilities::default(),
     );
     run(
         session,
@@ -485,7 +487,7 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     };
 
     // Plan phase in Read-only mode
-    let plan_tools = tool_definitions(&policy, AgentMode::ReadOnly, AgentPhase::Plan);
+    let plan_tools = tool_definitions(&policy, AgentMode::ReadOnly, AgentPhase::Plan, &ClusterCapabilities::all());
     let plan_tool_names: Vec<String> = plan_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(plan_tool_names.contains(&"get_pod_diagnostics".to_string()));
@@ -494,7 +496,7 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     assert!(!plan_tool_names.contains(&"apply_manifest".to_string()));
 
     // Action phase in Ask mode
-    let action_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action);
+    let action_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &ClusterCapabilities::all());
     let action_tool_names: Vec<String> = action_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(action_tool_names.contains(&"get_pod_diagnostics".to_string()));
@@ -506,14 +508,14 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
 #[tokio::test]
 async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     let mut policy = AgentPolicy {
-        helm: true,
-        argocd: true,
-        flux: true,
+        helm: OptionalToolMode::Enabled,
+        argocd: OptionalToolMode::Enabled,
+        flux: OptionalToolMode::Enabled,
         ..Default::default()
     };
 
     // Plan phase in Read-only mode: read tools available, write/sync tools omitted
-    let plan_tools = tool_definitions(&policy, AgentMode::ReadOnly, AgentPhase::Plan);
+    let plan_tools = tool_definitions(&policy, AgentMode::ReadOnly, AgentPhase::Plan, &ClusterCapabilities::all());
     let plan_names: Vec<String> = plan_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(plan_names.contains(&"list_helm_releases".to_string()));
@@ -526,18 +528,37 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     assert!(!plan_names.contains(&"reconcile_flux_resource".to_string()));
 
     // Action phase in Ask mode: sync and reconcile tools are offered
-    let action_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action);
+    let action_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &ClusterCapabilities::all());
     let action_names: Vec<String> = action_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(action_names.contains(&"sync_argocd_app".to_string()));
     assert!(action_names.contains(&"reconcile_flux_resource".to_string()));
 
-    // Disabled in policy: tools should not be offered
-    policy.helm = false;
-    policy.argocd = false;
-    policy.flux = false;
+    // Auto mode with selective cluster capabilities
+    policy.helm = OptionalToolMode::Auto;
+    policy.argocd = OptionalToolMode::Auto;
+    policy.flux = OptionalToolMode::Auto;
 
-    let disabled_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action);
+    let partial_caps = ClusterCapabilities {
+        helm: true,
+        argocd: true,
+        flux: false, // Flux not installed
+    };
+    let auto_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &partial_caps);
+    let auto_names: Vec<String> = auto_tools.iter().map(|t| t.name.clone()).collect();
+
+    assert!(auto_names.contains(&"list_helm_releases".to_string()));
+    assert!(auto_names.contains(&"list_argocd_apps".to_string()));
+    assert!(!auto_names.contains(&"list_flux_resources".to_string()));
+    assert!(!auto_names.contains(&"get_flux_resource".to_string()));
+    assert!(!auto_names.contains(&"reconcile_flux_resource".to_string()));
+
+    // Disabled in policy: tools should not be offered even if capability is true
+    policy.helm = OptionalToolMode::Disabled;
+    policy.argocd = OptionalToolMode::Disabled;
+    policy.flux = OptionalToolMode::Disabled;
+
+    let disabled_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &ClusterCapabilities::all());
     let disabled_names: Vec<String> = disabled_tools.iter().map(|t| t.name.clone()).collect();
 
     assert!(!disabled_names.contains(&"list_helm_releases".to_string()));

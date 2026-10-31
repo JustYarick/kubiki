@@ -222,9 +222,9 @@ describe('AI domain conversations', () => {
 
   it('maps GitOps and Helm tool intents and sets default policies', () => {
     const policy = defaultSettings().policy;
-    expect(policy.helm).toBe(true);
-    expect(policy.argocd).toBe(true);
-    expect(policy.flux).toBe(true);
+    expect(policy.helm).toBe('auto');
+    expect(policy.argocd).toBe('auto');
+    expect(policy.flux).toBe('auto');
 
     const helmList = getToolIntent('list_helm_releases', { namespace: 'kube-system' });
     expect(helmList.badge).toBe('HELM');

@@ -7,6 +7,7 @@ fn session_starts_in_read_only_and_plan_by_default() {
         "win".into(),
         AgentScope::default(),
         AgentPolicy::default(),
+        ClusterCapabilities::all(),
     );
     let control = session.control().unwrap();
     assert_eq!(control.mode, AgentMode::ReadOnly);
@@ -20,14 +21,14 @@ fn plan_phase_omits_every_write_tool_even_in_accept_mode() {
         ..Default::default()
     };
     // In Plan phase, write tools are not offered
-    let plan_tools = tool_definitions(&policy, AgentMode::Accept, AgentPhase::Plan);
+    let plan_tools = tool_definitions(&policy, AgentMode::Accept, AgentPhase::Plan, &ClusterCapabilities::all());
     assert!(!plan_tools.iter().any(|t| t.name == "scale_workload"));
     assert!(!plan_tools.iter().any(|t| t.name == "restart_workload"));
     assert!(!plan_tools.iter().any(|t| t.name == "apply_manifest"));
     assert!(!plan_tools.iter().any(|t| t.name == "delete_resource"));
 
     // In Action phase with Accept mode, write tools ARE offered
-    let action_tools = tool_definitions(&policy, AgentMode::Accept, AgentPhase::Action);
+    let action_tools = tool_definitions(&policy, AgentMode::Accept, AgentPhase::Action, &ClusterCapabilities::all());
     assert!(action_tools.iter().any(|t| t.name == "scale_workload"));
     assert!(action_tools.iter().any(|t| t.name == "restart_workload"));
 }
@@ -39,6 +40,7 @@ fn action_phase_is_rejected_in_read_only_mode() {
         "win".into(),
         AgentScope::default(),
         AgentPolicy::default(),
+        ClusterCapabilities::all(),
     );
     assert!(session.phase(AgentPhase::Action).is_err());
     assert_eq!(session.control().unwrap().phase, AgentPhase::Plan);
@@ -56,6 +58,7 @@ fn switching_to_read_only_downgrades_action_to_plan() {
         "win".into(),
         AgentScope::default(),
         AgentPolicy::default(),
+        ClusterCapabilities::all(),
     );
     session.mode(AgentMode::Accept).unwrap();
     session.phase(AgentPhase::Action).unwrap();
@@ -75,6 +78,7 @@ fn stop_does_not_reset_phase() {
         "win".into(),
         AgentScope::default(),
         AgentPolicy::default(),
+        ClusterCapabilities::all(),
     );
     session.mode(AgentMode::Ask).unwrap();
     session.phase(AgentPhase::Action).unwrap();
@@ -100,6 +104,7 @@ fn authorize_dispatch_strictly_rejects_plan_phase() {
             writes: vec![WriteOperation::Scale],
             ..Default::default()
         },
+        ClusterCapabilities::all(),
     );
     session.mode(AgentMode::Accept).unwrap();
     let target = Target {

@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentMode, AgentPhase, AgentScope, AiSettings, GenerationOptions, ModelInfo, SessionView, SettingsView } from './types';
+import type { AgentEvent, AgentMode, AgentPhase, AgentScope, AiSettings, ClusterCapabilities, GenerationOptions, ModelInfo, SessionView, SettingsView } from './types';
 
 export function desktopAiAvailable(): boolean { return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window; }
 export function agentError(error: unknown): string {
@@ -14,7 +14,7 @@ export const agentTransport = {
   save: (settings: AiSettings) => invoke<void>('ai_save_settings', { settings }),
   credential: (providerId: string, apiKey: string | null) => invoke<void>('ai_set_credential', { providerId, apiKey }),
   models: (providerId: string, modelId?: string) => invoke<ModelInfo[]>('ai_list_models', { providerId, modelId }),
-  create: (scope: AgentScope, providerId: string, model: string, options: GenerationOptions) => invoke<SessionView>('ai_create_session', { request: { scope, providerId, model, options } }),
+  create: (scope: AgentScope, providerId: string, model: string, options: GenerationOptions, capabilities?: ClusterCapabilities) => invoke<SessionView>('ai_create_session', { request: { scope, providerId, model, options, capabilities } }),
   mode: (sessionId: string, mode: AgentMode) => invoke<SessionView>('ai_set_mode', { sessionId, mode }),
   phase: (sessionId: string, phase: AgentPhase) => invoke<SessionView>('ai_set_phase', { sessionId, phase }),
   stop: (sessionId: string, close = false) => invoke<void>('ai_stop', { sessionId, close }),

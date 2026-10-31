@@ -176,9 +176,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 workload_configuration: false,
                 annotations: false,
                 custom_resources: DataAccess::Metadata,
-                helm: false,
-                argocd: false,
-                flux: false,
+                helm: OptionalToolMode::Disabled,
+                argocd: OptionalToolMode::Disabled,
+                flux: OptionalToolMode::Disabled,
                 contexts: vec!["k3d-testbed".into()],
                 namespaces: vec!["caretta".into()],
                 writes: vec![],
@@ -186,6 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rules: vec![],
                 denied_paths: vec![],
             },
+            ClusterCapabilities::default(),
         );
 
         let revision = session.control()?.revision;
@@ -240,9 +241,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 workload_configuration: false,
                 annotations: false,
                 custom_resources: DataAccess::Metadata,
-                helm: false,
-                argocd: false,
-                flux: false,
+                helm: OptionalToolMode::Disabled,
+                argocd: OptionalToolMode::Disabled,
+                flux: OptionalToolMode::Disabled,
                 contexts: vec!["k3d-testbed".into()],
                 namespaces: vec!["caretta".into()],
                 writes: vec![],
@@ -250,6 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rules: vec![],
                 denied_paths: vec![],
             },
+            ClusterCapabilities::default(),
         );
 
         let revision = session.control()?.revision;

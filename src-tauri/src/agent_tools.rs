@@ -167,7 +167,7 @@ impl ToolExecutor for KubernetesTools {
             return Err("AI run was cancelled".into());
         }
         // Unknown, unadvertised and malformed tool calls fail closed.
-        if !tool_definitions(&state.policy, state.mode, state.phase)
+        if !tool_definitions(&state.policy, state.mode, state.phase, &state.capabilities)
             .iter()
             .any(|t| t.name == call.name)
         {
@@ -1016,8 +1016,8 @@ impl KubernetesTools {
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid list_helm_releases arguments")?;
         let state = session.control()?;
-        if !state.policy.helm {
-            return Err("Helm operations are disabled by policy".into());
+        if !state.policy.is_helm_active(&state.capabilities) {
+            return Err("Helm operations are disabled by policy or not detected in cluster".into());
         }
         let ns = args.namespace.as_deref().or_else(|| {
             if session.scope.all_namespaces {
@@ -1057,8 +1057,8 @@ impl KubernetesTools {
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid get_helm_release arguments")?;
         let state = session.control()?;
-        if !state.policy.helm {
-            return Err("Helm operations are disabled by policy".into());
+        if !state.policy.is_helm_active(&state.capabilities) {
+            return Err("Helm operations are disabled by policy or not detected in cluster".into());
         }
         let target = Target {
             group: "helm.sh".into(),
@@ -1104,8 +1104,8 @@ impl KubernetesTools {
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid list_argocd_apps arguments")?;
         let state = session.control()?;
-        if !state.policy.argocd {
-            return Err("Argo CD operations are disabled by policy".into());
+        if !state.policy.is_argocd_active(&state.capabilities) {
+            return Err("Argo CD operations are disabled by policy or not detected in cluster".into());
         }
         let ns = args.namespace.or_else(|| {
             if session.scope.all_namespaces {
@@ -1173,8 +1173,8 @@ impl KubernetesTools {
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid get_argocd_app arguments")?;
         let state = session.control()?;
-        if !state.policy.argocd {
-            return Err("Argo CD operations are disabled by policy".into());
+        if !state.policy.is_argocd_active(&state.capabilities) {
+            return Err("Argo CD operations are disabled by policy or not detected in cluster".into());
         }
         let target = Target {
             group: "argoproj.io".into(),
@@ -1226,8 +1226,8 @@ impl KubernetesTools {
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid list_flux_resources arguments")?;
         let state = session.control()?;
-        if !state.policy.flux {
-            return Err("Flux operations are disabled by policy".into());
+        if !state.policy.is_flux_active(&state.capabilities) {
+            return Err("Flux operations are disabled by policy or not detected in cluster".into());
         }
         let kinds_to_query: Vec<(&str, &str, &str)> = match args.kind.as_deref() {
             Some("HelmRelease") => vec![("helm.toolkit.fluxcd.io", "v2", "HelmRelease")],
@@ -1302,8 +1302,8 @@ impl KubernetesTools {
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid get_flux_resource arguments")?;
         let state = session.control()?;
-        if !state.policy.flux {
-            return Err("Flux operations are disabled by policy".into());
+        if !state.policy.is_flux_active(&state.capabilities) {
+            return Err("Flux operations are disabled by policy or not detected in cluster".into());
         }
         let (group, version) = match args.kind.as_str() {
             "HelmRelease" => ("helm.toolkit.fluxcd.io", "v2"),

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { agentError, agentTransport, desktopAiAvailable } from './transport';
 import { defaultSettings, type AgentEvent, type AgentMode, type AgentPhase, type AgentScope, type AiSettings, type ChatMessage, type Conversation, type ModelInfo } from './types';
+import { useResourceStore } from '../../state/resource_store';
 
 interface AiState {
   settings: AiSettings; credentials: Record<string, boolean>; loaded: boolean; loading: boolean; saving: boolean; error?: string;
@@ -260,7 +261,14 @@ export const useAiStore = create<AiState>()(
           if (!sessionId) {
             const metadata = get().models[entry.providerId]?.find(m => m.id === entry.model);
             const options = { ...get().settings.options, ...(metadata?.tools === false ? { toolUse: false } : {}) };
-            const session = await agentTransport.create(entry.scope, entry.providerId, entry.model, options);
+            const crds = useResourceStore.getState().resources.CustomResourceDefinition;
+            const crdList = crds ? [...crds.values()] : [];
+            const capabilities = {
+              helm: true,
+              argocd: crdList.some(c => c.name?.includes('argoproj.io') || c.raw?.spec?.group === 'argoproj.io'),
+              flux: crdList.some(c => c.name?.includes('toolkit.fluxcd.io') || c.name?.includes('fluxcd.io') || c.raw?.spec?.group?.includes('fluxcd.io')),
+            };
+            const session = await agentTransport.create(entry.scope, entry.providerId, entry.model, options, capabilities);
             sessionId = session.id;
             if (runEpochs.get(id) !== epoch) { await agentTransport.stop(sessionId, true); return; }
             get().update(id, { sessionId });

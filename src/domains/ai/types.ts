@@ -3,6 +3,13 @@ export type AgentPhase = 'plan' | 'tooling' | 'action';
 export type ProviderProtocol = 'responses' | 'openai_compatible' | 'anthropic' | 'ollama';
 export type DataAccess = 'none' | 'metadata' | 'content';
 export type WriteOperation = 'create' | 'update' | 'delete' | 'scale' | 'restart';
+export type OptionalToolMode = 'auto' | 'enabled' | 'disabled';
+
+export interface ClusterCapabilities {
+  helm: boolean;
+  argocd: boolean;
+  flux: boolean;
+}
 
 export interface ProviderProfile { id: string; name: string; protocol: ProviderProtocol; baseUrl: string }
 export interface GenerationOptions { maxOutputTokens?: number | null; temperature?: number | null; toolUse?: boolean | null; contextTokens?: number | null }
@@ -13,7 +20,7 @@ export interface AgentPolicy {
   resources: boolean; events: boolean; logs: boolean; metrics: boolean;
   clusterResources: boolean; secrets: DataAccess; configMaps: DataAccess;
   workloadConfiguration: boolean; annotations: boolean; customResources: DataAccess;
-  helm: boolean; argocd: boolean; flux: boolean;
+  helm: OptionalToolMode; argocd: OptionalToolMode; flux: OptionalToolMode;
   contexts: string[]; namespaces: string[]; writes: WriteOperation[];
   maxReplicas: number; rules: ResourceRule[]; deniedPaths: string[];
 }
@@ -62,7 +69,7 @@ export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'To
 export function defaultPolicy(): AgentPolicy {
   return { resources: true, events: true, logs: false, metrics: true, clusterResources: false,
     secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false,
-    customResources: 'metadata', helm: true, argocd: true, flux: true, contexts: ['*'], namespaces: ['*'],
+    customResources: 'metadata', helm: 'auto', argocd: 'auto', flux: 'auto', contexts: ['*'], namespaces: ['*'],
     writes: ['create', 'update', 'delete', 'scale', 'restart'], maxReplicas: 10,
     rules: [], deniedPaths: [] };
 }

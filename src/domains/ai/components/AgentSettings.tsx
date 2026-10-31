@@ -7,7 +7,7 @@ import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { useResourceStore } from '../../../state/resource_store';
 import { invalidateAiConversations, useAiStore } from '../store';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
-import { PROVIDER_PRESETS, WRITE_OPERATIONS, type AgentPolicy, type AiSettings, type DataAccess, type ModelInfo, type ProviderProfile, type ProviderProtocol, type WriteOperation } from '../types';
+import { PROVIDER_PRESETS, WRITE_OPERATIONS, type AgentPolicy, type AiSettings, type DataAccess, type ModelInfo, type OptionalToolMode, type ProviderProfile, type ProviderProtocol, type WriteOperation } from '../types';
 import '../ai.css';
 
 const protocolNames: Record<ProviderProtocol, string> = {
@@ -260,25 +260,31 @@ function PolicySettings({
     <fieldset className="ai-fieldset" disabled={saving}>
       <div className="ai-settings-card">
         <h4>GitOps & Package Managers (Argo CD, Flux, Helm)</h4>
-        <p className="ai-help mb-2">Controls whether the agent can discover and manage GitOps pipelines and Helm releases. Tools are dynamically enabled when detected in the cluster.</p>
-        <div className="ai-permission-checks">
-          <CheckboxRow
-            label="Helm Releases & Values"
-            trailing={<small className="text-[10px] text-emerald-400 font-mono ml-1.5">[Available]</small>}
-            checked={policy.helm}
-            onChange={e => patch({ helm: e.target.checked })}
+        <p className="ai-help mb-2">Controls whether the agent can discover and manage GitOps pipelines and Helm releases. Set to Auto to dynamically enable tools only when detected in the cluster, or explicitly Enable/Disable access.</p>
+        <div className="flex flex-col">
+          <OptionalToolRow
+            title="Helm Releases & Values"
+            description="Allows agent to list releases, inspect values, and check revision history (list_helm_releases, get_helm_release)."
+            detected={true}
+            value={typeof policy.helm === 'string' ? policy.helm : policy.helm ? 'enabled' : 'disabled'}
+            onChange={helm => patch({ helm })}
+            disabled={saving}
           />
-          <CheckboxRow
-            label="Argo CD Integration"
-            trailing={<small className={`text-[10px] font-mono ml-1.5 ${hasArgoCd ? 'text-emerald-400' : 'text-[var(--text-muted)]'}`}>[{hasArgoCd ? 'Detected in cluster' : 'Not detected'}]</small>}
-            checked={policy.argocd}
-            onChange={e => patch({ argocd: e.target.checked })}
+          <OptionalToolRow
+            title="Argo CD Integration"
+            description="Allows agent to inspect Applications, health/sync conditions, source git repos, and trigger app sync (list_argocd_apps, get_argocd_app, sync_argocd_app)."
+            detected={hasArgoCd}
+            value={typeof policy.argocd === 'string' ? policy.argocd : policy.argocd ? 'enabled' : 'disabled'}
+            onChange={argocd => patch({ argocd })}
+            disabled={saving}
           />
-          <CheckboxRow
-            label="Flux GitOps Delivery"
-            trailing={<small className={`text-[10px] font-mono ml-1.5 ${hasFlux ? 'text-emerald-400' : 'text-[var(--text-muted)]'}`}>[{hasFlux ? 'Detected in cluster' : 'Not detected'}]</small>}
-            checked={policy.flux}
-            onChange={e => patch({ flux: e.target.checked })}
+          <OptionalToolRow
+            title="Flux GitOps Delivery"
+            description="Allows agent to inspect Kustomizations, HelmReleases, GitRepositories, and trigger reconciliation (list_flux_resources, get_flux_resource, reconcile_flux_resource)."
+            detected={hasFlux}
+            value={typeof policy.flux === 'string' ? policy.flux : policy.flux ? 'enabled' : 'disabled'}
+            onChange={flux => patch({ flux })}
+            disabled={saving}
           />
         </div>
       </div>
@@ -355,4 +361,97 @@ function PolicySettings({
     {error && <p role="alert" className="ai-error mt-2">{error}</p>}
     {message && <p role="status" className="ai-help text-emerald-400 mt-2">{message}</p>}
   </section>;
+}
+
+function ToolModeSelector({
+  value,
+  onChange,
+  disabled,
+  ariaLabel,
+}: {
+  value: OptionalToolMode;
+  onChange: (val: OptionalToolMode) => void;
+  disabled?: boolean;
+  ariaLabel: string;
+}) {
+  return (
+    <div role="group" aria-label={ariaLabel} className="inline-flex items-center rounded border border-[var(--border-default)] bg-[var(--bg-surface)] p-0.5 shrink-0">
+      {(['auto', 'enabled', 'disabled'] as const).map(mode => {
+        const active = value === mode;
+        const labels: Record<OptionalToolMode, string> = {
+          auto: 'Auto',
+          enabled: 'Enabled',
+          disabled: 'Disabled',
+        };
+        return (
+          <button
+            key={mode}
+            type="button"
+            disabled={disabled}
+            aria-pressed={active}
+            className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+              active
+                ? 'bg-[var(--accent)] text-white shadow-xs font-semibold'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+            }`}
+            onClick={() => onChange(mode)}
+          >
+            {labels[mode]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function OptionalToolRow({
+  title,
+  description,
+  detected,
+  value,
+  onChange,
+  disabled,
+}: {
+  title: string;
+  description: string;
+  detected: boolean;
+  value: OptionalToolMode;
+  onChange: (val: OptionalToolMode) => void;
+  disabled?: boolean;
+}) {
+  const effectiveActive = value === 'enabled' || (value === 'auto' && detected);
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2 border-b border-[var(--border-subtle)] last:border-b-0">
+      <div className="flex-1 min-w-0 pr-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-[var(--text-primary)]">{title}</span>
+          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
+            detected
+              ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+              : 'border-[var(--border-subtle)] text-[var(--text-muted)] bg-[var(--bg-surface)]'
+          }`}>
+            {detected ? 'Detected in cluster' : 'Not detected'}
+          </span>
+          <span className={`text-[10px] font-mono ${
+            value === 'disabled'
+              ? 'text-amber-400/80'
+              : value === 'enabled'
+              ? 'text-sky-400'
+              : effectiveActive
+              ? 'text-emerald-400'
+              : 'text-[var(--text-muted)]'
+          }`}>
+            [{value === 'disabled' ? 'Disabled by user' : value === 'enabled' ? 'Always enabled' : effectiveActive ? 'Active (auto-detected)' : 'Inactive (not in cluster)'}]
+          </span>
+        </div>
+        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{description}</p>
+      </div>
+      <ToolModeSelector
+        ariaLabel={`${title} mode`}
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+      />
+    </div>
+  );
 }

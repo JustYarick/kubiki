@@ -325,12 +325,13 @@ pub async fn ai_list_models(
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateSession {
     scope: AgentScope,
     provider_id: String,
     model: String,
     options: GenerationOptions,
+    capabilities: Option<ClusterCapabilities>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -385,12 +386,35 @@ pub async fn ai_create_session(
             .map_err(|_| "Cannot connect this conversation to the selected Kubernetes context")?,
         )
     };
+    let mut capabilities = request.capabilities.unwrap_or_default();
+    if let Some(ref client) = client {
+        capabilities.helm = true;
+        if !capabilities.argocd || !capabilities.flux {
+            if let Ok(Ok(discovery)) = tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                kube::Discovery::new(client.clone()).run(),
+            )
+            .await
+            {
+                for group in discovery.groups() {
+                    let name = group.name();
+                    if name == "argoproj.io" {
+                        capabilities.argocd = true;
+                    }
+                    if name.ends_with(".toolkit.fluxcd.io") || name == "fluxcd.io" {
+                        capabilities.flux = true;
+                    }
+                }
+            }
+        }
+    }
     let id = format!("ai-{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
     let session = Session::new(
         id.clone(),
         window.label().into(),
         request.scope.clone(),
         settings.policy.clone(),
+        capabilities,
     );
     let mut sessions = manager
         .sessions

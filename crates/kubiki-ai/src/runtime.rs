@@ -63,13 +63,20 @@ pub struct Control {
     pub mode: AgentMode,
     pub phase: AgentPhase,
     pub policy: AgentPolicy,
+    pub capabilities: ClusterCapabilities,
     pub revision: u64,
     pub active: bool,
     pub invalidated: bool,
 }
 
 impl Session {
-    pub fn new(id: String, owner: String, scope: AgentScope, policy: AgentPolicy) -> Self {
+    pub fn new(
+        id: String,
+        owner: String,
+        scope: AgentScope,
+        policy: AgentPolicy,
+        capabilities: ClusterCapabilities,
+    ) -> Self {
         let (cancel, _) = watch::channel(false);
         Self {
             id,
@@ -79,6 +86,7 @@ impl Session {
                 mode: AgentMode::ReadOnly,
                 phase: AgentPhase::Plan,
                 policy,
+                capabilities,
                 revision: 0,
                 active: false,
                 invalidated: false,
@@ -316,7 +324,7 @@ pub async fn run(
     let mut definitions = if options.tool_use == Some(false) {
         vec![]
     } else {
-        tool_definitions(&state.policy, state.mode, state.phase)
+        tool_definitions(&state.policy, state.mode, state.phase, &state.capabilities)
     };
     if session.scope.context.is_empty() {
         definitions.retain(|tool| tool.name == "propose_manifests");
@@ -414,7 +422,12 @@ pub async fn cancelled(receiver: &mut watch::Receiver<bool>) {
     }
 }
 
-pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase) -> Vec<ToolDefinition> {
+pub fn tool_definitions(
+    policy: &AgentPolicy,
+    mode: AgentMode,
+    phase: AgentPhase,
+    capabilities: &ClusterCapabilities,
+) -> Vec<ToolDefinition> {
     fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> ToolDefinition {
         ToolDefinition {
             name: name.into(),
@@ -460,18 +473,18 @@ pub fn tool_definitions(policy: &AgentPolicy, mode: AgentMode, phase: AgentPhase
     if policy.metrics {
         tools.push(tool("get_metrics", "Read Pod CPU/memory usage in one permitted namespace. Metrics API access may be unavailable.", json!({"namespace":{"type":"string"}}), &["namespace"]));
     }
-    if policy.helm {
+    if policy.is_helm_active(capabilities) {
         tools.push(tool("list_helm_releases", "List installed Helm releases in a namespace (or null for all permitted namespaces) with chart name, revision, status, and app version.", json!({"namespace":{"type":["string","null"]}}), &[]));
         tools.push(tool("get_helm_release", "Inspect details, user-supplied values, and revision history of an installed Helm release.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace","name"]));
     }
-    if policy.argocd {
+    if policy.is_argocd_active(capabilities) {
         tools.push(tool("list_argocd_apps", "List Argo CD Applications with health status (Healthy, Degraded, Progressing), sync status (Synced, OutOfSync), target revision, and repo URL.", json!({"namespace":{"type":["string","null"]}}), &[]));
         tools.push(tool("get_argocd_app", "Inspect an Argo CD Application's sync status, health conditions, source repository, and managed resource tree.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace","name"]));
         if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {
             tools.push(tool("sync_argocd_app", "Request an immediate Argo CD Application refresh or sync. In Ask mode, opens interactive in-chat approval.", json!({"namespace":{"type":"string"},"name":{"type":"string"},"hard":{"type":["boolean","null"]}}), &["namespace","name"]));
         }
     }
-    if policy.flux {
+    if policy.is_flux_active(capabilities) {
         tools.push(tool("list_flux_resources", "List Flux GitOps delivery resources (Kustomizations, HelmReleases, GitRepositories) with ready conditions, suspend status, and revisions.", json!({"namespace":{"type":["string","null"]},"kind":{"type":["string","null"]}}), &[]));
         tools.push(tool("get_flux_resource", "Inspect a Flux Kustomization or HelmRelease: status conditions, failure reasons, last applied revision, and inventory.", json!({"kind":{"type":"string"},"namespace":{"type":"string"},"name":{"type":"string"}}), &["kind","namespace","name"]));
         if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {

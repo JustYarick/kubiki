@@ -21,6 +21,78 @@ pub enum WriteOperation {
     Restart,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OptionalToolMode {
+    Auto,
+    Enabled,
+    Disabled,
+}
+
+impl Default for OptionalToolMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl Serialize for OptionalToolMode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Enabled => serializer.serialize_str("enabled"),
+            Self::Disabled => serializer.serialize_str("disabled"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for OptionalToolMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Str(String),
+            Bool(bool),
+        }
+
+        match Helper::deserialize(deserializer)? {
+            Helper::Str(s) => match s.to_ascii_lowercase().as_str() {
+                "auto" => Ok(OptionalToolMode::Auto),
+                "enabled" | "enable" | "on" | "true" => Ok(OptionalToolMode::Enabled),
+                "disabled" | "disable" | "off" | "false" => Ok(OptionalToolMode::Disabled),
+                _ => Err(serde::de::Error::custom(format!("Invalid tool mode: {}", s))),
+            },
+            Helper::Bool(b) => Ok(if b {
+                OptionalToolMode::Enabled
+            } else {
+                OptionalToolMode::Disabled
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterCapabilities {
+    pub helm: bool,
+    pub argocd: bool,
+    pub flux: bool,
+}
+
+impl ClusterCapabilities {
+    pub fn all() -> Self {
+        Self {
+            helm: true,
+            argocd: true,
+            flux: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceRule {
@@ -45,9 +117,9 @@ pub struct AgentPolicy {
     pub workload_configuration: bool,
     pub annotations: bool,
     pub custom_resources: DataAccess,
-    pub helm: bool,
-    pub argocd: bool,
-    pub flux: bool,
+    pub helm: OptionalToolMode,
+    pub argocd: OptionalToolMode,
+    pub flux: OptionalToolMode,
     pub contexts: Vec<String>,
     pub namespaces: Vec<String>,
     pub writes: Vec<WriteOperation>,
@@ -57,6 +129,33 @@ pub struct AgentPolicy {
     /// JSON pointer prefixes to omit, including inside nested objects.
     pub denied_paths: Vec<String>,
 }
+
+impl AgentPolicy {
+    pub fn is_helm_active(&self, capabilities: &ClusterCapabilities) -> bool {
+        match self.helm {
+            OptionalToolMode::Auto => capabilities.helm,
+            OptionalToolMode::Enabled => true,
+            OptionalToolMode::Disabled => false,
+        }
+    }
+
+    pub fn is_argocd_active(&self, capabilities: &ClusterCapabilities) -> bool {
+        match self.argocd {
+            OptionalToolMode::Auto => capabilities.argocd,
+            OptionalToolMode::Enabled => true,
+            OptionalToolMode::Disabled => false,
+        }
+    }
+
+    pub fn is_flux_active(&self, capabilities: &ClusterCapabilities) -> bool {
+        match self.flux {
+            OptionalToolMode::Auto => capabilities.flux,
+            OptionalToolMode::Enabled => true,
+            OptionalToolMode::Disabled => false,
+        }
+    }
+}
+
 impl Default for AgentPolicy {
     fn default() -> Self {
         Self {
@@ -70,9 +169,9 @@ impl Default for AgentPolicy {
             workload_configuration: false,
             annotations: false,
             custom_resources: DataAccess::Metadata,
-            helm: true,
-            argocd: true,
-            flux: true,
+            helm: OptionalToolMode::Auto,
+            argocd: OptionalToolMode::Auto,
+            flux: OptionalToolMode::Auto,
             contexts: vec!["*".into()],
             namespaces: vec!["*".into()],
             writes: vec![],
