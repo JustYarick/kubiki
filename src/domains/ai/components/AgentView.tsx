@@ -384,7 +384,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   return (
     <div className="ai-home kubiki-scrollbar">
       <div className="ai-home-hero">
-        <div className="ai-home-brand-logo flex items-center justify-center gap-3 select-none">
+        <div className="ai-home-brand-logo flex items-center justify-center select-none">
           <img
             src="/brand/kubiki-logo-color-dark.svg"
             alt="kubiki"
@@ -393,7 +393,6 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
             draggable={false}
             className="h-10 sm:h-12 w-auto shrink-0 select-none drop-shadow-md"
           />
-          <span className="ai-home-brand-agent">agent</span>
         </div>
       </div>
 
