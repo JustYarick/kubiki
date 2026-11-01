@@ -18,6 +18,7 @@ export interface AgentScope { context: string; namespaces: string[]; allNamespac
 export interface ResourceRule { group: string; kind: string; namespace: string; name: string; read: DataAccess; writes: WriteOperation[] }
 export interface AgentPolicy {
   alwaysAsk?: string[];
+  confirmReads?: boolean;
   schemaVersion?:number;ruleResolution?:'first_match'|'deny_overrides';allowedFields?:string[];
   resources: boolean; events: boolean; logs: boolean; metrics: boolean;
   clusterResources: boolean; secrets: DataAccess; configMaps: DataAccess;

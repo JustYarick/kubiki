@@ -142,6 +142,7 @@ pub enum RuleResolution {
 pub struct AgentPolicy {
     /// Tools that require consent even in Auto accept.
     pub always_ask: Vec<String>,
+    pub confirm_reads: bool,
     pub schema_version: u32,
     pub rule_resolution: RuleResolution,
     pub allowed_fields: Vec<String>,
@@ -170,7 +171,8 @@ pub struct AgentPolicy {
 
 impl AgentPolicy {
     pub fn requires_confirmation(&self, mode: AgentMode, tool: &str) -> bool {
-        mode == AgentMode::Ask || self.always_ask.iter().any(|name| name == tool)
+        (mode == AgentMode::Ask && (self.confirm_reads || matches!(tool, "apply_manifest" | "scale_workload" | "restart_workload" | "delete_resource")))
+            || self.always_ask.iter().any(|name| name == tool)
     }
 
     pub fn is_helm_active(&self, capabilities: &ClusterCapabilities) -> bool {
@@ -202,6 +204,7 @@ impl Default for AgentPolicy {
     fn default() -> Self {
         Self {
             always_ask: vec![],
+            confirm_reads: true,
             schema_version: 1,
             rule_resolution: RuleResolution::FirstMatch,
             allowed_fields: vec![],

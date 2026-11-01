@@ -507,3 +507,20 @@ fn confirmation_mode_applies_to_reads_and_writes_without_granting_access() {
     let restored: AgentPolicy = serde_json::from_value(serde_json::json!({})).unwrap();
     assert!(restored.always_ask.is_empty());
 }
+
+#[test]
+fn actions_only_consent_preserves_mandatory_read_prompts_and_write_protection() {
+    let mut policy = AgentPolicy { confirm_reads: false, ..Default::default() };
+    for tool in ["get_resource", "get_logs", "get_workload_diagnostics", "propose_plan"] {
+        assert!(!policy.requires_confirmation(AgentMode::Ask, tool));
+    }
+    for tool in ["apply_manifest", "scale_workload", "restart_workload", "delete_resource"] {
+        assert!(policy.requires_confirmation(AgentMode::Ask, tool));
+    }
+    policy.always_ask = vec!["get_logs".into()];
+    assert!(policy.requires_confirmation(AgentMode::Ask, "get_logs"));
+    assert!(policy.requires_confirmation(AgentMode::Accept, "get_logs"));
+    assert!(policy.writes.is_empty());
+    let legacy: AgentPolicy = serde_json::from_value(json!({})).unwrap();
+    assert!(legacy.confirm_reads);
+}

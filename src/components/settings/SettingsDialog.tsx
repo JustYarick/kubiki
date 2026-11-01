@@ -26,7 +26,7 @@ import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_rendering';
 import { cx } from '../../core/utils/cx';
-import { AgentSettings } from '../../domains/ai/components/AgentSettings';
+import { AgentSettings, AI_SETTINGS_PAGES, type AgentSettingsPage } from '../../domains/ai/components/AgentSettings';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
   entryMatches, filterPages, findEntry, findPage, firstMatchingPage,
@@ -607,14 +607,11 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
   );
 }
 
-function AiPage({ sectionTitle }: { sectionTitle: string }) {
-  return (
-    <div>
-      <SectionTitle>{sectionTitle}</SectionTitle>
-      <Row entry={findEntry('ai.providers')} wide><AgentSettings section="providers" /></Row>
-      <Row entry={findEntry('ai.permissions')} wide><AgentSettings section="permissions" /></Row>
-    </div>
-  );
+function AiPage({ sectionTitle, page }: { sectionTitle: string; page: AgentSettingsPage }) {
+  return <div>
+    <SectionTitle>{sectionTitle}</SectionTitle>
+    <AgentSettings page={page} hideNavigation />
+  </div>;
 }
 
 function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
@@ -625,11 +622,11 @@ function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
   </div>;
 }
 
-function pageContent(page: SettingsPageDef): React.ReactElement {
+function pageContent(page: SettingsPageDef, aiPage: AgentSettingsPage): React.ReactElement {
   switch (page.id) {
     case 'topology': return <TopologyPage sectionTitle={page.sectionTitle} />;
     case 'developer': return <DeveloperPage sectionTitle={page.sectionTitle} />;
-    case 'ai': return <AiPage sectionTitle={page.sectionTitle} />;
+    case 'ai': return <AiPage sectionTitle={page.sectionTitle} page={aiPage} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
     case 'editor': return <EditorPage sectionTitle={page.sectionTitle} />;
     case 'terminal': return <TerminalPage sectionTitle={page.sectionTitle} />;
@@ -745,10 +742,12 @@ export const SettingsDialog: React.FC = () => {
   const open = useUiStore((s) => s.settingsOpen);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const [query, setQuery] = useState('');
+  const [aiPage, setAiPage] = useState<AgentSettingsPage>('providers');
   const [pageId, setPageId] = useState<SettingsPageId>('appearance');
 
   const pages = useMemo(() => filterPages(query), [query]);
   const activePage = pages.find((page) => page.id === pageId) ?? pages[0];
+  const selectedAiPage = query.trim() ? AI_SETTINGS_PAGES.find(item => entryMatches(findEntry(`ai.${item.id}`), query))?.id ?? aiPage : aiPage;
   const resetHandler = activePage ? RESET_HANDLERS[activePage.id] : undefined;
 
   const close = () => setOpen(false);
@@ -794,8 +793,8 @@ export const SettingsDialog: React.FC = () => {
                 const selected = activePage?.id === page.id;
                 const Icon = page.icon;
                 return (
+                  <React.Fragment key={page.id}>
                   <button
-                    key={page.id}
                     type="button"
                     onClick={() => setPageId(page.id)}
                     aria-current={selected ? 'true' : undefined}
@@ -809,6 +808,10 @@ export const SettingsDialog: React.FC = () => {
                     <Icon size="calc(14px * var(--ui-factor))" strokeWidth={1.75} className={selected ? 'text-white' : 'text-[var(--text-muted)]'} />
                     <span className="truncate"><Highlight text={page.title} query={query} /></span>
                   </button>
+                  {page.id === 'ai' && selected && <div className="pl-5 py-1 space-y-0.5" aria-label="AI settings subsections">
+                    {AI_SETTINGS_PAGES.map(item => <button key={item.id} type="button" aria-current={selectedAiPage === item.id ? 'page' : undefined} className={cx('block w-full rounded px-2 py-1 text-left text-xs', selectedAiPage === item.id ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')} onClick={() => { setQuery(''); setAiPage(item.id); }}>{item.label}</button>)}
+                  </div>}
+                  </React.Fragment>
                 );
               })}
               {pages.length === 0 && (
@@ -820,7 +823,7 @@ export const SettingsDialog: React.FC = () => {
               className="flex-1 min-w-0 overflow-y-auto kubiki-scrollbar px-4 pb-4"
             >
               {activePage ? (
-                pageContent(activePage)
+                pageContent(activePage, selectedAiPage)
               ) : (
                 <div className="h-full flex flex-col items-center justify-center gap-1 text-center px-6">
                   <Search size="calc(22px * var(--ui-factor))" className="text-[var(--text-muted)] mb-1" />

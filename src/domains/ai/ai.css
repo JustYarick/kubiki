@@ -702,3 +702,8 @@
   .ai-composer .ai-help { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .ai-modes button { transition: none; } }
+
+.ai-settings-navigation { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--border-default); }
+.ai-settings-navigation button { padding: 6px 10px; border-radius: 5px; color: var(--text-secondary); }
+.ai-settings-navigation button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ai-settings-navigation button[aria-current="page"] { background: var(--bg-selection); color: var(--text-primary); }

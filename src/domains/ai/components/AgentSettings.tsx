@@ -17,19 +17,35 @@ const protocolNames: Record<ProviderProtocol, string> = {
 };
 const EMPTY_MODELS: ModelInfo[] = [];
 
+export const AI_SETTINGS_PAGES = [
+  { id: 'providers', label: 'Connections & models' },
+  { id: 'confirmations', label: 'Confirmations' },
+  { id: 'access', label: 'Data access' },
+  { id: 'scope', label: 'Scope & rules' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'instructions', label: 'Instructions' },
+  { id: 'history', label: 'History' },
+] as const;
+export type AgentSettingsPage = typeof AI_SETTINGS_PAGES[number]['id'];
+
 export interface AgentSettingsHandle {
   save: () => Promise<boolean>;
 }
 
 export interface AgentSettingsProps {
   section?: 'providers' | 'permissions' | 'all';
+  page?: AgentSettingsPage;
+  hideNavigation?: boolean;
   onStatusChange?: (status: { message?: string; error?: string; saving?: boolean }) => void;
 }
 
 export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>(function AgentSettings(
-  { section = 'all', onStatusChange },
+  { section = 'all', page: controlledPage, hideNavigation = false, onStatusChange },
   ref,
 ) {
+  const [selectedPage, setSelectedPage] = useState<AgentSettingsPage>(section === 'permissions' ? 'access' : 'providers');
+  const page = controlledPage ?? selectedPage;
+  const policyPage = page !== 'providers' && page !== 'history';
   const loaded = useAiStore(s => s.loaded);
   const loading = useAiStore(s => s.loading);
   const error = useAiStore(s => s.error);
@@ -52,9 +68,12 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
     {loading && <p role="status">Loading AI settings…</p>}
     {error && <div role="alert" className="ai-error">{error} <Button size="sm" onClick={() => void load()}>Reload settings</Button></div>}
     {loaded && <>
-      {section !== 'permissions' && <ProviderSettings />}
-      {section !== 'providers' && <HistorySettings />}
-      {section !== 'providers' && <PolicySettings commitRef={policyCommitRef} onStatusChange={onStatusChange} />}
+      {!hideNavigation && <nav className="ai-settings-navigation" aria-label="AI settings sections">
+        {AI_SETTINGS_PAGES.map(item => <button type="button" key={item.id} aria-current={page === item.id ? 'page' : undefined} onClick={() => setSelectedPage(item.id)}>{item.label}</button>)}
+      </nav>}
+      <div style={{ display: page === 'providers' ? undefined : 'none' }}><ProviderSettings /></div>
+      <div style={{ display: page === 'history' ? undefined : 'none' }}><HistorySettings /></div>
+      <div style={{ display: policyPage ? undefined : 'none' }}><PolicySettings page={page} commitRef={policyCommitRef} onStatusChange={onStatusChange} /></div>
     </>}
   </div>;
 });
@@ -191,9 +210,11 @@ function Writes({ value, onChange, label = 'Allowed AI changes' }: { value: Writ
 const tokens = (text: string) => text.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
 
 function PolicySettings({
+  page,
   commitRef,
   onStatusChange,
 }: {
+  page: AgentSettingsPage;
   commitRef?: React.MutableRefObject<(() => Promise<boolean>) | null>;
   onStatusChange?: (status: { message?: string; error?: string; saving?: boolean }) => void;
 }) {
@@ -204,7 +225,14 @@ function PolicySettings({
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  useEffect(() => { setDraft(settings); }, [settings]);
+  const savedPolicy = useRef(JSON.stringify([settings.policy, settings.instructions]));
+  useEffect(() => {
+    const signature = JSON.stringify([settings.policy, settings.instructions]);
+    if (signature !== savedPolicy.current) {
+      savedPolicy.current = signature;
+      setDraft(d => ({ ...d, policy: settings.policy, instructions: settings.instructions }));
+    }
+  }, [settings]);
 
   const policy = draft.policy;
   const patch = (change: Partial<AgentPolicy>) => {
@@ -252,14 +280,19 @@ function PolicySettings({
   return <section className="ai-settings-section" aria-label="AI access policy">
     <div className="ai-section-header">
       <div>
-        <h3>Agent permissions & data access</h3>
-        <p className="ai-help">Plan blocks changes. Ask confirms tools; Auto accept runs permitted tools automatically.</p>
+        <h3>{AI_SETTINGS_PAGES.find(item => item.id === page)?.label}</h3>
+        <p className="ai-help">Choose what the agent may access and when it needs your approval.</p>
       </div>
       <Button size="sm" variant="primary" aria-label="Save agent permissions" disabled={!desktopAiAvailable() || saving} loading={saving} onClick={() => void commit()}>
-        <Save size={12} aria-hidden="true" />Save permissions
+        <Save size={12} aria-hidden="true" />Save changes
       </Button>
     </div>
 
+    <div style={{ display: page === 'confirmations' ? undefined : 'none' }}>
+      <div className="ai-settings-card">
+        <CheckboxRow label="Ask permission for reads" checked={policy.confirmReads ?? true} onChange={e => patch({ confirmReads: e.target.checked })} />
+        <p className="ai-help">In Ask mode, confirm reads as well as changes. Turn off to confirm changes only. Always ask rules apply in both modes.</p>
+      </div>
     <details className="ai-settings-card">
       <summary>Always ask</summary>
       <p className="ai-help">Confirm these tools even in Auto accept. Access restrictions still apply.</p>
@@ -297,10 +330,11 @@ function PolicySettings({
         ['delete_resource', 'Delete resource'],
       ].map(([tool, label]) => <label key={tool} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={(policy.alwaysAsk ?? []).includes(tool)} disabled={saving} onChange={e => patch({ alwaysAsk: e.target.checked ? [...(policy.alwaysAsk ?? []), tool] : (policy.alwaysAsk ?? []).filter(name => name !== tool) })} />{label}</label>)}</div>
     </details>
-    <PolicyPreview policy={policy} />
-    <div className="ai-form-line"><span>Draft permission profile (replaces rules; v1 first-match):</span>{PERMISSION_PROFILES.map(profile=><Button key={profile} size="sm" onClick={()=>patch(permissionProfile(policy,profile))}>{profile}</Button>)}</div>
+    </div>
+    <div style={{ display: page === 'scope' ? undefined : 'none' }}><PolicyPreview policy={policy} /></div>
+    <details style={{ display: page === 'access' ? undefined : 'none' }} className="ai-settings-card"><summary>Permission presets</summary><p className="ai-help">Replaces the current access rules.</p>{PERMISSION_PROFILES.map(profile=><Button key={profile} size="sm" onClick={()=>patch(permissionProfile(policy,profile))}>{profile}</Button>)}</details>
     <fieldset className="ai-fieldset" disabled={saving}>
-      <div className="ai-settings-card">
+      <div className="ai-settings-card" style={{ display: page === 'integrations' ? undefined : 'none' }}>
         <h4>GitOps & Package Managers (Argo CD, Flux, Helm)</h4>
         <p className="ai-help mb-2">Controls whether the agent can discover and manage GitOps pipelines and Helm releases. Set to Auto to dynamically enable tools only when detected in the cluster, or explicitly Enable/Disable access.</p>
         <div className="flex flex-col">
@@ -314,7 +348,7 @@ function PolicySettings({
           />
           <OptionalToolRow
             title="Argo CD Integration"
-            description="Allows agent to inspect Applications, health/sync conditions, source git repos, and trigger app sync (list_argocd_apps, get_argocd_app, sync_argocd_app)."
+            description="Allows agent to inspect Applications, health/sync conditions, source git repos, (list_argocd_apps, get_argocd_app)."
             detected={hasArgoCd}
             value={typeof policy.argocd === 'string' ? policy.argocd : policy.argocd ? 'enabled' : 'disabled'}
             onChange={argocd => patch({ argocd })}
@@ -322,7 +356,7 @@ function PolicySettings({
           />
           <OptionalToolRow
             title="Flux GitOps Delivery"
-            description="Allows agent to inspect Kustomizations, HelmReleases, GitRepositories, and trigger reconciliation (list_flux_resources, get_flux_resource, reconcile_flux_resource)."
+            description="Allows agent to inspect Kustomizations, HelmReleases, GitRepositories, (list_flux_resources, get_flux_resource)."
             detected={hasFlux}
             value={typeof policy.flux === 'string' ? policy.flux : policy.flux ? 'enabled' : 'disabled'}
             onChange={flux => patch({ flux })}
@@ -331,8 +365,8 @@ function PolicySettings({
         </div>
       </div>
 
-      <div className="ai-settings-card">
-        <h4>Telemetry & Read Access</h4>
+      <div className="ai-settings-card" style={{ display: page === 'access' ? undefined : 'none' }}>
+        <h4>Read access</h4>
         <div className="ai-permission-checks">
           {([
             ['resources', 'Read resources'], ['events', 'Read Events'], ['logs', 'Read Pod logs'], ['metrics', 'Read metrics'],
@@ -341,8 +375,8 @@ function PolicySettings({
         </div>
       </div>
 
-      <div className="ai-settings-card">
-        <h4>Sensitive Resources & Limits</h4>
+      <div className="ai-settings-card" style={{ display: page === 'access' ? undefined : 'none' }}>
+        <h4>Sensitive resources</h4>
         <div className="ai-form-grid">
           <DataSelect label="Secret access" value={policy.secrets} onChange={secrets => patch({ secrets })} />
           <DataSelect label="ConfigMap access" value={policy.configMaps} onChange={configMaps => patch({ configMaps })} />
@@ -352,7 +386,7 @@ function PolicySettings({
         <p className="ai-help mt-2">Secret and ConfigMap contents are only read if explicitly permitted. Metadata-only reads omit bodies.</p>
       </div>
 
-      <div className="ai-settings-card">
+      <div className="ai-settings-card" style={{ display: page === 'scope' ? undefined : 'none' }}>
         <h4>Scope Boundaries</h4>
         <div className="ai-form-grid">
           <label className="ai-field">Allowed contexts (* matches any)<textarea aria-label="Allowed AI contexts" className="ide-textarea" rows={2} value={policy.contexts.join('\n')} onChange={e => patch({ contexts: tokens(e.target.value) })} /></label>
@@ -360,13 +394,13 @@ function PolicySettings({
         </div>
       </div>
 
-      <div className="ai-settings-card">
-        <h4>Default Write Permissions</h4>
+      <div className="ai-settings-card" style={{ display: page === 'access' ? undefined : 'none' }}>
+        <h4>Allowed changes</h4>
         <Writes value={policy.writes} onChange={writes => patch({ writes })} />
         <p className="ai-help mt-2">Changes are available only in Action.</p>
       </div>
 
-      <div className="ai-settings-card">
+      <div className="ai-settings-card" style={{ display: page === 'scope' ? undefined : 'none' }}>
         <div className="ai-form-line">
           <div>
             <h4>Resource Rules</h4>
@@ -395,11 +429,16 @@ function PolicySettings({
         </div>)}
       </div>
 
-      <div className="ai-settings-card">
-        <h4>Field access & custom instructions</h4>
+      <div className="ai-settings-card" style={{ display: page === 'scope' ? undefined : 'none' }}>
+        <h4>Field filters</h4>
         <label className="ai-field">Allowed fields (empty keeps permitted content)<textarea aria-label="Allowed AI fields" className="ide-textarea font-mono" rows={3} value={policy.allowedFields?.join('\n')??''} placeholder="spec.containers[*].image" onChange={e=>patch({allowedFields:e.target.value.split('\n').map(s=>s.trim()).filter(Boolean)})}/></label>
         <p className="ai-help">Selection is applied after data access and excluded fields. Permitted identity remains available. Include metadata.labels to allow label filtering.</p>
         <label className="ai-field">Excluded JSON pointer paths<textarea aria-label="Excluded AI field paths" className="ide-textarea font-mono" rows={3} value={policy.deniedPaths.join('\n')} placeholder={'/spec/template/spec/containers/0/env\n/data/private.conf'} onChange={e => patch({ deniedPaths: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })} /></label>
+
+      </div>
+      <div className="ai-settings-card" style={{ display: page === 'instructions' ? undefined : 'none' }}>
+        <h4>Custom instructions</h4>
+        <p className="ai-help">Response language, style and investigation conventions. Instructions cannot override permissions.</p>
         <label className="ai-field mt-3">Agent instructions<textarea aria-label="Integrated agent instructions" className="ide-textarea" rows={3} maxLength={8000} value={draft.instructions} placeholder="Preferred response style, diagnostic conventions, language preferences…" onChange={e => setDraft(d => ({ ...d, instructions: e.target.value }))} /></label>
       </div>
     </fieldset>

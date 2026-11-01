@@ -63,7 +63,9 @@ block directly. Remote images and raw HTML in model output are not loaded.
 
 The composer has two independent controls: **Plan / Action** and **Ask / Auto accept**.
 New and restored conversations start in **Plan + Ask**. Plan forbids all writes.
-Ask requests consent for each model tool call (reads included); Auto accept runs
+Ask requests consent for model tools; **Confirmations → Ask permission for reads**
+controls whether reads also prompt (enabled by default for existing settings).
+Turn it off to confirm changes only. Auto accept runs
 permitted tools automatically. The question tool is already an explicit user interaction.
 In settings, **Always ask** selects tools that must request consent in either mode.
 These settings never grant data access or write permissions. Internal reads belonging
@@ -446,3 +448,10 @@ Tests use local HTTP fixtures and mocked IPC/Kubernetes services. No paid-provid
 calls or live-cluster writes are part of the automated suite. Verify actual model
 quality, credentials/OS keyring behavior and cluster admission on the intended
 desktop platforms before relying on a new provider/model for automatic changes.
+
+### Settings navigation
+
+AI settings use the same sections in the workspace dialog and global Settings:
+Connections & models, Confirmations, Data access, Scope & rules, Integrations,
+Instructions, and History. Switching sections preserves unsaved permission edits.
+Always ask takes precedence over the read-confirmation checkbox and Auto accept.

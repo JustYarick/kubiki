@@ -144,9 +144,11 @@ test('provider credentials stay out of rendered settings and access rules persis
   const errors = await setup(page); const agent = await openAgent(page);
   await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
+  await dialog.getByRole('button', { name: 'Data access', exact: true }).click();
   await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toHaveValue('none');
   await expect(dialog.getByRole('combobox', { name: 'ConfigMap access', exact: true })).toHaveValue('metadata');
   await expect(dialog.getByRole('checkbox', { name: 'Read Pod logs', exact: true })).not.toBeChecked();
+  await dialog.getByRole('button', { name: 'Connections & models', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add provider', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'AI connection name' }).fill('My cloud connection');
   await dialog.getByRole('textbox', { name: 'AI API root' }).fill('https://my-provider.example/v1');
@@ -157,25 +159,31 @@ test('provider credentials stay out of rendered settings and access rules persis
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('test-only-provider-credential');
   await dialog.getByRole('combobox', { name: 'Default AI model', exact: true }).selectOption('model-from-endpoint');
   await dialog.getByRole('button', { name: 'Use as default', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Data access', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Secret access', exact: true }).selectOption('metadata');
   await dialog.getByRole('checkbox', { name: 'Read Pod logs', exact: true }).check();
   await dialog.getByRole('group', { name: 'Allowed AI changes', exact: true }).getByRole('checkbox', { name: 'Create', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Scope & rules', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add resource rule', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Rule 1 kind', exact: true }).fill('Secret');
   await dialog.getByRole('textbox', { name: 'Rule 1 namespace', exact: true }).fill('backend');
   await dialog.getByRole('textbox', { name: 'Rule 1 name', exact: true }).fill('nexus-credentials');
   await dialog.getByRole('combobox', { name: 'Rule 1 read access', exact: true }).selectOption('content');
   await dialog.getByRole('textbox', { name: 'Excluded AI field paths', exact: true }).fill('/data/private.conf');
+  await dialog.getByRole('button', { name: 'Confirmations', exact: true }).click();
+  await dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true }).uncheck();
   await dialog.getByText('Always ask', { exact: true }).click();
   await dialog.getByRole('checkbox', { name: 'Delete resource', exact: true }).check();
   await dialog.getByRole('button', { name: 'Save agent permissions', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy.rules[0]?.name)).toBe('nexus-credentials');
   const policy = await page.evaluate(() => (window as any).__aiHarness.settings().policy);
+  expect(policy.confirmReads).toBe(false);
   expect(policy.alwaysAsk).toEqual(['delete_resource']);
   expect(policy.secrets).toBe('metadata'); expect(policy.logs).toBe(true); expect(policy.writes).toEqual(['create']);
   expect(policy.deniedPaths).toEqual(['/data/private.conf']); expect(policy.rules[0].read).toBe('content');
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Scope & rules', exact: true }).click();
   await expect(dialog.getByRole('textbox', { name: 'Rule 1 name', exact: true })).toHaveValue('nexus-credentials');
   await captureScreenshot(page, { path: 'test-results/ai-agent-settings.png', animations: 'disabled' });
   expect(errors).toEqual([]);
@@ -267,5 +275,22 @@ test('read tools have a compact working confirmation in Plan', async ({ page }) 
   await agent.getByRole('button', { name: 'Allow once', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.decision)).toBe(true);
   await expect(agent.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+
+test('global AI settings have subsections and find confirmations through search', async ({ page }) => {
+  const errors = await setup(page);
+  await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await dialog.getByRole('button', { name: 'AI assistant', exact: true }).click();
+  const sections = dialog.getByLabel('AI settings subsections');
+  await sections.getByRole('button', { name: 'Confirmations', exact: true }).click();
+  await expect(dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).not.toBeVisible();
+  await sections.getByRole('button', { name: 'Data access', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Search settings', exact: true }).fill('confirmations');
+  await expect(dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

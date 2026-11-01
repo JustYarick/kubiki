@@ -28,8 +28,13 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: 'ai', title: 'AI assistant', icon: Bot, sectionTitle: 'AI assistant',
     entries: [
-      { id: 'ai.providers', label: 'Integrated agent providers', description: 'Cloud and local API connections, dynamic model discovery and generation options.', keywords: 'openai anthropic ollama lm studio vllm gemini deepseek openrouter groq mistral endpoint models API key' },
-      { id: 'ai.permissions', label: 'Integrated agent permissions', description: 'Control resource access, Secrets, ConfigMaps, logs, namespaces, write operations and field exclusions.', keywords: 'read only ask accept safety policy rules secret config security agent' },
+      { id: 'ai.providers', label: 'Connections & models', description: 'Cloud and local connections, models and generation options.', keywords: 'openai anthropic ollama endpoint provider API key tokens temperature' },
+      { id: 'ai.confirmations', label: 'Confirmations', description: 'Ask permission for reads or changes and always confirm selected tools.', keywords: 'ask auto accept approval consent always permissions' },
+      { id: 'ai.access', label: 'Data access', description: 'Read access, Secrets, ConfigMaps, logs and allowed changes.', keywords: 'permissions read write sensitive replicas scale restart delete' },
+      { id: 'ai.scope', label: 'Scope & rules', description: 'Cluster and namespace boundaries, resource rules and field filters.', keywords: 'contexts namespaces policy exclusions security' },
+      { id: 'ai.integrations', label: 'Integrations', description: 'Helm, Argo CD and Flux inspection tools.', keywords: 'gitops helm argo flux' },
+      { id: 'ai.instructions', label: 'Instructions', description: 'Preferred language, response style and investigation conventions.', keywords: 'prompt custom language behavior agent' },
+      { id: 'ai.history', label: 'History', description: 'Local transcript storage, retention and export.', keywords: 'conversations archive privacy export retention' },
     ],
   },
   {

@@ -41,7 +41,7 @@ import { desktopAiAvailable } from '../transport';
 import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
 import { isPlanArtifact } from '../plan_contract';
 import { PlanArtifactCard } from './PlanArtifactCard';
-import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
+import { AgentSettings } from './AgentSettings';
 import { getToolIntent, getToolCallSummary } from '../tool_intents';
 import { getClusterTone } from '../../../core/cluster_color';
 import { stringify } from 'yaml';
@@ -86,7 +86,6 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
   const conversation = state.conversations.find(c => c.id === state.activeId);
   const settingsOpen = state.settingsOpen;
   const setSettingsOpen = state.setSettingsOpen;
-  const settingsRef = useRef<AgentSettingsHandle>(null);
   const [settingsStatus, setSettingsStatus] = useState<{ message?: string; error?: string; saving?: boolean }>({});
 
   useEffect(() => { void useAiStore.getState().load(); }, []);
@@ -104,15 +103,6 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
       if (profile.id !== c.providerId || model !== c.model) state.update(c.id, { providerId: profile.id, model });
     }
   }, [state.settings, state.update]);
-
-  async function saveSettingsModal() {
-    if (settingsRef.current) {
-      const ok = await settingsRef.current.save();
-      if (ok) {
-        toast.success('Settings saved');
-      }
-    }
-  }
 
   return <section className="ai-workspace">
     <div className="ai-chat">
@@ -137,12 +127,11 @@ export function AgentView({ visible = true }: { visible?: boolean }) {
           {settingsStatus.message || settingsStatus.error}
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          <Button size="sm" variant="primary" loading={settingsStatus.saving} disabled={!desktopAiAvailable() || settingsStatus.saving} onClick={() => void saveSettingsModal()}><Check size={12} aria-hidden="true" />Save</Button>
           <Button size="sm" variant="secondary" onClick={() => setSettingsOpen(false)}>Done</Button>
         </div>
       </div>}
     >
-      <AgentSettings ref={settingsRef} onStatusChange={setSettingsStatus} />
+      <AgentSettings onStatusChange={setSettingsStatus} />
     </Modal>
   </section>;
 }
