@@ -9,6 +9,7 @@ mod update_commands;
 use mutation_guard::resolve_mutation_confirm;
 mod mutation_commands;
 mod agent_commands;
+mod ai_history;
 mod agent_tools;
 use mutation_commands::*;
 mod extension_commands;
@@ -92,6 +93,9 @@ pub fn run() {
             agent_commands::ai_review_plan,
             agent_commands::ai_get_evidence,
             agent_commands::ai_execute_plan,
+            ai_history::ai_history_load,
+            ai_history::ai_history_sync,
+            ai_history::ai_history_preferences,
             agent_commands::ai_save_settings,
             agent_commands::ai_set_credential,
             agent_commands::ai_list_models,

@@ -49,6 +49,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 keyring = "4"
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [patch.crates-io]
 # GTK3 requires glib 0.18. Backport the upstream VariantStrIter safety fix.
