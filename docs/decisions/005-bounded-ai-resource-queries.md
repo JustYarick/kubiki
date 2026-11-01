@@ -84,6 +84,6 @@ cache не даёт выигрыша или нарушает свежесть/п
 нет. Delivery metrics сравнивать с baseline существующего desktop-релиза: frequency,
 lead time, failed deployment recovery time, change fail rate и deployment rework rate.
 
-Текущие лимиты и примеры: [AI_AGENT.md](../AI_AGENT.md). Статус и дальнейшие
-продуктовые этапы: [AI_ROADMAP.md](../AI_ROADMAP.md). При замене решения добавить
-ссылку superseded-by здесь; раннее ADR-003 сохраняет роль общего подключения/фаз.
+Текущие лимиты и примеры: [AI_AGENT.md](../AI_AGENT.md). При замене решения
+добавить ссылку superseded-by здесь; раннее ADR-003 сохраняет роль общего
+подключения/фаз.

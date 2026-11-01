@@ -5,8 +5,7 @@ live-cluster performance benchmark. Backend Plan/Action phases, Pod/workload
 diagnostics, structured compaction and frontend conversation persistence already exist.
 Generic UI/agent reads now share core ResourceAccess, with field selection,
 pagination and working-scope defaults. Specialized readers use the same core transport and pinned connection generation.
-Live-cluster/model evaluation and optional informer reuse remain separate work. See the [development roadmap](AI_ROADMAP.md) and
-[query and diagnostic requirements](AI_QUERY_DESIGN.md) for remaining work.
+Live-cluster/model evaluation and optional informer reuse remain separate work.
 
 Kubiki's integrated agent has its own workspace tab and a shared runtime for
 ordinary chat, resource investigation and resource generation. It calls model
@@ -16,6 +15,9 @@ shell or arbitrary command tool. Helm diagnostics currently delegate to the exis
 metadata-only reads of Helm storage labels; it never loads Secret bodies.
 The existing external CLI snapshot analysis is a separate
 feature described in [AI analysis](AI_ANALYSIS.md).
+
+The current investigation/result and execution format is specified in
+[AI_PLAN_CONTRACT.md](AI_PLAN_CONTRACT.md).
 
 ## Getting started
 
@@ -43,7 +45,9 @@ new AI commands.
 - **AI Agent**: independent conversations for questions, investigation and creation.
 - **Investigate with AI** in a resource's **What's wrong** block: opens a
   conversation pinned to that resource's context and namespace. Only identity
-  is attached; live object fields must pass through native read policy.
+  is attached; live object fields must pass through native read policy. It requests
+  a final remediation PlanArtifact with diagnosis, uncertainty, evidence, concrete
+  steps, risks and verification. Internal reasoning/Markdown headings never gain a Plan badge.
 - **Create with AI** in resource lists: opens a creation conversation. For
   example, request a Nexus deployment, discuss image/version/storage/exposure,
   and receive a YAML proposal. A multi-namespace selection is not silently
@@ -155,7 +159,7 @@ four protocols. A provider preset is not a certification of every model it serve
 The current tool set provides a resource catalog, namespace names, resource
 get/list with field profiles/selectors/cursors, backend resource summaries, working
 scope, historical evidence lookup, bounded workload verification, Pod/workload
-diagnostics, Events and an event timeline, current/previous
+diagnostics, Service/PVC/Node and configuration-reference diagnostics, Events and an event timeline, current/previous
 bounded Pod logs, Pod metrics, clarification questions and YAML proposals.
 Capability/policy-gated Helm, Argo CD and Flux inspection tools also exist.
 Write tools create/update one manifest, scale, restart or delete a resource,
@@ -330,9 +334,6 @@ results do not prove rollout completion or application health.
   reuse uses scoped discovery/coalescing and already-projected historical evidence;
   fresh live reads remain the fallback. No duplicate cluster-wide watch is started.
 
-Remaining gaps and regression gates are tracked in
-[AI_QUERY_DESIGN.md](AI_QUERY_DESIGN.md).
-
 API acceptance, rollout completion and verified application health are distinct.
 Read-back verification is available to the agent through read tools when permitted;
 it is not a universal automatic health check or rollback mechanism.
@@ -355,14 +356,47 @@ and event adapter. CI runs AI-domain tests on the desktop target OS alongside
 existing core and desktop tests.
 
 Configuration is native app-config `ai.json`; credentials are in the OS keyring.
-Frontend text conversations and usage metadata persist in localStorage under
-`kubiki.ai_conversations.v1` (Zustand schema version 1). Tool bodies, log/value data,
-YAML arguments and generated tool manifests are omitted; only call identities and
-operation ID/status receipts are retained. Legacy version-0 history is migrated with
-the same filtering. User/assistant text can still contain sensitive text: this is
-not general DLP or the planned native history/retention UI. Restored mode/phase reset
-to Read only + Plan; native runs/approvals are not restored. Native runtime memory,
-cursors and evidence are ephemeral; the visible transcript is not runtime replay.
+Desktop transcripts use app-data `ai/history.sqlite3` (SQLite + FTS5), schema v1.
+Legacy `kubiki.ai_conversations.v1` data migrates through native sanitization before
+removal from localStorage; corrupt migration preserves the old bytes and still
+restores valid native history. Browser preview uses localStorage only.
+
+History retains at most 200 conversations / 32 MiB, 2 MiB per transcript; default
+retention is 30 days (configurable 1–365). Opt-out deletes stored transcripts and
+index data. SQLite secure_delete and FTS5 secure-delete are both enabled. Explicit
+conversation deletion awaits the native transaction; deletion tombstones prevent
+stale windows from reintroducing it. Tool bodies, log/value data, YAML arguments,
+PlanArtifact payloads and approvals are excluded by a native whitelist. User/assistant
+text may still contain user-provided or copied sensitive text; this is not DLP.
+
+Restored conversations are Read only + Plan, with no resumed session/run/approval.
+Search supports text, cluster/namespace/date filters, historical message navigation
+and archive/pin/rename. Branch/edit-and-retry creates a fresh read-only session with
+an explicit bounded historical transcript in the editable draft. Provider/model
+changes detach the previous native session; old tool evidence is not resent.
+Transcript/plan export checks the separate local export preference.
+
+Native plans are ephemeral versioned proposals (≤16 versions / 256 KiB; each ≤60 KB),
+with a formal schema, checked evidence references and actual session scope/policy ID.
+The UI renders them as typed cards, never by guessing at Markdown or thinking.
+Selected concrete steps require an explicit native review and a single-use 5-minute
+token. Current UID/resourceVersion/absence is checked again at dispatch, including
+an independent mode/phase/cancellation guard after connection validation. Native
+server-accepted UIDs bind create verification and are kept out of model history when
+not permitted. Failed/uncertain/declined steps stop further writes. Unknown outcomes
+may collect bounded read-only reconciliation evidence without retrying the write.
+Verified dependencies and explicit acceptance-only dependencies remain distinct.
+See [the plan contract](AI_PLAN_CONTRACT.md) for lifecycle, limitations and statuses.
+
+Permission settings now provide diagnostic/metadata/workload/network/storage/limited
+action presets and a native-only effective-access/rule preview. `allowedFields`
+restricts egress after data permissions and denied paths; hidden fields cannot be
+queried through selectors. Existing schema-v1 first-match rules retain their meaning.
+Users can explicitly choose schema v2 `deny_overrides`: matching no-access/no-write
+rules then override grants regardless of order. Preview precedes saving; settings
+changes invalidate native sessions and their old context rather than silently
+continuing under changed permissions.
+
 Operation metadata is appended to app-data
 `ai/operations.jsonl`, with intent persisted before commit and receipts afterwards.
 It includes identity/operation/mode/status, not model prompts, object values or

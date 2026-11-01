@@ -2,9 +2,8 @@
 
 For the integrated chat, resource investigation, YAML generation, API providers
 and backend-enforced execution modes, see [Integrated AI agent](AI_AGENT.md).
-Scoped field queries, pagination, working scope and large-cluster optimization
-are planned for the integrated agent in [AI_QUERY_DESIGN.md](AI_QUERY_DESIGN.md);
-they do not add cluster-query tools to this snapshot workflow.
+Scoped field queries, pagination and working scope belong to the integrated
+agent; they do not add cluster-query tools to this snapshot workflow.
 The external CLI snapshot workflow below has its own controls and is not governed
 by the integrated agent's permissions.
 

@@ -11,7 +11,7 @@
 
 Пользователь требует одно подключение для UI и агента, отдельный логический
 AI-домен без собственного Kubernetes-ядра, две фазы Plan / Action и приоритет
-диагностики. Создание и развёртывание приложений перенесены в конец roadmap.
+диагностики. Создание и развёртывание приложений требуют отдельных capabilities.
 
 Сейчас `ai_create_session` получает `Client` из существующего `ClusterClientPool`,
 зарегистрированного в Tauri. Следовательно, отдельного AI-пула уже нет. Однако
@@ -84,11 +84,8 @@ fleet, vector DB и orchestration runtime не вводятся. Сопрово�
 ownership остаются у desktop/core; отключение новой AI-фичи не затрагивает ручной
 доступ пользователя. Изменения кластера не откатываются отключением функции.
 
-Подробные этапы, критерии и backlog: [AI_ROADMAP.md](../AI_ROADMAP.md).
-
 ## Уточнение 2026-10-31: эффективные запросы
 
-Новые требования детализированы в [AI_QUERY_DESIGN.md](../AI_QUERY_DESIGN.md).
 Топология и владелец подключения не меняются. В общий access service входят
 query planner, ограниченные fields/profiles, server-side selectors, cursor,
 working scope, budgets и policy-aware cache. Projection уменьшает контекст модели;
@@ -112,4 +109,5 @@ fallback. Политика first-match этим уточнением не мен
 ResourceAccess, field queries, cursors, рабочий scope, budgets/cache и память.
 AI-адаптер больше не создаёт kube::Api/Discovery; UI/AI используют core reads.
 Client generation проверяется перед tools/HTTP, включая retries; смена kubeconfig
-инвалидирует сессии. PlanArtifact и последующие продуктовые этапы остаются в roadmap.
+инвалидирует сессии. Реализованные PlanArtifact, review и исполнение описаны
+в [ADR-006](006-reviewed-ai-plans-and-transcript-history.md).

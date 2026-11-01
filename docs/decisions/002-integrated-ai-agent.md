@@ -5,16 +5,16 @@
 Заменяет: —. При пересмотре связать новое ADR с этим документом.
 
 Уточнено [ADR-003](003-shared-kubernetes-access-and-ai-phases.md): общий Kubernetes
-access service, независимые Plan / Action и новые приоритеты. Актуальный порядок
-дальнейшей разработки — [AI roadmap](../AI_ROADMAP.md); создание/deployment последними.
+access service и независимые Plan / Action. Текущий контракт планов и исполнения
+описан в [AI_PLAN_CONTRACT.md](../AI_PLAN_CONTRACT.md).
 
 ## Уточнения первого этапа
 
 Сверка реализации от 2026-10-31 находится в [AI_AGENT.md](../AI_AGENT.md).
 Описанные ниже ограничения первого этапа и исходный анализ являются историческими:
 в коде уже есть backend-фазы, специализированная диагностика, frontend persistence
-и базовая compaction. Новые требования к fields/selectors/cursors, working scope,
-бюджетам и prompt определены в [AI_QUERY_DESIGN.md](../AI_QUERY_DESIGN.md).
+и базовая compaction. Реализованные fields/selectors/cursors, working scope
+и бюджеты описаны в [ADR-005](005-bounded-ai-resource-queries.md).
 
 Пользователь подтвердил начало разработки и выделение AI в отдельную доменную
 область. Реализованы отдельный `crates/kubiki-ai` и frontend-домен
