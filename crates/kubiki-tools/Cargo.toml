@@ -1,0 +1,20 @@
+[package]
+name = "kubiki-tools"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Headless Kubiki cluster tools and execution boundary"
+[dependencies]
+kubiki-core = { path = "../kubiki-core" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+kube = { version = "0.98", default-features = false, features = ["client", "runtime", "derive", "ws", "rustls-tls"] }
+k8s-openapi = { version = "0.24", features = ["latest"] }
+chrono = "0.4"
+
+[dev-dependencies]
+http = "1"
+tower = { version = "0.5", features = ["util"] }

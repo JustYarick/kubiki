@@ -922,3 +922,26 @@ async fn an_older_plan_cannot_certify_a_new_investigation_turn() {
     assert!(outcome.unwrap_err().contains("Investigation is incomplete"));
     task.await.unwrap();
 }
+
+struct EnvironmentHost;
+#[async_trait]
+impl ToolExecutor for EnvironmentHost {
+    async fn additional_tools(&self, _: &Session) -> Result<Vec<ToolDefinition>, String> {
+        Ok(vec![ToolDefinition {name:"read_skill".into(),description:"Read installed skill".into(),parameters:json!({"type":"object","properties":{},"additionalProperties":false})}])
+    }
+    async fn execute(&self, _: &Session, call: &ToolCall, _: &EventSink) -> Result<Value, String> {
+        assert_eq!(call.name,"read_skill");
+        Ok(json!({"text":"Skill instructions"}))
+    }
+}
+#[tokio::test]
+async fn general_chat_can_use_environment_tools_without_advertising_cluster_tools() {
+    let (client,requests,task)=provider(vec![call("read_skill"),final_text()]).await;
+    let session=Session::new("environment".into(),"window".into(),AgentScope::default(),AgentPolicy::default(),ClusterCapabilities::default());
+    run(session,0,client,"model".into(),GenerationOptions::default(),String::new(),"Use a skill".into(),Arc::new(EnvironmentHost),sink()).await.unwrap();
+    let requests=requests.lock().unwrap();
+    let tools=requests[0]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|tool|tool["function"]["name"]=="read_skill"));
+    assert!(!tools.iter().any(|tool|tool["function"]["name"]=="get_resource"));
+    drop(requests);task.await.unwrap();
+}

@@ -16,12 +16,16 @@ static SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiSettings {
+    pub runtime: crate::opencode::AgentRuntime,
+    pub opencode: crate::opencode::OpenCodeSettings,
+    pub mcp_policy: AgentPolicy,
     pub providers: Vec<ProviderProfile>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
     pub options: GenerationOptions,
     pub policy: AgentPolicy,
     pub instructions: String,
+    pub environment: kubiki_ai::environment::EnvironmentSettings,
 }
 
 #[derive(Serialize)]
@@ -40,12 +44,13 @@ struct ManagedSession {
     client: Option<kube::Client>,
     connection_generation: Option<u64>,
     plan_review: Mutex<Option<PlanReview>>,
+    environment: Arc<kubiki_ai::environment::Environment>,
 }
 
 #[derive(Clone)]
 pub struct AgentManager {
     sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
-    settings_gate: Arc<AsyncMutex<()>>,
+    pub(crate) settings_gate: Arc<AsyncMutex<()>>,
     runs: Arc<Semaphore>,
     read_permits: Arc<Semaphore>,
 }
@@ -76,6 +81,10 @@ impl AgentManager {
         if let Ok(sessions) = self.sessions.lock() {
             for s in sessions.values() {
                 s.session.invalidate();
+                let environment = s.environment.clone();
+                tokio::spawn(async move {
+                    environment.close().await;
+                });
             }
         }
     }
@@ -90,7 +99,7 @@ impl AgentManager {
     }
 }
 
-async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
+pub(crate) async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
     let path = app
         .path()
         .app_config_dir()
@@ -100,6 +109,8 @@ async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
         Ok(bytes) if bytes.len() <= 1024 * 1024 => {
             let settings: AiSettings = serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned())?;
             settings.policy.validate()?;
+            settings.mcp_policy.validate()?;
+            settings.opencode.validate()?;
             settings.options.validate()?;
             Ok(settings)
         }
@@ -116,6 +127,9 @@ async fn store(app: &tauri::AppHandle, settings: &AiSettings) -> Result<(), Stri
         .map_err(|_| "Cannot locate AI settings directory")?
         .join("ai.json");
     let bytes = serde_json::to_vec_pretty(settings).map_err(|_| "Cannot encode AI settings")?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("AI settings exceed 1 MiB".into());
+    }
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
         std::fs::create_dir_all(path.parent().unwrap())
@@ -212,6 +226,8 @@ pub async fn ai_save_settings(
     manager: tauri::State<'_, AgentManager>,
 ) -> Result<(), String> {
     settings.policy.validate()?;
+    settings.mcp_policy.validate()?;
+    settings.opencode.validate()?;
     settings.options.validate()?;
     if settings.providers.len() > 30 || settings.instructions.len() > 8000 {
         return Err("At most 30 providers and 8000 bytes of instructions are supported".into());
@@ -251,17 +267,41 @@ pub async fn ai_save_settings(
             credential(&profile.id, Some(None)).await?;
         }
     }
-    if serde_json::to_value((&before.providers, &before.policy, &before.instructions)).ok()
+    if serde_json::to_value((
+        &before.providers,
+        &before.policy,
+        &before.instructions,
+        &before.environment,
+        &before.runtime,
+        &before.opencode,
+        &before.mcp_policy,
+    ))
+    .ok()
         != serde_json::to_value((
             &settings.providers,
             &settings.policy,
             &settings.instructions,
+            &settings.environment,
+            &settings.runtime,
+            &settings.opencode,
+            &settings.mcp_policy,
         ))
         .ok()
     {
         manager.invalidate();
     }
-    store(window.app_handle(), &settings).await
+    store(window.app_handle(), &settings).await?;
+    if before.runtime != settings.runtime
+        || before.opencode != settings.opencode
+        || serde_json::to_value(&before.mcp_policy).ok()
+            != serde_json::to_value(&settings.mcp_policy).ok()
+    {
+        window
+            .state::<crate::opencode::OpenCodeManager>()
+            .stop_all()
+            .await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -356,6 +396,9 @@ pub async fn ai_create_session(
     }
     let _gate = manager.settings_gate.lock().await;
     let settings = load(window.app_handle()).await?;
+    if settings.runtime != crate::opencode::AgentRuntime::Kubiki {
+        return Err("OpenCode is selected in settings".into());
+    }
     let profile = settings
         .providers
         .iter()
@@ -418,6 +461,11 @@ pub async fn ai_create_session(
         return Err("Investigation requires a tool-capable model".into());
     }
     session.intent = request.intent;
+    let installed_skills = kubiki_ai::environment::global_skills().await?;
+    let environment = Arc::new(kubiki_ai::environment::Environment::new(
+        settings.environment.clone(),
+        installed_skills,
+    ));
     let mut sessions = manager
         .sessions
         .lock()
@@ -436,12 +484,13 @@ pub async fn ai_create_session(
             client,
             connection_generation,
             plan_review: Mutex::new(None),
+            environment,
         }),
     );
     Ok(SessionView {
         id,
         scope: request.scope,
-        mode: AgentMode::ReadOnly,
+        mode: AgentMode::Ask,
         phase: AgentPhase::Plan,
         policy: settings.policy,
     })
@@ -519,20 +568,28 @@ pub async fn ai_send_message(
     let revision = managed.session.control()?.revision;
     let key = provider_key(&managed.provider).await?;
     let provider = ProviderClient::new(managed.provider.clone(), key)?;
-    let host = tool_host(&managed, window, &manager, revision)?;
+    let host = tool_host(&managed, window, &manager, revision).await?;
     let session = managed.session.clone();
     let emit: EventSink = Arc::new(move |event| {
         if on_event.send(event).is_err() {
             session.stop();
         }
     });
+    let skills = managed.environment.skills.clone();
+    let selection = message.clone();
+    let skill_instructions = tokio::task::spawn_blocking(move || {
+        kubiki_ai::skills::selected_instructions(&skills, &selection)
+    })
+    .await
+    .map_err(|_| "Cannot read selected skill instructions")??;
+    let instructions = format!("{}\n{}", managed.instructions, skill_instructions);
     run(
         managed.session.clone(),
         revision,
         provider,
         managed.model.clone(),
         managed.options.clone(),
-        managed.instructions.clone(),
+        instructions,
         message,
         host,
         emit,
@@ -561,12 +618,12 @@ pub fn ai_preview_policy(request: PolicyPreviewRequest) -> Result<serde_json::Va
     )
 }
 
-fn tool_host(
+async fn tool_host(
     managed: &Arc<ManagedSession>,
     window: tauri::WebviewWindow,
     manager: &AgentManager,
     revision: u64,
-) -> Result<Arc<crate::agent_tools::KubernetesTools>, String> {
+) -> Result<Arc<crate::agent_tools::IntegratedTools>, String> {
     let journal = window
         .app_handle()
         .path()
@@ -612,8 +669,9 @@ fn tool_host(
         );
         read_cache.wrap(budget.wrap(pinned))
     });
-    Ok(Arc::new(crate::agent_tools::KubernetesTools {
-        window,
+    let cluster = Arc::new(crate::agent_tools::KubernetesTools {
+        consent: Arc::new(crate::agent_tools::DesktopConsent(window)),
+        pool,
         client: pinned_client,
         connection_generation: managed.connection_generation,
         budget: budget.clone(),
@@ -621,6 +679,18 @@ fn tool_host(
         read_permits: manager.read_permits.clone(),
         journal,
         accepted_identities: Arc::default(),
+    });
+    let mcp = kubiki_mcp::McpExecutor::connect(kubiki_mcp::ClusterServer::new(
+        managed.session.clone(),
+        cluster.clone(),
+        Arc::new(|_| {}),
+        false,
+    ))
+    .await?;
+    Ok(Arc::new(crate::agent_tools::IntegratedTools {
+        cluster,
+        mcp,
+        environment: managed.environment.clone(),
     }))
 }
 
@@ -705,7 +775,7 @@ pub async fn ai_review_plan(
     {
         return Err("Unknown or duplicate plan step".into());
     }
-    let host = tool_host(&managed, window, &manager, state.revision)?;
+    let host = tool_host(&managed, window, &manager, state.revision).await?;
     let mut steps = Vec::new();
     let mut previews = Vec::new();
     let mut targets = std::collections::BTreeSet::new();
@@ -793,7 +863,7 @@ pub async fn ai_execute_plan(
     if review.revision != revision || review.at.elapsed() > std::time::Duration::from_secs(300) {
         return Err("Plan review expired or mode/phase changed; review again".into());
     }
-    let host = tool_host(&managed, window, &manager, revision)?;
+    let host = tool_host(&managed, window, &manager, revision).await?;
     let session = managed.session.clone();
     let emit: EventSink = Arc::new(move |event| {
         if on_event.send(event).is_err() {
@@ -823,4 +893,39 @@ pub fn ai_get_evidence(
     Ok(
         serde_json::json!({"evidenceId":evidence_id,"historical":true,"data":result,"warning":"Previously projected evidence; not fresh verification. Its relevance to a claim still requires review."}),
     )
+}
+
+#[tauri::command]
+pub async fn ai_test_provider(
+    profile: ProviderProfile,
+    api_key: Option<String>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<ModelInfo>, String> {
+    kubiki_ai::provider::validate_profile(&profile)?;
+    let key = if let Some(key) = api_key {
+        key
+    } else {
+        let settings = load(window.app_handle()).await?;
+        if settings.providers.iter().any(|saved| {
+            saved.id == profile.id
+                && saved.base_url == profile.base_url
+                && saved.protocol == profile.protocol
+        }) {
+            provider_key(&profile).await?
+        } else {
+            String::new()
+        }
+    };
+    if key.len() > 8192 || key.contains(['\r', '\n']) {
+        return Err("Invalid API key".into());
+    }
+    let client = ProviderClient::new(profile, key)?;
+    tokio::time::timeout(std::time::Duration::from_secs(30), client.models())
+        .await
+        .map_err(|_| "Connection test timed out")?
+}
+
+#[tauri::command]
+pub async fn ai_list_skills() -> Result<Vec<kubiki_ai::skills::SkillInfo>, String> {
+    kubiki_ai::environment::global_skills().await
 }

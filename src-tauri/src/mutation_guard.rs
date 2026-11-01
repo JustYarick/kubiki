@@ -74,8 +74,21 @@ pub async fn resolve_mutation_confirm(id: String, approved: bool) -> Result<bool
 }
 
 #[derive(Default)]
-pub struct MutationGuard(tokio::sync::Mutex<()>);
+pub struct MutationGuard(std::sync::Arc<tokio::sync::Mutex<()>>);
 impl MutationGuard {
+    pub fn acquire_owned(
+        &self,
+        resource: &ResourceRef,
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, ApiError> {
+        if DIALOG_OPEN.load(Ordering::Acquire) {
+            return Err(error(resource, 409, "A confirmation is still open"));
+        }
+        self.0
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| error(resource, 409, "Another cluster change is running"))
+    }
+
     /// Installation and cluster changes share one gate. Never wait and restart
     /// unexpectedly after a long-running change finishes.
     pub fn acquire_for_update(&self) -> Result<tokio::sync::MutexGuard<'_, ()>, String> {

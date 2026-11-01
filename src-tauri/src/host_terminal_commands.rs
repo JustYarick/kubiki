@@ -24,7 +24,7 @@ pub async fn start_host_terminal(
     .await
 }
 
-async fn start_local_session(
+pub(crate) async fn start_local_session(
     session_id: String,
     request: HostTerminalRequest,
     ack_timeout_secs: Option<u64>,

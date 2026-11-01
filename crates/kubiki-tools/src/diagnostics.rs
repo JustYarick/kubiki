@@ -892,7 +892,12 @@ mod accepted_revision_tests {
     #[test]
     fn healthy_rollback_does_not_verify_the_accepted_generation() {
         let reverted = json!({"metadata":{"uid":"same","generation":4},"spec":{"replicas":3},"status":{"observedGeneration":4,"replicas":3,"readyReplicas":3,"updatedReplicas":3,"availableReplicas":3}});
-        assert!(controller_verified("Deployment", &reverted, Some(3), Some("same")));
+        assert!(controller_verified(
+            "Deployment",
+            &reverted,
+            Some(3),
+            Some("same")
+        ));
         assert!(!accepted_generation_matches(&reverted, Some(3)));
         assert!(accepted_generation_matches(&reverted, Some(4)));
         assert!(!accepted_generation_matches(&json!({}), Some(4)));

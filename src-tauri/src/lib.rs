@@ -11,6 +11,7 @@ mod mutation_commands;
 mod agent_commands;
 mod ai_history;
 mod agent_tools;
+mod opencode;
 use mutation_commands::*;
 mod extension_commands;
 use extension_commands::{ExtensionManager, extension_cancel, extension_request};
@@ -83,11 +84,14 @@ pub fn run() {
         .manage(ExtensionManager::default())
         .manage(mutation_guard::MutationGuard::default())
         .manage(agent_commands::AgentManager::default())
+        .manage(opencode::OpenCodeManager::default())
         .manage(update_commands::DesktopUpdater::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            opencode::ai_test_opencode,
+            opencode::start_opencode,
             agent_commands::ai_get_settings,
             agent_commands::ai_preview_policy,
             agent_commands::ai_review_plan,
@@ -99,6 +103,8 @@ pub fn run() {
             agent_commands::ai_save_settings,
             agent_commands::ai_set_credential,
             agent_commands::ai_list_models,
+            agent_commands::ai_test_provider,
+            agent_commands::ai_list_skills,
             agent_commands::ai_create_session,
             agent_commands::ai_set_mode,
             agent_commands::ai_set_phase,
@@ -170,6 +176,7 @@ pub fn run() {
                 let manager = window.state::<InformerManager>().inner().clone();
                 let terminals = window.state::<PodTerminalManager>().inner().clone();
                 let hosts = window.state::<HostTerminalManager>().inner().clone();
+                let opencode = window.state::<opencode::OpenCodeManager>().inner().clone();
                 let nodes = window.state::<NodeDebugManager>().inner().clone();
                 let forwards = window.state::<PortForwardManager>().inner().clone();
                 let reads = window.state::<read_tasks::ReadTasks>().inner().clone();
@@ -181,6 +188,7 @@ pub fn run() {
                     terminals.stop_owner(&owner).await;
                     nodes.stop_owner(&owner).await;
                     hosts.stop_owner(&owner).await;
+                    opencode.stop_owner(&owner).await;
                     forwards.stop_owner(&owner).await;
                 });
             }

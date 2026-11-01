@@ -171,7 +171,12 @@ pub struct AgentPolicy {
 
 impl AgentPolicy {
     pub fn requires_confirmation(&self, mode: AgentMode, tool: &str) -> bool {
-        (mode == AgentMode::Ask && (self.confirm_reads || matches!(tool, "apply_manifest" | "scale_workload" | "restart_workload" | "delete_resource")))
+        (mode == AgentMode::Ask
+            && (self.confirm_reads
+                || matches!(
+                    tool,
+                    "apply_manifest" | "scale_workload" | "restart_workload" | "delete_resource"
+                )))
             || self.always_ask.iter().any(|name| name == tool)
     }
 
@@ -276,7 +281,11 @@ impl AgentPolicy {
         }
 
         if self.always_ask.len() > 64
-            || self.always_ask.iter().any(|name| name.is_empty() || name.len() > 64 || !name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_'))
+            || self.always_ask.iter().any(|name| {
+                name.is_empty()
+                    || name.len() > 64
+                    || !name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+            })
             || self.contexts.len() > 100
             || self.namespaces.len() > 100
             || self.rules.len() > 100
