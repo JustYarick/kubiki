@@ -9,8 +9,10 @@ Live-cluster/model evaluation and optional informer reuse remain separate work.
 
 Kubiki's integrated agent has its own workspace tab and a shared runtime for
 ordinary chat, resource investigation and resource generation. It calls model
-APIs directly. Generic resource tools use typed Kubernetes APIs, with no model-facing
-shell or arbitrary command tool. Helm diagnostics currently delegate to the existing
+APIs directly. Cluster tools run through the embedded Kubiki MCP dispatcher and
+the headless `kubiki-tools` library. Generic tools use typed Kubernetes APIs;
+the integrated agent exposes no arbitrary shell or third-party MCP connections.
+Helm diagnostics delegate to the existing
 `HelmReader` for explicitly permitted release content. Inventory uses Kubernetes
 metadata-only reads of Helm storage labels; it never loads Secret bodies.
 The existing external CLI snapshot analysis is a separate
@@ -80,12 +82,13 @@ the tool is in Always ask. Merely switching to Action never executes a proposal.
 
 Changing to Auto accept does not enable disabled operations or expand data access.
 Kubernetes RBAC and admission still apply. The model cannot change mode, edit
-policy, approve a native confirmation, open a terminal or choose another endpoint.
+policy, approve its own confirmation or change a saved endpoint. Legacy external
+MCP/command settings are retained as inert JSON for migration and never executed.
 
 The backend owns mode and scope. A cluster client is pinned to each cluster
 conversation; changing the global cluster selector does not retarget it. Choose scope before the first message. Changing provider/model starts a fresh
-native session in the same transcript; previous evidence remains historical. General chat exposes only proposal generation, or no tools when
-tool use is disabled.
+native session in the same transcript; previous evidence remains historical. General chat supports proposals and installed skill references; it does not expose
+cluster tools. Turning tool use off omits all tools.
 
 Changing mode or pressing Stop cancels pending generation/review and revokes
 unissued writes. Authorization is checked again after commit's final live reads,
@@ -345,18 +348,22 @@ it is not a universal automatic health check or rollback mechanism.
 
 ```text
 src/domains/ai/                  Frontend domain: chat, settings, state, IPC adapter
-crates/kubiki-ai/                Headless domain: policy, sessions, loop, provider protocols
+crates/kubiki-ai/                Provider loop, model context and installed skills
+crates/kubiki-tools/             Headless tools, policy, projections, receipts and verification
+crates/kubiki-mcp/               Shared MCP dispatcher, embedded client, standalone CLI/bridge
 src-tauri/src/agent_commands.rs  Window ownership, settings, credentials, lifecycle
-src-tauri/src/agent_tools.rs     Policy/projection adapters, consent, receipts
+src-tauri/src/agent_tools.rs     Native consent and installed-skill adapter
+src-tauri/src/opencode.rs        Installed OpenCode launcher and attached MCP lifecycle
 crates/kubiki-core/src/core/     ResourceAccess, shared reads, read budgets/cache
 ```
 
-One repository and the existing desktop runtime remain the deployment unit.
-The AI crate has no Kubernetes credentials, shell, filesystem tools or dependency
-on Tauri; capabilities enter through a host-owned `ToolExecutor`. Desktop/core
-maintainers own authorization and tool changes; frontend maintainers own the chat
-and event adapter. CI runs AI-domain tests on the desktop target OS alongside
-existing core and desktop tests.
+One repository contains the desktop application and independently installable
+`kubiki-mcp`. Tools depend on `kubiki-core`, with no Tauri dependency. The integrated
+agent reaches the same dispatcher over an in-memory MCP transport. OpenCode reaches
+it through an authenticated local bridge and reuses the desktop connection pool.
+Standalone MCP hosts the same tools/core without requiring the desktop application.
+Desktop/core maintainers own tool and connection changes; frontend maintainers own
+the chat/settings and terminal presentation.
 
 Configuration is native app-config `ai.json`; credentials are in the OS keyring.
 Desktop transcripts use app-data `ai/history.sqlite3` (SQLite + FTS5), schema v1.
@@ -425,7 +432,7 @@ The following primary sources informed the design; code was not copied:
   instead of exposing general `bash`/`kubectl` execution.
 - [Radar MCP](https://github.com/skyhook-io/radar/blob/main/docs/mcp.md): structured
   diagnostic context and separation of diagnosis/application/verification. Kubiki's
-  initial runtime calls APIs directly and does not require MCP or an external CLI.
+  tool layer is available through an embedded dispatcher and standalone MCP CLI.
 - [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling),
   [Anthropic tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview),
   [Anthropic model discovery](https://platform.claude.com/docs/en/api/models/list),
@@ -439,6 +446,8 @@ pnpm typecheck
 pnpm exec vitest run
 pnpm test:e2e tests/e2e/ai_agent.spec.ts
 cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml
+cargo test --locked --manifest-path crates/kubiki-tools/Cargo.toml
+cargo test --locked --manifest-path crates/kubiki-mcp/Cargo.toml
 cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
 cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml --test revocable_mutation_tests
 pnpm build
@@ -455,3 +464,83 @@ AI settings use the same sections in the workspace dialog and global Settings:
 Connections & models, Confirmations, Data access, Scope & rules, Integrations,
 Instructions, and History. Switching sections preserves unsaved permission edits.
 Always ask takes precedence over the read-confirmation checkbox and Auto accept.
+
+## Agent environment
+
+**Test connection** requests the provider model catalog using the current form's
+endpoint/protocol and temporary key. It neither saves the provider nor persists
+the temporary credential. A stored key is reused only for its exact saved endpoint.
+
+**Skills** follow the [skills.sh canonical layout](https://github.com/vercel-labs/skills/blob/main/src/installer.ts):
+`~/.agents/skills/<skill>/SKILL.md`. Install globally with `npx skills add owner/repo -g`.
+Kubiki reads the existing directories and symlinks; it does not install or copy them.
+Type `$` in either composer, choose a skill with arrows/Enter/Tab, or dismiss with
+Escape. Explicit `$name` references load instructions for that turn. `read_skill`
+can load relative references inside the selected skill directory. Skills cannot
+extend permissions. Discovery is bounded to 128 skills, depth three, 64 KiB per file;
+a turn may explicitly select up to four skills. New conversations refresh the runtime
+catalog; the settings list has a Refresh button.
+
+## Agent selection and OpenCode
+
+Choose **Kubiki / OpenCode** under **Settings → AI assistant → Agent**. Missing
+runtime preferences default to Kubiki. The selection is application-wide, with
+separate histories. Only settings that affect the selected runtime are displayed.
+Kubiki provider/model/instructions/skills/confirmation settings are retained while
+hidden and do not control OpenCode. Switching invalidates integrated sessions and
+stops attached processes; it never transfers approvals or replays tools.
+
+OpenCode uses the installed V2 executable, a real PTY, its user configuration and
+credentials. A dedicated Kubiki workspace adds only our local MCP connection;
+existing project configuration is not overwritten. The desktop executable provides
+a headless `--kubiki-mcp-attach` bridge entrypoint, so desktop bundles do not need a
+separately installed CLI. Scope-specific workspace directories isolate windows and
+connections. Custom workspace roots must be absolute; the default lives in app data.
+
+OpenCode owns its permissions, Plan mode and confirmation prompts. No additional
+Kubiki Ask/Auto/alwaysAsk confirmation is applied to host-owned calls. A separate
+`mcpPolicy` controls what data and operations the application exposes: it is not
+inherited from the hidden Kubiki policy. Defaults expose filtered reads and no
+writes. Kubernetes RBAC, pinned connection generation, projection, bounds,
+mutation preconditions and receipts remain enforced by the server.
+
+Global context changes disconnect the panel until an explicit restart; they never
+silently retarget a running connection. Restart does not resend an initial Analyze
+or creation prompt. Normal TUI commands and model/provider choices belong to
+OpenCode. Its shell runs under its own permissions and is outside MCP filtering.
+
+### Standalone CLI
+
+```sh
+cargo build --release --manifest-path crates/kubiki-mcp/Cargo.toml
+kubiki-mcp serve --context my-cluster --namespace my-namespace
+```
+
+The MCP host launches this command over stdio. `--all-namespaces` is an explicit
+alternative to named namespaces; `--kubeconfig PATH` pins a configuration file.
+`--profile PATH` accepts a JSON exposure policy (AgentPolicy schema) when additional
+data or mutation capabilities are needed. Host-owned connections ignore
+`confirmReads`/`alwaysAsk`; host permissions decide whether each call may proceed.
+Logs go to stderr and mutation receipts to a process-specific journal; stdout is
+reserved for MCP. Connection loss never switches attached mode to standalone.
+
+OpenCode V2 example (replace the executable path and scope):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "kubiki": {
+        "type": "local",
+        "command": ["/absolute/path/kubiki-mcp", "serve", "--context", "my-cluster", "--namespace", "my-namespace"],
+        "codemode": false
+      }
+    }
+  }
+}
+```
+
+Transport coverage is tested on Linux. The Windows named-pipe implementation needs
+native Windows validation. Live provider/cluster evaluation and infrastructure
+repositories remain separate work. Architecture and migration rationale:
+[ADR-007](decisions/007-portable-cluster-tools-and-opencode.md).
