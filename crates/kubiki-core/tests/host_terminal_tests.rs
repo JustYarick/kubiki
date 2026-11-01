@@ -270,3 +270,29 @@ async fn cancellation_is_bounded_with_a_full_output_queue_and_invalid_requests_d
         .unwrap();
     assert_eq!(manager.session_count().await, 0);
 }
+
+#[tokio::test]
+async fn trusted_executable_uses_exact_arguments_and_cwd_without_login_shell_flags() {
+    use kubiki_core::pod_ops::host_terminal::HostProcess;
+    let manager=HostTerminalManager::default();
+    let cwd=std::env::temp_dir();
+    let mut sub=manager.start_process("agent","argv",request(),HostProcess {
+        program:"/bin/sh".into(),cwd:cwd.clone(),
+        args:vec!["-c".into(),"test -t 0 && printf '\\nARG:%s\\nCWD:%s\\nENV:%s\\n' \"$1\" \"$PWD\" \"$KUBIKI_PROCESS_TEST\"".into(),"test".into(),"literal ; $(echo BAD)".into()],
+        environment:vec![("KUBIKI_PROCESS_TEST".into(),"kept".into())],
+    }).await.unwrap();
+    let mut output=vec![];
+    tokio::time::timeout(Duration::from_secs(5),async {
+        while let Some(message)=sub.output.recv().await {match message.event {
+            ExecEvent::Output{data}=>output.extend(data),
+            ExecEvent::Exited{code}=>{assert_eq!(code,0);break;},
+            ExecEvent::Failed{error}=>panic!("{}",error.message),_=>{},
+        }}
+    }).await.unwrap();
+    let text=String::from_utf8_lossy(&output);
+    assert!(text.contains("ARG:literal ; $(echo BAD)"));
+    assert!(text.contains(&format!("CWD:{}",cwd.display())));
+    assert!(text.contains("ENV:kept"));
+    manager.stop_owner("agent").await;
+    assert_eq!(manager.session_count().await,0);
+}

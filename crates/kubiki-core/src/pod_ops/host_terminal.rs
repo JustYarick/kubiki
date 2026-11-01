@@ -33,6 +33,14 @@ pub struct HostTerminalRequest {
     pub rows: u16,
 }
 
+/// Trusted native process specification. Never accepted from terminal renderer IPC.
+#[derive(Clone, Debug)]
+pub struct HostProcess {
+    pub program: std::path::PathBuf,
+    pub args: Vec<String>,
+    pub cwd: std::path::PathBuf,
+    pub environment: Vec<(String, String)>,
+}
 fn error(status: u16, message: impl Into<String>) -> ApiError {
     ApiError::from_status(status, message, "host_terminal", None)
 }
@@ -123,6 +131,34 @@ impl HostTerminalManager {
         id: &str,
         request: HostTerminalRequest,
     ) -> Result<ExecSubscription, ApiError> {
+        self.start_inner(owner, id, request, None).await
+    }
+    pub async fn start_process(
+        &self,
+        owner: &str,
+        id: &str,
+        request: HostTerminalRequest,
+        process: HostProcess,
+    ) -> Result<ExecSubscription, ApiError> {
+        if !process.program.is_absolute()
+            || !process.program.is_file()
+            || !process.cwd.is_absolute()
+            || !process.cwd.is_dir()
+        {
+            return Err(error(
+                400,
+                "Agent executable and working directory must exist",
+            ));
+        }
+        self.start_inner(owner, id, request, Some(process)).await
+    }
+    async fn start_inner(
+        &self,
+        owner: &str,
+        id: &str,
+        request: HostTerminalRequest,
+        process: Option<HostProcess>,
+    ) -> Result<ExecSubscription, ApiError> {
         size(request.cols, request.rows)?;
         if id.is_empty()
             || id.len() > 128
@@ -130,13 +166,20 @@ impl HostTerminalManager {
         {
             return Err(error(400, "Invalid host terminal session ID"));
         }
-        let info = host_terminal_info()?;
+        let mut info = host_terminal_info()?;
+        if let Some(p) = &process {
+            info.cwd = p.cwd.to_string_lossy().into();
+        }
         let shell = request
             .shell
             .as_ref()
             .unwrap_or(&info.default_shell)
             .clone();
-        if !info.shells.contains(&shell) {
+        let shell = process
+            .as_ref()
+            .map(|p| p.program.to_string_lossy().into_owned())
+            .unwrap_or(shell);
+        if process.is_none() && !info.shells.contains(&shell) {
             return Err(error(400, "Choose one of the available local shells"));
         }
         let mut sessions = self.inner.sessions.lock().await;
@@ -158,6 +201,7 @@ impl HostTerminalManager {
                 &request,
                 &info,
                 &shell,
+                process,
                 controls,
                 &output,
                 sequence.clone(),
@@ -355,6 +399,7 @@ fn run(
     request: &HostTerminalRequest,
     info: &HostTerminalInfo,
     shell: &str,
+    process: Option<HostProcess>,
     mut controls: mpsc::Receiver<Control>,
     output: &mpsc::Sender<ExecMessage>,
     sequence: Arc<AtomicU64>,
@@ -388,10 +433,17 @@ fn run(
     command.cwd(&info.cwd);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    #[cfg(unix)]
-    {
-        command.arg("-l");
-        command.arg("-i");
+    if let Some(process) = process {
+        command.args(process.args);
+        for (key, value) in process.environment {
+            command.env(key, value);
+        }
+    } else {
+        #[cfg(unix)]
+        {
+            command.arg("-l");
+            command.arg("-i");
+        }
     }
     let child = pair
         .slave
