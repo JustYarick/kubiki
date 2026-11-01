@@ -33,7 +33,7 @@ The current investigation/result and execution format is specified in
    excluded by default. All write permissions start disabled.
 5. Start a conversation. Select **General chat · no cluster** for ordinary
    questions without requiring a cluster connection, or keep the selected
-   cluster/namespace scope. The default is **Read only + Plan**; the creation UI
+   cluster/namespace scope. The default is **Plan + Ask**; the creation UI
    also permits an explicit mode/phase selection.
 
 The browser preview does not connect to model providers, persist credentials or
@@ -55,33 +55,34 @@ new AI commands.
 
 Text streams into the chat, with Markdown, code copying and structured tool
 results. Generated YAML is a **proposal**, not evidence of a deployment. In
-Ask/Accept a proposal can be passed back to the agent for application through
+Action a proposal can be passed back to the agent for application through
 the same guarded mutation tools. The application never executes a Markdown code
 block directly. Remote images and raw HTML in model output are not loaded.
 
 ## Modes and permissions
 
-| Mode | Permitted reads | Permitted changes |
-| --- | --- | --- |
-| Read only | Automatic | Blocked; proposals are allowed |
-| Ask | Automatic | Each prepared operation needs an explicit native review |
-| Accept | Automatic | Automatic after policy and resource identity/version checks |
+The composer has two independent controls: **Plan / Action** and **Ask / Auto accept**.
+New and restored conversations start in **Plan + Ask**. Plan forbids all writes.
+Ask requests consent for each model tool call (reads included); Auto accept runs
+permitted tools automatically. The question tool is already an explicit user interaction.
+In settings, **Always ask** selects tools that must request consent in either mode.
+These settings never grant data access or write permissions. Internal reads belonging
+to a single approved diagnostic or mutation are covered by that operation, rather
+than opening a prompt for every HTTP request. Read-only wire values are retained
+solely for legacy compatibility; Action still serializes as `tooling`.
 
-The changes column applies only in **Action**. In **Plan**, all modes prohibit
-writes. Backend sessions start in Read only + Plan; users can explicitly select
-another mode/phase. The UI now consistently displays **Action**. The wire enum
-still serializes `tooling`, accepts `action` as an alias, and exposes a Rust
-`AgentPhase::Action` alias for compatibility with existing data.
-Read only forces Plan. Tool availability and dispatch both enforce the phase.
+Plans have one **Apply selected steps** action. Native review prepares and pins the
+operations automatically, then execution asks for exact native mutation previews
+when the confirmation policy requires it. Auto accept skips those prompts unless
+the tool is in Always ask. Merely switching to Action never executes a proposal.
 
-Changing to Accept does not enable disabled operations or expand data access.
+Changing to Auto accept does not enable disabled operations or expand data access.
 Kubernetes RBAC and admission still apply. The model cannot change mode, edit
 policy, approve a native confirmation, open a terminal or choose another endpoint.
 
 The backend owns mode and scope. A cluster client is pinned to each cluster
-conversation; changing the global cluster selector does not retarget it. Choose
-scope/provider/model before the first message. Start a new conversation to change
-them afterwards. General chat exposes only proposal generation, or no tools when
+conversation; changing the global cluster selector does not retarget it. Choose scope before the first message. Changing provider/model starts a fresh
+native session in the same transcript; previous evidence remains historical. General chat exposes only proposal generation, or no tools when
 tool use is disabled.
 
 Changing mode or pressing Stop cancels pending generation/review and revokes
@@ -179,7 +180,7 @@ service-account token mounting. Secret/ConfigMap references in workload manifest
 require content access to the referenced object under the data policy.
 
 The agent reuses `PreparedMutation`, optimistic concurrency and the existing
-desktop `MutationGuard`. Ask uses the existing native consent dialog. Accept
+desktop `MutationGuard`. Ask uses the existing native consent dialog. Auto accept
 uses backend policy authorization and never a renderer-supplied approval flag.
 Only complete provider responses can produce executable calls; unknown tools,
 incomplete streams, malformed/duplicate calls and output-limit truncation fail
@@ -324,7 +325,7 @@ results do not prove rollout completion or application health.
 - GitOps inventories are bounded and conservatively partial. Use generic resource
   cursors for deeper enumeration. No default global namespace scans are performed.
 - The system prompt now directs hypothesis-driven, scoped field queries and stops
-  unnecessary collection; read-only model batches execute with concurrency four. The desktop admits at most
+  unnecessary collection; automatically permitted read batches execute with concurrency four; tools needing consent run sequentially. The desktop admits at most
   two AI reads across conversations, sharing ReadTasks with UI (four per context),
   leaving capacity for manual reads. Mixed/write/scope-change batches stay ordered.
   Transport caps independently bound HTTP attempts/bytes/time, and scoped discovery
@@ -369,9 +370,9 @@ stale windows from reintroducing it. Tool bodies, log/value data, YAML arguments
 PlanArtifact payloads and approvals are excluded by a native whitelist. User/assistant
 text may still contain user-provided or copied sensitive text; this is not DLP.
 
-Restored conversations are Read only + Plan, with no resumed session/run/approval.
+Restored conversations are Plan + Ask, with no resumed session/run/approval.
 Search supports text, cluster/namespace/date filters, historical message navigation
-and archive/pin/rename. Branch/edit-and-retry creates a fresh read-only session with
+and archive/pin/rename. Branch/edit-and-retry creates a fresh Plan + Ask session with
 an explicit bounded historical transcript in the editable draft. Provider/model
 changes detach the previous native session; old tool evidence is not resent.
 Transcript/plan export checks the separate local export preference.

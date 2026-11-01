@@ -15,12 +15,20 @@ export function PlanArtifactCard({ artifact, conversation: c }: { artifact: Plan
   const sameSession = c.sessionId === artifact.sessionId;
   const [evidence, setEvidence] = useState<{ data: Record<string, unknown>; warning: string } | undefined>();
   const [selected, setSelected] = useState(artifact.steps.filter(s => !['inspect', 'manual'].includes(s.action)).map(s => s.id));
-  const [review, setReview] = useState<Awaited<ReturnType<typeof agentTransport.reviewPlan>> | undefined>();
   const [operationError, setOperationError] = useState('');
-  useEffect(() => { setReview(undefined); }, [artifact.id, artifact.version, c.mode, c.phase, c.sessionId]);
+  useEffect(() => { setSelected(artifact.steps.filter(step => !['inspect', 'manual'].includes(step.action)).map(step => step.id)); setEvidence(undefined); setOperationError(''); }, [artifact.id, artifact.version]);
   const updateFromEvent = (event: import('../types').AgentEvent) => useAiStore.setState(state => ({ conversations: state.conversations.map(conv => conv.id === c.id ? applyAgentEvent(conv, event) : conv) }));
-  const reviewSelected = async () => { if (!c.sessionId || !sameSession) return; setOperationError(''); useAiStore.getState().update(c.id, { busy: true, status: 'reviewing' }); try { const next = await agentTransport.reviewPlan(c.sessionId, artifact.id, artifact.version, selected); setReview(next); updateFromEvent({ type: 'plan_updated', plan: next.plan }); } catch (e) { setOperationError(String(e)); } finally { useAiStore.getState().update(c.id, { busy: false, status: 'idle' }); } };
-  const executeReviewed = async () => { if (!review || !c.sessionId || !sameSession) return; const token = review.reviewToken; setReview(undefined); setOperationError(''); useAiStore.getState().update(c.id, { busy: true, status: 'executing' }); try { await agentTransport.executePlan(c.sessionId, token, updateFromEvent); } catch (e) { setOperationError(String(e)); } finally { useAiStore.getState().update(c.id, { busy: false }); await flushAiHistory(); } };
+  const applySelected = async () => {
+    if (!c.sessionId || !sameSession || c.busy) return;
+    setOperationError('');
+    useAiStore.getState().update(c.id, { busy: true, status: 'reviewing' });
+    try {
+      const reviewed = await agentTransport.reviewPlan(c.sessionId, artifact.id, artifact.version, selected);
+      updateFromEvent({ type: 'plan_updated', plan: reviewed.plan });
+      await agentTransport.executePlan(c.sessionId, reviewed.reviewToken, updateFromEvent);
+    } catch (e) { setOperationError(String(e)); useAiStore.getState().update(c.id, { status: 'failed' }); }
+    finally { useAiStore.getState().update(c.id, { busy: false }); await flushAiHistory(); }
+  };
   const [copied, setCopied] = useState(false);
   const [showSource, setShowSource] = useState(false);
 
@@ -71,7 +79,17 @@ export function PlanArtifactCard({ artifact, conversation: c }: { artifact: Plan
       <div className="ai-plan-body">
         <p className="p-2 text-sm"><strong>Diagnosis:</strong> {artifact.diagnosis}</p>
         <p className="p-2 text-xs"><strong>Uncertainty:</strong> {artifact.uncertainty || 'None stated; verify evidence before changes.'}</p>
-        <ol className="p-3 list-decimal list-inside space-y-3">{artifact.steps.map(step => <li key={step.id}><strong>{step.title}</strong><p>{step.reason}</p><p className="text-xs">Risk: {step.risk}</p><p className="text-xs">Verify: {step.verification}</p><p className="text-xs">Requires verified: {step.dependsOn?.join(', ') || 'none'} · Requires API acceptance only: {step.dependsOnAccepted?.join(', ') || 'none'}</p>{step.target && <code>{step.target.kind} {step.target.namespace}/{step.target.name}</code>}</li>)}</ol>
+        <ol className="p-3 list-decimal list-inside space-y-3">{artifact.steps.map(step => <li key={step.id}>
+          <strong>{step.title}</strong>
+          <p>{step.reason}</p>
+          <p className="text-xs">Risk: {step.risk}</p>
+          {step.target && <code>{step.target.kind} {step.target.namespace}/{step.target.name}</code>}
+          <details className="text-xs mt-1"><summary>Verification</summary>
+            <p>{step.verification}</p>
+            {!!step.dependsOn?.length && <p>Requires verified: {step.dependsOn.join(', ')}</p>}
+            {!!step.dependsOnAccepted?.length && <p>Requires API acceptance: {step.dependsOnAccepted.join(', ')}</p>}
+          </details>
+        </li>)}</ol>
         {showSource ? (
           <pre className="p-3 bg-[var(--bg-tertiary)] rounded text-xs font-mono overflow-auto max-h-[400px]">
             {artifact.bodyMarkdown}
@@ -106,13 +124,12 @@ export function PlanArtifactCard({ artifact, conversation: c }: { artifact: Plan
 
       {evidence && <details open className="p-3"><summary>Referenced historical evidence</summary><p className="text-xs">{evidence.warning}</p><CodeEditor ariaLabel="Referenced evidence" value={JSON.stringify(evidence.data, null, 2)} language="json" readOnly height="240px" variant="field" /></details>}
       {artifact.steps.some(s => !['inspect', 'manual'].includes(s.action)) && <div className="p-3 space-y-2">
-        {artifact.steps.filter(s => !['inspect', 'manual'].includes(s.action)).map(step => <label key={step.id} className="flex gap-2 text-xs"><input type="checkbox" aria-label={`Select plan step ${step.title}`} disabled={c.busy} checked={selected.includes(step.id)} onChange={e => { setSelected(e.target.checked ? [...selected, step.id] : selected.filter(id => id !== step.id)); setReview(undefined); }} />{step.title} · {step.action}</label>)}
-        {review && <section aria-label="Plan execution review" className="space-y-3">{review.steps.map(step => <div key={step.stepId}><strong>{step.operation}: {step.target.kind} {step.target.namespace}/{step.target.name}</strong>{typeof step.call.arguments.yaml === 'string' ? <CodeEditor ariaLabel={`Reviewed YAML ${step.target.name}`} value={step.call.arguments.yaml} language="yaml" readOnly height="220px" variant="field" /> : <p className="text-xs">{step.call.name === 'scale_workload' ? `Set replicas to ${step.call.arguments.replicas}` : step.call.name === 'restart_workload' ? 'Request rollout restart' : 'Delete this exact resource'}</p>}<p className="text-xs">The review pins current identity and version. A concurrent change requires a new review. Ask also shows the native change preview before dispatch.</p></div>)}</section>}
-        <Button size="sm" disabled={!sameSession || c.busy || c.invalidated || c.mode === 'read_only' || c.phase === 'plan' || !selected.length || !['draft', 'ready'].includes(artifact.status ?? 'draft')} onClick={() => void reviewSelected()}>Review selected steps</Button>
-        {review && <Button size="sm" variant="primary" disabled={!sameSession || c.busy || c.invalidated || c.phase === 'plan' || c.mode === 'read_only'} onClick={() => void executeReviewed()}>Execute reviewed steps</Button>}
-        <p className="text-xs">Execution requires Ask or Accept and Action. Each reviewed version is single-use; API acceptance and application health are separate.</p>
-        {operationError && <p role="alert">{operationError}</p>}
+        {artifact.steps.filter(s => !['inspect', 'manual'].includes(s.action)).map(step => <label key={step.id} className="flex gap-2 text-xs"><input type="checkbox" aria-label={`Select plan step ${step.title}`} disabled={c.busy} checked={selected.includes(step.id)} onChange={e => { setSelected(e.target.checked ? [...selected, step.id] : selected.filter(id => id !== step.id)); }} />{step.title} · {step.action}</label>)}
+        <Button size="sm" disabled={!sameSession || c.busy || c.invalidated || c.phase === 'plan' || !selected.length || !['draft', 'ready'].includes(artifact.status ?? 'draft')} onClick={() => void applySelected()}>Apply selected steps</Button>
+        <p className="text-xs">{c.phase === 'plan' ? 'Switch to Action to apply changes.' : c.mode === 'ask' ? 'You will confirm each change before it runs.' : 'Permitted changes run automatically.'}</p>
+
       </div>}
+      {operationError && <p role="alert" className="ai-error">{operationError}</p>}
       <div className="ai-plan-action-bar">
         <Button size="sm" disabled={c.busy || c.invalidated} onClick={() => useAiStore.getState().update(c.id, { draft: sameSession ? `Refresh permitted evidence and revise plan ${artifact.id} using planId. Preserve the goal, update diagnosis, risks and verification.` : `Investigate ${artifact.title} using fresh permitted evidence and propose a new remediation plan. The previous proposal belongs to a historical session.` })}>Refresh and revise</Button>
         <Button size="sm" disabled={c.busy || c.invalidated} onClick={() => useAiStore.getState().update(c.id, { draft: `Clarify remediation plan ${artifact.id}: ` })}>Clarify</Button>

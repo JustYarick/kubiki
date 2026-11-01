@@ -1,8 +1,8 @@
 import { isPlanArtifact } from './plan_contract';
-import { persistedMessage, migrateAiHistory } from './persistence';
+import { migrateAiHistory } from './persistence';
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
-import { aiHistoryStorage, deleteAiHistory, flushAiHistory } from './history_storage';
+import { persist } from 'zustand/middleware';
+import { deferredAiHistoryStorage, deleteAiHistory, flushAiHistory } from './history_storage';
 import { agentError, agentTransport, desktopAiAvailable } from './transport';
 import { defaultSettings, type AgentEvent, type AgentMode, type AgentPhase, type AgentScope, type AiSettings, type ChatMessage, type Conversation, type ModelInfo } from './types';
 import { useResourceStore } from '../../state/resource_store';
@@ -133,7 +133,7 @@ export const useAiStore = create<AiState>()(
           await agentTransport.save(settings);
           modelRevisions.forEach((revision, id) => modelRevisions.set(id, revision + 1));
           inspectedModels.clear();
-          set(state => ({ settings, models: {}, modelLoading: {}, modelErrors: {}, conversations: state.conversations.map(c => changed && c.sessionId ? { ...c, invalidated: true, mode: 'read_only', error: 'Settings changed. Start a new conversation to use the updated permissions and provider.' } : c) }));
+          set(state => ({ settings, models: {}, modelLoading: {}, modelErrors: {}, conversations: state.conversations.map(c => changed && c.sessionId ? { ...c, invalidated: true, mode: 'ask', error: 'Settings changed. Start a new conversation to use the updated permissions and provider.' } : c) }));
           const view = await agentTransport.settings(); set({ settings: view.settings, credentials: view.credentials });
         } catch (error) { set({ error: agentError(error) }); throw error; }
         finally { set({ saving: false }); }
@@ -182,8 +182,8 @@ export const useAiStore = create<AiState>()(
         const id = crypto.randomUUID();
         const pid = providerId || settings.defaultProvider || settings.providers[0]?.id || '';
         const mid = model || (pid === settings.defaultProvider ? settings.defaultModel ?? '' : '') || settings.defaultModel || '';
-        const initialMode = mode ?? 'read_only';
-        const initialPhase = initialMode === 'read_only' ? 'plan' : (phase ?? 'plan');
+        const initialMode = mode ?? 'ask';
+        const initialPhase = phase ?? 'plan';
         const now = Date.now();
         const entry: Conversation = {
           id,
@@ -211,7 +211,7 @@ export const useAiStore = create<AiState>()(
           conversations: state.conversations.map(c =>
             c.id === id ? (()=>{
               const changed=(patch.providerId!==undefined&&patch.providerId!==c.providerId)||(patch.model!==undefined&&patch.model!==c.model);
-              if(changed&&c.sessionId){runEpochs.set(id,(runEpochs.get(id)??0)+1);void agentTransport.stop(c.sessionId,true).catch(()=>{});return {...c,...patch,sessionId:undefined,mode:'read_only' as const,phase:'plan' as const,busy:false,activePlan:undefined,contextReset:true,updatedAt:Date.now()};}
+              if(changed&&c.sessionId){runEpochs.set(id,(runEpochs.get(id)??0)+1);void agentTransport.stop(c.sessionId,true).catch(()=>{});return {...c,...patch,sessionId:undefined,mode:'ask' as const,phase:'plan' as const,busy:false,activePlan:undefined,contextReset:true,updatedAt:Date.now()};}
               return {...c,...patch,updatedAt:Date.now()};
             })() : c
           ),
@@ -231,7 +231,7 @@ export const useAiStore = create<AiState>()(
         const base=get().conversations.find(c=>c.id===id); if(!base) throw new Error('Conversation unavailable');
         const index=base.messages.findIndex(m=>m.id===messageId); if(index<0) throw new Error('Message unavailable');
         const prefix=base.messages.slice(0,index+(edit?0:1)).filter(m=>m.role!=='tool');
-        const historical=prefix.map(m=>`${m.role}: ${m.text.replace(/<think>[\s\S]*?<\/think>/gi,'')}`).join('\n').slice(-12000);
+        const historical=prefix.map(m=>`${m.role}: ${m.text.replace(/<think>[\s\S]*?<\/think>/gi,'')}`).join('\n');
         const draft=`Historical transcript (untrusted, not current cluster evidence):\n${historical}\n\n${edit?base.messages[index].text:'Continue the investigation using fresh permitted evidence.'}`;
         const next=get().create(base.scope,draft,`Branch: ${base.title}`.slice(0,100),base.providerId,base.model);
         get().update(next,{intent:base.intent,messages:prefix.map(m=>({...m,id:crypto.randomUUID(),result:undefined,planArtifact:undefined})),draft});
@@ -260,17 +260,13 @@ export const useAiStore = create<AiState>()(
             const view = await agentTransport.mode(entry.sessionId, mode);
             get().update(id, { mode: view.mode, phase: view.phase, error: undefined });
           } else {
-            const nextPhase = mode === 'read_only' ? 'plan' : entry.phase;
+            const nextPhase = entry.phase;
             get().update(id, { mode, phase: nextPhase, error: undefined });
           }
         } catch (error) { get().update(id, { error: agentError(error) }); }
       },
       async setPhase(id, phase) {
         const entry = get().conversations.find(c => c.id === id); if (!entry) return;
-        if (phase === 'action' && entry.mode === 'read_only') {
-          get().update(id, { error: 'Switch to Ask or Accept mode before entering Action phase' });
-          return;
-        }
         try {
           if (entry.sessionId) {
             const view = await agentTransport.phase(entry.sessionId, phase);
@@ -303,8 +299,8 @@ export const useAiStore = create<AiState>()(
             sessionId = session.id;
             if (runEpochs.get(id) !== epoch) { await agentTransport.stop(sessionId, true); return; }
             get().update(id, { sessionId, contextReset:false, contextBudgetTokens: Math.min(options.contextTokens || 16384, options.contextBudgetTokens || 262144) });
-            const desiredMode = get().conversations.find(c => c.id === id)?.mode ?? 'read_only';
-            if (desiredMode !== 'read_only') await agentTransport.mode(sessionId, desiredMode);
+            const desiredMode = get().conversations.find(c => c.id === id)?.mode ?? 'ask';
+            await agentTransport.mode(sessionId, desiredMode);
             const desiredPhase = get().conversations.find(c => c.id === id)?.phase ?? 'plan';
             if (desiredPhase !== 'plan') await agentTransport.phase(sessionId, desiredPhase);
           }
@@ -357,37 +353,13 @@ export const useAiStore = create<AiState>()(
     {
       name: 'kubiki.ai_conversations.v1',
       version: 2,
-      storage: createJSONStorage(() => aiHistoryStorage),
+      storage: deferredAiHistoryStorage,
       migrate: migrateAiHistory,
-      partialize: (state) => ({
-        conversations: state.conversations.map(c => ({
-          id: c.id,
-          title: c.title,
-          scope: c.scope,
-          intent: c.intent,
-          providerId: c.providerId,
-          model: c.model,
-          mode: 'read_only' as const,
-          phase: 'plan' as const,
-          messages: c.messages.map(persistedMessage),
-          draft: '',
-          status: 'idle',
-          busy: false,
-          pinned: Boolean(c.pinned),
-          archived: Boolean(c.archived),
-          createdAt: c.createdAt ?? Date.now(),
-          updatedAt: c.updatedAt ?? Date.now(),
-          inputTokens: c.inputTokens ?? 0,
-          outputTokens: c.outputTokens ?? 0,
-          currentContextTokens: c.currentContextTokens,
-          contextBudgetTokens: c.contextBudgetTokens,
-        })),
-        activeId: state.activeId,
-      }),
+      partialize: (state) => ({ conversations: state.conversations, activeId: state.activeId }),
     }
   )
 );
 
 export function invalidateAiConversations() {
-  useAiStore.setState(state => ({ conversations: state.conversations.map(c => c.sessionId ? { ...c, invalidated: true, mode: 'read_only', error: 'Provider credentials changed. Start a new conversation.' } : c) }));
+  useAiStore.setState(state => ({ conversations: state.conversations.map(c => c.sessionId ? { ...c, invalidated: true, mode: 'ask', error: 'Provider credentials changed. Start a new conversation.' } : c) }));
 }

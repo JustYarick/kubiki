@@ -11,7 +11,7 @@ describe('native AI history adapter', () => {
     localStorage.setItem('legacy', '{bad-json'); api.invoke.mockResolvedValue({ conversations: [conversation], preferences: { enabled: true, retentionDays: 30, allowExport: true }, migrated: false });
     const { aiHistoryStorage } = await import('../../src/domains/ai/history_storage');
     const saved = JSON.parse(String(await aiHistoryStorage.getItem('legacy')));
-    expect(saved.state.conversations[0].id).toBe('c1'); expect(saved.state.conversations[0].mode).toBe('read_only'); expect(localStorage.getItem('legacy')).toBe('{bad-json');
+    expect(saved.state.conversations[0].id).toBe('c1'); expect(saved.state.conversations[0].mode).toBe('ask'); expect(localStorage.getItem('legacy')).toBe('{bad-json');
   });
   it('awaits explicit deletion in native storage instead of relying on pagehide/debounce', async () => {
     api.invoke.mockResolvedValue({ conversations: [conversation], preferences: { enabled: true, retentionDays: 30, allowExport: true }, migrated: true });
@@ -36,4 +36,20 @@ it('a failed old flush never requeues a stale snapshot after a newer successful 
   aiHistoryStorage.setItem('legacy', JSON.stringify({ version: 2, state: { conversations: [conversation, newer], activeId: 'c2' } })); const fresh = flushAiHistory();
   rejectOld(new Error('temporary IO error')); await Promise.all([old, fresh]); await flushAiHistory();
   const calls = api.invoke.mock.calls.filter(([name]) => name === 'ai_history_sync'); expect(calls.length).toBe(2); expect(calls.some(([, args]) => args?.deleted?.includes('c2'))).toBe(false);
+});
+
+
+it('defers reading and serializing messages until flush and saves only the latest snapshot', async () => {
+  const { deferredAiHistoryStorage, flushAiHistory } = await import('../../src/domains/ai/history_storage');
+  api.invoke.mockResolvedValue(undefined);
+  let reads = 0;
+  const entry = { ...conversation, providerId: 'p', model: 'm', mode: 'ask' as const, phase: 'plan' as const, draft: '', busy: false, status: 'idle', inputTokens: 0, outputTokens: 0,
+    get messages() { reads++; return [{ id: 'm', role: 'assistant' as const, text: 'latest' }]; },
+  };
+  for (let i = 0; i < 20; i++) deferredAiHistoryStorage.setItem('history', { version: 2, state: { conversations: [entry], activeId: entry.id } });
+  expect(reads).toBe(0);
+  await flushAiHistory();
+  expect(reads).toBe(1);
+  expect(api.invoke).toHaveBeenCalledTimes(1);
+  expect(api.invoke.mock.calls[0][1].documents[0].messages[0].text).toBe('latest');
 });

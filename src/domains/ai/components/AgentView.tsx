@@ -311,7 +311,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   const [providerId, setProviderId] = useState(settings.defaultProvider ?? settings.providers[0]?.id ?? '');
   const [model, setModel] = useState(() => getSavedModel(settings.defaultProvider ?? settings.providers[0]?.id ?? '', settings.defaultModel));
   const [phase, setPhase] = useState<AgentPhase>('plan');
-  const [mode, setMode] = useState<AgentMode>('read_only');
+  const [mode, setMode] = useState<AgentMode>('ask');
   const draft = useAiStore(s => s.homeDraft);
   const setDraft = useAiStore(s => s.setHomeDraft);
   const [sending, setSending] = useState(false);
@@ -445,14 +445,13 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
                 const label = PHASE_LABELS[key] ?? key;
                 const isTooling = key === 'tooling';
                 const isSelected = isTooling ? (phase === 'tooling' || phase === 'action') : phase === 'plan';
-                const disabled = (isTooling && mode === 'read_only');
+                const disabled = false;
                 return (
                   <button
                     key={key}
                     type="button"
                     aria-pressed={isSelected}
                     disabled={disabled}
-                    title={isTooling && mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
                     onClick={() => setPhase(key as AgentPhase)}
                   >
                     {label}
@@ -469,7 +468,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
                   aria-pressed={mode === value}
                   onClick={() => {
                     setMode(value);
-                    if (value === 'read_only') setPhase('plan');
+
                   }}
                 >
                   {label}
@@ -717,7 +716,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       <Button size="sm" variant="ghost" onClick={onSettings}><Settings size={13} aria-hidden="true" />Permissions</Button>
     </header>
 
-    {c.contextReset&&<p className="ai-notice">Provider/model changed. A fresh Read only + Plan session will receive your next message; previous transcript and evidence are historical.</p>}
+    {c.contextReset&&<p className="ai-notice">This is a fresh session. Earlier messages are historical; use Branch here to include them as context.</p>}
     <div className="ai-transcript-container">
       <div
         ref={transcript}
@@ -872,14 +871,13 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
                 const label = PHASE_LABELS[key] ?? key;
                 const isTooling = key === 'tooling';
                 const isSelected = isTooling ? (c.phase === 'tooling' || c.phase === 'action') : c.phase === 'plan';
-                const disabled = (isTooling && c.mode === 'read_only') || modePending || c.invalidated;
+                const disabled = modePending || c.invalidated;
                 return (
                   <button
                     key={key}
                     type="button"
                     aria-pressed={isSelected}
                     disabled={disabled}
-                    title={isTooling && c.mode === 'read_only' ? 'Action is forbidden in Read only mode; switch to Ask or Accept first' : undefined}
                     onClick={() => void phase(key as AgentPhase)}
                   >
                     {label}
@@ -1001,7 +999,7 @@ function ActionApprovalCard({
   const title = simple?.title ?? (yaml ? 'Review and Approve YAML Mutation' : deleting ? 'Approve Resource Deletion' : 'Action Approval Required');
   const summary = simple ? review : details?.kind === 'batch' ? `Perform ${details.steps.length} operations on the selected resources.` : details?.steps[0]?.summary ?? review;
   const diffContent = yaml && details.steps[0]?.diff ? details.steps[0].diff : '';
-  const formatted = formatManifestOrDiff(diffContent);
+  const formatted = diffContent ? formatManifestOrDiff(diffContent) : { code: '', language: 'yaml' as const };
 
   return (
     <div className="ai-action-approval-card my-3 p-4 rounded-lg border-2 border-amber-500/40 bg-[var(--bg-secondary)] shadow-lg animate-fade-in max-w-[900px] mx-auto">
@@ -1024,8 +1022,9 @@ function ActionApprovalCard({
       </div>
 
       <p className="text-xs text-[var(--text-secondary)] mb-3 leading-relaxed">
-        {summary}
+        {simple ? summary.split('\n')[0] : summary}
       </p>
+      {simple && summary.includes('\n') && <details className="mb-3 text-xs"><summary>Tool arguments</summary><pre className="overflow-auto max-h-48 whitespace-pre-wrap">{summary.slice(summary.indexOf('\n') + 1)}</pre></details>}
 
       {formatted.code ? (
         <div className="mb-3 rounded border border-[var(--border-default)] overflow-hidden">
@@ -1054,7 +1053,7 @@ function ActionApprovalCard({
           variant={deleting ? 'danger' : 'primary'}
           onClick={() => onResolve(true)}
         >
-          {deleting ? 'Confirm & Delete' : 'Approve & Apply'}
+          {simple?.confirm_label ?? (deleting ? 'Delete' : 'Apply')}
         </Button>
       </div>
     </div>
@@ -1492,106 +1491,8 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
     const result = m.result;
     const proposal = result?.proposal === true && typeof result.yaml === 'string';
     const isAwaitingApproval = !result && c.status === 'awaiting_approval' && !!mutationPending;
-    const args = (m.call?.arguments || {}) as Record<string, any>;
-    const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
-    const intent = getToolIntent(m.call?.name ?? '', args);
-
     if (isAwaitingApproval && mutationPending) {
-      return (
-        <article className="ai-tool is-awaiting-approval" aria-label={`AI tool ${m.call?.name}`}>
-          <div className="ai-tool-header">
-            <div className="flex items-center gap-2 font-mono">
-              <ShieldAlert size={12} className="text-amber-400 animate-pulse" aria-hidden="true" />
-              <span className="ai-tooling-badge">ACTION</span>
-              <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
-              <span className="font-semibold">{m.call?.name}</span>
-              {targetSummary && (
-                <span className="ai-tool-badge font-mono truncate max-w-[200px]" title={targetSummary}>
-                  {targetSummary}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="ai-tool-status font-medium text-amber-400 font-semibold">
-                Awaiting your approval
-              </span>
-            </div>
-          </div>
-
-          <div className="ai-tool-content">
-            <div className="ai-command-rationale is-destructive">
-              <div className="ai-command-rationale-header">
-                <div className="flex items-center gap-1.5 font-medium">
-                  <ShieldAlert size={12} className="text-amber-400" aria-hidden="true" />
-                  <span>Action Confirmation Required</span>
-                </div>
-                <span className="ai-destructive-pill text-amber-300 bg-amber-500/20 border-amber-500/40">Action Confirmation Required</span>
-              </div>
-              <p className="ai-command-rationale-title">{intent.title}</p>
-              <p className="ai-command-rationale-desc">{intent.description}</p>
-            </div>
-
-            <div className="space-y-3 pt-1">
-              {mutationPending.simple ? (
-                <p className="text-xs text-[var(--text-secondary)]">{mutationPending.review}</p>
-              ) : (
-                (() => {
-                  const appliedYaml = typeof m.call?.arguments?.yaml === 'string' ? m.call.arguments.yaml : undefined;
-                  const diffRaw = mutationPending.details?.steps[0]?.diff || '';
-                  const formatted = formatManifestOrDiff(diffRaw, appliedYaml);
-                  const isDeleting = mutationPending.details?.steps.some(step => step.operation === 'DELETE') ?? false;
-
-                  return (
-                    <div className="space-y-2">
-                      {formatted.code ? (
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--text-secondary)]">
-                            <span>{appliedYaml ? 'Proposed YAML manifest to apply:' : 'Resource change preview:'}</span>
-                            <span className="font-mono text-[10px] text-[var(--text-muted)]">YAML</span>
-                          </div>
-                          <div className="rounded border border-[var(--border-default)] overflow-hidden">
-                            <CodeEditor
-                              ariaLabel="Cluster mutation preview"
-                              value={formatted.code}
-                              language={formatted.language}
-                              readOnly={true}
-                              height="min(38vh, 280px)"
-                              copyable={true}
-                              variant="field"
-                            />
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-[var(--border-subtle)]">
-                        <span className="text-xs text-[var(--text-secondary)] font-medium">
-                          {isDeleting ? 'Confirm deletion of this resource?' : 'Approve applying this mutation to the cluster?'}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => void resolveMutation(false)}
-                          >
-                            Decline
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={isDeleting ? 'danger' : 'primary'}
-                            onClick={() => void resolveMutation(true)}
-                          >
-                            {isDeleting ? 'Confirm & Delete' : 'Approve & Apply'}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()
-              )}
-            </div>
-          </div>
-        </article>
-      );
+      return <ActionApprovalCard request={mutationPending} onResolve={approved => void resolveMutation(approved)} />;
     }
 
     if (proposal) {
@@ -1626,7 +1527,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
                   variant="field"
                 />
               </div>
-              {c.mode !== 'read_only' && !c.busy && (
+              {c.phase !== 'plan' && !c.busy && (
                 <div className="mt-2.5">
                   <Button size="sm" variant="primary" onClick={() => {
                     useAiStore.getState().update(c.id, { draft: `Apply the following YAML proposal using apply_manifest:\n\`\`\`yaml\n${String(result.yaml)}\n\`\`\`` });

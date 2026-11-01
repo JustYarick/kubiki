@@ -253,13 +253,50 @@ function PolicySettings({
     <div className="ai-section-header">
       <div>
         <h3>Agent permissions & data access</h3>
-        <p className="ai-help">Backend-enforced restrictions. Plan phase strictly forbids cluster writes; Ask requires explicit confirmation; Accept executes permitted operations automatically.</p>
+        <p className="ai-help">Plan blocks changes. Ask confirms tools; Auto accept runs permitted tools automatically.</p>
       </div>
       <Button size="sm" variant="primary" aria-label="Save agent permissions" disabled={!desktopAiAvailable() || saving} loading={saving} onClick={() => void commit()}>
         <Save size={12} aria-hidden="true" />Save permissions
       </Button>
     </div>
 
+    <details className="ai-settings-card">
+      <summary>Always ask</summary>
+      <p className="ai-help">Confirm these tools even in Auto accept. Access restrictions still apply.</p>
+      <div className="grid grid-cols-2 gap-2">{[
+        ['propose_manifests', 'Propose manifests'],
+        ['get_plan', 'Get plan'],
+        ['propose_plan', 'Propose plan'],
+        ['verify_workload', 'Verify workload'],
+        ['get_evidence', 'Get evidence'],
+        ['set_working_scope', 'Set working scope'],
+        ['list_namespaces', 'List namespaces'],
+        ['summarize_resources', 'Summarize resources'],
+        ['list_resources', 'List resources'],
+        ['get_resource', 'Get resource'],
+        ['get_pod_diagnostics', 'Get pod diagnostics'],
+        ['get_workload_diagnostics', 'Get workload diagnostics'],
+        ['get_service_diagnostics', 'Get service diagnostics'],
+        ['get_pvc_diagnostics', 'Get pvc diagnostics'],
+        ['get_node_diagnostics', 'Get node diagnostics'],
+        ['get_config_diagnostics', 'Get config diagnostics'],
+        ['resource_catalog', 'Resource catalog'],
+        ['get_events', 'Get events'],
+        ['get_events_timeline', 'Get events timeline'],
+        ['get_logs', 'Get logs'],
+        ['get_metrics', 'Get metrics'],
+        ['list_helm_releases', 'List helm releases'],
+        ['get_helm_release', 'Get helm release'],
+        ['list_argocd_apps', 'List argocd apps'],
+        ['get_argocd_app', 'Get argocd app'],
+        ['list_flux_resources', 'List flux resources'],
+        ['get_flux_resource', 'Get flux resource'],
+        ['apply_manifest', 'Apply manifest'],
+        ['scale_workload', 'Scale workload'],
+        ['restart_workload', 'Restart workload'],
+        ['delete_resource', 'Delete resource'],
+      ].map(([tool, label]) => <label key={tool} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={(policy.alwaysAsk ?? []).includes(tool)} disabled={saving} onChange={e => patch({ alwaysAsk: e.target.checked ? [...(policy.alwaysAsk ?? []), tool] : (policy.alwaysAsk ?? []).filter(name => name !== tool) })} />{label}</label>)}</div>
+    </details>
     <PolicyPreview policy={policy} />
     <div className="ai-form-line"><span>Draft permission profile (replaces rules; v1 first-match):</span>{PERMISSION_PROFILES.map(profile=><Button key={profile} size="sm" onClick={()=>patch(permissionProfile(policy,profile))}>{profile}</Button>)}</div>
     <fieldset className="ai-fieldset" disabled={saving}>
@@ -326,7 +363,7 @@ function PolicySettings({
       <div className="ai-settings-card">
         <h4>Default Write Permissions</h4>
         <Writes value={policy.writes} onChange={writes => patch({ writes })} />
-        <p className="ai-help mt-2">Active only when session is in Action phase and mode is Ask or Accept. In Plan phase, all write operations are completely blocked.</p>
+        <p className="ai-help mt-2">Changes are available only in Action.</p>
       </div>
 
       <div className="ai-settings-card">

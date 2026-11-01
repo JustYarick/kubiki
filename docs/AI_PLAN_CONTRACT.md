@@ -7,7 +7,7 @@
 ## Результат Investigate with AI
 
 Карточка ресурса передаёт только identity и intent `investigate`. Разговор начинается
-в Read only + Plan. Агент собирает разрешённые evidence, формулирует диагноз и
+в Plan + Ask. Агент собирает разрешённые evidence, формулирует диагноз и
 неопределённость, затем вызывает `propose_plan` с `kind=remediation`.
 Если после плана собраны новые данные, итоговый remediation plan требуется обновить.
 Runtime допускает один корректирующий проход при ответе без плана; повторное
@@ -82,15 +82,16 @@ revision используется review token и проверяется пер�
 
 ## Review → execution → verification
 
-1. Пользователь явно выбирает Ask/Accept и Action, затем шаги конкретной версии.
-2. Native review повторно проверяет scope, права операции, YAML и identity.
+1. Пользователь явно выбирает Ask/Auto accept и Action, затем шаги конкретной версии.
+2. Кнопка Apply selected steps автоматически запускает native review, который повторно проверяет scope, права операции, YAML и identity.
    Текущие UID/resourceVersion или отсутствие объекта закрепляются в token на 5 минут.
    На один ресурс — одно изменение в таком плане; изменения одного объекта нужно
    объединить либо рассматривать отдельной следующей версией.
-3. Отдельная кнопка Execute reviewed steps передаёт только одноразовый token.
+3. После review UI передаёт только одноразовый token для исполнения.
+   Ask и Always ask показывают native confirmation; Auto accept выполняет разрешённые шаги без дополнительного вопроса.
    Изменить payload/target/version через этот запрос нельзя. Это не tool модели.
 4. Каждый шаг проходит существующие PreparedMutation/MutationGuard. Ask дополнительно
-   показывает native review конкретного изменения. Accept требует текущей policy.
+   показывает native review конкретного изменения. Auto accept также требует текущей policy.
    Изменение объекта после review, Stop, смена mode/phase/config отзывает будущую отправку.
 5. Принятый write получает durable receipt. UID из ответа API хранится native и
    используется при проверке созданного объекта; объект-замена не считается успехом.
@@ -126,4 +127,4 @@ Evidence IDs принадлежат исходной native-сессии. При
 
 SQLite history хранит очищенный transcript, а не runtime replay/approvals. Tool
 payloads и PlanArtifact bodies по умолчанию не сохраняются. Восстановление всегда
-Read only + Plan; старый transcript не пересылается модели автоматически.
+Plan + Ask; старый transcript не пересылается модели автоматически.

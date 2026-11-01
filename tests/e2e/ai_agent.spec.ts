@@ -17,7 +17,8 @@ async function setup(page: Page) {
       transformCallback: (callback: unknown) => { callbacks.set(++sequence, callback); return sequence; }, unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
         if (command.startsWith('ai_')) commands.push({ command, args: { ...args, onEvent: undefined } });
-        if (command === 'plugin:event|listen') return ++sequence;
+        if (command === 'plugin:event|listen') { if(args.event === 'mutation-confirm-request') w.__aiHarness.confirm = (payload: any) => (callbacks.get(args.handler) as ((event: any) => void) | undefined)?.({event: args.event, payload}); return ++sequence; }
+        if (command === 'resolve_mutation_confirm') { w.__aiHarness.decision = args.approved; w.__aiHarness.resolveApproval?.(); return true; }
         if (command === 'plugin:event|unlisten' || command.startsWith('stop_')) return;
         if(command==='ai_history_load')return{conversations:[...history.values()],preferences:historyPrefs,migrated:true};
         if(command==='ai_history_sync'){for(const id of args.deleted)history.delete(id);if(historyPrefs.enabled)for(const c of args.documents)history.set(c.id,structuredClone(c));return;}
@@ -53,6 +54,16 @@ async function setup(page: Page) {
         if (command === 'ai_send_message') {
           sends.push(args); const emit = (event: object) => args.onEvent.onmessage(event);
           emit({ type: 'status', status: 'running' });
+          if (w.__aiHarness.readApproval) {
+            emit({type:'tool_started',call:{id:'read',name:'get_logs',arguments:{namespace:'apps',name:'web'}}});
+            emit({type:'status',status:'awaiting_approval'});
+            await new Promise<void>(resolve => {
+              w.__aiHarness.resolveApproval = resolve;
+              w.__aiHarness.confirm({id:'approval',resource:{context:'prod',kind:'Pod',name:'web',namespace:'apps'},review:'Run get_logs? Results are shared with the selected model.\n{"namespace":"apps","name":"web"}',simple:{title:'Allow agent tool?',confirm_label:'Allow once',destructive:false}});
+            });
+            emit({type:'tool_completed',id:'read',result:{message:w.__aiHarness.decision ? 'Read completed' : 'Read declined'}});
+            emit({type:'status',status:'completed'}); return;
+          }
           if (w.__aiHarness.hold) {
             emit({ type: 'text_delta', text: 'Collecting permitted evidence…' });
             await new Promise<void>(resolve => { sessions.get(args.sessionId).finish = () => { emit({ type: 'status', status: 'cancelled' }); resolve(); }; });
@@ -86,13 +97,13 @@ async function openAgent(page: Page) {
   return page.getByRole('region', { name: 'AI Agent workspace', exact: true });
 }
 
-test('integrated chat discovers models, streams safe Markdown, changes modes and starts new chats read only', async ({ page }) => {
+test('integrated chat discovers models, streams safe Markdown, changes modes and starts new chats in Plan and Ask', async ({ page }) => {
   const errors = await setup(page); let trackingRequests = 0;
   await page.route('https://tracking.invalid/**', route => { trackingRequests++; return route.abort(); });
   const agent = await openAgent(page);
-  await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: 'Ask', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(agent.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeDisabled();
+  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeEnabled();
   await expect(agent.getByRole('combobox', { name: 'Conversation AI model' })).toHaveValue('model-from-endpoint');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain Pending Pods');
   await agent.getByRole('button', { name: 'Send', exact: true }).click();
@@ -107,12 +118,12 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeEnabled();
   await agent.getByRole('button', { name: /^(?:Tooling|Action)$/ }).click();
   await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toHaveAttribute('aria-pressed', 'true');
-  await agent.getByRole('button', { name: 'Accept', exact: true }).click();
+  await agent.getByRole('button', { name: 'Auto accept', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.modes.at(-1)?.mode)).toBe('accept');
   await agent.getByRole('button', { name: 'New AI conversation', exact: true }).click();
-  await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: 'Ask', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(agent.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeDisabled();
+  await expect(agent.getByRole('button', { name: /^(?:Tooling|Action)$/ })).toBeEnabled();
   await expect(agent.getByRole('combobox', { name: 'AI conversation cluster' })).toHaveValue('kubiki-demo');
   await agent.getByRole('combobox', { name: 'AI conversation cluster' }).selectOption('general');
   await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain Kubernetes architecture');
@@ -155,9 +166,12 @@ test('provider credentials stay out of rendered settings and access rules persis
   await dialog.getByRole('textbox', { name: 'Rule 1 name', exact: true }).fill('nexus-credentials');
   await dialog.getByRole('combobox', { name: 'Rule 1 read access', exact: true }).selectOption('content');
   await dialog.getByRole('textbox', { name: 'Excluded AI field paths', exact: true }).fill('/data/private.conf');
+  await dialog.getByText('Always ask', { exact: true }).click();
+  await dialog.getByRole('checkbox', { name: 'Delete resource', exact: true }).check();
   await dialog.getByRole('button', { name: 'Save agent permissions', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy.rules[0]?.name)).toBe('nexus-credentials');
   const policy = await page.evaluate(() => (window as any).__aiHarness.settings().policy);
+  expect(policy.alwaysAsk).toEqual(['delete_resource']);
   expect(policy.secrets).toBe('metadata'); expect(policy.logs).toBe(true); expect(policy.writes).toEqual(['create']);
   expect(policy.deniedPaths).toEqual(['/data/private.conf']); expect(policy.rules[0].read).toBe('content');
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
@@ -190,7 +204,7 @@ test('resource entry points create conversations with pinned scope and YAML prop
   await page.getByTestId('explorer-panel').getByRole('button', { name: /^Services(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'Create with AI', exact: true }).click();
   await expect(agent.getByRole('textbox', { name: 'Message AI agent' })).toHaveValue(/Create a Service in Kubernetes/);
-  await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(agent.getByRole('button', { name: 'Ask', exact: true })).toHaveAttribute('aria-pressed', 'true');
   expect(errors).toEqual([]);
 });
 
@@ -218,27 +232,40 @@ test('a running conversation survives section navigation, Stop interrupts it and
   expect(errors).toEqual([]);
 });
 
-test('reasoning never gains a Plan badge and typed remediation requires explicit native review before execution',async({page})=>{
+test('reasoning never gains a Plan badge and typed remediation prepares native review and executes from one apply action',async({page})=>{
   const errors=await setup(page);const agent=await openAgent(page);let trackers=0;
   await page.route('https://example.invalid/**',route=>{trackers++;return route.abort();});
   await page.evaluate(()=>{(window as any).__aiHarness.planMode=true;});
   await agent.getByRole('textbox',{name:'Message AI agent'}).fill('Investigate readiness and propose remediation');await agent.getByRole('button',{name:'Send',exact:true}).click();
   const plan=agent.getByRole('article',{name:'Remediation plan: Restore workload capacity'});await expect(plan).toBeVisible();
   await expect(agent.locator('.ai-message .ai-plan-badge')).toHaveCount(0);await expect(plan.locator('img')).toHaveCount(0);expect(trackers).toBe(0);
-  await expect(plan.getByRole('button',{name:'Review selected steps'})).toBeDisabled();
+  await expect(plan.getByRole('button',{name:'Apply selected steps'})).toBeDisabled();
   await plan.getByRole('button',{name:'#e1',exact:true}).click();await expect(plan.getByText('Historical evidence; refresh before verification')).toBeVisible();
   await agent.getByRole('button',{name:'Ask',exact:true}).click();await agent.getByRole('button',{name:'Action',exact:true}).click();
-  await plan.getByRole('button',{name:'Review selected steps'}).click();await expect(plan.getByRole('region',{name:'Plan execution review'})).toBeVisible();
-  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.commands.filter((c:any)=>c.command==='ai_execute_plan').length)).toBe(0);
-  await plan.getByRole('button',{name:'Execute reviewed steps'}).click();await expect(plan.getByText('COMPLETED',{exact:true})).toBeVisible();
+  await plan.getByRole('button',{name:'Apply selected steps'}).click();await expect(plan.getByText('COMPLETED',{exact:true})).toBeVisible();
   expect(await page.evaluate(()=>(window as any).__aiHarness.commands.find((c:any)=>c.command==='ai_execute_plan').args.request)).toEqual(expect.objectContaining({reviewToken:expect.stringMatching(/^review-/)}));
   await page.evaluate(()=>{(window as any).__aiHarness.models.push({id:'another-model',name:'Another model',contextWindow:32768,maxOutputTokens:8192,tools:true});});
   await agent.getByRole('combobox',{name:'Conversation AI model'}).click();
   await agent.getByRole('combobox',{name:'Conversation AI model'}).selectOption('another-model');
-  await expect(agent.getByRole('button',{name:'Read only',exact:true})).toHaveAttribute('aria-pressed','true');
-  await expect(agent.getByText(/Provider\/model changed/)).toBeVisible();
+  await expect(agent.getByRole('button',{name:'Ask',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(agent.getByText(/This is a fresh session/)).toBeVisible();
   await expect(plan.getByRole('button',{name:'#e1',exact:true})).toBeDisabled();
-  await expect(plan.getByRole('button',{name:'Review selected steps'})).toBeDisabled();
+  await expect(plan.getByRole('button',{name:'Apply selected steps'})).toBeDisabled();
   await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.stops.at(-1)?.close)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+
+test('read tools have a compact working confirmation in Plan', async ({ page }) => {
+  const errors = await setup(page); const agent = await openAgent(page);
+  await expect(agent.getByRole('button', { name: 'Read only', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { (window as any).__aiHarness.readApproval = true; });
+  await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Read pod logs');
+  await agent.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(agent.getByText('Allow agent tool?', { exact: true })).toBeVisible();
+  await expect(agent.getByText('Tool arguments', { exact: true })).toBeVisible();
+  await agent.getByRole('button', { name: 'Allow once', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.decision)).toBe(true);
+  await expect(agent.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
   expect(errors).toEqual([]);
 });

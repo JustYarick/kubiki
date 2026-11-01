@@ -20,7 +20,7 @@ export function persistedMessage(message: ChatMessage): ChatMessage {
 export function migrateAiHistory(value: unknown): { conversations: Conversation[]; activeId: string | null } {
   const data = value && typeof value === 'object' ? value as { conversations?: unknown; activeId?: unknown } : {};
   const conversations = Array.isArray(data.conversations) ? data.conversations.filter(c => c && typeof c.id === 'string' && Array.isArray(c.messages)).map(c => ({
-    ...c, activePlan: undefined, sessionId: undefined, mode: 'read_only', phase: 'plan', busy: false, status: 'idle', draft: '',
+    ...c, activePlan: undefined, sessionId: undefined, contextReset: c.messages.length > 0, mode: 'ask', phase: 'plan', busy: false, status: 'idle', draft: '',
     messages: c.messages.filter((m: unknown) => m && typeof m === 'object' && typeof (m as ChatMessage).role === 'string' && typeof (m as ChatMessage).text === 'string').map(persistedMessage),
   } as Conversation)) : [];
   return { conversations, activeId: typeof data.activeId === 'string' && conversations.some(c => c.id === data.activeId) ? data.activeId : null };

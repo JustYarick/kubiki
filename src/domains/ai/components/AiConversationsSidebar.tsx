@@ -257,7 +257,7 @@ export const AiConversationsSidebar: React.FC = () => {
                     <span>{c.scope.context || 'General'}</span>
                   </span>
                   <small>
-                    {PHASE_LABELS[c.phase]} · {MODE_LABELS[c.mode]}
+                    {PHASE_LABELS[c.phase]} · {MODE_LABELS[c.mode === 'read_only' ? 'ask' : c.mode]}
                   </small>
                 </div>
               </button>
@@ -320,7 +320,7 @@ export const AiConversationsSidebar: React.FC = () => {
       </div>
 
       <p className="ai-help">
-        Conversations are stored locally on this device in Read-only Plan mode.
+        History is stored locally. Restored chats start in Plan.
       </p>
       <Button size="sm" onClick={() => state.setSettingsOpen(true)}>
         <Settings size={13} aria-hidden="true" />

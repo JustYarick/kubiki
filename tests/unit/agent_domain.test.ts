@@ -31,9 +31,9 @@ beforeEach(() => {
 });
 
 describe('AI domain conversations', () => {
-  it('always creates read-only conversations in plan phase and applies explicit mode and phase', async () => {
+  it('creates Ask conversations in plan phase and applies explicit mode and phase', async () => {
     const id = useAiStore.getState().create(scope, 'Scale my workload');
-    expect(useAiStore.getState().conversations[0].mode).toBe('read_only');
+    expect(useAiStore.getState().conversations[0].mode).toBe('ask');
     expect(useAiStore.getState().conversations[0].phase).toBe('plan');
     await useAiStore.getState().setMode(id, 'ask');
     await useAiStore.getState().setPhase(id, 'action');
@@ -45,19 +45,16 @@ describe('AI domain conversations', () => {
     expect(useAiStore.getState().conversations[0].draft).toBe('');
   });
 
-  it('rejects action phase while in read-only mode and resets to plan when switching to read-only', async () => {
+  it('keeps phase independent from confirmation mode', async () => {
     const id = useAiStore.getState().create(scope, 'Explore');
     await useAiStore.getState().setPhase(id, 'action');
-    expect(useAiStore.getState().conversations[0].phase).toBe('plan');
-    expect(useAiStore.getState().conversations[0].error).toContain('Switch to Ask or Accept');
-
-    await useAiStore.getState().setMode(id, 'ask');
-    await useAiStore.getState().setPhase(id, 'action');
     expect(useAiStore.getState().conversations[0].phase).toBe('action');
-
-    await useAiStore.getState().setMode(id, 'read_only');
-    expect(useAiStore.getState().conversations[0].mode).toBe('read_only');
-    expect(useAiStore.getState().conversations[0].phase).toBe('plan');
+    await useAiStore.getState().setMode(id, 'accept');
+    expect(useAiStore.getState().conversations[0].phase).toBe('action');
+    await useAiStore.getState().setMode(id, 'ask');
+    expect(useAiStore.getState().conversations[0].phase).toBe('action');
+    await useAiStore.getState().setPhase(id, 'plan');
+    expect(useAiStore.getState().conversations[0].mode).toBe('ask');
   });
 
   it('Stop during connection creation prevents the deferred message from being sent', async () => {
@@ -117,7 +114,7 @@ describe('AI domain conversations', () => {
     expect(c.providerId).toBe('provider');
     expect(c.model).toBe('dynamic:latest');
     expect(c.phase).toBe('plan');
-    expect(c.mode).toBe('read_only');
+    expect(c.mode).toBe('ask');
     expect(c.draft).toContain('UID original');
     expect(JSON.stringify(c)).not.toContain('private-source-value');
     expect(JSON.stringify(c)).not.toContain('annotation-source-value');
@@ -337,7 +334,7 @@ describe('AI history evidence retention', () => {
   it('migrates legacy tool outputs without restoring execution authority', () => {
     const history = migrateAiHistory({ conversations: [{ id: 'c', sessionId: 'old', mode: 'accept', phase: 'tooling', busy: true, messages: [{ id: 'm', role: 'tool', text: 'get_logs', result: { logs: 'private' } }] }], activeId: 'c' });
     expect(history.conversations[0].sessionId).toBeUndefined();
-    expect(history.conversations[0].mode).toBe('read_only');
+    expect(history.conversations[0].mode).toBe('ask');
     expect(history.conversations[0].phase).toBe('plan');
     expect(JSON.stringify(history)).not.toContain('private');
   });
@@ -418,7 +415,7 @@ it('resource investigations explicitly request a remediation artifact and retain
 it('changing a live provider/model creates a fresh read-only context without sending old evidence',async()=>{
   const id=useAiStore.getState().create(scope,'Question');await useAiStore.getState().send(id);
   useAiStore.getState().update(id,{model:'new-model'});const c=useAiStore.getState().conversations.find(c=>c.id===id)!;
-  expect(c.sessionId).toBeUndefined();expect(c.mode).toBe('read_only');expect(c.phase).toBe('plan');expect(c.contextReset).toBe(true);
+  expect(c.sessionId).toBeUndefined();expect(c.mode).toBe('ask');expect(c.phase).toBe('plan');expect(c.contextReset).toBe(true);
   expect(agentTransport.stop).toHaveBeenCalledWith('native',true);
 });
 

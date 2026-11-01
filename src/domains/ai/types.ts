@@ -17,6 +17,7 @@ export interface ModelInfo { id: string; name: string; contextWindow: number | n
 export interface AgentScope { context: string; namespaces: string[]; allNamespaces: boolean }
 export interface ResourceRule { group: string; kind: string; namespace: string; name: string; read: DataAccess; writes: WriteOperation[] }
 export interface AgentPolicy {
+  alwaysAsk?: string[];
   schemaVersion?:number;ruleResolution?:'first_match'|'deny_overrides';allowedFields?:string[];
   resources: boolean; events: boolean; logs: boolean; metrics: boolean;
   clusterResources: boolean; secrets: DataAccess; configMaps: DataAccess;
@@ -95,7 +96,7 @@ export interface Conversation {
 }
 
 export const WRITE_OPERATIONS: WriteOperation[] = ['create', 'update', 'delete', 'scale', 'restart'];
-export const MODE_LABELS: Record<AgentMode, string> = { read_only: 'Read only', ask: 'Ask', accept: 'Accept' };
+export const MODE_LABELS = { ask: 'Ask', accept: 'Auto accept' };
 export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'Action', action: 'Action' };
 
 export function defaultPolicy(): AgentPolicy {
