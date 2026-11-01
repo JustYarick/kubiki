@@ -41,6 +41,9 @@ import { desktopAiAvailable } from '../transport';
 import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
 import { isPlanArtifact } from '../plan_contract';
 import { PlanArtifactCard } from './PlanArtifactCard';
+import { highlightSkillChildren } from './SkillReferenceText';
+import { SkillComposer } from './SkillComposer';
+import { OpenCodePane } from './OpenCodePane';
 import { AgentSettings } from './AgentSettings';
 import { getToolIntent, getToolCallSummary } from '../tool_intents';
 import { getClusterTone } from '../../../core/cluster_color';
@@ -81,7 +84,14 @@ const statusLabels: Record<string, string> = {
   executing: 'Applying change', completed: 'Complete', cancelled: 'Stopped', stopping: 'Stopping; awaiting in-flight requests', failed: 'Failed',
 };
 
-export function AgentView({ visible = true }: { visible?: boolean }) {
+export function AgentView({visible=true}:{visible?:boolean}) {
+  const runtime=useAiStore(s=>s.settings.runtime);const settingsOpen=useAiStore(s=>s.settingsOpen);
+  useEffect(()=>{void useAiStore.getState().load();},[]);
+  if(runtime!=='open_code')return <KubikiAgentView visible={visible}/>;
+  return <><OpenCodePane visible={visible}/><Modal title="AI Agent settings" width={900} footer={<Button size="sm" onClick={()=>useAiStore.getState().setSettingsOpen(false)}>Done</Button>} open={settingsOpen} onClose={()=>useAiStore.getState().setSettingsOpen(false)}><AgentSettings/></Modal></>;
+}
+
+function KubikiAgentView({ visible = true }: { visible?: boolean }) {
   const state = useAiStore();
   const conversation = state.conversations.find(c => c.id === state.activeId);
   const settingsOpen = state.settingsOpen;
@@ -468,7 +478,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
         </div>
 
         {/* Fixed-size textarea */}
-        <textarea
+        <SkillComposer
           ref={input}
           aria-label="Message AI agent"
           className="ai-composer-card-textarea kubiki-scrollbar"
@@ -476,7 +486,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
           maxLength={24000}
           rows={3}
           placeholder="Ask a question or describe what you want to create…"
-          onChange={e => setDraft(e.target.value)}
+          onValueChange={setDraft}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -893,7 +903,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
 
         {/* Fixed-size textarea */}
         <label className="sr-only" htmlFor={`ai-message-${c.id}`}>Message AI agent</label>
-        <textarea
+        <SkillComposer
           ref={input}
           id={`ai-message-${c.id}`}
           aria-label="Message AI agent"
@@ -902,7 +912,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
           maxLength={24000}
           rows={3}
           placeholder="Ask a question or describe what you want to create…"
-          onChange={e => update(c.id, { draft: e.target.value })}
+          onValueChange={value => update(c.id, { draft: value })}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -1353,7 +1363,7 @@ function CompactToolMessage({
   conversation: Conversation;
 }) {
   const result = m.result;
-  const error = typeof result?.error === 'string' ? result.error : ['failed', 'cancelled', 'uncertain'].includes(String(result?.status)) ? `Change ${result?.status}; inspect the recorded outcome` : undefined;
+  const error = typeof result?.error === 'string' ? result.error : result?.isError === true ? 'MCP tool reported an error' : ['failed', 'cancelled', 'uncertain'].includes(String(result?.status)) ? `Change ${result?.status}; inspect the recorded outcome` : undefined;
   const isRunning = !result && c.busy;
   const args = (m.call?.arguments || {}) as Record<string, any>;
   const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
@@ -1457,7 +1467,10 @@ function CompactToolMessage({
               )}
             </Button>
           </div>
-          <pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre>
+          {m.call?.name === 'run_command' && result && !result.payloadOmitted ? <div>
+            <pre className="ai-tool-result kubiki-scrollbar" aria-label="Command output">{String(result.stdout ?? '')}{result.stderr ? `\n${result.stderr}` : ''}</pre>
+            <details><summary>Raw result</summary><pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre></details>
+          </div> : <pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre>}
         </div>
       )}
     </article>
@@ -1602,6 +1615,8 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           skipHtml
           urlTransform={url => /^https?:\/\//i.test(url) ? url : ''}
           components={{
+            p: ({ children }) => <p>{highlightSkillChildren(children)}</p>,
+            li: ({ children }) => <li>{highlightSkillChildren(children)}</li>,
             pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
             img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : '[Image omitted]'}</span>,
             a: ({ href, children }) => href ? (

@@ -30,6 +30,9 @@ async function setup(page: Page) {
         if (command === 'ai_get_settings') return { settings: { ...structuredClone(settings), providers: settings.providers.map(({ id, name, protocol, baseUrl }) => ({ id, name, protocol, baseUrl })) }, credentials: Object.fromEntries([...keys.keys()].map(id => [id, true])) };
         if (command === 'ai_save_settings') { settings = structuredClone(args.settings); return; }
         if (command === 'ai_set_credential') { if (args.apiKey) keys.set(args.providerId, args.apiKey); else keys.delete(args.providerId); return; }
+        if (command === 'ai_list_skills') return w.__aiHarness.skills ?? [{name:'cluster-debug',description:'Investigate a cluster using permitted evidence',directory:'/home/user/.agents/skills/cluster-debug'}];
+        if (command === 'ai_test_provider') { if(args.profile.baseUrl.includes('broken')) throw new Error('Provider connection failed'); return structuredClone(w.__aiHarness.models); }
+        if (command === 'ai_test_opencode') return {executable:'/usr/local/bin/opencode',version:'opencode v2.0.27'};
         if (command === 'ai_list_models') return structuredClone(w.__aiHarness.models);
         if (command === 'ai_create_session') { const id = `native-${++sequence}`; const session = { ...args.request, id, mode: 'read_only', phase: 'plan', policy }; sessions.set(id, session); return session; }
         if (command === 'ai_set_mode') {
@@ -292,5 +295,122 @@ test('global AI settings have subsections and find confirmations through search'
   await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toBeVisible();
   await dialog.getByRole('textbox', { name: 'Search settings', exact: true }).fill('confirmations');
   await expect(dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+
+test('provider can be tested before saving and skill completion works in both composers', async ({ page }) => {
+  const errors = await setup(page); const agent = await openAgent(page);
+  await agent.getByRole('button', {name:'AI settings',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
+  await dialog.getByRole('button',{name:'Connections & models',exact:true}).click();
+  await dialog.getByRole('button',{name:'Add provider',exact:true}).click();
+  await dialog.getByRole('textbox',{name:'AI API root'}).fill('https://unsaved.example/v1');
+  await dialog.getByLabel('AI API key',{exact:true}).fill('temporary-test-key');
+  const savedBefore=await page.evaluate(()=>(window as any).__aiHarness.commands.filter((c:any)=>c.command==='ai_save_settings').length);
+  await dialog.getByRole('button',{name:'Test connection',exact:true}).click();
+  await expect(dialog.getByText('Connected. 1 models available.',{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).__aiHarness.commands.filter((c:any)=>c.command==='ai_save_settings').length)).toBe(savedBefore);
+  await dialog.getByRole('textbox',{name:'AI API root'}).fill('https://broken.example/v1');
+  await dialog.getByRole('button',{name:'Test connection',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('Provider connection failed');
+  await dialog.getByRole('button',{name:'Done',exact:true}).click();
+  const composer=agent.getByRole('textbox',{name:'Message AI agent'});
+  await composer.fill('Use $cl');
+  const option=agent.getByRole('option',{name:/cluster-debug/}); await expect(option).toBeVisible();
+  await captureScreenshot(page, {path:'test-results/ai-skill-completion.png'});
+  await composer.press('Enter');
+  await expect(composer).toHaveValue('Use $cluster-debug ');
+  expect(await page.evaluate(()=>(window as any).__aiHarness.sends.length)).toBe(0);
+  await composer.press('Enter');
+  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.sends.length)).toBe(1);
+  await composer.fill('$cl'); await expect(agent.getByRole('listbox',{name:'Installed skills'})).toBeVisible();
+  await composer.press('Escape'); await expect(agent.getByRole('listbox',{name:'Installed skills'})).toHaveCount(0);
+  await composer.fill('$cluster'); await composer.press('Tab'); await expect(composer).toHaveValue('$cluster-debug ');
+  expect(errors).toEqual([]);
+});
+
+test('agent selection is in settings and OpenCode only exposes effective settings', async ({ page }) => {
+  const errors=await setup(page);const agent=await openAgent(page);
+  await agent.getByRole('button',{name:'AI settings',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
+  await expect(dialog.getByRole('combobox',{name:'AI agent',exact:true})).toHaveValue('kubiki');
+  await dialog.getByRole('combobox',{name:'AI agent',exact:true}).selectOption('open_code');
+  await expect(page.getByTestId('opencode-pane')).toBeVisible();
+  await expect(page.getByRole('textbox',{name:'Search conversations',exact:true})).toHaveCount(0);
+  await expect(dialog.getByRole('button',{name:'Connections & models',exact:true})).toHaveCount(0);
+  await expect(dialog.getByRole('button',{name:'Confirmations',exact:true})).toHaveCount(0);
+  await expect(dialog.getByRole('button',{name:'Skills',exact:true})).toHaveCount(0);
+  await dialog.getByRole('button',{name:'Check installation',exact:true}).click();
+  await expect(dialog.getByRole('status')).toContainText('opencode v2.0.27');
+  await dialog.getByRole('button',{name:'Cluster tools & data',exact:true}).click();
+  await expect(dialog.getByRole('checkbox',{name:'Logs',exact:true})).not.toBeChecked();
+  await dialog.getByRole('checkbox',{name:'Logs',exact:true}).check();
+  await dialog.getByRole('button',{name:'Save cluster access',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.settings().mcpPolicy?.logs)).toBe(true);
+  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(false);
+  await captureScreenshot(page,{path:'test-results/opencode-cluster-settings.png'});
+  await page.setViewportSize({width:375,height:812});
+  expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
+  await captureScreenshot(page,{path:'test-results/opencode-cluster-settings-narrow.png'});
+  await page.setViewportSize({width:1440,height:900});
+  await dialog.getByRole('button',{name:'Agent',exact:true}).click();
+  await dialog.getByRole('combobox',{name:'AI agent',exact:true}).selectOption('kubiki');
+  await expect(page.getByTestId('opencode-pane')).toHaveCount(0);
+  await dialog.getByRole('button',{name:'Connections & models',exact:true}).click();
+  await expect(dialog.getByRole('combobox',{name:'Saved AI connection',exact:true})).toHaveValue('local');
+  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test('skill keyboard navigation scrolls the full catalog and highlights selected references', async ({ page }) => {
+  const errors=await setup(page); const agent=await openAgent(page);
+  await page.evaluate(()=>{(window as any).__aiHarness.skills=Array.from({length:24},(_,index)=>({name:`skill-${String(index).padStart(2,'0')}`,description:'A skill with a description',directory:'/skills'}));});
+  const composer=agent.getByRole('textbox',{name:'Message AI agent'});
+  await composer.fill('$skill-');
+  const list=agent.getByRole('listbox',{name:'Installed skills'});
+  await expect(list.getByRole('option')).toHaveCount(24);
+  const pageTop=await page.evaluate(()=>document.scrollingElement?.scrollTop);
+  for(let index=0;index<23;index++)await composer.press('ArrowDown');
+  const last=list.getByRole('option',{selected:true}); await expect(last).toContainText('$skill-23');
+  const visible=await last.evaluate(node=>{const list=node.parentElement!;const item=node.getBoundingClientRect();const bounds=list.getBoundingClientRect();return item.top>=bounds.top&&item.bottom<=bounds.bottom;});
+  expect(visible).toBe(true); expect(await list.evaluate(node=>node.scrollTop)).toBeGreaterThan(0);
+  await expect(composer).toBeFocused(); expect(await page.evaluate(()=>document.scrollingElement?.scrollTop)).toBe(pageTop);
+  await composer.press('Enter'); await expect(composer).toHaveValue('$skill-23 ');
+  await expect(agent.locator('.ai-skill-token')).toHaveText('$skill-23');
+  await captureScreenshot(page,{path:'test-results/ai-skill-input-highlight.png'});
+  await composer.press('Enter');
+  await expect(agent.getByRole('article',{name:'Your message'}).locator('.ai-skill-reference')).toContainText('$skill-23');
+  await composer.fill('$skill-'); await expect(list).toBeVisible(); await composer.press('ArrowUp');
+  await expect(list.getByRole('option',{selected:true})).toContainText('$skill-23');
+  await captureScreenshot(page,{path:'test-results/ai-skills-scrolled.png'});
+  expect(errors).toEqual([]);
+});
+
+test('AI settings sections fit desktop and narrow dialogs without horizontal overflow', async ({ page }) => {
+  const errors=await setup(page); const agent=await openAgent(page);
+  await agent.getByRole('button',{name:'AI settings',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
+  for(const section of ['Connections & models','Confirmations','Data access','Scope & rules','Integrations','Skills','Instructions','History']) {
+    await dialog.getByRole('navigation',{name:'AI settings sections'}).getByRole('button',{name:section,exact:true}).click();
+    expect(await dialog.locator('.ai-settings-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
+  }
+  await dialog.getByRole('button',{name:'Skills',exact:true}).click();
+  await captureScreenshot(page,{path:'test-results/ai-settings-desktop.png'});
+  await page.setViewportSize({width:375,height:812}); await page.emulateMedia({reducedMotion:'reduce'});
+  for(const section of ['Confirmations','Data access','Scope & rules','Integrations','Skills']) {
+    await dialog.getByRole('navigation',{name:'AI settings sections'}).getByRole('button',{name:section,exact:true}).click();
+    expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
+    expect(await dialog.locator('.ai-settings-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
+  }
+  await captureScreenshot(page,{path:'test-results/ai-settings-narrow.png'});
+  await dialog.getByRole('button',{name:'Done',exact:true}).click();
+  await page.getByRole('banner').getByRole('button',{name:'Settings',exact:true}).click();
+  const global=page.getByRole('dialog',{name:'Settings',exact:true});
+  await global.getByRole('combobox',{name:'Settings category',exact:true}).selectOption('ai');
+  await global.getByRole('combobox',{name:'AI settings section',exact:true}).selectOption('environment');
+  await expect(global.getByRole('heading',{name:'Skills',exact:true})).toBeVisible();
+  expect(await global.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
+  await captureScreenshot(page,{path:'test-results/global-settings-narrow.png'});
   expect(errors).toEqual([]);
 });

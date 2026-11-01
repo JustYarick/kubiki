@@ -26,12 +26,16 @@ export async function connectHostTerminal(request: HostTerminalRequest, receive:
 export async function connectNodeExec(request: NodeExecRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
   return connectTerminal(request, receive, signal, 'node_exec');
 }
+export interface OpenCodeRequest { scope: import('../domains/ai/types').AgentScope; cols: number; rows: number; prompt: string | null }
+export async function connectOpenCode(request: OpenCodeRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
+  return connectTerminal(request,receive,signal,'host_terminal','start_opencode');
+}
 export async function getHostTerminalInfo(): Promise<HostTerminalInfo> {
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Local shell is available in the desktop app. Start Kubiki with pnpm tauri dev.', { operation: 'host_terminal' });
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<HostTerminalInfo>('get_host_terminal_info');
 }
-async function connectTerminal(request: ExecRequest | HostTerminalRequest | NodeExecRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal, target: 'pod_exec' | 'host_terminal' | 'node_exec', startCommand = `start_${target}`): Promise<ExecConnection> {
+async function connectTerminal(request: ExecRequest | HostTerminalRequest | NodeExecRequest | OpenCodeRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal, target: 'pod_exec' | 'host_terminal' | 'node_exec', startCommand = `start_${target}`): Promise<ExecConnection> {
   const node = target === 'node_exec';
   const info = 'resource' in request ? (node ? { operation: 'node_debug', context: request.resource.context } : { operation: 'exec', context: request.resource.context, resource: request.resource }) : { operation: 'host_terminal' };
   const routing = 'debug_session_id' in request ? { debugSessionId: request.debug_session_id } : {};

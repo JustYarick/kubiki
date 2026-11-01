@@ -707,3 +707,55 @@
 .ai-settings-navigation button { padding: 6px 10px; border-radius: 5px; color: var(--text-secondary); }
 .ai-settings-navigation button:hover { background: var(--bg-hover); color: var(--text-primary); }
 .ai-settings-navigation button[aria-current="page"] { background: var(--bg-selection); color: var(--text-primary); }
+
+.ai-skill-composer { position: relative; width: 100%; min-width: 0; }
+.ai-skill-options { position: absolute; bottom: 100%; left: 0; right: 0; z-index: 20; max-height: 240px; overflow-y: auto; padding: 4px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-secondary); box-shadow: 0 6px 24px #0004; }
+.ai-skill-options button { display: flex; flex-direction: column; width: 100%; padding: 8px 10px; text-align: left; border-radius: 4px; }
+.ai-skill-options button[aria-selected="true"], .ai-skill-options button:hover { background: var(--bg-hover); }
+.ai-skill-options span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; font-size: 11px; color: var(--text-secondary); }
+
+.ai-composer-card:has(.ai-skill-options) { overflow: visible; }
+
+/* Keep native textarea editing; the mirrored text supplies skill syntax colors. */
+.ai-skill-composer .ai-skill-highlight { position: absolute; inset: 0 auto auto 0; pointer-events: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: break-word; }
+.ai-skill-composer.has-skill-references textarea { position: relative; color: transparent; caret-color: var(--text-primary); }
+.ai-skill-token { color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 3px; }
+.ai-skill-reference { display: inline; font-family: var(--font-mono); font-size: .95em; color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 4px; padding: 0 3px; overflow-wrap: anywhere; }
+.ai-skill-options { position: absolute; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.ai-skill-options button { flex-shrink: 0; min-height: 48px; }
+.ai-skill-options strong { overflow-wrap: anywhere; }
+.ai-skill-options button[aria-selected="true"] { background: var(--bg-selection); box-shadow: inset 2px 0 var(--accent); }
+.ai-settings { container-type: inline-size; }
+.ai-settings-layout { display: grid; grid-template-columns: 158px minmax(0, 1fr); gap: 20px; align-items: start; }
+.ai-settings-content { min-width: 0; }
+.ai-settings-layout > .ai-settings-navigation { position: sticky; top: 0; display: flex; flex-direction: column; flex-wrap: nowrap; gap: 4px; margin: 0; padding: 0 12px 0 0; border: 0; border-right: 1px solid var(--border-default); }
+.ai-settings-navigation button { text-align: left; min-height: 32px; overflow-wrap: anywhere; }
+.ai-settings-navigation button[aria-current="page"] { color: var(--text-primary); box-shadow: inset 2px 0 var(--accent); }
+.ai-settings .ai-section-header { flex-wrap: wrap; align-items: center; }
+.ai-settings .ai-section-header h3 { margin-bottom: 0; }
+.ai-settings .ai-help, .ai-settings code, .ai-mcp-tools { overflow-wrap: anywhere; }
+.ai-settings .ai-form-line h4 { margin-bottom: 0; }
+.ai-settings .ui-checkbox-row { align-items: flex-start; }
+.ai-settings input, .ai-settings select { max-width: 100%; }
+.ai-settings summary { cursor: pointer; padding: 4px 0; }
+.ai-settings summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.ai-mcp-tools { max-height: 240px; overflow-y: auto; margin-top: 8px; }
+.ai-mcp-tools li { padding: 6px 0; border-top: 1px solid var(--border-subtle); }
+.settings-mobile-navigation { display: none; }
+@container (max-width: 560px) {
+  .ai-settings-layout { display: block; }
+  .ai-settings-layout > .ai-settings-navigation { position: static; flex-direction: row; overflow-x: auto; padding: 0 0 10px; margin-bottom: 14px; border: 0; border-bottom: 1px solid var(--border-default); }
+  .ai-settings-navigation button { flex: 0 0 auto; white-space: nowrap; }
+}
+@media (max-width: 640px) {
+  .settings-dialog-layout { flex-direction: column; }
+  .settings-categories { display: none; }
+  .settings-mobile-navigation { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-default); }
+  .settings-mobile-navigation label { flex: 1 1 120px; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-secondary); }
+}
+@media (forced-colors: active) {
+  .ai-skill-composer .ai-skill-highlight { display: none; }
+  .ai-skill-composer.has-skill-references textarea { color: CanvasText; caret-color: CanvasText; }
+}
+.ai-settings .ai-form-line > div { min-width: 0; max-width: 100%; }
+.ai-settings .ai-field select { width: 100%; min-width: 0; }

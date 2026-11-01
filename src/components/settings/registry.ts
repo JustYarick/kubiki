@@ -28,11 +28,14 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: 'ai', title: 'AI assistant', icon: Bot, sectionTitle: 'AI assistant',
     entries: [
+      { id: 'ai.agent', label: 'Agent', description: 'Choose Kubiki or your installed OpenCode.', keywords: 'runtime opencode executable workspace' },
+      { id: 'ai.mcp', label: 'Cluster tools & data', description: 'Data and operations provided by Kubiki MCP to OpenCode.', keywords: 'exposure mcp namespaces cluster tools' },
       { id: 'ai.providers', label: 'Connections & models', description: 'Cloud and local connections, models and generation options.', keywords: 'openai anthropic ollama endpoint provider API key tokens temperature' },
       { id: 'ai.confirmations', label: 'Confirmations', description: 'Ask permission for reads or changes and always confirm selected tools.', keywords: 'ask auto accept approval consent always permissions' },
       { id: 'ai.access', label: 'Data access', description: 'Read access, Secrets, ConfigMaps, logs and allowed changes.', keywords: 'permissions read write sensitive replicas scale restart delete' },
       { id: 'ai.scope', label: 'Scope & rules', description: 'Cluster and namespace boundaries, resource rules and field filters.', keywords: 'contexts namespaces policy exclusions security' },
       { id: 'ai.integrations', label: 'Integrations', description: 'Helm, Argo CD and Flux inspection tools.', keywords: 'gitops helm argo flux' },
+      { id: 'ai.environment', label: 'Skills', description: 'Installed skills.sh skills for the integrated agent.', keywords: 'skills instructions environment' },
       { id: 'ai.instructions', label: 'Instructions', description: 'Preferred language, response style and investigation conventions.', keywords: 'prompt custom language behavior agent' },
       { id: 'ai.history', label: 'History', description: 'Local transcript storage, retention and export.', keywords: 'conversations archive privacy export retention' },
     ],

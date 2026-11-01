@@ -26,7 +26,8 @@ import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_rendering';
 import { cx } from '../../core/utils/cx';
-import { AgentSettings, AI_SETTINGS_PAGES, type AgentSettingsPage } from '../../domains/ai/components/AgentSettings';
+import { useAiStore } from '../../domains/ai/store';
+import { AgentSettings, availableAiSettingsPages, type AgentSettingsPage } from '../../domains/ai/components/AgentSettings';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
   entryMatches, filterPages, findEntry, findPage, firstMatchingPage,
@@ -742,12 +743,16 @@ export const SettingsDialog: React.FC = () => {
   const open = useUiStore((s) => s.settingsOpen);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const [query, setQuery] = useState('');
-  const [aiPage, setAiPage] = useState<AgentSettingsPage>('providers');
+  const [aiPage, setAiPage] = useState<AgentSettingsPage>('agent');
   const [pageId, setPageId] = useState<SettingsPageId>('appearance');
 
-  const pages = useMemo(() => filterPages(query), [query]);
+  const aiSettings=useAiStore(s=>s.settings);
+  const aiPages=availableAiSettingsPages(aiSettings);
+  const aiMode=aiSettings.runtime;
+  const pages = useMemo(() => filterPages(query).map(page=>page.id==='ai'?{...page,entries:page.entries.filter(entry=>availableAiSettingsPages({runtime:aiMode}).some(item=>entry.id===`ai.${item.id}`))}:page).filter(page=>page.entries.length>0 && (page.id!=='ai' || !query.trim() || page.entries.some(entry=>entryMatches(entry,query)) || /^(ai|agent|assistant)$/i.test(query.trim()))), [query,aiMode]);
   const activePage = pages.find((page) => page.id === pageId) ?? pages[0];
-  const selectedAiPage = query.trim() ? AI_SETTINGS_PAGES.find(item => entryMatches(findEntry(`ai.${item.id}`), query))?.id ?? aiPage : aiPage;
+  const requestedAiPage = query.trim() ? aiPages.find(item => entryMatches(findEntry(`ai.${item.id}`), query))?.id ?? aiPage : aiPage;
+  const selectedAiPage = aiPages.some(item=>item.id===requestedAiPage) ? requestedAiPage : 'agent';
   const resetHandler = activePage ? RESET_HANDLERS[activePage.id] : undefined;
 
   const close = () => setOpen(false);
@@ -784,10 +789,10 @@ export const SettingsDialog: React.FC = () => {
               }}
             />
           </div>
-          <div className="flex-1 min-h-0 flex border-t border-[var(--border-subtle)]">
+          <div className="settings-dialog-layout flex-1 min-h-0 flex border-t border-[var(--border-subtle)]">
             <nav
               aria-label="Settings categories"
-              className="w-[calc(216px*var(--ui-factor))] shrink-0 overflow-y-auto kubiki-scrollbar bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] px-1.5 py-2 space-y-0.5"
+              className="settings-categories w-[calc(216px*var(--ui-factor))] shrink-0 overflow-y-auto kubiki-scrollbar bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] px-1.5 py-2 space-y-0.5"
             >
               {pages.map((page) => {
                 const selected = activePage?.id === page.id;
@@ -809,7 +814,7 @@ export const SettingsDialog: React.FC = () => {
                     <span className="truncate"><Highlight text={page.title} query={query} /></span>
                   </button>
                   {page.id === 'ai' && selected && <div className="pl-5 py-1 space-y-0.5" aria-label="AI settings subsections">
-                    {AI_SETTINGS_PAGES.map(item => <button key={item.id} type="button" aria-current={selectedAiPage === item.id ? 'page' : undefined} className={cx('block w-full rounded px-2 py-1 text-left text-xs', selectedAiPage === item.id ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')} onClick={() => { setQuery(''); setAiPage(item.id); }}>{item.label}</button>)}
+                    {aiPages.map(item => <button key={item.id} type="button" aria-current={selectedAiPage === item.id ? 'page' : undefined} className={cx('block w-full rounded px-2 py-1 text-left text-xs', selectedAiPage === item.id ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')} onClick={() => { setQuery(''); setAiPage(item.id); }}>{item.label}</button>)}
                   </div>}
                   </React.Fragment>
                 );
@@ -818,6 +823,10 @@ export const SettingsDialog: React.FC = () => {
                 <p className="px-2.5 py-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No categories</p>
               )}
             </nav>
+            <div className="settings-mobile-navigation">
+              <label>Category<Select className="ide-select" aria-label="Settings category" value={activePage?.id ?? ''} onChange={e => setPageId(e.target.value as SettingsPageId)}>{pages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}</Select></label>
+              {activePage?.id === 'ai' && <label>Section<Select className="ide-select" aria-label="AI settings section" value={selectedAiPage} onChange={e => { setQuery(''); setAiPage(e.target.value as AgentSettingsPage); }}>{aiPages.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</Select></label>}
+            </div>
             <section
               aria-label={activePage ? `Settings: ${activePage.title}` : 'Search results'}
               className="flex-1 min-w-0 overflow-y-auto kubiki-scrollbar px-4 pb-4"

@@ -7,7 +7,10 @@ export interface ToolIntentInfo {
 }
 
 export function getToolIntent(name: string, args: Record<string, any> = {}): ToolIntentInfo {
+  if (name.startsWith('mcp_')) return { title: 'Call MCP tool', description: 'Uses an explicitly connected external server.', badge: 'MCP', color: 'purple' };
   switch (name) {
+    case 'run_command': return { title: `Run ${args.program ?? 'local command'}`, description: args.reason || 'Runs on this computer in the configured working directory.', badge: 'COMMAND', color: 'amber' };
+    case 'read_skill': return { title: `Read skill $${args.name ?? ''}`, description: 'Loads installed skill instructions or a reference file.', badge: 'SKILL', color: 'indigo' };
     case 'scale_workload': {
       const kind = args.kind || 'Workload';
       const resourceName = args.name ? `"${args.name}"` : '';
@@ -239,6 +242,9 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
 
 export function getToolCallSummary(name: string, args: Record<string, any> = {}, result?: Record<string, any>): string {
   if (!result) return 'Executing…';
+  if (name === 'run_command' && !result.error) return `Command exited ${result.exitCode ?? 'without an exit code'}`;
+  if (name === 'read_skill' && !result.error) return 'Skill file loaded';
+  if (name.startsWith('mcp_') && !result.error) return result.isError ? 'MCP tool reported an error' : 'MCP response received';
   if (result.error && typeof result.error === 'string') return `Failed: ${result.error}`;
   if (result.payloadOmitted) return result.operationId ? `Historical operation ${result.status ?? 'outcome unknown'} · Receipt: ${result.operationId}` : 'Historical tool payload omitted · refresh evidence';
   if (result.executed === false) return result.deferred ? 'Deferred pending user input' : 'Not executed';

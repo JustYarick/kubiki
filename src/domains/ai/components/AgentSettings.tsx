@@ -10,6 +10,9 @@ import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 import { PROVIDER_PRESETS, WRITE_OPERATIONS, type AgentPolicy, type AiSettings, type DataAccess, type ModelInfo, type OptionalToolMode, type ProviderProfile, type ProviderProtocol, type WriteOperation } from '../types';
 import { PERMISSION_PROFILES, permissionProfile } from '../permission_profiles';
 import { HistorySettings, PolicyPreview } from './PreferencePanels';
+import { AgentEnvironmentSettings } from './AgentEnvironmentSettings';
+import { AgentRuntimeSettings } from './AgentRuntimeSettings';
+import { McpAccessSettings } from './McpAccessSettings';
 import '../ai.css';
 
 const protocolNames: Record<ProviderProtocol, string> = {
@@ -18,15 +21,22 @@ const protocolNames: Record<ProviderProtocol, string> = {
 const EMPTY_MODELS: ModelInfo[] = [];
 
 export const AI_SETTINGS_PAGES = [
+  { id: 'agent', label: 'Agent' },
+  { id: 'mcp', label: 'Cluster tools & data' },
   { id: 'providers', label: 'Connections & models' },
   { id: 'confirmations', label: 'Confirmations' },
   { id: 'access', label: 'Data access' },
   { id: 'scope', label: 'Scope & rules' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'environment', label: 'Skills' },
   { id: 'instructions', label: 'Instructions' },
   { id: 'history', label: 'History' },
 ] as const;
 export type AgentSettingsPage = typeof AI_SETTINGS_PAGES[number]['id'];
+
+export function availableAiSettingsPages(settings: Pick<AiSettings, 'runtime'>) {
+  return AI_SETTINGS_PAGES.filter(item => settings.runtime === 'open_code' ? item.id === 'agent' || item.id === 'mcp' : item.id !== 'mcp');
+}
 
 export interface AgentSettingsHandle {
   save: () => Promise<boolean>;
@@ -43,9 +53,12 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
   { section = 'all', page: controlledPage, hideNavigation = false, onStatusChange },
   ref,
 ) {
-  const [selectedPage, setSelectedPage] = useState<AgentSettingsPage>(section === 'permissions' ? 'access' : 'providers');
-  const page = controlledPage ?? selectedPage;
-  const policyPage = page !== 'providers' && page !== 'history';
+  const [selectedPage, setSelectedPage] = useState<AgentSettingsPage>(section === 'permissions' ? 'access' : 'agent');
+  const settings = useAiStore(s=>s.settings);
+  const pages = availableAiSettingsPages(settings);
+  const requestedPage = controlledPage ?? selectedPage;
+  const page = pages.some(item=>item.id===requestedPage) ? requestedPage : 'agent';
+  const policyPage = page !== 'providers' && page !== 'history' && page !== 'environment' && page !== 'agent' && page !== 'mcp';
   const loaded = useAiStore(s => s.loaded);
   const loading = useAiStore(s => s.loading);
   const error = useAiStore(s => s.error);
@@ -67,14 +80,21 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
     {!desktopAiAvailable() && <p className="ai-notice">Configure AI providers and use cluster tools in the desktop app. This preview does not send cluster data or store API keys.</p>}
     {loading && <p role="status">Loading AI settings…</p>}
     {error && <div role="alert" className="ai-error">{error} <Button size="sm" onClick={() => void load()}>Reload settings</Button></div>}
-    {loaded && <>
+    {loaded && <div className={hideNavigation ? undefined : "ai-settings-layout"}>
       {!hideNavigation && <nav className="ai-settings-navigation" aria-label="AI settings sections">
-        {AI_SETTINGS_PAGES.map(item => <button type="button" key={item.id} aria-current={page === item.id ? 'page' : undefined} onClick={() => setSelectedPage(item.id)}>{item.label}</button>)}
+        {pages.map(item => <button type="button" key={item.id} aria-current={page === item.id ? 'page' : undefined} onClick={() => setSelectedPage(item.id)}>{item.label}</button>)}
       </nav>}
+      <div className="ai-settings-content">
+      {page==='agent' && <AgentRuntimeSettings />}
+      {page==='mcp' && <McpAccessSettings />}
+      {settings.runtime!=='open_code' && <>
       <div style={{ display: page === 'providers' ? undefined : 'none' }}><ProviderSettings /></div>
       <div style={{ display: page === 'history' ? undefined : 'none' }}><HistorySettings /></div>
+      <div style={{ display: page === 'environment' ? undefined : 'none' }}><AgentEnvironmentSettings /></div>
       <div style={{ display: policyPage ? undefined : 'none' }}><PolicySettings page={page} commitRef={policyCommitRef} onStatusChange={onStatusChange} /></div>
-    </>}
+      </>}
+      </div>
+    </div>}
   </div>;
 });
 
@@ -117,6 +137,16 @@ function ProviderSettings() {
       if (key) { await agentTransport.credential(profile.id, key); invalidateAiConversations(); setKey(''); await load(); }
       setMessage('Provider saved. Load its models to choose one.');
       await refresh(profile.id);
+    } catch (e) { setError(agentError(e)); }
+    finally { setWorking(false); }
+  }
+  async function testConnection() {
+    if (!profile) return;
+    setError(''); setMessage(''); setWorking(true);
+    try {
+      const discovered = await agentTransport.testProvider(profile, key || undefined);
+      if (!dirty) useAiStore.setState(state => ({ models: { ...state.models, [profile.id]: discovered } }));
+      setMessage(`Connected. ${discovered.length} models available.`);
     } catch (e) { setError(agentError(e)); }
     finally { setWorking(false); }
   }
@@ -168,6 +198,7 @@ function ProviderSettings() {
         <Input aria-label="AI API key" type="password" autoComplete="new-password" value={key} placeholder={credentials[profile.id] ? 'Leave empty to keep the stored key' : 'Enter API key if required'} onChange={e => setKey(e.target.value)} />
       </label>
       <div className="ai-form-line">
+        <Button size="sm" disabled={!desktopAiAvailable() || !profile.baseUrl.trim()} loading={working} onClick={() => void testConnection()}>Test connection</Button>
         <Button size="sm" variant="primary" disabled={!desktopAiAvailable() || !profile.name.trim()} onClick={() => void commit()}><Save size={12} aria-hidden="true" />Save provider</Button>
         {saved && <Button size="sm" variant="danger" disabled={!desktopAiAvailable()} onClick={() => void remove()}><Trash2 size={12} aria-hidden="true" />Remove connection</Button>}
         {saved && credentials[profile.id] && <Button size="sm" disabled={!desktopAiAvailable()} onClick={() => { setWorking(true); void agentTransport.credential(profile.id, null).then(() => { invalidateAiConversations(); return load(); }).catch(e => setError(agentError(e))).finally(() => setWorking(false)); }}>Remove API key</Button>}
@@ -267,9 +298,8 @@ function PolicySettings({
   }
 
   useEffect(() => {
-    if (commitRef) {
-      commitRef.current = commit;
-    }
+    if (commitRef) commitRef.current = commit;
+    return () => { if (commitRef?.current === commit) commitRef.current = null; };
   });
 
   const crds = useResourceStore(s => s.resources.CustomResourceDefinition);
@@ -297,6 +327,7 @@ function PolicySettings({
       <summary>Always ask</summary>
       <p className="ai-help">Confirm these tools even in Auto accept. Access restrictions still apply.</p>
       <div className="grid grid-cols-2 gap-2">{[
+        ['read_skill', 'Read skill files'],
         ['propose_manifests', 'Propose manifests'],
         ['get_plan', 'Get plan'],
         ['propose_plan', 'Propose plan'],

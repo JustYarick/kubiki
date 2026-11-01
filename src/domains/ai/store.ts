@@ -8,6 +8,8 @@ import { defaultSettings, type AgentEvent, type AgentMode, type AgentPhase, type
 import { useResourceStore } from '../../state/resource_store';
 
 interface AiState {
+  openCodeRequestConsumed?: string;
+  openCodeRequest?: {id:string;scope:AgentScope;prompt:string};
   settings: AiSettings; credentials: Record<string, boolean>; loaded: boolean; loading: boolean; saving: boolean; error?: string;
   models: Record<string, ModelInfo[]>; modelLoading: Record<string, boolean>; modelErrors: Record<string, string | undefined>;
   conversations: Conversation[]; activeId: string | null;
@@ -129,7 +131,7 @@ export const useAiStore = create<AiState>()(
         set({ saving: true, error: undefined });
         try {
           const before = get().settings;
-          const changed = JSON.stringify([before.providers, before.policy, before.instructions]) !== JSON.stringify([settings.providers, settings.policy, settings.instructions]);
+          const changed = JSON.stringify([before.providers, before.policy, before.instructions, before.environment, before.runtime, before.opencode, before.mcpPolicy]) !== JSON.stringify([settings.providers, settings.policy, settings.instructions, settings.environment, settings.runtime, settings.opencode, settings.mcpPolicy]);
           await agentTransport.save(settings);
           modelRevisions.forEach((revision, id) => modelRevisions.set(id, revision + 1));
           inspectedModels.clear();

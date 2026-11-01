@@ -27,7 +27,15 @@ export interface AgentPolicy {
   contexts: string[]; namespaces: string[]; writes: WriteOperation[];
   maxReplicas: number; rules: ResourceRule[]; deniedPaths: string[];
 }
+export interface SkillInfo { name: string; description: string; directory: string }
+export type AgentRuntime = 'kubiki' | 'open_code';
+export interface OpenCodeSettings { executable: string; workingDirectory: string }
 export interface AiSettings {
+  runtime?: AgentRuntime;
+  opencode?: OpenCodeSettings;
+  mcpPolicy?: AgentPolicy;
+  /** Inert legacy configuration, retained for lossless migration. */
+  environment?: unknown;
   providers: ProviderProfile[]; defaultProvider: string | null; defaultModel: string | null;
   options: GenerationOptions; policy: AgentPolicy; instructions: string;
 }
@@ -108,7 +116,7 @@ export function defaultPolicy(): AgentPolicy {
     rules: [], deniedPaths: [] };
 }
 export function defaultSettings(): AiSettings {
-  return { providers: [], defaultProvider: null, defaultModel: null, options: {}, policy: defaultPolicy(), instructions: '' };
+  return { runtime: 'kubiki', providers: [], defaultProvider: null, defaultModel: null, options: {}, policy: defaultPolicy(), instructions: '' };
 }
 
 /** These are connection presets, never a catalog of available model IDs. */

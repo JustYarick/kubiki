@@ -10,6 +10,9 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
   return invoke<T>(command, args);
 }
 export const agentTransport = {
+  testProvider: (profile: import('./types').ProviderProfile, apiKey?: string) => invoke<ModelInfo[]>('ai_test_provider', { profile, apiKey: apiKey || null }),
+  skills: () => invoke<import('./types').SkillInfo[]>('ai_list_skills'),
+  testOpenCode: (settings: import('./types').OpenCodeSettings) => invoke<{executable:string;version:string}>('ai_test_opencode', {settings}),
   evidence: (sessionId:string,evidenceId:string) => invoke<{data:Record<string,unknown>;warning:string}>('ai_get_evidence',{sessionId,evidenceId}),
   previewPolicy: (request: { policy: AiSettings['policy']; scope: AgentScope; target: {group:string;version:string;kind:string;namespace:string|null;name:string}; mode:AgentMode;phase:AgentPhase;operation?:string }) => invoke<{explanation:{allowed:boolean;explanation:string;dataAccess:string;writeAllowed:boolean};issues:Array<{ruleIndex:number;kind:string;message:string}>}>('ai_preview_policy', { request }),
   reviewPlan: (sessionId:string,planId:string,version:number,stepIds:string[]) => invoke<{reviewToken:string;plan:import('./types').PlanArtifact;steps:Array<{stepId:string;target:{kind:string;namespace:string|null;name:string};operation:string;call:ToolCall}>}>('ai_review_plan',{request:{sessionId,planId,version,stepIds}}),

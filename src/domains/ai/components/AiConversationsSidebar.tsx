@@ -18,6 +18,18 @@ function extractSnippet(text: string, term: string): string {
 }
 
 export const AiConversationsSidebar: React.FC = () => {
+  const runtime=useAiStore(s=>s.settings.runtime);
+  const setSettingsOpen=useAiStore(s=>s.setSettingsOpen);
+  if(runtime==='open_code') return <aside className="ai-conversations h-full w-full" aria-label="OpenCode agent">
+    <strong><Bot size={15} aria-hidden="true"/>OpenCode</strong>
+    <p className="ai-help">Use OpenCode’s terminal interface to manage conversations, models and permissions.</p>
+    <span className="ai-grow"/>
+    <Button size="sm" onClick={()=>setSettingsOpen(true)}><Settings size={13} aria-hidden="true"/>AI settings</Button>
+  </aside>;
+  return <KubikiConversationsSidebar/>;
+};
+
+const KubikiConversationsSidebar: React.FC = () => {
   const state = useAiStore();
   const [selectedClusterTag, setSelectedClusterTag] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');

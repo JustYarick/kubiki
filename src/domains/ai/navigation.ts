@@ -20,6 +20,11 @@ export function openAiChat(options: { resource?: ResourceItem; create?: boolean;
   const scope = currentAgentScope(resource?.namespace ?? options.namespace);
   const create = () => {
     const settings = useAiStore.getState().settings;
+    if(settings.runtime==='open_code') {
+      const id=crypto.randomUUID();
+      useAiStore.setState({openCodeRequest:{id,scope,prompt:draft.replace(/ and a structured remediation plan via propose_plan.*$/s,'')}});
+      return id;
+    }
     const providerId = settings.defaultProvider ?? settings.providers[0]?.id ?? '';
     const model = (providerId === settings.defaultProvider ? settings.defaultModel : '') || settings.defaultModel || '';
     const id=useAiStore.getState().create(
@@ -34,8 +39,8 @@ export function openAiChat(options: { resource?: ResourceItem; create?: boolean;
   };
   const store = useAiStore.getState();
   if (resource || options.create) {
-    create();
-    if (!store.loaded) void store.load();
+    if (store.loaded) create();
+    else void store.load().then(create);
   } else {
     const isTabOpen = useWorkspaceStore.getState().tabs.some(t => t.id === 'panel:ai-agent');
     if (!isTabOpen) {

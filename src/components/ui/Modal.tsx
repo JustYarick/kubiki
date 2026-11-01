@@ -36,7 +36,7 @@ export function Modal({ open, onClose, title, width = 480, children, footer, pad
       'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]'
     ) ?? []).filter((node) => node.getClientRects().length && !node.closest('[hidden], [inert]'));
     // Prefer the first field; dialogs with no fields start at their first action.
-    const field = dialogRef.current?.querySelector<HTMLElement>('input:not(:disabled), select:not(:disabled), textarea:not(:disabled)');
+    const field = focusable().find(node => node.matches('input, select, textarea'));
     (field ?? focusable()[0] ?? dialogRef.current)?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (modalStack[modalStack.length - 1] !== dialog || e.defaultPrevented) return;
