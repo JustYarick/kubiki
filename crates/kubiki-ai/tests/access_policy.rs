@@ -491,3 +491,19 @@ fn deny_priority_is_explicitly_versioned_and_never_silently_changes_legacy_rules
         Some(1)
     );
 }
+
+#[test]
+fn confirmation_mode_applies_to_reads_and_writes_without_granting_access() {
+    let mut policy = AgentPolicy::default();
+    for tool in ["get_resource", "get_logs", "delete_resource", "propose_plan"] {
+        assert!(policy.requires_confirmation(AgentMode::Ask, tool));
+        assert!(!policy.requires_confirmation(AgentMode::Accept, tool));
+    }
+    policy.always_ask = vec!["get_logs".into(), "delete_resource".into()];
+    assert!(policy.requires_confirmation(AgentMode::Accept, "get_logs"));
+    assert!(policy.requires_confirmation(AgentMode::Accept, "delete_resource"));
+    assert!(!policy.requires_confirmation(AgentMode::Accept, "get_resource"));
+    assert!(policy.writes.is_empty());
+    let restored: AgentPolicy = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert!(restored.always_ask.is_empty());
+}

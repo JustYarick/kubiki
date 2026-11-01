@@ -109,7 +109,7 @@ impl Session {
             scope,
             intent: AgentIntent::Chat,
             control: Arc::new(Mutex::new(Control {
-                mode: AgentMode::ReadOnly,
+                mode: AgentMode::Ask,
                 phase: AgentPhase::Plan,
                 policy,
                 policy_revision: POLICY_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -499,7 +499,7 @@ pub async fn run(
                 }
                 return Ok(());
             }
-            if calls.iter().all(|call| parallel_read_tool(&call.name)) {
+            if calls.iter().all(|call| parallel_read_tool(&call.name) && !state.policy.requires_confirmation(state.mode, &call.name)) {
                 count += calls.len();
                 if count > 20 { return Err("AI run reached its 20-tool budget".into()); }
                 let results = tokio::select! {

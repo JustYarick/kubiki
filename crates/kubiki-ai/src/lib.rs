@@ -12,7 +12,7 @@ pub use runtime::*;
 pub use types::*;
 
 pub use diagnostics::{
-    config_reference_diagnostics, container_diagnostics, controller_verified,
+    accepted_generation_matches, config_reference_diagnostics, container_diagnostics, controller_verified,
     diagnostic_selector, node_diagnostics, pvc_diagnostics, service_diagnostics, workload_health,
 };
 

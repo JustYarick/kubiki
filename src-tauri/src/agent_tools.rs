@@ -19,6 +19,12 @@ use std::{
 };
 use tauri::Manager;
 
+#[derive(Clone)]
+pub struct AcceptedIdentity {
+    uid: String,
+    generation: Option<u64>,
+}
+
 pub struct KubernetesTools {
     pub window: tauri::WebviewWindow,
     pub client: Option<Client>,
@@ -28,7 +34,7 @@ pub struct KubernetesTools {
     pub journal: PathBuf,
     pub read_permits: std::sync::Arc<tokio::sync::Semaphore>,
     pub accepted_identities:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, AcceptedIdentity>>>,
 }
 
 fn stamp() -> u128 {
@@ -143,7 +149,7 @@ async fn resource_access(
 #[async_trait]
 impl ToolExecutor for KubernetesTools {
     fn accepted_uid(&self, id: &str) -> Option<String> {
-        self.accepted_identities.lock().ok()?.get(id).cloned()
+        self.accepted_identities.lock().ok()?.get(id).map(|identity| identity.uid.clone())
     }
     async fn verify_change(
         &self,
@@ -185,6 +191,16 @@ impl ToolExecutor for KubernetesTools {
                 serde_json::to_value(target).map_err(|_| "Cannot encode verification target")?;
             arguments["uid"] = json!(uid);
             arguments["timeoutSeconds"] = json!(20);
+            let generation = self.accepted_identities.lock().ok()
+                .and_then(|ids| ids.get(&format!("call:{}", call.id)).filter(|identity| identity.uid == uid).and_then(|identity| identity.generation));
+            let Some(generation) = generation else {
+                return Ok(json!({"verification":"unavailable","observation":"Accepted workload generation is unavailable"}));
+            };
+            arguments["expectedGeneration"] = json!(generation);
+            if let Some(yaml) = call.arguments["yaml"].as_str() {
+                let desired: Value = serde_yaml::from_str(yaml).map_err(|_| "Invalid reviewed YAML")?;
+                arguments["desiredState"] = json!({"spec":desired["spec"],"metadata":{"labels":desired["metadata"]["labels"],"annotations":desired["metadata"]["annotations"]}});
+            }
             if let Some(n) = call.arguments.get("replicas") {
                 arguments["expectedReplicas"] = n.clone();
             }
@@ -236,6 +252,38 @@ impl ToolExecutor for KubernetesTools {
         emit: &EventSink,
     ) -> Result<Value, String> {
         self.ensure_connection(session).await?;
+        let control = session.control()?;
+        let mutation = matches!(call.name.as_str(), "apply_manifest" | "scale_workload" | "restart_workload" | "delete_resource");
+        // Mutations request consent after preparing their exact native diff.
+        // Internal reads belonging to one approved tool do not prompt again.
+        if !mutation && call.name != "ask_user" && control.policy.requires_confirmation(control.mode, &call.name) {
+            if !tool_definitions(&control.policy, control.mode, control.phase, &control.capabilities).iter().any(|tool| tool.name == call.name) {
+                return Err("Tool is unavailable in the current access policy".into());
+            }
+            let target = Target {
+                group: call.arguments["group"].as_str().unwrap_or("").into(),
+                version: call.arguments["version"].as_str().unwrap_or("v1").into(),
+                kind: call.arguments["kind"].as_str().unwrap_or("Agent tool").into(),
+                namespace: call.arguments["namespace"].as_str().map(str::to_owned),
+                name: call.arguments["name"].as_str().unwrap_or(&call.name).into(),
+            };
+            let resource = reference(&session.scope.context, &target, None);
+            let summary = format!("Run {}? Results are shared with the selected model.\n{}", call.name, serde_json::to_string_pretty(&call.arguments).unwrap_or_default());
+            emit(AgentEvent::Status { status: "awaiting_approval".into() });
+            let started = tokio::time::Instant::now();
+            let mut cancellation = session.cancellation();
+            let decision = tokio::select! {
+                biased;
+                _ = cancelled(&mut cancellation) => Err("Tool cancelled before dispatch".to_owned()),
+                result = crate::mutation_guard::confirm_action(self.window.clone(), &resource, summary, "AI_TOOL") => result.map_err(error_message),
+            };
+            self.budget.exclude_approval_wait(started.elapsed());
+            session.exclude_approval_wait(started.elapsed());
+            if !decision? { return Err("User declined this tool. Continue without it or ask for an alternative".into()); }
+            self.ensure_connection(session).await?;
+            if session.control()?.revision != control.revision { return Err("Permissions changed; request the tool again".into()); }
+            emit(AgentEvent::Status { status: "running".into() });
+        }
         if !parallel_read_tool(&call.name) {
             return self.execute_inner(session, call, emit).await;
         }
@@ -416,6 +464,8 @@ impl KubernetesTools {
                 uid: Option<String>,
                 timeout_seconds: Option<u64>,
                 expected_replicas: Option<u32>,
+                expected_generation: Option<u64>,
+                desired_state: Option<Value>,
             }
             let args: Args = serde_json::from_value(call.arguments.clone())
                 .map_err(|_| "Invalid verification request")?;
@@ -434,7 +484,7 @@ impl KubernetesTools {
             let query = ToolCall {
                 id: call.id.clone(),
                 name: "get_resource".into(),
-                arguments: json!({"group":args.group,"version":args.version,"kind":args.kind,"namespace":args.namespace,"name":args.name,"profile":"health"}),
+                arguments: json!({"group":args.group,"version":args.version,"kind":args.kind,"namespace":args.namespace,"name":args.name,"profile":if args.desired_state.is_some() {"full"} else {"health"}}),
             };
             let mut attempts = 0;
             let mut expected_uid = args.uid;
@@ -468,7 +518,15 @@ impl KubernetesTools {
                         .as_str()
                         .map(str::to_owned);
                 }
-                let verified = controller_verified(
+                if args.expected_generation.is_some_and(|generation| page["resource"]["metadata"]["generation"].as_u64().is_some_and(|current| current != generation)) {
+                    return Ok(json!({"verification":"pending","observation":"Workload changed after the accepted operation; inspect before continuing"}));
+                }
+                let desired_matches = args.desired_state.as_ref().is_none_or(|desired| {
+                    let observed = &page["resource"];
+                    (desired["spec"].is_null() || contains_desired_fields(&desired["spec"], &observed["spec"]))
+                        && ["labels", "annotations"].iter().all(|key| desired["metadata"][key].is_null() || contains_desired_fields(&desired["metadata"][key], &observed["metadata"][key]))
+                });
+                let verified = desired_matches && accepted_generation_matches(&page["resource"], args.expected_generation) && controller_verified(
                     &args.kind,
                     &page["resource"],
                     args.expected_replicas,
@@ -2879,7 +2937,7 @@ impl KubernetesTools {
         let prepared = PreparedMutation::prepare(client, intent)
             .await
             .map_err(error_message)?;
-        if state.mode == AgentMode::Ask {
+        if state.policy.requires_confirmation(state.mode, &call.name) {
             emit(AgentEvent::Status {
                 status: "awaiting_approval".into(),
             });
@@ -2917,7 +2975,9 @@ impl KubernetesTools {
         if let Ok(object) = &outcome {
             if let Some(uid) = object["metadata"]["uid"].as_str() {
                 if let Ok(mut identities) = self.accepted_identities.lock() {
-                    identities.insert(operation_id.clone(), uid.to_owned());
+                    let identity = AcceptedIdentity { uid: uid.to_owned(), generation: object["metadata"]["generation"].as_u64() };
+                    identities.insert(operation_id.clone(), identity.clone());
+                    identities.insert(format!("call:{}", call.id), identity);
                 }
             }
         }

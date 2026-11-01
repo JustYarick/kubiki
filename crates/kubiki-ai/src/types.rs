@@ -4,8 +4,8 @@ use serde_json::Value;
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentMode {
-    #[default]
     ReadOnly,
+    #[default]
     Ask,
     Accept,
 }

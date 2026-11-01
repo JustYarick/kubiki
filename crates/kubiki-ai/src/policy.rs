@@ -140,6 +140,8 @@ pub enum RuleResolution {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentPolicy {
+    /// Tools that require consent even in Auto accept.
+    pub always_ask: Vec<String>,
     pub schema_version: u32,
     pub rule_resolution: RuleResolution,
     pub allowed_fields: Vec<String>,
@@ -167,6 +169,10 @@ pub struct AgentPolicy {
 }
 
 impl AgentPolicy {
+    pub fn requires_confirmation(&self, mode: AgentMode, tool: &str) -> bool {
+        mode == AgentMode::Ask || self.always_ask.iter().any(|name| name == tool)
+    }
+
     pub fn is_helm_active(&self, capabilities: &ClusterCapabilities) -> bool {
         match self.helm {
             OptionalToolMode::Auto => capabilities.helm,
@@ -195,6 +201,7 @@ impl AgentPolicy {
 impl Default for AgentPolicy {
     fn default() -> Self {
         Self {
+            always_ask: vec![],
             schema_version: 1,
             rule_resolution: RuleResolution::FirstMatch,
             allowed_fields: vec![],
@@ -265,7 +272,9 @@ impl AgentPolicy {
             crate::FieldSelection::new(&self.allowed_fields)?;
         }
 
-        if self.contexts.len() > 100
+        if self.always_ask.len() > 64
+            || self.always_ask.iter().any(|name| name.is_empty() || name.len() > 64 || !name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_'))
+            || self.contexts.len() > 100
             || self.namespaces.len() > 100
             || self.rules.len() > 100
             || self.denied_paths.len() > 100

@@ -159,6 +159,7 @@ pub async fn confirm_action(
         "REFRESH" => ("Refresh resource?", "Refresh", false),
         "RUN_JOB" => ("Run Job?", "Run", false),
         "ROLLBACK" => ("Roll back workload?", "Roll back", false),
+        "AI_TOOL" => ("Allow agent tool?", "Allow once", false),
         "batch" => ("Confirm operation?", "Confirm", false),
         "node_shell" => ("Open node shell?", "Open", false),
         "container_shell" => ("Open container shell?", "Open", false),

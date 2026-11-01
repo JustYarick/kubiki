@@ -140,7 +140,7 @@ fn sanitize(value: &Value) -> Result<Value, String> {
         }
         messages.push(safe);
     }
-    let mut result = json!({"id":id,"title":title,"scope":scope,"messages":messages,"mode":"read_only","phase":"plan","busy":false,"status":"idle","draft":"","inputTokens":0,"outputTokens":0});
+    let mut result = json!({"id":id,"title":title,"scope":scope,"messages":messages,"mode":"ask","phase":"plan","busy":false,"status":"idle","draft":"","inputTokens":0,"outputTokens":0});
     result["intent"] = json!(
         value["intent"]
             .as_str()
@@ -467,7 +467,7 @@ mod tests {
         let text = out.to_string();
         assert!(!text.contains("secret-"));
         assert!(!text.contains("live-session"));
-        assert_eq!(out["conversations"][0]["mode"], "read_only");
+        assert_eq!(out["conversations"][0]["mode"], "ask");
         assert_eq!(out["conversations"][0]["phase"], "plan");
         assert_eq!(out["conversations"][0]["intent"], "investigate");
         assert_eq!(out["conversations"].as_array().unwrap().len(), 1);

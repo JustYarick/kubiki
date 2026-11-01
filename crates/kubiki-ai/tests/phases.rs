@@ -1,7 +1,7 @@
 use kubiki_ai::*;
 
 #[test]
-fn session_starts_in_read_only_and_plan_by_default() {
+fn session_starts_in_ask_and_plan_by_default() {
     let session = Session::new(
         "test-session".into(),
         "win".into(),
@@ -10,7 +10,7 @@ fn session_starts_in_read_only_and_plan_by_default() {
         ClusterCapabilities::all(),
     );
     let control = session.control().unwrap();
-    assert_eq!(control.mode, AgentMode::ReadOnly);
+    assert_eq!(control.mode, AgentMode::Ask);
     assert_eq!(control.phase, AgentPhase::Plan);
 }
 
@@ -42,6 +42,7 @@ fn action_phase_is_rejected_in_read_only_mode() {
         AgentPolicy::default(),
         ClusterCapabilities::all(),
     );
+    session.mode(AgentMode::ReadOnly).unwrap(); // Legacy wire compatibility.
     assert!(session.phase(AgentPhase::Action).is_err());
     assert_eq!(session.control().unwrap().phase, AgentPhase::Plan);
 
