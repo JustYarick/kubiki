@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Bot, Check, Pencil, Pin, Plus, Search, Server, Settings, Trash2, X } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { getClusterTone } from '../../../core/cluster_color';
 import { useAiStore } from '../store';
+import { searchAiHistory, historyStorageError } from '../history_storage';
 import { MODE_LABELS, PHASE_LABELS, type Conversation } from '../types';
 
 function extractSnippet(text: string, term: string): string {
@@ -20,6 +21,13 @@ export const AiConversationsSidebar: React.FC = () => {
   const state = useAiStore();
   const [selectedClusterTag, setSelectedClusterTag] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [namespace,setNamespace]=useState('');
+  const [after,setAfter]=useState('');
+  const [includeArchived,setIncludeArchived]=useState(false);
+  const [nativeIds,setNativeIds]=useState<Set<string>|undefined>();
+  const [historyError,setHistoryError]=useState(historyStorageError());
+  useEffect(()=>{const refresh=()=>setHistoryError(historyStorageError());window.addEventListener('ai-history-state',refresh);return()=>window.removeEventListener('ai-history-state',refresh);},[]);
+  useEffect(()=>{let active=true; const timer=setTimeout(()=>{void searchAiHistory({text:searchQuery,context:selectedClusterTag==='all'?undefined:selectedClusterTag,namespace:namespace||undefined,after:after?new Date(after).getTime():undefined,includeArchived}).then(docs=>{if(active)setNativeIds(docs?new Set(docs.map(c=>c.id)):undefined);}).catch(()=>{if(active)setNativeIds(undefined);});},200);return()=>{active=false;clearTimeout(timer);};},[searchQuery,selectedClusterTag,namespace,after,includeArchived,state.conversations]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState<string>('');
 
@@ -34,7 +42,7 @@ export const AiConversationsSidebar: React.FC = () => {
 
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    let list = state.conversations;
+    let list = state.conversations.filter(c=>(includeArchived||!c.archived) && (!namespace||c.scope.namespaces.includes(namespace)) && (!after||(c.updatedAt??0)>=new Date(after).getTime()));
 
     // Filter by cluster tag
     if (selectedClusterTag !== 'all') {
@@ -44,7 +52,7 @@ export const AiConversationsSidebar: React.FC = () => {
     // Filter by text search
     const results: Array<{ conv: Conversation; matchSnippet?: string }> = [];
     for (const c of list) {
-      if (!q) {
+      if (!q || nativeIds?.has(c.id)) {
         results.push({ conv: c });
         continue;
       }
@@ -80,7 +88,7 @@ export const AiConversationsSidebar: React.FC = () => {
     });
 
     return results;
-  }, [state.conversations, selectedClusterTag, searchQuery]);
+  }, [state.conversations, selectedClusterTag, searchQuery, namespace, after, includeArchived, nativeIds]);
 
   const handleStartRename = (c: Conversation) => {
     setEditingId(c.id);
@@ -133,6 +141,8 @@ export const AiConversationsSidebar: React.FC = () => {
         )}
       </div>
 
+      <details className="p-2 text-xs"><summary>History filters</summary><input aria-label="History namespace filter" placeholder="Namespace" value={namespace} onChange={e=>setNamespace(e.target.value)}/><label>Updated since<input aria-label="History updated since" type="date" value={after} onChange={e=>setAfter(e.target.value)}/></label><label><input type="checkbox" checked={includeArchived} onChange={e=>setIncludeArchived(e.target.checked)}/>Include archived</label></details>
+      {historyError&&<p role="alert" className="ai-error">{historyError}</p>}
       <div className="ai-cluster-tags kubiki-scrollbar" role="tablist" aria-label="Filter conversations by cluster">
         <button
           type="button"
@@ -184,7 +194,7 @@ export const AiConversationsSidebar: React.FC = () => {
                 type="button"
                 aria-pressed={c.id === state.activeId}
                 onClick={() => {
-                  if (!isEditing) useAiStore.setState({ activeId: c.id });
+                  if (!isEditing) { useAiStore.setState({ activeId:c.id }); const match=searchQuery.trim()&&c.messages.find(m=>m.text.toLowerCase().includes(searchQuery.toLowerCase()));if(match)setTimeout(()=>document.querySelector(`[data-message-id="${CSS.escape(match.id)}"]`)?.scrollIntoView({block:'center'}),100); }
                 }}
               >
                 {isEditing ? (
@@ -269,6 +279,7 @@ export const AiConversationsSidebar: React.FC = () => {
                     aria-hidden="true"
                   />
                 </Button>
+                <Button variant="ghost" size="sm" aria-label={c.archived?'Unarchive conversation':'Archive conversation'} disabled={c.busy} onClick={()=>state.update(c.id,{archived:!c.archived})}>{c.archived?'Unarchive':'Archive'}</Button>
                 <Button
                   variant="ghost"
                   size="sm"

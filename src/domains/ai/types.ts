@@ -17,6 +17,7 @@ export interface ModelInfo { id: string; name: string; contextWindow: number | n
 export interface AgentScope { context: string; namespaces: string[]; allNamespaces: boolean }
 export interface ResourceRule { group: string; kind: string; namespace: string; name: string; read: DataAccess; writes: WriteOperation[] }
 export interface AgentPolicy {
+  schemaVersion?:number;ruleResolution?:'first_match'|'deny_overrides';allowedFields?:string[];
   resources: boolean; events: boolean; logs: boolean; metrics: boolean;
   clusterResources: boolean; secrets: DataAccess; configMaps: DataAccess;
   workloadConfiguration: boolean; annotations: boolean; customResources: DataAccess;
@@ -28,6 +29,27 @@ export interface AiSettings {
   providers: ProviderProfile[]; defaultProvider: string | null; defaultModel: string | null;
   options: GenerationOptions; policy: AgentPolicy; instructions: string;
 }
+export type PlanStatus = 'draft' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale' | 'partial';
+
+export interface PlanStep { id:string;title:string;action:'inspect'|'manual'|'scale'|'restart'|'apply'|'delete';target?:{group:string;version:string;kind:string;namespace:string|null;name:string}|null;expectedUid?:string|null;replicas?:number|null;yaml?:string|null;reason:string;verification:string;risk:string;dependsOn?:string[];dependsOnAccepted?:string[] }
+export interface PlanArtifact {
+  schemaVersion:1;
+  sessionId:string;
+  kind:'remediation'|'investigation'|'deployment';
+  diagnosis:string;uncertainty:string;steps:PlanStep[];
+  id: string;
+  version: number;
+  title: string;
+  bodyMarkdown: string;
+  targetScope?: string | null;
+  scope: AgentScope;
+  evidenceIds?: string[];
+  proposedActions?: string[];
+  status?: PlanStatus;
+  policyRevision?: number;
+  createdAt: string;
+}
+
 export interface SettingsView { settings: AiSettings; credentials: Record<string, boolean> }
 export interface SessionView { id: string; scope: AgentScope; mode: AgentMode; phase: AgentPhase; policy: AgentPolicy }
 export interface ToolCall { id: string; name: string; arguments: Record<string, unknown> }
@@ -36,6 +58,7 @@ export type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_started'; call: ToolCall }
   | { type: 'tool_completed'; id: string; result: Record<string, unknown> }
+  | { type: 'plan_updated'; plan: PlanArtifact }
   | { type: 'context'; estimatedInputTokens: number; budgetTokens: number; reservedOutputTokens: number }
   | { type: 'usage'; inputTokens: number | null; outputTokens: number | null }
   | { type: 'error'; message: string };
@@ -45,6 +68,7 @@ export interface ChatMessage {
   text: string;
   call?: ToolCall;
   result?: Record<string, unknown>;
+  planArtifact?: PlanArtifact;
   model?: string;
   phase?: AgentPhase;
   startTime?: number;
@@ -54,6 +78,7 @@ export interface ChatMessage {
 }
 export interface Conversation {
   id: string; sessionId?: string; title: string; scope: AgentScope;
+  intent?: 'chat' | 'investigate' | 'create';
   providerId: string; model: string; mode: AgentMode; phase: AgentPhase; messages: ChatMessage[];
   draft: string; status: string; error?: string; busy: boolean; invalidated?: boolean;
   inputTokens: number; outputTokens: number;
@@ -61,6 +86,9 @@ export interface Conversation {
   contextBudgetTokens?: number;
   contextEstimated?: boolean;
   reservedOutputTokens?: number;
+  contextReset?: boolean;
+  activePlan?: PlanArtifact;
+  archived?: boolean;
   pinned?: boolean;
   createdAt?: number;
   updatedAt?: number;

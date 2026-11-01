@@ -7,6 +7,7 @@ async function setup(page: Page) {
     const w = window as any;
     const policy = { resources: true, events: true, logs: false, metrics: true, clusterResources: false, secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false, customResources: 'metadata', contexts: ['*'], namespaces: ['*'], writes: [], maxReplicas: 10, rules: [], deniedPaths: [] };
     let settings = { providers: [{ id: 'local', name: 'Local Ollama', protocol: 'ollama', baseUrl: 'http://localhost:11434' }], defaultProvider: 'local', defaultModel: 'model-from-endpoint', options: {}, policy, instructions: '' };
+    const history=new Map<string,any>();let historyPrefs={enabled:true,retentionDays:30,allowExport:true};const plans=new Map<string,any>();const reviews=new Map<string,any>();
     const keys = new Map<string, string>(); const sessions = new Map<string, any>();
     const callbacks = new Map<number, unknown>(); let sequence = 0;
     const commands: Array<{ command: string; args: any }> = []; const sends: any[] = []; const modes: any[] = []; const stops: any[] = [];
@@ -18,6 +19,13 @@ async function setup(page: Page) {
         if (command.startsWith('ai_')) commands.push({ command, args: { ...args, onEvent: undefined } });
         if (command === 'plugin:event|listen') return ++sequence;
         if (command === 'plugin:event|unlisten' || command.startsWith('stop_')) return;
+        if(command==='ai_history_load')return{conversations:[...history.values()],preferences:historyPrefs,migrated:true};
+        if(command==='ai_history_sync'){for(const id of args.deleted)history.delete(id);if(historyPrefs.enabled)for(const c of args.documents)history.set(c.id,structuredClone(c));return;}
+        if(command==='ai_history_preferences'){historyPrefs=args.preferences;if(!historyPrefs.enabled)history.clear();return;}
+        if(command==='ai_preview_policy')return{explanation:{allowed:false,explanation:'Plan forbids writes',dataAccess:'content',writeAllowed:false},issues:[]};
+        if(command==='ai_get_evidence')return{data:{capturedAt:Date.now(),completeness:'partial',resource:{metadata:{name:'web'}}},warning:'Historical evidence; refresh before verification'};
+        if(command==='ai_review_plan'){const plan=plans.get(args.request.planId);const reviewToken=`review-${++sequence}`;const ready={...plan,status:'ready'};reviews.set(reviewToken,ready);return{reviewToken,plan:ready,steps:ready.steps.map((step:any)=>({stepId:step.id,target:step.target,operation:'scale',call:{name:'scale_workload',arguments:{replicas:3}}}))};}
+        if(command==='ai_execute_plan'){const plan=reviews.get(args.request.reviewToken);if(!plan)throw new Error('Consumed review');reviews.delete(args.request.reviewToken);const completed={...plan,status:'completed'};args.onEvent.onmessage({type:'plan_updated',plan:completed});args.onEvent.onmessage({type:'status',status:'completed'});return{plan:completed,receipts:[]};}
         if (command === 'ai_get_settings') return { settings: { ...structuredClone(settings), providers: settings.providers.map(({ id, name, protocol, baseUrl }) => ({ id, name, protocol, baseUrl })) }, credentials: Object.fromEntries([...keys.keys()].map(id => [id, true])) };
         if (command === 'ai_save_settings') { settings = structuredClone(args.settings); return; }
         if (command === 'ai_set_credential') { if (args.apiKey) keys.set(args.providerId, args.apiKey); else keys.delete(args.providerId); return; }
@@ -50,7 +58,12 @@ async function setup(page: Page) {
             await new Promise<void>(resolve => { sessions.get(args.sessionId).finish = () => { emit({ type: 'status', status: 'cancelled' }); resolve(); }; });
             return;
           }
-          if (/create|nexus/i.test(args.message)) {
+          if(w.__aiHarness.planMode){
+            emit({type:'text_delta',text:'<think>## Plan\nFirst I should investigate the resource.</think>Observed a workload readiness issue. Review the remediation steps below.'});
+            emit({type:'tool_started',call:{id:'evidence',name:'get_resource',arguments:{kind:'Deployment',namespace:'apps',name:'web'}}});emit({type:'tool_completed',id:'evidence',result:{evidenceId:'e1',resource:{metadata:{name:'web'}}}});
+            const plan={schemaVersion:1,sessionId:args.sessionId,id:'typed-plan',version:1,title:'Restore workload capacity',kind:'remediation',diagnosis:'Ready capacity is below desired',uncertainty:'Application health is not established',bodyMarkdown:'## Remediation\nReview the concrete change. ![remote](https://example.invalid/plan-tracker)',scope:sessions.get(args.sessionId).scope,evidenceIds:['e1'],status:'draft',policyRevision:0,createdAt:new Date().toISOString(),steps:[{id:'scale',title:'Scale web to three replicas',action:'scale',target:{group:'apps',version:'v1',kind:'Deployment',namespace:'apps',name:'web'},replicas:3,reason:'Restore intended capacity',risk:'May increase resource usage',verification:'Controller observed generation and readyReplicas=3',dependsOn:[],dependsOnAccepted:[]}]};plans.set(plan.id,plan);
+            emit({type:'tool_started',call:{id:'plan',name:'propose_plan',arguments:{title:plan.title}}});emit({type:'plan_updated',plan});emit({type:'tool_completed',id:'plan',result:{planArtifact:plan,executed:false}});
+          } else if (/create|nexus/i.test(args.message)) {
             emit({ type: 'text_delta', text: 'Here is a proposed manifest. It has not been applied.\n' });
             emit({ type: 'tool_started', call: { id: 'proposal-1', name: 'propose_manifests', arguments: { title: 'Nexus resources' } } });
             emit({ type: 'tool_completed', id: 'proposal-1', result: { proposal: true, executed: false, title: 'Nexus resources', yaml: 'apiVersion: v1\nkind: Service\nmetadata:\n  name: nexus\n  namespace: backend\nspec:\n  selector:\n    app: nexus\n  ports:\n    - port: 8081\n' } });
@@ -202,5 +215,30 @@ test('a running conversation survives section navigation, Stop interrupts it and
   await page.setViewportSize({ width: 740, height: 800 });
   await expect(agent.getByRole('combobox', { name: 'Active AI conversation' })).toBeVisible();
   expect(await agent.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('reasoning never gains a Plan badge and typed remediation requires explicit native review before execution',async({page})=>{
+  const errors=await setup(page);const agent=await openAgent(page);let trackers=0;
+  await page.route('https://example.invalid/**',route=>{trackers++;return route.abort();});
+  await page.evaluate(()=>{(window as any).__aiHarness.planMode=true;});
+  await agent.getByRole('textbox',{name:'Message AI agent'}).fill('Investigate readiness and propose remediation');await agent.getByRole('button',{name:'Send',exact:true}).click();
+  const plan=agent.getByRole('article',{name:'Remediation plan: Restore workload capacity'});await expect(plan).toBeVisible();
+  await expect(agent.locator('.ai-message .ai-plan-badge')).toHaveCount(0);await expect(plan.locator('img')).toHaveCount(0);expect(trackers).toBe(0);
+  await expect(plan.getByRole('button',{name:'Review selected steps'})).toBeDisabled();
+  await plan.getByRole('button',{name:'#e1',exact:true}).click();await expect(plan.getByText('Historical evidence; refresh before verification')).toBeVisible();
+  await agent.getByRole('button',{name:'Ask',exact:true}).click();await agent.getByRole('button',{name:'Action',exact:true}).click();
+  await plan.getByRole('button',{name:'Review selected steps'}).click();await expect(plan.getByRole('region',{name:'Plan execution review'})).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.commands.filter((c:any)=>c.command==='ai_execute_plan').length)).toBe(0);
+  await plan.getByRole('button',{name:'Execute reviewed steps'}).click();await expect(plan.getByText('COMPLETED',{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).__aiHarness.commands.find((c:any)=>c.command==='ai_execute_plan').args.request)).toEqual(expect.objectContaining({reviewToken:expect.stringMatching(/^review-/)}));
+  await page.evaluate(()=>{(window as any).__aiHarness.models.push({id:'another-model',name:'Another model',contextWindow:32768,maxOutputTokens:8192,tools:true});});
+  await agent.getByRole('combobox',{name:'Conversation AI model'}).click();
+  await agent.getByRole('combobox',{name:'Conversation AI model'}).selectOption('another-model');
+  await expect(agent.getByRole('button',{name:'Read only',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(agent.getByText(/Provider\/model changed/)).toBeVisible();
+  await expect(plan.getByRole('button',{name:'#e1',exact:true})).toBeDisabled();
+  await expect(plan.getByRole('button',{name:'Review selected steps'})).toBeDisabled();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.stops.at(-1)?.close)).toBe(true);
   expect(errors).toEqual([]);
 });

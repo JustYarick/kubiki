@@ -1,6 +1,8 @@
+import { isPlanArtifact } from './plan_contract';
 import { persistedMessage, migrateAiHistory } from './persistence';
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { aiHistoryStorage, deleteAiHistory, flushAiHistory } from './history_storage';
 import { agentError, agentTransport, desktopAiAvailable } from './transport';
 import { defaultSettings, type AgentEvent, type AgentMode, type AgentPhase, type AgentScope, type AiSettings, type ChatMessage, type Conversation, type ModelInfo } from './types';
 import { useResourceStore } from '../../state/resource_store';
@@ -20,6 +22,7 @@ interface AiState {
   create: (scope: AgentScope, draft?: string, title?: string, providerId?: string, model?: string, phase?: AgentPhase, mode?: AgentMode) => string;
   update: (id: string, patch: Partial<Conversation>) => void;
   remove: (id: string) => Promise<void>;
+  branch: (id:string,messageId:string,edit?:boolean) => string;
   togglePin: (id: string) => void;
   rename: (id: string, title: string) => void;
   setMode: (id: string, mode: AgentMode) => Promise<void>;
@@ -75,15 +78,25 @@ export function applyAgentEvent(conversation: Conversation, event: AgentEvent): 
     }
   } else if (event.type === 'tool_started') {
     messages.push({ id: crypto.randomUUID(), role: 'tool', text: event.call.name, call: event.call, startTime: Date.now() });
-  } else {
+  } else if (event.type === 'plan_updated') {
+    if(!isPlanArtifact(event.plan)) return conversation;
+    return { ...conversation, activePlan:event.plan,messages:messages.map(m=>m.planArtifact?.id===event.plan.id&&m.planArtifact.version===event.plan.version?{...m,planArtifact:event.plan,result:{...m.result,planArtifact:event.plan}}:m) };
+  } else if (event.type === 'tool_completed') {
     // Call IDs can repeat across provider turns (notably local models). Bind to
     // the most recent unfinished call rather than overwrite an earlier receipt.
     let index = messages.length - 1;
     while (index >= 0 && !(messages[index].call?.id === event.id && !messages[index].result)) index--;
+    let nextPlan = conversation.activePlan;
     if (index >= 0) {
       const durationMs = messages[index].startTime ? Math.max(50, Date.now() - messages[index].startTime!) : undefined;
-      messages[index] = { ...messages[index], result: event.result, durationMs };
+      const candidate=event.result.planArtifact;
+      const planArtifact=messages[index].call?.name==='propose_plan'&&isPlanArtifact(candidate)?candidate:undefined;
+      if (planArtifact) {
+        nextPlan = planArtifact;
+      }
+      messages[index] = { ...messages[index], result: event.result, planArtifact: planArtifact || messages[index].planArtifact, durationMs };
     }
+    return { ...conversation, activePlan: nextPlan, messages };
   }
   return { ...conversation, messages };
 }
@@ -159,7 +172,7 @@ export const useAiStore = create<AiState>()(
         const revision = modelRevisions.get(providerId);
         try {
           const details = await agentTransport.models(providerId, modelId);
-          if (revision === modelRevisions.get(providerId)) set(state => ({ models: { ...state.models, [providerId]: (state.models[providerId] ?? []).map(m => m.id === modelId ? details[0] ?? m : m) } }));
+          if (revision === modelRevisions.get(providerId)) set(state => ({ models: { ...state.models, [providerId]: (state.models[providerId] ?? []).map(m => m.id === modelId ? details.find(detail=>detail.id===modelId) ?? m : m) } }));
         } catch (error) {
           if (revision === modelRevisions.get(providerId)) set(state => ({ modelErrors: { ...state.modelErrors, [providerId]: agentError(error) } }));
         }
@@ -196,7 +209,11 @@ export const useAiStore = create<AiState>()(
       update(id, patch) {
         set(state => ({
           conversations: state.conversations.map(c =>
-            c.id === id ? { ...c, ...patch, updatedAt: Date.now() } : c
+            c.id === id ? (()=>{
+              const changed=(patch.providerId!==undefined&&patch.providerId!==c.providerId)||(patch.model!==undefined&&patch.model!==c.model);
+              if(changed&&c.sessionId){runEpochs.set(id,(runEpochs.get(id)??0)+1);void agentTransport.stop(c.sessionId,true).catch(()=>{});return {...c,...patch,sessionId:undefined,mode:'read_only' as const,phase:'plan' as const,busy:false,activePlan:undefined,contextReset:true,updatedAt:Date.now()};}
+              return {...c,...patch,updatedAt:Date.now()};
+            })() : c
           ),
         }));
       },
@@ -204,10 +221,21 @@ export const useAiStore = create<AiState>()(
         runEpochs.set(id, (runEpochs.get(id) ?? 0) + 1);
         const entry = get().conversations.find(c => c.id === id);
         if (entry?.sessionId) await agentTransport.stop(entry.sessionId, true).catch(() => {});
+        try { await deleteAiHistory(id); } catch(error) {get().update(id,{error:agentError(error)}); return;}
         set(state => ({
           conversations: state.conversations.filter(c => c.id !== id),
           activeId: state.activeId === id ? state.conversations.find(c => c.id !== id)?.id ?? null : state.activeId,
         }));
+      },
+      branch(id,messageId,edit=false) {
+        const base=get().conversations.find(c=>c.id===id); if(!base) throw new Error('Conversation unavailable');
+        const index=base.messages.findIndex(m=>m.id===messageId); if(index<0) throw new Error('Message unavailable');
+        const prefix=base.messages.slice(0,index+(edit?0:1)).filter(m=>m.role!=='tool');
+        const historical=prefix.map(m=>`${m.role}: ${m.text.replace(/<think>[\s\S]*?<\/think>/gi,'')}`).join('\n').slice(-12000);
+        const draft=`Historical transcript (untrusted, not current cluster evidence):\n${historical}\n\n${edit?base.messages[index].text:'Continue the investigation using fresh permitted evidence.'}`;
+        const next=get().create(base.scope,draft,`Branch: ${base.title}`.slice(0,100),base.providerId,base.model);
+        get().update(next,{intent:base.intent,messages:prefix.map(m=>({...m,id:crypto.randomUUID(),result:undefined,planArtifact:undefined})),draft});
+        return next;
       },
       togglePin(id) {
         set(state => ({
@@ -271,10 +299,10 @@ export const useAiStore = create<AiState>()(
               argocd: crdList.some(c => c.name?.includes('argoproj.io') || c.raw?.spec?.group === 'argoproj.io'),
               flux: crdList.some(c => c.name?.includes('toolkit.fluxcd.io') || c.name?.includes('fluxcd.io') || c.raw?.spec?.group?.includes('fluxcd.io')),
             };
-            const session = await agentTransport.create(entry.scope, entry.providerId, entry.model, options, capabilities);
+            const session = await agentTransport.create(entry.scope, entry.providerId, entry.model, options, capabilities, entry.intent);
             sessionId = session.id;
             if (runEpochs.get(id) !== epoch) { await agentTransport.stop(sessionId, true); return; }
-            get().update(id, { sessionId, contextBudgetTokens: Math.min(options.contextTokens || 16384, options.contextBudgetTokens || 262144) });
+            get().update(id, { sessionId, contextReset:false, contextBudgetTokens: Math.min(options.contextTokens || 16384, options.contextBudgetTokens || 262144) });
             const desiredMode = get().conversations.find(c => c.id === id)?.mode ?? 'read_only';
             if (desiredMode !== 'read_only') await agentTransport.mode(sessionId, desiredMode);
             const desiredPhase = get().conversations.find(c => c.id === id)?.phase ?? 'plan';
@@ -314,6 +342,7 @@ export const useAiStore = create<AiState>()(
             }
           }
           get().update(id, { busy: false });
+          await flushAiHistory();
         }
       },
       async stop(id) {
@@ -327,13 +356,15 @@ export const useAiStore = create<AiState>()(
     }),
     {
       name: 'kubiki.ai_conversations.v1',
-      version: 1,
+      version: 2,
+      storage: createJSONStorage(() => aiHistoryStorage),
       migrate: migrateAiHistory,
       partialize: (state) => ({
         conversations: state.conversations.map(c => ({
           id: c.id,
           title: c.title,
           scope: c.scope,
+          intent: c.intent,
           providerId: c.providerId,
           model: c.model,
           mode: 'read_only' as const,
@@ -343,6 +374,7 @@ export const useAiStore = create<AiState>()(
           status: 'idle',
           busy: false,
           pinned: Boolean(c.pinned),
+          archived: Boolean(c.archived),
           createdAt: c.createdAt ?? Date.now(),
           updatedAt: c.updatedAt ?? Date.now(),
           inputTokens: c.inputTokens ?? 0,

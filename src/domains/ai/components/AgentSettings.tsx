@@ -8,6 +8,8 @@ import { useResourceStore } from '../../../state/resource_store';
 import { invalidateAiConversations, useAiStore } from '../store';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 import { PROVIDER_PRESETS, WRITE_OPERATIONS, type AgentPolicy, type AiSettings, type DataAccess, type ModelInfo, type OptionalToolMode, type ProviderProfile, type ProviderProtocol, type WriteOperation } from '../types';
+import { PERMISSION_PROFILES, permissionProfile } from '../permission_profiles';
+import { HistorySettings, PolicyPreview } from './PreferencePanels';
 import '../ai.css';
 
 const protocolNames: Record<ProviderProtocol, string> = {
@@ -51,6 +53,7 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
     {error && <div role="alert" className="ai-error">{error} <Button size="sm" onClick={() => void load()}>Reload settings</Button></div>}
     {loaded && <>
       {section !== 'permissions' && <ProviderSettings />}
+      {section !== 'providers' && <HistorySettings />}
       {section !== 'providers' && <PolicySettings commitRef={policyCommitRef} onStatusChange={onStatusChange} />}
     </>}
   </div>;
@@ -257,6 +260,8 @@ function PolicySettings({
       </Button>
     </div>
 
+    <PolicyPreview policy={policy} />
+    <div className="ai-form-line"><span>Draft permission profile (replaces rules; v1 first-match):</span>{PERMISSION_PROFILES.map(profile=><Button key={profile} size="sm" onClick={()=>patch(permissionProfile(policy,profile))}>{profile}</Button>)}</div>
     <fieldset className="ai-fieldset" disabled={saving}>
       <div className="ai-settings-card">
         <h4>GitOps & Package Managers (Argo CD, Flux, Helm)</h4>
@@ -328,7 +333,9 @@ function PolicySettings({
         <div className="ai-form-line">
           <div>
             <h4>Resource Rules</h4>
-            <p className="ai-help">First matching rule overrides defaults. Specific exceptions take precedence.</p>
+            <label className="ai-field">Rule semantics<Select aria-label="AI rule semantics" value={policy.ruleResolution??'first_match'} onChange={e=>patch({schemaVersion:e.target.value==='deny_overrides'?2:1,ruleResolution:e.target.value as 'first_match'|'deny_overrides'})}><option value="first_match">v1 · First matching rule (existing behavior)</option><option value="deny_overrides">v2 · No-access/no-write denies override grants</option></Select></label>
+            {policy.ruleResolution==='deny_overrides'&&<p className="ai-help">Explicit migration: matching rules with No access and no writes deny access regardless of position. Preview effective rights before saving.</p>}
+            <p className="ai-help">First matching rule overrides defaults. Order matters: put specific exceptions before broad rules.</p>
           </div>
           <span className="ai-grow" />
           <Button size="sm" aria-label="Add resource rule" disabled={policy.rules.length >= 100} onClick={() => patch({ rules: [...policy.rules, { group: '*', kind: '*', namespace: '*', name: '*', read: 'none', writes: [] }] })}>
@@ -352,7 +359,9 @@ function PolicySettings({
       </div>
 
       <div className="ai-settings-card">
-        <h4>Excluded Field Paths & Custom Instructions</h4>
+        <h4>Field access & custom instructions</h4>
+        <label className="ai-field">Allowed fields (empty keeps permitted content)<textarea aria-label="Allowed AI fields" className="ide-textarea font-mono" rows={3} value={policy.allowedFields?.join('\n')??''} placeholder="spec.containers[*].image" onChange={e=>patch({allowedFields:e.target.value.split('\n').map(s=>s.trim()).filter(Boolean)})}/></label>
+        <p className="ai-help">Selection is applied after data access and excluded fields. Permitted identity remains available. Include metadata.labels to allow label filtering.</p>
         <label className="ai-field">Excluded JSON pointer paths<textarea aria-label="Excluded AI field paths" className="ide-textarea font-mono" rows={3} value={policy.deniedPaths.join('\n')} placeholder={'/spec/template/spec/containers/0/env\n/data/private.conf'} onChange={e => patch({ deniedPaths: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })} /></label>
         <label className="ai-field mt-3">Agent instructions<textarea aria-label="Integrated agent instructions" className="ide-textarea" rows={3} maxLength={8000} value={draft.instructions} placeholder="Preferred response style, diagnostic conventions, language preferences…" onChange={e => setDraft(d => ({ ...d, instructions: e.target.value }))} /></label>
       </div>

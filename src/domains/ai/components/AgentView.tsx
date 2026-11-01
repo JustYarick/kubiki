@@ -12,7 +12,6 @@ import {
   Copy,
   Cpu,
   FileCode,
-  FileText,
   HelpCircle,
   Plus,
   RefreshCw,
@@ -37,10 +36,13 @@ import { toast } from '../../../state/notifications_store';
 import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
+import { downloadMarkdown, transcriptMarkdown } from '../chat_artifacts';
 import { desktopAiAvailable } from '../transport';
 import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
+import { isPlanArtifact } from '../plan_contract';
+import { PlanArtifactCard } from './PlanArtifactCard';
 import { AgentSettings, type AgentSettingsHandle } from './AgentSettings';
-import { getToolIntent, getToolCallSummary, isPlanMessage } from '../tool_intents';
+import { getToolIntent, getToolCallSummary } from '../tool_intents';
 import { getClusterTone } from '../../../core/cluster_color';
 import { stringify } from 'yaml';
 import '../ai.css';
@@ -75,6 +77,7 @@ function formatManifestOrDiff(rawDiff: string, appliedYaml?: string): { code: st
 
 const statusLabels: Record<string, string> = {
   idle: 'Ready', connecting: 'Connecting', running: 'Working', awaiting_approval: 'Waiting for your review',
+  reviewing: 'Checking selected steps', partial: 'Partially applied · verification required',
   executing: 'Applying change', completed: 'Complete', cancelled: 'Stopped', stopping: 'Stopping; awaiting in-flight requests', failed: 'Failed',
 };
 
@@ -710,9 +713,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         </span>
       </div>
       <span className="ai-grow" />
+      <Button size="sm" variant="ghost" onClick={()=>{try {downloadMarkdown(c.title,transcriptMarkdown(c));} catch(e) {toast.error(String(e));}}}>Export chat</Button>
       <Button size="sm" variant="ghost" onClick={onSettings}><Settings size={13} aria-hidden="true" />Permissions</Button>
     </header>
 
+    {c.contextReset&&<p className="ai-notice">Provider/model changed. A fresh Read only + Plan session will receive your next message; previous transcript and evidence are historical.</p>}
     <div className="ai-transcript-container">
       <div
         ref={transcript}
@@ -732,7 +737,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
           // it is already formatted inside that QuestionCard!
           const isAnswerToQuestion = message.role === 'user' && idx > 0 && c.messages[idx - 1]?.role === 'tool' && c.messages[idx - 1]?.call?.name === 'ask_user';
           if (isAnswerToQuestion) return null;
-          return <Message key={message.id} message={message} conversation={c} />;
+          return <div key={message.id} data-message-id={message.id}><Message message={message} conversation={c} /></div>;
         })}
         {c.status === 'awaiting_approval' && mutationPending && !c.messages.some(m => m.role === 'tool' && !m.result) ? (
           <ActionApprovalCard
@@ -818,7 +823,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
           <div className="ai-composer-card-controls">
             <ClusterCircleButton
               context={c.scope.context}
-              disabled={!!c.sessionId || c.busy}
+              disabled={c.busy}
               contexts={contexts}
               onSelect={val => {
                 let nextScope: AgentScope;
@@ -841,7 +846,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
             <ProviderModelCapsule
               providerId={c.providerId}
               model={c.model}
-              disabled={!!c.sessionId || c.busy}
+              disabled={c.busy}
               providers={settings.providers}
               models={models}
               modelsLoading={loading}
@@ -1351,6 +1356,7 @@ function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; c
 }
 
 
+
 function CompactToolMessage({
   message: m,
   conversation: c,
@@ -1474,6 +1480,10 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
   if (m.role === 'tool') {
     if (m.call?.name === 'ask_user') {
       return <QuestionCard message={m} conversation={c} />;
+    }
+    if (m.call?.name === 'propose_plan' && isPlanArtifact(m.result?.planArtifact || m.planArtifact)) {
+      const artifact = (m.result?.planArtifact || m.planArtifact) as import('../types').PlanArtifact;
+      return <PlanArtifactCard artifact={artifact} conversation={c} />;
     }
 
     const mutationPending = useMutationConfirmStore(s => s.pending);
@@ -1638,10 +1648,6 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
   const isUser = m.role === 'user';
   const isStreaming = c.busy && c.messages[c.messages.length - 1]?.id === m.id;
   const { thinking, isThinkingActive, content } = !isUser ? parseThinking(m.text, isStreaming) : { isThinkingActive: false, content: m.text };
-  const rawText = content || m.text;
-  const msgIndex = c.messages.findIndex(x => x.id === m.id);
-  const prevUserMsg = msgIndex > 0 ? c.messages.slice(0, msgIndex).reverse().find(msg => msg.role === 'user') : undefined;
-  const isPlan = !isUser && isPlanMessage(rawText, prevUserMsg?.text);
   const [copied, setCopied] = useState(false);
 
   if (!isUser && !content.trim() && !thinking && !isThinkingActive && !isStreaming) {
@@ -1649,7 +1655,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
   }
 
   const handleCopy = () => {
-    const textToCopy = isUser ? m.text : (content || m.text);
+    const textToCopy = isUser ? m.text : content;
     copy(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -1657,7 +1663,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
 
   return (
     <article
-      className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''}`}
+      className={`ai-message is-${m.role}`}
       aria-label={isUser ? 'Your message' : 'Agent response'}
     >
       <div className="ai-message-heading">
@@ -1666,14 +1672,9 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
             <strong>You</strong>
           ) : (
             <>
-              <Bot size={13} className={isPlan ? 'text-emerald-400' : 'text-indigo-400'} aria-hidden="true" />
+              <Bot size={13} className="text-indigo-400" aria-hidden="true" />
               <strong>Agent</strong>
-              {isPlan ? (
-                <span className="ai-plan-badge" title="Strategic plan proposal">
-                  <FileText size={10} aria-hidden="true" />
-                  Plan
-                </span>
-              ) : (m.phase === 'tooling' || m.phase === 'action') ? (
+              {(m.phase === 'tooling' || m.phase === 'action') ? (
                 <span className="ai-tooling-badge" title="Action execution phase">
                   Action
                 </span>
@@ -1730,24 +1731,11 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
             ) : <span>{children}</span>,
           }}
         >
-          {content || (isThinkingActive ? '' : m.text)}
+          {thinking || isThinkingActive ? content : m.text}
         </Markdown>
       </div>
 
-      {isPlan && c.phase === 'plan' && c.mode !== 'read_only' && !c.busy && (
-        <div className="ai-plan-action-bar">
-          <span className="text-xs text-[var(--text-secondary)]">Ready to execute this plan?</span>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => void useAiStore.getState().setPhase(c.id, 'action')}
-          >
-            <Zap size={11} className="text-amber-300" aria-hidden="true" />
-            Switch to Action to execute
-          </Button>
-        </div>
-      )}
-
+      <div className="flex gap-2"><Button size="sm" variant="ghost" disabled={c.busy} onClick={()=>useAiStore.getState().branch(c.id,m.id)}>Branch here</Button>{isUser&&<Button size="sm" variant="ghost" disabled={c.busy} onClick={()=>useAiStore.getState().branch(c.id,m.id,true)}>Edit and retry in new branch</Button>}</div>
       {!isUser && (
         <div className="ai-message-footer">
           <div className="ai-message-stats">

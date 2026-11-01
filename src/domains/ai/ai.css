@@ -86,6 +86,18 @@
 .ai-message-heading strong { font-weight: 600; color: var(--text-primary); }
 .ai-plan-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
 .ai-plan-action-bar { margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(16, 185, 129, 0.25); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.ai-plan-artifact-card { margin: 0 auto 16px; max-width: 900px; min-width: 0; padding: 16px; background: linear-gradient(180deg, rgba(16, 185, 129, 0.06) 0%, var(--bg-secondary) 100%); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: calc(8px * var(--ui-factor)); box-shadow: 0 4px 16px rgba(16, 185, 129, 0.08); }
+.ai-plan-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(16, 185, 129, 0.2); margin-bottom: 12px; flex-wrap: wrap; }
+.ai-plan-version-badge { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 3px; font-family: var(--font-mono); font-size: calc(10px * var(--ui-factor)); font-weight: 600; background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.ai-plan-status-badge { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 3px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; background: var(--bg-tertiary); color: var(--text-secondary); }
+.ai-plan-status-badge.is-draft { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+.ai-plan-status-badge.is-ready { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.ai-plan-status-badge.is-running { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.ai-plan-status-badge.is-completed { background: rgba(16, 185, 129, 0.25); color: #10b981; }
+.ai-plan-status-badge.is-partial { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.ai-plan-status-badge.is-cancelled, .ai-plan-status-badge.is-stale { background: var(--bg-tertiary); color: var(--text-muted); }
+.ai-plan-status-badge.is-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+.ai-plan-evidence-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
 .ai-action-badge, .ai-tooling-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: calc(9.5px * var(--ui-factor)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.35); }
 .ai-thinking-block { border: 1px solid var(--border-default); border-left: 3px solid var(--accent); border-radius: calc(6px * var(--ui-factor)); background: var(--bg-canvas); margin: 6px 0 12px; overflow: hidden; }
 .ai-thinking-block.is-active { border-left-color: #f59e0b; box-shadow: 0 0 10px rgba(245, 158, 11, 0.08); }

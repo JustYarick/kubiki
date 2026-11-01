@@ -364,3 +364,81 @@ it('retains the backend context estimate when a provider omits token usage', () 
   expect(conversation.contextEstimated).toBe(true);
   expect(conversation.contextBudgetTokens).toBe(8192);
 });
+
+it('handles plan_updated and propose_plan events, preserving PlanArtifact in active conversation', () => {
+  const id = useAiStore.getState().create(scope);
+  let conversation = useAiStore.getState().conversations.find(c => c.id === id)!;
+  const artifact = { schemaVersion:1 as const, sessionId:'native', scope, kind:'remediation' as const, diagnosis:'Readiness failure',uncertainty:'Cause not established',steps:[{id:'s1',title:'Inspect',action:'inspect' as const,reason:'Find cause',risk:'Read only',verification:'Observe conditions'}],
+    id: 'plan-123',
+    version: 1,
+    title: 'Payment Service Investigation Plan',
+    bodyMarkdown: '# Plan\n1. Check Service endpoints\n2. Inspect Pod readiness',
+    targetScope: 'backend/payments',
+    evidenceIds: ['ev-1', 'ev-2'],
+    proposedActions: ['verify_endpoints'],
+    status: 'draft' as const,
+    createdAt: new Date().toISOString(),
+  };
+
+  conversation = applyAgentEvent(conversation, { type: 'plan_updated', plan: artifact });
+  expect(conversation.activePlan).toBeDefined();
+  expect(conversation.activePlan?.id).toBe('plan-123');
+  expect(conversation.activePlan?.version).toBe(1);
+  expect(conversation.activePlan?.title).toBe('Payment Service Investigation Plan');
+
+  // Also verify tool_completed with planArtifact
+  conversation = applyAgentEvent(conversation, {
+    type: 'tool_started',
+    call: { id: 'call-plan', name: 'propose_plan', arguments: { title: 'Updated Plan' } },
+  });
+  conversation = applyAgentEvent(conversation, {
+    type: 'tool_completed',
+    id: 'call-plan',
+    result: { planArtifact: { ...artifact, version: 2, title: 'Updated Plan' } },
+  });
+  expect(conversation.activePlan?.version).toBe(2);
+  expect(conversation.activePlan?.title).toBe('Updated Plan');
+  expect(conversation.messages[conversation.messages.length - 1].planArtifact?.version).toBe(2);
+});
+
+it('omits copied plan bodies from persistent history and legacy migration', () => {
+  const planArtifact={schemaVersion:1 as const,sessionId:'native',kind:'remediation' as const,diagnosis:'Unknown',uncertainty:'Need evidence',steps:[],id:'plan',version:1,title:'Plan',bodyMarkdown:'private-plan-body',scope,status:'draft' as const,createdAt:'1'};
+  const message={id:'plan-message',role:'tool' as const,text:'propose_plan',call:{id:'plan-call',name:'propose_plan',arguments:{bodyMarkdown:'private-plan-body'}},result:{planArtifact},planArtifact};
+  expect(JSON.stringify(persistedMessage(message))).not.toContain('private-plan-body');
+  const migrated=migrateAiHistory({conversations:[{id:'legacy',scope,messages:[message],activePlan:planArtifact}]});
+  expect(JSON.stringify(migrated)).not.toContain('private-plan-body');
+});
+
+it('resource investigations explicitly request a remediation artifact and retain identity-only context', () => {
+  useClusterStore.setState({ currentContext:'prod',selectedNamespace:'apps' });
+  openAiChat({resource:{apiVersion:'apps/v1',kind:'Deployment',name:'api',namespace:'apps',uid:'d1'} as any});
+  const c=useAiStore.getState().conversations.at(-1)!;
+  expect(c.intent).toBe('investigate');expect(c.draft).toContain('structured remediation plan via propose_plan');expect(c.draft).toContain('verification');
+});
+it('changing a live provider/model creates a fresh read-only context without sending old evidence',async()=>{
+  const id=useAiStore.getState().create(scope,'Question');await useAiStore.getState().send(id);
+  useAiStore.getState().update(id,{model:'new-model'});const c=useAiStore.getState().conversations.find(c=>c.id===id)!;
+  expect(c.sessionId).toBeUndefined();expect(c.mode).toBe('read_only');expect(c.phase).toBe('plan');expect(c.contextReset).toBe(true);
+  expect(agentTransport.stop).toHaveBeenCalledWith('native',true);
+});
+
+it('permission presets preserve allowed scope and require explicit grants for changes',async()=>{
+  const {permissionProfile}=await import('../../src/domains/ai/permission_profiles');
+  const base={...defaultPolicy(),contexts:['prod'],namespaces:['apps']};
+  for(const name of ['workloads','network','storage'] as const){const policy=permissionProfile(base,name);expect(policy.contexts).toEqual(['prod']);expect(policy.namespaces).toEqual(['apps']);expect(policy.writes).toEqual([]);expect(policy.rules.at(-1)?.read).toBe('none');}
+  expect(permissionProfile(base,'network').clusterResources).toBe(false);expect(permissionProfile(base,'limited actions').writes).toEqual(['scale','restart']);
+});
+
+it('changing rule semantics then applying a preset never lets its catch-all deny override its own grants',async()=>{
+  const {permissionProfile}=await import('../../src/domains/ai/permission_profiles');
+  const profile=permissionProfile({...defaultPolicy(),schemaVersion:2,ruleResolution:'deny_overrides'},'network');
+  expect(profile.schemaVersion).toBe(1);expect(profile.ruleResolution).toBe('first_match');expect(profile.rules.some(r=>r.kind==='Service'&&r.read==='content')).toBe(true);
+});
+
+it('model detail lookup cannot replace a requested model identity with an unrelated returned record',async()=>{
+  const id='detail-identity-check';
+  useAiStore.setState({models:{provider:[{id,name:'Expected model',contextWindow:8192,maxOutputTokens:null,tools:true}]}});
+  vi.mocked(agentTransport.models).mockResolvedValue([{id:'unrelated-model',name:'Wrong record',contextWindow:32768,maxOutputTokens:null,tools:true}]);
+  await useAiStore.getState().inspectModel('provider',id);
+  expect(useAiStore.getState().models.provider[0].id).toBe(id);
+});
