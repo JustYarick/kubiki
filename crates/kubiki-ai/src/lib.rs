@@ -30,3 +30,9 @@ pub use summary::ResourceSummary;
 
 pub mod memory;
 pub use memory::{ConversationMemory, EvidenceStore};
+
+pub mod plans;
+pub use plans::{PlanProposal, PlanStore};
+
+pub mod execution;
+pub use execution::{PlanReview, ReviewedStep, execute_reviewed_plan, public_execution_call, contains_desired_fields};

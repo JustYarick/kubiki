@@ -58,6 +58,8 @@ glib = { path = "../vendor/glib" }
 glib = "0.18.5"
 
 [dev-dependencies]
+http = "1"
+tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1", features = ["test-util"] }
 
 # Exercise the backported out-pointer fix with optimizer assumptions enabled.

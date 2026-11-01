@@ -27,6 +27,8 @@ pub struct KubernetesTools {
     pub budget: std::sync::Arc<kubiki_core::core::read_budget::ReadBudget>,
     pub journal: PathBuf,
     pub read_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub accepted_identities:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
 }
 
 fn stamp() -> u128 {
@@ -58,6 +60,12 @@ struct ResourceArgs {
     #[serde(default)]
     name: String,
     replicas: Option<u32>,
+    #[serde(rename = "expectedUid")]
+    _expected_uid: Option<String>,
+    #[serde(rename = "expectedResourceVersion")]
+    _expected_resource_version: Option<String>,
+    #[serde(rename = "expectedAbsent")]
+    _expected_absent: Option<bool>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -134,6 +142,93 @@ async fn resource_access(
 
 #[async_trait]
 impl ToolExecutor for KubernetesTools {
+    fn accepted_uid(&self, id: &str) -> Option<String> {
+        self.accepted_identities.lock().ok()?.get(id).cloned()
+    }
+    async fn verify_change(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        target: &Target,
+        uid: &str,
+        emit: &EventSink,
+    ) -> Result<Value, String> {
+        self.ensure_connection(session).await?;
+        let policy = session.control()?.policy;
+        policy.check_scope(&session.scope, target)?;
+        if !policy.resources || policy.access(target, true) == DataAccess::None {
+            return Err("Read-back verification is disabled by the data policy".into());
+        }
+        if call.name == "delete_resource" {
+            let reader = resource_access(
+                self.client
+                    .clone()
+                    .ok_or("Cluster connection unavailable")?,
+                target,
+            )
+            .await?;
+            return match reader.get(&target.name, true).await {
+                Err(kube::Error::Api(e)) if e.code == 404 => Ok(
+                    json!({"verification":"verified","observation":"Resource is absent after accepted deletion"}),
+                ),
+                Ok(_) => Ok(
+                    json!({"verification":"pending","observation":"An object still exists under this name; no replacement was modified"}),
+                ),
+                Err(_) => Ok(json!({"verification":"unavailable"})),
+            };
+        }
+        if matches!(
+            target.kind.as_str(),
+            "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet"
+        ) {
+            let mut arguments =
+                serde_json::to_value(target).map_err(|_| "Cannot encode verification target")?;
+            arguments["uid"] = json!(uid);
+            arguments["timeoutSeconds"] = json!(20);
+            if let Some(n) = call.arguments.get("replicas") {
+                arguments["expectedReplicas"] = n.clone();
+            }
+            return Box::pin(self.execute_inner(
+                session,
+                &ToolCall {
+                    id: call.id.clone(),
+                    name: "verify_workload".into(),
+                    arguments,
+                },
+                emit,
+            ))
+            .await;
+        }
+        let page=self.linked_read(session,"get_resource",json!({"group":target.group,"version":target.version,"kind":target.kind,"namespace":target.namespace,"name":target.name,"fields":["metadata.labels","metadata.annotations","spec","data","binaryData","status.phase"]})).await?;
+        let observed = &page["resource"];
+        let same_uid = observed["metadata"]["uid"].as_str() == Some(uid);
+        let configuration = if let Some(yaml) = call.arguments["yaml"].as_str() {
+            let wanted: Value = serde_yaml::from_str(yaml).map_err(|_| "Invalid reviewed YAML")?;
+            let metadata_matches = ["labels", "annotations"].iter().all(|key| {
+                wanted["metadata"].get(key).is_none_or(|value| {
+                    observed["metadata"]
+                        .get(key)
+                        .is_some_and(|actual| contains_desired_fields(value, actual))
+                })
+            });
+            metadata_matches
+                && ["spec", "data", "binaryData"].iter().all(|key| {
+                    wanted.get(key).is_none_or(|value| {
+                        observed
+                            .get(key)
+                            .is_some_and(|actual| contains_desired_fields(value, actual))
+                    })
+                })
+        } else {
+            false
+        };
+        let verified = same_uid
+            && configuration
+            && (target.kind != "PersistentVolumeClaim" || observed["status"]["phase"] == "Bound");
+        Ok(
+            json!({"verification":if verified{"verified"}else{"pending"},"resource":observed,"capturedAt":page["capturedAt"],"coverage":"Fresh UID-bound permitted configuration; PVC additionally requires Bound. Application health is unverified."}),
+        )
+    }
     async fn execute(
         &self,
         session: &Session,
@@ -145,7 +240,10 @@ impl ToolExecutor for KubernetesTools {
             return self.execute_inner(session, call, emit).await;
         }
         if self.budget.expired()
-            && !matches!(call.name.as_str(), "get_evidence" | "resource_catalog")
+            && !matches!(
+                call.name.as_str(),
+                "get_evidence" | "get_plan" | "resource_catalog"
+            )
         {
             return Err("AI read deadline exhausted".into());
         }
@@ -248,6 +346,44 @@ impl KubernetesTools {
             return Ok(
                 json!({"proposal":true,"title":proposal.title,"yaml":proposal.yaml,"executed":false}),
             );
+        }
+        if call.name == "propose_plan" {
+            let args: PlanProposal = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "Invalid propose_plan arguments")?;
+            let artifact = session
+                .plans
+                .lock()
+                .map_err(|_| "Plan registry unavailable")?
+                .propose(
+                    args,
+                    &session.id,
+                    &session.scope,
+                    state.policy_revision,
+                    &mut *session
+                        .evidence
+                        .lock()
+                        .map_err(|_| "Evidence unavailable")?,
+                )?;
+            emit(AgentEvent::PlanUpdated {
+                plan: artifact.clone(),
+            });
+            return Ok(json!({"planArtifact":artifact,"executed":false,"status":"plan_proposed"}));
+        }
+        if call.name == "get_plan" {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Args {
+                plan_id: String,
+                version: u32,
+            }
+            let args: Args = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "Invalid plan lookup")?;
+            let plan = session
+                .plans
+                .lock()
+                .map_err(|_| "Plan registry unavailable")?
+                .current(&args.plan_id, args.version)?;
+            return Ok(json!({"planArtifact":plan,"historical":true,"executed":false}));
         }
         if call.name == "ask_user" {
             #[derive(Deserialize)]
@@ -556,6 +692,114 @@ impl KubernetesTools {
         if call.name == "get_workload_diagnostics" {
             return self.read_workload_diagnostics(session, call, client).await;
         }
+        if call.name == "get_node_diagnostics" {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                name: String,
+            }
+            let args: Args =
+                serde_json::from_value(call.arguments.clone()).map_err(|_| "Invalid Node query")?;
+            let page=self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":"Node","namespace":null,"name":args.name,"fields":["spec.unschedulable","spec.taints","status.conditions","status.capacity","status.allocatable"]})).await?;
+            return bounded_result(
+                json!({"node":node_diagnostics(&page["resource"]),"evidence":{"context":session.scope.context,"kind":"Node","name":page["resource"]["metadata"]["name"],"uid":page["resource"]["metadata"]["uid"],"capturedAt":page["capturedAt"],"completeness":"partial"}}),
+            );
+        }
+        if call.name == "get_config_diagnostics" {
+            let args: ResourceArgs = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "Invalid configuration query")?;
+            if !matches!(
+                args.kind.as_str(),
+                "Pod"
+                    | "Deployment"
+                    | "StatefulSet"
+                    | "DaemonSet"
+                    | "ReplicaSet"
+                    | "Job"
+                    | "CronJob"
+            ) {
+                return Err("Configuration diagnostics supports Pods and workloads".into());
+            }
+            let fields = [
+                "spec",
+                "spec.template.spec",
+                "spec.jobTemplate.spec.template.spec",
+            ]
+            .into_iter()
+            .flat_map(|prefix| {
+                [
+                    "containers[*].name",
+                    "containers[*].envFrom",
+                    "containers[*].env[*].valueFrom",
+                    "initContainers[*].name",
+                    "initContainers[*].envFrom",
+                    "initContainers[*].env[*].valueFrom",
+                    "volumes[*].configMap",
+                    "volumes[*].secret",
+                    "imagePullSecrets",
+                ]
+                .into_iter()
+                .map(move |field| format!("{prefix}.{field}"))
+            })
+            .collect::<Vec<_>>();
+            let page=self.linked_read(session,"get_resource",json!({"group":args.group,"version":args.version,"kind":args.kind,"namespace":args.namespace,"name":args.name,"fields":fields})).await?;
+            let root = &page["resource"];
+            let pod_spec = if args.kind == "Pod" {
+                &root["spec"]
+            } else if args.kind == "CronJob" {
+                &root["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+            } else {
+                &root["spec"]["template"]["spec"]
+            };
+            let references = config_reference_diagnostics(pod_spec);
+            let mut checks = Vec::new();
+            let mut examined = 0;
+            let mut seen = std::collections::BTreeSet::new();
+            for (key, kind) in [("configMaps", "ConfigMap"), ("secrets", "Secret")] {
+                for reference in references[key].as_array().into_iter().flatten() {
+                    if examined >= 20 {
+                        break;
+                    }
+                    let Some(name) = reference["name"].as_str() else {
+                        continue;
+                    };
+                    if !seen.insert((
+                        kind.to_owned(),
+                        name.to_owned(),
+                        reference["key"].as_str().map(str::to_owned),
+                    )) {
+                        continue;
+                    }
+                    examined += 1;
+                    let target = Target {
+                        group: "".into(),
+                        version: "v1".into(),
+                        kind: kind.into(),
+                        namespace: args.namespace.clone(),
+                        name: name.into(),
+                    };
+                    let content = state.policy.access(&target, true) == DataAccess::Content;
+                    let fields = if content && reference["key"].is_string() {
+                        json!(["data", "binaryData"])
+                    } else {
+                        json!(["metadata.name"])
+                    };
+                    match self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":kind,"namespace":args.namespace,"name":name,"fields":fields})).await {
+                        Ok(found)=>{let item=&found["resource"];let key=reference["key"].as_str();let present=key.is_some_and(|key|item["data"].get(key).is_some()||item["binaryData"].get(key).is_some());checks.push(json!({"kind":kind,"name":name,"key":key,"object":"observed","keyStatus":if present{"present"}else{"unknownOrMissing"},"capturedAt":found["capturedAt"]}));}
+                        Err(error)=>checks.push(json!({"kind":kind,"name":name,"object":if error.contains("HTTP 404"){"notFound"}else{"unavailableOrDenied"},"reason":error})),
+                    }
+                }
+            }
+            return bounded_result(
+                json!({"references":references,"checks":checks,"examined":examined,"evidence":{"context":session.scope.context,"kind":args.kind,"namespace":args.namespace,"name":args.name,"capturedAt":page["capturedAt"],"completeness":"partial","coverage":"Projected references and at most 20 distinct exact checks; secret/configuration values are never returned, absent/filtered keys remain unknown"}}),
+            );
+        }
+        if call.name == "get_service_diagnostics" {
+            return self.read_service_diagnostics(session, call, client).await;
+        }
+        if call.name == "get_pvc_diagnostics" {
+            return self.read_pvc_diagnostics(session, call, client).await;
+        }
         if call.name == "list_helm_releases" {
             return self.list_helm_releases(session, call, client).await;
         }
@@ -849,6 +1093,22 @@ impl KubernetesTools {
     }
 }
 
+async fn diagnostic_metadata_list(
+    reader: &kubiki_core::core::access::ResourceAccess,
+    policy: &AgentPolicy,
+    scope: &AgentScope,
+    target: &Target,
+    label_selector: &str,
+    limit: u32,
+) -> Result<kube::api::ObjectList<kube::core::PartialObjectMeta<DynamicObject>>, String> {
+    policy.check_scope(scope, target)?;
+    validate_query_filters(policy, target, reader.builtin, Some(label_selector), None)?;
+    reader
+        .list_metadata(&ListParams::default().labels(label_selector).limit(limit))
+        .await
+        .map_err(query_list_error)
+}
+
 async fn projected_page(
     reader: &kubiki_core::core::access::ResourceAccess,
     policy: &AgentPolicy,
@@ -961,6 +1221,17 @@ fn validate_query_filters(
     labels: Option<&str>,
     fields: Option<&str>,
 ) -> Result<(), String> {
+    if labels.is_some_and(|s| !s.is_empty()) && !policy.filter_field_allowed("metadata.labels") {
+        return Err("Label filters are outside the selected-field access policy".into());
+    }
+    if fields.is_some_and(|s| {
+        s.split(',').any(|term| {
+            !policy.filter_field_allowed(term.split(['=', '!']).next().unwrap_or("").trim())
+        })
+    }) {
+        return Err("Field filters are outside the selected-field access policy".into());
+    }
+
     if labels
         .into_iter()
         .chain(fields)
@@ -1049,6 +1320,152 @@ fn diagnostic_projection(
         &serde_json::to_value(object).map_err(|_| "Cannot encode diagnostic resource")?,
         true,
     )
+}
+
+fn parse_mutation(
+    policy: &AgentPolicy,
+    scope: &AgentScope,
+    mode: AgentMode,
+    call: &ToolCall,
+) -> Result<(Target, Option<String>, Option<WriteOperation>, Option<u32>), String> {
+    let (target, yaml, requested_op, replicas) = if call.name == "apply_manifest" {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Manifest {
+            yaml: String,
+            #[serde(rename = "expectedUid")]
+            _expected_uid: Option<String>,
+            #[serde(rename = "expectedResourceVersion")]
+            _expected_resource_version: Option<String>,
+            #[serde(rename = "expectedAbsent")]
+            _expected_absent: Option<bool>,
+        }
+        let args: Manifest = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid manifest arguments")?;
+        if args.yaml.len() > 24000 {
+            return Err("Manifest exceeds 24000 bytes".into());
+        }
+        let value: Value = serde_yaml::from_str(&args.yaml)
+            .map_err(|_| "Provide exactly one valid YAML resource")?;
+        let api_version = value["apiVersion"]
+            .as_str()
+            .ok_or("apiVersion is required")?;
+        let (group, version) = api_version.split_once('/').unwrap_or(("", api_version));
+        let target = Target {
+            group: group.into(),
+            version: version.into(),
+            kind: value["kind"].as_str().ok_or("kind is required")?.into(),
+            namespace: value["metadata"]["namespace"].as_str().map(str::to_owned),
+            name: value["metadata"]["name"]
+                .as_str()
+                .ok_or("metadata.name is required")?
+                .into(),
+        };
+        // Generic manifest tools must not become a route to privileged host Pods.
+        reject_privileged_manifest(&value)?;
+        check_manifest_data_access(&value, &policy, scope, &target)?;
+        if value["spec"]["replicas"]
+            .as_u64()
+            .is_some_and(|n| n > u64::from(policy.max_replicas))
+        {
+            return Err("Manifest replica count exceeds the AI policy limit".into());
+        }
+        if target.kind == "HorizontalPodAutoscaler"
+            && value["spec"]["maxReplicas"]
+                .as_u64()
+                .is_some_and(|n| n > u64::from(policy.max_replicas))
+        {
+            return Err("HPA maximum replicas exceeds the AI policy limit".into());
+        }
+        (target, Some(args.yaml), None, None)
+    } else if call.name == "sync_argocd_app" {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: String,
+            name: String,
+            #[allow(dead_code)]
+            hard: Option<bool>,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid sync_argocd_app arguments")?;
+        let target = Target {
+            group: "argoproj.io".into(),
+            version: "v1alpha1".into(),
+            kind: "Application".into(),
+            namespace: Some(args.namespace),
+            name: args.name,
+        };
+        (target, None, Some(WriteOperation::Update), None)
+    } else if call.name == "reconcile_flux_resource" {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            kind: String,
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid reconcile_flux_resource arguments")?;
+        let (group, version) = match args.kind.as_str() {
+            "HelmRelease" => ("helm.toolkit.fluxcd.io", "v2"),
+            "Kustomization" => ("kustomize.toolkit.fluxcd.io", "v1"),
+            _ => return Err("kind must be 'HelmRelease' or 'Kustomization'".into()),
+        };
+        let target = Target {
+            group: group.into(),
+            version: version.into(),
+            kind: args.kind,
+            namespace: Some(args.namespace),
+            name: args.name,
+        };
+        (target, None, Some(WriteOperation::Update), None)
+    } else {
+        let args: ResourceArgs = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid mutation arguments")?;
+        let op = match call.name.as_str() {
+            "scale_workload" => WriteOperation::Scale,
+            "restart_workload" => WriteOperation::Restart,
+            "delete_resource" => WriteOperation::Delete,
+            _ => return Err("Unknown mutation tool".into()),
+        };
+        if op == WriteOperation::Scale && args.replicas.is_none_or(|r| r > policy.max_replicas) {
+            return Err("Replica count exceeds the AI policy limit or is missing".into());
+        }
+        if op != WriteOperation::Scale && args.replicas.is_some() {
+            return Err("Unexpected replicas argument".into());
+        }
+        (args.target(), None, Some(op), args.replicas)
+    };
+    if requested_op == Some(WriteOperation::Scale)
+        && !matches!(
+            target.kind.as_str(),
+            "Deployment" | "StatefulSet" | "ReplicaSet"
+        )
+    {
+        return Err("Scale supports Deployment, StatefulSet and ReplicaSet".into());
+    }
+    if requested_op == Some(WriteOperation::Restart)
+        && !matches!(
+            target.kind.as_str(),
+            "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet"
+        )
+    {
+        return Err("Restart supports controller workloads".into());
+    }
+    validate_target(&target, true)?;
+    if let Some(op) = requested_op {
+        policy.check_write(mode, scope, &target, op)?;
+    } else if policy
+        .check_write(mode, scope, &target, WriteOperation::Create)
+        .is_err()
+        && policy
+            .check_write(mode, scope, &target, WriteOperation::Update)
+            .is_err()
+    {
+        return Err("Manifest create/update is disabled by policy".into());
+    }
+    Ok((target, yaml, requested_op, replicas))
 }
 
 fn bounded_result(mut result: Value) -> Result<Value, String> {
@@ -1565,9 +1982,15 @@ impl KubernetesTools {
                 };
                 if let Ok(label_selector) = &selector {
                     if let Ok(rs_api) = resource_access(client.clone(), &rs_target).await {
-                        if let Ok(page) = rs_api
-                            .list_metadata(&ListParams::default().labels(label_selector).limit(20))
-                            .await
+                        if let Ok(page) = diagnostic_metadata_list(
+                            &rs_api,
+                            &state.policy,
+                            &session.scope,
+                            &rs_target,
+                            label_selector,
+                            20,
+                        )
+                        .await
                         {
                             if page
                                 .metadata
@@ -1678,9 +2101,15 @@ impl KubernetesTools {
                         name: "".into(),
                     };
                     if let Ok(pod_api) = resource_access(client.clone(), &pod_target).await {
-                        if let Ok(pod_page) = pod_api
-                            .list_metadata(&ListParams::default().labels(&label_selector).limit(30))
-                            .await
+                        if let Ok(pod_page) = diagnostic_metadata_list(
+                            &pod_api,
+                            &state.policy,
+                            &session.scope,
+                            &pod_target,
+                            label_selector,
+                            30,
+                        )
+                        .await
                         {
                             if pod_page
                                 .metadata
@@ -1799,6 +2228,196 @@ impl KubernetesTools {
             }))
         };
         tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Workload diagnostics cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Workload diagnostics timed out")? }
+    }
+
+    // Compose generic projected reads so policy, selectors, UID checks, paging and
+    // uniform-LIST optimization have exactly one implementation.
+    async fn linked_read(
+        &self,
+        session: &Session,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, String> {
+        let call = ToolCall {
+            id: "linked-diagnostic".into(),
+            name: name.into(),
+            arguments,
+        };
+        let mut result = Box::pin(self.execute_inner(session, &call, &silent_events())).await?;
+        if name == "list_resources" {
+            if let Some(cursor) = result["cursor"].as_str() {
+                let mut args = call.arguments.clone();
+                args["cursor"] = json!(cursor);
+                result["continuationQuery"] = json!({"tool":"list_resources","arguments":args});
+            }
+        }
+        Ok(result)
+    }
+
+    async fn read_service_diagnostics(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        _client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid service diagnostics arguments")?;
+        let state = session.control()?;
+        let target = Target {
+            group: "".into(),
+            version: "v1".into(),
+            kind: "Service".into(),
+            namespace: Some(args.namespace.clone()),
+            name: args.name.clone(),
+        };
+        validate_target(&target, true)?;
+        state.policy.check_scope(&session.scope, &target)?;
+        if state.policy.access(&target, true) != DataAccess::Content {
+            return Err("Service diagnostics require content access".into());
+        }
+        let root = self.linked_read(session, "get_resource", json!({"group":"","version":"v1","kind":"Service","namespace":args.namespace,"name":args.name,"fields":["spec.type","spec.clusterIP","spec.selector","spec.ports","spec.externalName","spec.publishNotReadyAddresses","status.loadBalancer"]})).await?;
+        let service = &root["resource"];
+        let mut coverage = json!({});
+        let mut slices = None;
+        let mut pods = None;
+        if service["spec"]["type"] != "ExternalName" {
+            let result = self.linked_read(session, "list_resources", json!({"group":"discovery.k8s.io","version":"v1","kind":"EndpointSlice","namespace":args.namespace,"labelSelector":format!("kubernetes.io/service-name={}",args.name),"pageSize":10,"fields":["metadata.ownerReferences","endpoints[*].conditions","ports"]})).await;
+            match result {
+                Ok(mut page) => {
+                    let service_uid = service["metadata"]["uid"].as_str();
+                    if let Some(items) = page["items"].as_array_mut() {
+                        // A known conflicting owner belongs to a previous Service incarnation.
+                        let before = items.len();
+                        items.retain(|item| {
+                            !item["metadata"]["ownerReferences"]
+                                .as_array()
+                                .is_some_and(|owners| {
+                                    owners.iter().any(|owner| {
+                                        owner["kind"] == "Service"
+                                            && owner["uid"]
+                                                .as_str()
+                                                .zip(service_uid)
+                                                .is_some_and(|(a, b)| a != b)
+                                    })
+                                })
+                        });
+                        let omitted = before - items.len();
+                        page["omittedReplacedOwners"] = json!(omitted);
+                    }
+                    slices = Some(page["items"].clone());
+                    coverage["endpointSlices"] = page;
+                }
+                Err(error) => {
+                    coverage["endpointSlices"] =
+                        json!({"completeness":"unavailable","reason":error})
+                }
+            }
+            let selector = service
+                .pointer("/spec/selector")
+                .and_then(Value::as_object)
+                .filter(|s| !s.is_empty());
+            if let Some(selector) = selector {
+                let selector = diagnostic_selector(&json!({"matchLabels":selector}))?;
+                match self.linked_read(session, "list_resources", json!({"group":"","version":"v1","kind":"Pod","namespace":args.namespace,"labelSelector":selector,"pageSize":20,"fields":["status.phase","status.conditions","spec.containers[*].name","spec.containers[*].ports"]})).await {
+                    Ok(page) => { pods = page["items"].as_array().cloned(); coverage["pods"]=page; }
+                    Err(error) => coverage["pods"]=json!({"completeness":"unavailable","reason":error}),
+                }
+            } else {
+                coverage["pods"] = json!({"completeness":"unavailable","reason":"No usable permitted selector; no broad Pod scan performed"});
+            }
+        }
+        let diag = service_diagnostics(service, slices.as_ref(), pods.as_deref());
+        // Do not duplicate all child bodies in evidence. Keep filters/cursors/time/counts.
+        for key in ["pods", "endpointSlices"] {
+            if let Some(map) = coverage[key].as_object_mut() {
+                map.remove("items");
+            }
+        }
+        bounded_result(
+            json!({"diagnostic":"service_diagnostics","service":diag,"components":coverage,"evidence":{"context":session.scope.context,"kind":"Service","namespace":args.namespace,"name":args.name,"uid":service["metadata"]["uid"],"resourceVersion":service["metadata"]["resourceVersion"],"capturedAt":root["capturedAt"],"completeness":"partial","coverage":"Scoped policy-projected observations; endpoint readiness does not establish connectivity or application health"}}),
+        )
+    }
+
+    async fn read_pvc_diagnostics(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+        _client: Client,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            namespace: String,
+            name: String,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid PVC diagnostics arguments")?;
+        let state = session.control()?;
+        let target = Target {
+            group: "".into(),
+            version: "v1".into(),
+            kind: "PersistentVolumeClaim".into(),
+            namespace: Some(args.namespace.clone()),
+            name: args.name.clone(),
+        };
+        validate_target(&target, true)?;
+        state.policy.check_scope(&session.scope, &target)?;
+        if state.policy.access(&target, true) != DataAccess::Content {
+            return Err("PVC diagnostics require content access".into());
+        }
+        let root=self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":"PersistentVolumeClaim","namespace":args.namespace,"name":args.name,"fields":["spec.volumeName","spec.storageClassName","spec.resources.requests.storage","spec.accessModes","status.phase","status.capacity","status.conditions"]})).await?;
+        let pvc = &root["resource"];
+        let mut components = json!({});
+        let mut pv = None;
+        if let Some(name) = pvc["spec"]["volumeName"].as_str().filter(|s| !s.is_empty()) {
+            match self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":"PersistentVolume","namespace":null,"name":name,"fields":["spec.claimRef","spec.capacity","spec.storageClassName","spec.persistentVolumeReclaimPolicy","spec.nodeAffinity","status.phase"]})).await {
+                Ok(page)=> {
+                    let resource=&page["resource"];
+                    let valid=resource.pointer("/spec/claimRef/uid").and_then(Value::as_str).zip(pvc["metadata"]["uid"].as_str()).is_some_and(|(a,b)|a==b);
+                    if valid { pv=Some(resource.clone()); }
+                    components["volume"]=json!({"identity":resource["metadata"],"capturedAt":page["capturedAt"],"claimUidVerified":valid,"completeness":if valid {"partial"}else{"unavailable"},"reason":if valid {"Projected bound volume"}else{"Claim UID missing, filtered or mismatched; volume not attributed to this claim"}});
+                }
+                Err(error)=>components["volume"]=json!({"completeness":"unavailable","reason":error}),
+            }
+        }
+        if let Some(name) = pvc["spec"]["storageClassName"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+        {
+            match self.linked_read(session,"get_resource",json!({"group":"storage.k8s.io","version":"v1","kind":"StorageClass","namespace":null,"name":name,"fields":["volumeBindingMode","allowVolumeExpansion","allowedTopologies","provisioner"]})).await {
+                Ok(page)=>components["storageClass"]=page,
+                Err(error)=>components["storageClass"]=json!({"completeness":"unavailable","reason":error}),
+            }
+        }
+        let mut events = None;
+        if state.policy.events {
+            if let Some(uid) = pvc["metadata"]["uid"].as_str().filter(|s| !s.is_empty()) {
+                let selector = format!("involvedObject.uid={uid}");
+                match self.linked_read(session,"list_resources",json!({"group":"","version":"v1","kind":"Event","namespace":args.namespace,"labelSelector":"","fieldSelector":selector,"pageSize":20,"fields":["involvedObject.uid","reason","message","type","lastTimestamp","eventTime"]})).await {
+                    Ok(mut page)=> {
+                        events=page["items"].as_array().map(|items|items.iter().filter(|item|item["involvedObject"]["uid"]==uid).cloned().collect::<Vec<_>>());
+                        page.as_object_mut().unwrap().remove("items");
+                        components["events"]=page;
+                    }
+                    Err(error)=>components["events"]=json!({"completeness":"unavailable","reason":error}),
+                }
+            } else {
+                components["events"] = json!({"completeness":"unavailable","reason":"Claim UID unavailable; no name-only Event query performed"});
+            }
+        } else {
+            components["events"] =
+                json!({"completeness":"denied","reason":"Event access disabled"});
+        }
+        let diag = pvc_diagnostics(pvc, pv.as_ref(), events.as_deref());
+        bounded_result(
+            json!({"diagnostic":"pvc_diagnostics","pvc":diag,"components":components,"evidence":{"context":session.scope.context,"kind":"PersistentVolumeClaim","namespace":args.namespace,"name":args.name,"uid":pvc["metadata"]["uid"],"resourceVersion":pvc["metadata"]["resourceVersion"],"capturedAt":root["capturedAt"],"completeness":"partial","coverage":"Projected claim, exact volume/class and UID-bound Events; unavailable fields do not establish absence"}}),
+        )
     }
 
     async fn list_helm_releases(
@@ -2077,6 +2696,64 @@ impl KubernetesTools {
         )
     }
 
+    pub(crate) async fn review_plan_call(
+        &self,
+        session: &Session,
+        mut call: ToolCall,
+    ) -> Result<(ToolCall, Target, WriteOperation), String> {
+        self.ensure_connection(session).await?;
+        let state = session.control()?;
+        if state.mode == AgentMode::ReadOnly || state.phase != AgentPhase::Action {
+            return Err("Review for execution requires Ask/Accept and Action".into());
+        }
+        let (target, _, requested, _) =
+            parse_mutation(&state.policy, &session.scope, state.mode, &call)?;
+        let reader = resource_access(
+            self.client
+                .clone()
+                .ok_or("Cluster connection unavailable")?,
+            &target,
+        )
+        .await?;
+        let before = match reader.get(&target.name, true).await {
+            Ok(value) => Some(value),
+            Err(kube::Error::Api(e)) if e.code == 404 => None,
+            Err(_) => return Err("Cannot inspect target identity for plan review".into()),
+        };
+        let op = requested.unwrap_or(if before.is_some() {
+            WriteOperation::Update
+        } else {
+            WriteOperation::Create
+        });
+        state
+            .policy
+            .check_write(state.mode, &session.scope, &target, op)?;
+        if let Some(before) = before {
+            let uid = before["metadata"]["uid"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or("Missing target UID")?;
+            let version = before["metadata"]["resourceVersion"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or("Missing resource version")?;
+            if call.arguments["expectedUid"]
+                .as_str()
+                .is_some_and(|expected| expected != uid)
+            {
+                return Err("Planned target was recreated; refresh investigation and plan".into());
+            }
+            call.arguments["expectedUid"] = json!(uid);
+            call.arguments["expectedResourceVersion"] = json!(version);
+        } else {
+            if op != WriteOperation::Create {
+                return Err("Planned target no longer exists".into());
+            }
+            call.arguments["expectedAbsent"] = json!(true);
+        }
+        Ok((call, target, op))
+    }
+
     async fn mutate(
         &self,
         session: &Session,
@@ -2088,127 +2765,8 @@ impl KubernetesTools {
         if state.phase != AgentPhase::Action || state.mode == AgentMode::ReadOnly {
             return Err("Kubernetes modifications are strictly prohibited during the Plan phase or in Read only mode".into());
         }
-        let (target, yaml, requested_op, replicas) = if call.name == "apply_manifest" {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Manifest {
-                yaml: String,
-            }
-            let args: Manifest = serde_json::from_value(call.arguments.clone())
-                .map_err(|_| "Invalid manifest arguments")?;
-            if args.yaml.len() > 24000 {
-                return Err("Manifest exceeds 24000 bytes".into());
-            }
-            let value: Value = serde_yaml::from_str(&args.yaml)
-                .map_err(|_| "Provide exactly one valid YAML resource")?;
-            let api_version = value["apiVersion"]
-                .as_str()
-                .ok_or("apiVersion is required")?;
-            let (group, version) = api_version.split_once('/').unwrap_or(("", api_version));
-            let target = Target {
-                group: group.into(),
-                version: version.into(),
-                kind: value["kind"].as_str().ok_or("kind is required")?.into(),
-                namespace: value["metadata"]["namespace"].as_str().map(str::to_owned),
-                name: value["metadata"]["name"]
-                    .as_str()
-                    .ok_or("metadata.name is required")?
-                    .into(),
-            };
-            // Generic manifest tools must not become a route to privileged host Pods.
-            reject_privileged_manifest(&value)?;
-            check_manifest_data_access(&value, &state.policy, &session.scope, &target)?;
-            if value["spec"]["replicas"]
-                .as_u64()
-                .is_some_and(|n| n > u64::from(state.policy.max_replicas))
-            {
-                return Err("Manifest replica count exceeds the AI policy limit".into());
-            }
-            if target.kind == "HorizontalPodAutoscaler"
-                && value["spec"]["maxReplicas"]
-                    .as_u64()
-                    .is_some_and(|n| n > u64::from(state.policy.max_replicas))
-            {
-                return Err("HPA maximum replicas exceeds the AI policy limit".into());
-            }
-            (target, Some(args.yaml), None, None)
-        } else if call.name == "sync_argocd_app" {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Args {
-                namespace: String,
-                name: String,
-                #[allow(dead_code)]
-                hard: Option<bool>,
-            }
-            let args: Args = serde_json::from_value(call.arguments.clone())
-                .map_err(|_| "Invalid sync_argocd_app arguments")?;
-            let target = Target {
-                group: "argoproj.io".into(),
-                version: "v1alpha1".into(),
-                kind: "Application".into(),
-                namespace: Some(args.namespace),
-                name: args.name,
-            };
-            (target, None, Some(WriteOperation::Update), None)
-        } else if call.name == "reconcile_flux_resource" {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Args {
-                kind: String,
-                namespace: String,
-                name: String,
-            }
-            let args: Args = serde_json::from_value(call.arguments.clone())
-                .map_err(|_| "Invalid reconcile_flux_resource arguments")?;
-            let (group, version) = match args.kind.as_str() {
-                "HelmRelease" => ("helm.toolkit.fluxcd.io", "v2"),
-                "Kustomization" => ("kustomize.toolkit.fluxcd.io", "v1"),
-                _ => return Err("kind must be 'HelmRelease' or 'Kustomization'".into()),
-            };
-            let target = Target {
-                group: group.into(),
-                version: version.into(),
-                kind: args.kind,
-                namespace: Some(args.namespace),
-                name: args.name,
-            };
-            (target, None, Some(WriteOperation::Update), None)
-        } else {
-            let args: ResourceArgs = serde_json::from_value(call.arguments.clone())
-                .map_err(|_| "Invalid mutation arguments")?;
-            let op = match call.name.as_str() {
-                "scale_workload" => WriteOperation::Scale,
-                "restart_workload" => WriteOperation::Restart,
-                "delete_resource" => WriteOperation::Delete,
-                _ => return Err("Unknown mutation tool".into()),
-            };
-            if op == WriteOperation::Scale
-                && args.replicas.is_none_or(|r| r > state.policy.max_replicas)
-            {
-                return Err("Replica count exceeds the AI policy limit or is missing".into());
-            }
-            if op != WriteOperation::Scale && args.replicas.is_some() {
-                return Err("Unexpected replicas argument".into());
-            }
-            (args.target(), None, Some(op), args.replicas)
-        };
-        validate_target(&target, true)?;
-        if let Some(op) = requested_op {
-            state
-                .policy
-                .check_write(state.mode, &session.scope, &target, op)?;
-        } else if state
-            .policy
-            .check_write(state.mode, &session.scope, &target, WriteOperation::Create)
-            .is_err()
-            && state
-                .policy
-                .check_write(state.mode, &session.scope, &target, WriteOperation::Update)
-                .is_err()
-        {
-            return Err("Manifest create/update is disabled by policy".into());
-        }
+        let (target, yaml, requested_op, replicas) =
+            parse_mutation(&state.policy, &session.scope, state.mode, call)?;
         let resource = reference(&session.scope.context, &target, None);
         let guard = self.window.state::<MutationGuard>();
         let _gate = guard.acquire(&resource).map_err(error_message)?;
@@ -2223,6 +2781,23 @@ impl KubernetesTools {
                 .await
                 .map_err(|_| "Mutation preparation timed out")?
                 .map_err(|_| "Cannot read target for mutation preparation")?;
+        if call.arguments["expectedAbsent"] == true && before.is_some() {
+            return Err("A resource appeared after plan review; nothing was overwritten".into());
+        }
+        if let Some(uid) = call.arguments["expectedUid"].as_str() {
+            if before.as_ref().and_then(|o| o.metadata.uid.as_deref()) != Some(uid) {
+                return Err("Resource was replaced after plan review; review again".into());
+            }
+        }
+        if let Some(version) = call.arguments["expectedResourceVersion"].as_str() {
+            if before
+                .as_ref()
+                .and_then(|o| o.metadata.resource_version.as_deref())
+                != Some(version)
+            {
+                return Err("Resource changed after plan review; review again".into());
+            }
+        }
         let op = requested_op.unwrap_or(if before.is_some() {
             WriteOperation::Update
         } else {
@@ -2339,6 +2914,13 @@ impl KubernetesTools {
                     .map_err(|message| kubiki_core::core::mutations::cancelled(&pinned, &message))
             })
             .await;
+        if let Ok(object) = &outcome {
+            if let Some(uid) = object["metadata"]["uid"].as_str() {
+                if let Ok(mut identities) = self.accepted_identities.lock() {
+                    identities.insert(operation_id.clone(), uid.to_owned());
+                }
+            }
+        }
         let status = match &outcome {
             Ok(_) => "accepted",
             Err(_)
@@ -2511,6 +3093,95 @@ fn check_manifest_data_access(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn linked_diagnostic_pages_never_get_denied_bodies_or_leak_excluded_event_messages() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let body_reads = Arc::new(AtomicUsize::new(0));
+        let seen = body_reads.clone();
+        let client = Client::new(
+            tower::service_fn(move |request: http::Request<kube::client::Body>| {
+                let seen = seen.clone();
+                async move {
+                    let metadata = request
+                        .headers()
+                        .get("accept")
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|v| v.contains("PartialObjectMetadata"));
+                    if !metadata {
+                        seen.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let value = if metadata {
+                        json!({"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{},"items":[{"metadata":{"name":"event","namespace":"apps","uid":"event-uid"}}]})
+                    } else {
+                        json!({"apiVersion":"v1","kind":"EventList","metadata":{},"items":[{"apiVersion":"v1","kind":"Event","metadata":{"name":"event","namespace":"apps","uid":"event-uid"},"reason":"ProvisioningFailed","message":"private-admission-message"}]})
+                    };
+                    Ok::<_, std::convert::Infallible>(
+                        http::Response::builder()
+                            .header("content-type", "application/json")
+                            .body(kube::client::Body::from(
+                                serde_json::to_vec(&value).unwrap(),
+                            ))
+                            .unwrap(),
+                    )
+                }
+            }),
+            "apps",
+        );
+        let target = Target {
+            group: "".into(),
+            version: "v1".into(),
+            kind: "Event".into(),
+            namespace: Some("apps".into()),
+            name: "".into(),
+        };
+        let reader = resource_access(client, &target).await.unwrap();
+        let policy = AgentPolicy {
+            rules: vec![ResourceRule {
+                group: "".into(),
+                kind: "Event".into(),
+                namespace: "apps".into(),
+                name: "*".into(),
+                read: DataAccess::None,
+                writes: vec![],
+            }],
+            ..Default::default()
+        };
+        let page = projected_page(
+            &reader,
+            &policy,
+            &target,
+            &ListParams::default().limit(20),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(page.items.is_empty());
+        assert_eq!(page.omitted, 1);
+        assert_eq!(body_reads.load(Ordering::SeqCst), 0);
+        let policy = AgentPolicy {
+            denied_paths: vec!["/message".into()],
+            ..Default::default()
+        };
+        let page = projected_page(
+            &reader,
+            &policy,
+            &target,
+            &ListParams::default().limit(20),
+            false,
+        )
+        .await
+        .unwrap();
+        let diag = pvc_diagnostics(
+            &json!({"status":{"phase":"Pending"}}),
+            None,
+            Some(&page.items),
+        );
+        assert!(!diag.to_string().contains("private-admission-message"));
+    }
 
     #[test]
     fn ownership_queries_respect_excluded_relation_fields() {

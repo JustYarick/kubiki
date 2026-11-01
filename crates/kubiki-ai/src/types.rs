@@ -93,7 +93,7 @@ pub struct ModelInfo {
     pub tools: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentScope {
     pub context: String,
@@ -138,6 +138,92 @@ pub struct Completion {
     pub output_tokens: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentIntent {
+    #[default]
+    Chat,
+    Investigate,
+    Create,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanKind {
+    #[default]
+    Remediation,
+    Investigation,
+    Deployment,
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanAction {
+    Inspect,
+    Manual,
+    Scale,
+    Restart,
+    Apply,
+    Delete,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanStep {
+    pub id: String,
+    pub title: String,
+    pub action: PlanAction,
+    pub target: Option<Target>,
+    pub expected_uid: Option<String>,
+    pub replicas: Option<u32>,
+    pub yaml: Option<String>,
+    pub reason: String,
+    pub verification: String,
+    pub risk: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub depends_on_accepted: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    Partial,
+    #[default]
+    Draft,
+    Ready,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    Stale,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanArtifact {
+    pub schema_version: u32,
+    pub session_id: String,
+    pub kind: PlanKind,
+    pub diagnosis: String,
+    pub uncertainty: String,
+    pub steps: Vec<PlanStep>,
+    pub id: String,
+    pub version: u32,
+    pub title: String,
+    pub body_markdown: String,
+    #[serde(default)]
+    pub target_scope: Option<String>,
+    pub scope: AgentScope,
+    #[serde(default)]
+    pub evidence_ids: Vec<String>,
+    #[serde(default)]
+    pub proposed_actions: Vec<String>,
+    #[serde(default)]
+    pub status: PlanStatus,
+    #[serde(default)]
+    pub policy_revision: u64,
+    pub created_at: String,
+}
+
 #[derive(Clone, Debug)]
 pub enum Turn {
     User(String),
@@ -164,6 +250,9 @@ pub enum AgentEvent {
     ToolCompleted {
         id: String,
         result: Value,
+    },
+    PlanUpdated {
+        plan: PlanArtifact,
     },
     Context {
         estimated_input_tokens: u64,

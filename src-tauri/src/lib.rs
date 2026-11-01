@@ -88,6 +88,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             agent_commands::ai_get_settings,
+            agent_commands::ai_preview_policy,
+            agent_commands::ai_review_plan,
+            agent_commands::ai_get_evidence,
+            agent_commands::ai_execute_plan,
             agent_commands::ai_save_settings,
             agent_commands::ai_set_credential,
             agent_commands::ai_list_models,

@@ -161,8 +161,9 @@ impl ProviderClient {
             .await
             .map_err(|_| "AI provider has not sent data for 120 seconds")?
         {
-            let chunk =
-                chunk.map_err(|e| format!("AI stream disconnected ({e}); no further tools were executed"))?;
+            let chunk = chunk.map_err(|e| {
+                format!("AI stream disconnected ({e}); no further tools were executed")
+            })?;
             total += chunk.len();
             if total > 4 * 1024 * 1024 {
                 return Err("AI response exceeds the 4 MiB run limit".into());
@@ -274,6 +275,53 @@ pub fn parse_models(protocol: ProviderProtocol, value: &Value) -> Result<Vec<Mod
         .collect())
 }
 
+// Native plan execution records protocol-neutral receipts. Rebuild a valid
+// assistant/tool exchange when no provider-native replay item exists.
+fn replay_assistant(protocol: ProviderProtocol, completion: &Completion) -> Vec<Value> {
+    if completion.text.is_empty() && completion.calls.is_empty() {
+        return Vec::new();
+    }
+    let mut items = match protocol {
+        ProviderProtocol::Responses => {
+            let mut items = Vec::new();
+            if !completion.text.is_empty() {
+                items.push(json!({"role":"assistant","content":completion.text}));
+            }
+            for call in &completion.calls {
+                items.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.arguments.to_string()}));
+            }
+            items
+        }
+        ProviderProtocol::Anthropic => {
+            let mut content = Vec::new();
+            if !completion.text.is_empty() {
+                content.push(json!({"type":"text","text":completion.text}));
+            }
+            for call in &completion.calls {
+                content.push(
+                    json!({"type":"tool_use","id":call.id,"name":call.name,"input":call.arguments}),
+                );
+            }
+            vec![json!({"role":"assistant","content":content})]
+        }
+        ProviderProtocol::Ollama => vec![
+            json!({"role":"assistant","content":completion.text,"tool_calls":completion.calls.iter().map(|call|json!({"function":{"name":call.name,"arguments":call.arguments}})).collect::<Vec<_>>()}),
+        ],
+        ProviderProtocol::OpenaiCompatible => vec![
+            json!({"role":"assistant","content":completion.text,"tool_calls":completion.calls.iter().map(|call|json!({"id":call.id,"type":"function","function":{"name":call.name,"arguments":call.arguments.to_string()}})).collect::<Vec<_>>()}),
+        ],
+    };
+    for item in &mut items {
+        if item["tool_calls"]
+            .as_array()
+            .is_some_and(|calls| calls.is_empty())
+        {
+            item.as_object_mut().unwrap().remove("tool_calls");
+        }
+    }
+    items
+}
+
 pub fn build_request(
     protocol: ProviderProtocol,
     model: &str,
@@ -289,6 +337,7 @@ pub fn build_request(
     for turn in turns {
         match turn {
             Turn::User(text) => messages.push(json!({"role":"user", "content":text})),
+            Turn::Assistant(completion) if completion.native.is_null()=>messages.extend(replay_assistant(protocol,completion)),
             Turn::Assistant(completion) => match protocol {
                 ProviderProtocol::Responses => { if let Some(items) = completion.native.as_array() { messages.extend(items.iter().cloned()); } }
                 ProviderProtocol::Anthropic => messages.push(json!({"role":"assistant", "content":completion.native})),
@@ -934,9 +983,89 @@ mod tests {
             json!({"message":{"content":"The pod has failed.","thinking":""},"done":false}),
             json!({"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":25}),
         ] {
-            stream.frame(ProviderProtocol::Ollama, &frame, &sink()).unwrap();
+            stream
+                .frame(ProviderProtocol::Ollama, &frame, &sink())
+                .unwrap();
         }
         let completion = stream.finish(ProviderProtocol::Ollama).unwrap();
-        assert_eq!(completion.text, "<think>Checking pod diagnostics</think>\nThe pod has failed.");
+        assert_eq!(
+            completion.text,
+            "<think>Checking pod diagnostics</think>\nThe pod has failed."
+        );
+    }
+    #[test]
+    fn native_execution_receipts_replay_valid_assistant_tool_pairs_for_all_protocols() {
+        let call = ToolCall {
+            id: "native-step-1".into(),
+            name: "scale_workload".into(),
+            arguments: json!({"replicas":3}),
+        };
+        let turns = vec![
+            Turn::User("Execute reviewed plan".into()),
+            Turn::Assistant(Completion {
+                text: "Executed a reviewed step".into(),
+                calls: vec![call.clone()],
+                native: Value::Null,
+                ..Default::default()
+            }),
+            Turn::Tool {
+                call,
+                result: json!({"status":"accepted","operationId":"receipt"}),
+            },
+            Turn::User("What changed?".into()),
+        ];
+        for protocol in [
+            ProviderProtocol::Responses,
+            ProviderProtocol::OpenaiCompatible,
+            ProviderProtocol::Anthropic,
+            ProviderProtocol::Ollama,
+        ] {
+            let (_, body) = build_request(
+                protocol,
+                "model",
+                &GenerationOptions::default(),
+                "system",
+                &turns,
+                &[],
+            );
+            let items = body[if protocol == ProviderProtocol::Responses {
+                "input"
+            } else {
+                "messages"
+            }]
+            .as_array()
+            .unwrap();
+            assert!(
+                items.iter().all(|item| !item.is_null()),
+                "Invalid null assistant replay: {protocol:?}"
+            );
+            let text = body.to_string();
+            assert!(text.contains("scale_workload") && text.contains("receipt"));
+            match protocol {
+                ProviderProtocol::Responses => {
+                    assert!(items.iter().any(|item| item["type"] == "function_call"
+                        && item["call_id"] == "native-step-1"))
+                }
+                ProviderProtocol::Anthropic => {
+                    assert!(
+                        items
+                            .iter()
+                            .any(|item| item["content"].as_array().is_some_and(|cs| cs
+                                .iter()
+                                .any(|c| c["type"] == "tool_use" && c["id"] == "native-step-1")))
+                    )
+                }
+                ProviderProtocol::OpenaiCompatible => assert!(
+                    items
+                        .iter()
+                        .any(|item| item["tool_calls"][0]["id"] == "native-step-1")
+                ),
+                ProviderProtocol::Ollama => assert!(
+                    items.iter().any(
+                        |item| item["tool_calls"][0]["function"]["arguments"]["replicas"] == 3
+                    )
+                ),
+            }
+        }
     }
 }

@@ -498,6 +498,9 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
 
     assert!(plan_tool_names.contains(&"get_pod_diagnostics".to_string()));
     assert!(plan_tool_names.contains(&"get_workload_diagnostics".to_string()));
+    assert!(plan_tool_names.contains(&"get_service_diagnostics".to_string()));
+    assert!(plan_tool_names.contains(&"get_pvc_diagnostics".to_string()));
+    assert!(plan_tool_names.contains(&"propose_plan".to_string()));
     assert!(plan_tool_names.contains(&"get_events_timeline".to_string()));
     assert!(!plan_tool_names.contains(&"apply_manifest".to_string()));
 
@@ -512,6 +515,9 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
 
     assert!(action_tool_names.contains(&"get_pod_diagnostics".to_string()));
     assert!(action_tool_names.contains(&"get_workload_diagnostics".to_string()));
+    assert!(action_tool_names.contains(&"get_service_diagnostics".to_string()));
+    assert!(action_tool_names.contains(&"get_pvc_diagnostics".to_string()));
+    assert!(action_tool_names.contains(&"propose_plan".to_string()));
     assert!(action_tool_names.contains(&"get_events_timeline".to_string()));
     assert!(!action_tool_names.contains(&"apply_manifest".to_string()));
 }
@@ -784,5 +790,135 @@ async fn a_long_human_approval_wait_does_not_expire_post_write_generation() {
     )
     .await
     .unwrap();
+    task.await.unwrap();
+}
+
+struct RemediationHost;
+#[async_trait]
+impl ToolExecutor for RemediationHost {
+    async fn execute(&self, _: &Session, call: &ToolCall, _: &EventSink) -> Result<Value, String> {
+        if call.name == "get_resource" {
+            return Ok(json!({"resource":{"metadata":{"name":"web"}}}));
+        }
+        assert_eq!(call.name, "propose_plan");
+        Ok(
+            json!({"planArtifact":{"id":"plan-tested","kind":"remediation","bodyMarkdown":"do-not-duplicate-plan-body","steps":[{"id":"check","verification":"Observe Ready condition"}]}}),
+        )
+    }
+}
+#[tokio::test]
+async fn investigate_requires_a_remediation_artifact_and_performs_one_bounded_correction() {
+    let mut s = session();
+    s.intent = AgentIntent::Investigate;
+    let (client, requests, task) =
+        provider(vec![final_text(), call("propose_plan"), final_text()]).await;
+    run(
+        s,
+        0,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Investigate workload".into(),
+        Arc::new(RemediationHost),
+        sink(),
+    )
+    .await
+    .unwrap();
+    task.await.unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(
+        !requests[2]
+            .to_string()
+            .contains("do-not-duplicate-plan-body")
+    );
+    assert!(
+        requests[1]
+            .to_string()
+            .contains("ordered steps including risk and verification")
+    );
+}
+#[tokio::test]
+async fn investigation_is_not_reported_complete_when_model_repeatedly_omits_remediation() {
+    let mut s = session();
+    s.intent = AgentIntent::Investigate;
+    let (client, requests, task) = provider(vec![final_text(), final_text()]).await;
+    let result = run(
+        s,
+        0,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Investigate workload".into(),
+        Arc::new(RemediationHost),
+        sink(),
+    )
+    .await;
+    assert!(result.unwrap_err().contains("Investigation is incomplete"));
+    task.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn an_outline_published_before_new_evidence_is_not_the_final_remediation_plan() {
+    let mut s = session();
+    s.intent = AgentIntent::Investigate;
+    let (client, requests, task) = provider(vec![
+        call("propose_plan"),
+        call("get_resource"),
+        final_text(),
+        call("propose_plan"),
+        final_text(),
+    ])
+    .await;
+    run(
+        s,
+        0,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Investigate workload".into(),
+        Arc::new(RemediationHost),
+        sink(),
+    )
+    .await
+    .unwrap();
+    task.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn an_older_plan_cannot_certify_a_new_investigation_turn() {
+    let mut s = session();
+    s.intent = AgentIntent::Investigate;
+    let proposal:PlanProposal=serde_json::from_value(json!({"title":"Old plan","bodyMarkdown":"Old evidence","diagnosis":"Old diagnosis","uncertainty":"Historical","steps":[{"id":"inspect","title":"Inspect","action":"inspect","reason":"Find cause","risk":"Read only","verification":"Read current state"}]})).unwrap();
+    s.plans
+        .lock()
+        .unwrap()
+        .propose(
+            proposal,
+            &s.id,
+            &s.scope,
+            s.control().unwrap().policy_revision,
+            &mut *s.evidence.lock().unwrap(),
+        )
+        .unwrap();
+    let (client, _, task) = provider(vec![final_text(), final_text()]).await;
+    let outcome = run(
+        s,
+        0,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Investigate a new symptom".into(),
+        Arc::new(RemediationHost),
+        sink(),
+    )
+    .await;
+    assert!(outcome.unwrap_err().contains("Investigation is incomplete"));
     task.await.unwrap();
 }

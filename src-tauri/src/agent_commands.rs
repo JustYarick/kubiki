@@ -39,6 +39,7 @@ struct ManagedSession {
     instructions: String,
     client: Option<kube::Client>,
     connection_generation: Option<u64>,
+    plan_review: Mutex<Option<PlanReview>>,
 }
 
 #[derive(Clone)]
@@ -97,30 +98,13 @@ async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
         .join("ai.json");
     tokio::task::spawn_blocking(move || match std::fs::read(path) {
         Ok(bytes) if bytes.len() <= 1024 * 1024 => {
-            let mut settings: AiSettings = serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned())?;
-            if settings.policy.writes.is_empty() && settings.policy.rules.is_empty() {
-                settings.policy.writes = vec![
-                    kubiki_ai::WriteOperation::Create,
-                    kubiki_ai::WriteOperation::Update,
-                    kubiki_ai::WriteOperation::Delete,
-                    kubiki_ai::WriteOperation::Scale,
-                    kubiki_ai::WriteOperation::Restart,
-                ];
-            }
+            let settings: AiSettings = serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned())?;
+            settings.policy.validate()?;
+            settings.options.validate()?;
             Ok(settings)
         }
         Ok(_) => Err("AI settings file exceeds 1 MiB".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let mut settings = AiSettings::default();
-            settings.policy.writes = vec![
-                kubiki_ai::WriteOperation::Create,
-                kubiki_ai::WriteOperation::Update,
-                kubiki_ai::WriteOperation::Delete,
-                kubiki_ai::WriteOperation::Scale,
-                kubiki_ai::WriteOperation::Restart,
-            ];
-            Ok(settings)
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AiSettings::default()),
         Err(_) => Err("Cannot read AI settings".into()),
     }).await.map_err(|_| "AI settings task failed")?
 }
@@ -330,6 +314,8 @@ pub async fn ai_list_models(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSession {
+    #[serde(default)]
+    intent: AgentIntent,
     scope: AgentScope,
     provider_id: String,
     model: String,
@@ -421,13 +407,17 @@ pub async fn ai_create_session(
         }
     }
     let id = format!("ai-{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
-    let session = Session::new(
+    let mut session = Session::new(
         id.clone(),
         window.label().into(),
         request.scope.clone(),
         settings.policy.clone(),
         capabilities,
     );
+    if request.intent == AgentIntent::Investigate && request.options.tool_use == Some(false) {
+        return Err("Investigation requires a tool-capable model".into());
+    }
+    session.intent = request.intent;
     let mut sessions = manager
         .sessions
         .lock()
@@ -445,6 +435,7 @@ pub async fn ai_create_session(
             instructions: settings.instructions,
             client,
             connection_generation,
+            plan_review: Mutex::new(None),
         }),
     );
     Ok(SessionView {
@@ -528,6 +519,54 @@ pub async fn ai_send_message(
     let revision = managed.session.control()?.revision;
     let key = provider_key(&managed.provider).await?;
     let provider = ProviderClient::new(managed.provider.clone(), key)?;
+    let host = tool_host(&managed, window, &manager, revision)?;
+    let session = managed.session.clone();
+    let emit: EventSink = Arc::new(move |event| {
+        if on_event.send(event).is_err() {
+            session.stop();
+        }
+    });
+    run(
+        managed.session.clone(),
+        revision,
+        provider,
+        managed.model.clone(),
+        managed.options.clone(),
+        managed.instructions.clone(),
+        message,
+        host,
+        emit,
+    )
+    .await
+}
+
+/// Local policy preview. No Kubernetes/provider access and no permission changes.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyPreviewRequest {
+    policy: AgentPolicy,
+    scope: AgentScope,
+    target: Target,
+    mode: AgentMode,
+    phase: AgentPhase,
+    operation: Option<WriteOperation>,
+}
+#[tauri::command]
+pub fn ai_preview_policy(request: PolicyPreviewRequest) -> Result<serde_json::Value, String> {
+    request.policy.validate()?;
+    let builtin = kubiki_core::core::api::resource_type(&request.target.kind)
+        .is_some_and(|r| r.group == request.target.group);
+    Ok(
+        serde_json::json!({"explanation":request.policy.explain_access(request.mode,request.phase,&request.scope,&request.target,builtin,request.operation),"issues":request.policy.validate_rules()}),
+    )
+}
+
+fn tool_host(
+    managed: &Arc<ManagedSession>,
+    window: tauri::WebviewWindow,
+    manager: &AgentManager,
+    revision: u64,
+) -> Result<Arc<crate::agent_tools::KubernetesTools>, String> {
     let journal = window
         .app_handle()
         .path()
@@ -573,7 +612,7 @@ pub async fn ai_send_message(
         );
         read_cache.wrap(budget.wrap(pinned))
     });
-    let host = Arc::new(crate::agent_tools::KubernetesTools {
+    Ok(Arc::new(crate::agent_tools::KubernetesTools {
         window,
         client: pinned_client,
         connection_generation: managed.connection_generation,
@@ -581,23 +620,207 @@ pub async fn ai_send_message(
         write_rejected,
         read_permits: manager.read_permits.clone(),
         journal,
+        accepted_identities: Arc::default(),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReviewPlanRequest {
+    session_id: String,
+    plan_id: String,
+    version: u32,
+    step_ids: Vec<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutePlanRequest {
+    session_id: String,
+    review_token: String,
+}
+fn step_call(step: &PlanStep) -> Result<ToolCall, String> {
+    let (name,mut arguments)=match step.action {
+        PlanAction::Apply=>("apply_manifest",serde_json::json!({"yaml":step.yaml.as_ref().ok_or("Missing plan YAML")?})),
+        PlanAction::Scale|PlanAction::Restart|PlanAction::Delete=>{
+            let target=step.target.as_ref().ok_or("Missing plan target")?;
+            let mut args=serde_json::to_value(target).map_err(|_|"Cannot encode plan target")?;
+            if step.action==PlanAction::Scale {args["replicas"]=serde_json::json!(step.replicas.ok_or("Missing planned replica count")?);}
+            (match step.action{PlanAction::Scale=>"scale_workload",PlanAction::Restart=>"restart_workload",_=>"delete_resource"},args)
+        }
+        _=>return Err("Read/manual steps are not executable mutations; complete investigation and propose concrete changes first".into()),
+    };
+    if let Some(uid) = &step.expected_uid {
+        arguments["expectedUid"] = serde_json::json!(uid);
+    }
+    Ok(ToolCall {
+        id: format!(
+            "plan-step-{}-{}",
+            SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            step.id
+        ),
+        name: name.into(),
+        arguments,
+    })
+}
+#[tauri::command]
+pub async fn ai_review_plan(
+    request: ReviewPlanRequest,
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, AgentManager>,
+) -> Result<serde_json::Value, String> {
+    if request.step_ids.is_empty() || request.step_ids.len() > 16 {
+        return Err("Select 1–16 concrete plan steps".into());
+    }
+    let _permit = manager
+        .runs
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "Two AI operations are already running")?;
+    let managed = manager.get(&request.session_id, window.label())?;
+    let state = managed.session.control()?;
+    let _running = managed.session.begin_action(state.revision)?;
+    let plan = managed
+        .session
+        .plans
+        .lock()
+        .map_err(|_| "Plan registry unavailable")?
+        .current(&request.plan_id, request.version)?;
+    if plan.session_id != managed.session.id
+        || plan.policy_revision != state.policy_revision
+        || plan.scope != managed.session.scope
+    {
+        return Err("Plan scope or policy revision is stale".into());
+    }
+    if !matches!(plan.status, PlanStatus::Draft | PlanStatus::Ready) {
+        return Err("This plan was already attempted; refresh evidence and create a new version before another change".into());
+    }
+    let selected = request
+        .step_ids
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    if selected.len() != request.step_ids.len()
+        || selected
+            .iter()
+            .any(|id| !plan.steps.iter().any(|s| &s.id == *id))
+    {
+        return Err("Unknown or duplicate plan step".into());
+    }
+    let host = tool_host(&managed, window, &manager, state.revision)?;
+    let mut steps = Vec::new();
+    let mut previews = Vec::new();
+    let mut targets = std::collections::BTreeSet::new();
+    for step in plan.steps.iter().filter(|s| selected.contains(&s.id)) {
+        if step
+            .depends_on
+            .iter()
+            .chain(&step.depends_on_accepted)
+            .any(|id| !selected.contains(id))
+        {
+            return Err("All dependencies must be selected; manual/read dependencies require a revised plan after investigation".into());
+        }
+        let call = step_call(step)?;
+        let mut cancellation = managed.session.cancellation();
+        let (call, target, operation) = tokio::select! {biased; _=cancellation.changed()=>return Err("Plan review cancelled".into()), result=tokio::time::timeout(std::time::Duration::from_secs(20),host.review_plan_call(&managed.session,call))=>result.map_err(|_|"Plan review timed out")??};
+        if step.target.as_ref().is_some_and(|t| t != &target) {
+            return Err("Plan target differs from the YAML resource; revise the plan".into());
+        }
+        if !targets.insert(serde_json::to_string(&target).unwrap()) {
+            return Err("Use one change per resource in a plan; combine changes or review a subsequent plan".into());
+        }
+        previews.push(serde_json::json!({"stepId":step.id,"target":target,"operation":operation,"call":call,"risk":step.risk,"verification":step.verification}));
+        steps.push(ReviewedStep {
+            id: step.id.clone(),
+            call,
+            target,
+            operation,
+            depends_on: step.depends_on.clone(),
+            depends_on_accepted: step.depends_on_accepted.clone(),
+        });
+    }
+    if managed.session.control()?.revision != state.revision
+        || *managed.session.cancellation().borrow()
+    {
+        return Err("Plan review was cancelled or permissions changed".into());
+    }
+    let token = format!(
+        "review-{}-{}",
+        managed.session.id,
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let ready = managed
+        .session
+        .plans
+        .lock()
+        .map_err(|_| "Plan registry unavailable")?
+        .set_status(&plan.id, plan.version, PlanStatus::Ready)?;
+    *managed
+        .plan_review
+        .lock()
+        .map_err(|_| "Plan review unavailable")? = Some(PlanReview {
+        token: token.clone(),
+        plan_id: plan.id,
+        version: plan.version,
+        revision: state.revision,
+        at: std::time::Instant::now(),
+        steps,
     });
+    Ok(
+        serde_json::json!({"reviewToken":token,"plan":ready,"steps":previews,"expiresInSeconds":300,"executed":false,"mode":state.mode,"warning":"Selected operations only. Ask requires separate native confirmation for each change. No automatic rollback or ambiguous retry."}),
+    )
+}
+#[tauri::command]
+pub async fn ai_execute_plan(
+    request: ExecutePlanRequest,
+    on_event: Channel<AgentEvent>,
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, AgentManager>,
+) -> Result<serde_json::Value, String> {
+    let _permit = manager
+        .runs
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "Two AI operations are already running")?;
+    let managed = manager.get(&request.session_id, window.label())?;
+    let revision = managed.session.control()?.revision;
+    let _running = managed.session.begin_action(revision)?;
+    let review = PlanReview::consume(
+        &mut *managed
+            .plan_review
+            .lock()
+            .map_err(|_| "Plan review unavailable")?,
+        &request.review_token,
+    )?;
+    if review.revision != revision || review.at.elapsed() > std::time::Duration::from_secs(300) {
+        return Err("Plan review expired or mode/phase changed; review again".into());
+    }
+    let host = tool_host(&managed, window, &manager, revision)?;
     let session = managed.session.clone();
     let emit: EventSink = Arc::new(move |event| {
         if on_event.send(event).is_err() {
             session.stop();
         }
     });
-    run(
-        managed.session.clone(),
-        revision,
-        provider,
-        managed.model.clone(),
-        managed.options.clone(),
-        managed.instructions.clone(),
-        message,
-        host,
-        emit,
+    execute_reviewed_plan(&managed.session, review, host, emit).await
+}
+
+#[tauri::command]
+pub fn ai_get_evidence(
+    session_id: String,
+    evidence_id: String,
+    window: tauri::WebviewWindow,
+    manager: tauri::State<'_, AgentManager>,
+) -> Result<serde_json::Value, String> {
+    let managed = manager.get(&session_id, window.label())?;
+    if managed.session.control()?.invalidated {
+        return Err("Session permissions changed; refresh evidence in a new conversation".into());
+    }
+    let result = managed
+        .session
+        .evidence
+        .lock()
+        .map_err(|_| "Evidence unavailable")?
+        .get(&evidence_id)?;
+    Ok(
+        serde_json::json!({"evidenceId":evidence_id,"historical":true,"data":result,"warning":"Previously projected evidence; not fresh verification. Its relevance to a claim still requires review."}),
     )
-    .await
 }
