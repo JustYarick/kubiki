@@ -95,3 +95,93 @@ fn denied_evidence_is_not_reintroduced_by_profiles_or_aggregation() {
     assert_eq!(summary.value()["counts"]["unknown"], 1);
     assert!(!selected.to_string().contains("private"));
 }
+
+#[test]
+fn service_pvc_and_rollout_diagnostics_preserve_reproducible_evidence() {
+    // 1. Unready Service with 0 endpoints and matching pods failing readiness probe
+    let svc = json!({
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "api-service", "namespace": "apps", "uid": "svc-1"},
+        "spec": {
+            "type": "ClusterIP",
+            "clusterIP": "10.96.10.5",
+            "selector": {"app": "api"},
+            "ports": [{"name": "http", "port": 80, "targetPort": 8080}]
+        }
+    });
+    let pods = [
+        json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": "api-pod-0", "namespace": "apps", "uid": "pod-0"},
+            "spec": {"containers": [{"name": "api", "ports": [{"containerPort": 8080}]}]},
+            "status": {
+                "phase": "Running",
+                "conditions": [{"type": "Ready", "status": "False"}, {"type": "ContainersReady", "status": "False"}]
+            }
+        })
+    ];
+    let svc_diag = service_diagnostics(&svc, None, Some(&pods));
+    let svc_issues: Vec<&str> = svc_diag["issuesSummary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(svc_issues.iter().any(|i| i.contains("Ready=False")));
+
+    // 2. Stuck PVC (WaitForFirstConsumer and StorageClass pending)
+    let pvc = json!({
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {"name": "data-pvc", "namespace": "apps", "uid": "pvc-1"},
+        "spec": {
+            "storageClassName": "standard-wait",
+            "accessModes": ["ReadWriteOnce"],
+            "resources": {"requests": {"storage": "50Gi"}}
+        },
+        "status": {"phase": "Pending"}
+    });
+    let pvc_events = [json!({
+        "reason": "WaitForFirstConsumer",
+        "message": "waiting for first consumer to be created before binding"
+    })];
+    let pvc_diag = pvc_diagnostics(&pvc, None, Some(&pvc_events));
+    assert_eq!(pvc_diag["phase"], "Pending");
+    assert_eq!(pvc_diag["storageClassName"], "standard-wait");
+    let pvc_issues: Vec<&str> = pvc_diag["issuesSummary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(pvc_issues.iter().any(|i| i.contains("Waiting for first consumer")));
+
+    // 3. Rollout problem: Deployment generation 3, observedGeneration 2, ready 1/3, progressing failure
+    let deployment = json!({
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "api-deploy", "namespace": "apps", "uid": "dep-1", "generation": 3},
+        "spec": {"replicas": 3},
+        "status": {
+            "observedGeneration": 2,
+            "replicas": 3,
+            "readyReplicas": 1,
+            "updatedReplicas": 1,
+            "availableReplicas": 1,
+            "conditions": [
+                {"type": "Progressing", "status": "False", "reason": "ProgressDeadlineExceeded", "message": "ReplicaSet timed out"}
+            ]
+        }
+    });
+    let deploy_health = workload_health("Deployment", &deployment);
+    assert_eq!(deploy_health["rolloutState"], "failed");
+    let deploy_issues: Vec<&str> = deploy_health["issuesSummary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(deploy_issues.iter().any(|i| i.contains("Controller reports a failure condition")));
+}

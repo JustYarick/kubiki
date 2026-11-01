@@ -14,8 +14,14 @@ impl ToolExecutor for LiveKubeExecutor {
         _emit: &EventSink,
     ) -> Result<Value, String> {
         let state = session.control()?;
-        println!("\n⚙️  [TOOL CALLED]: {} (phase: {:?}, mode: {:?})", call.name, state.phase, state.mode);
-        println!("    Arguments: {}", serde_json::to_string(&call.arguments).unwrap_or_default());
+        println!(
+            "\n⚙️  [TOOL CALLED]: {} (phase: {:?}, mode: {:?})",
+            call.name, state.phase, state.mode
+        );
+        println!(
+            "    Arguments: {}",
+            serde_json::to_string(&call.arguments).unwrap_or_default()
+        );
 
         match call.name.as_str() {
             "get_pod_diagnostics" => {
@@ -28,12 +34,17 @@ impl ToolExecutor for LiveKubeExecutor {
                 if !output.status.success() {
                     return Err(String::from_utf8_lossy(&output.stderr).to_string());
                 }
-                let json: Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+                let json: Value =
+                    serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
                 let phase = json["status"]["phase"].as_str().unwrap_or("Unknown");
                 let container_statuses = &json["status"]["containerStatuses"];
                 let restarts = container_statuses[0]["restartCount"].as_i64().unwrap_or(0);
-                let waiting_reason = container_statuses[0]["state"]["waiting"]["reason"].as_str().unwrap_or("");
-                let exit_code = container_statuses[0]["lastState"]["terminated"]["exitCode"].as_i64().unwrap_or(0);
+                let waiting_reason = container_statuses[0]["state"]["waiting"]["reason"]
+                    .as_str()
+                    .unwrap_or("");
+                let exit_code = container_statuses[0]["lastState"]["terminated"]["exitCode"]
+                    .as_i64()
+                    .unwrap_or(0);
 
                 let summary = json!({
                     "pod": name,
@@ -45,7 +56,10 @@ impl ToolExecutor for LiveKubeExecutor {
                     "issuesSummary": vec!["CrashLoopBackOff", "Failed container initialization"],
                     "containerStatuses": container_statuses
                 });
-                println!("    Result: Diagnostics gathered (restarts: {}, waiting: {})", restarts, waiting_reason);
+                println!(
+                    "    Result: Diagnostics gathered (restarts: {}, waiting: {})",
+                    restarts, waiting_reason
+                );
                 Ok(summary)
             }
             "get_logs" => {
@@ -65,11 +79,22 @@ impl ToolExecutor for LiveKubeExecutor {
             "get_events_timeline" | "get_events" => {
                 let ns = call.arguments["namespace"].as_str().unwrap_or("caretta");
                 let output = std::process::Command::new("kubectl")
-                    .args(["get", "events", "-n", ns, "--sort-by=.metadata.creationTimestamp"])
+                    .args([
+                        "get",
+                        "events",
+                        "-n",
+                        ns,
+                        "--sort-by=.metadata.creationTimestamp",
+                    ])
                     .output()
                     .map_err(|e| e.to_string())?;
                 let events_str = String::from_utf8_lossy(&output.stdout).to_string();
-                let events: Vec<String> = events_str.lines().skip(1).take(5).map(|s| s.to_string()).collect();
+                let events: Vec<String> = events_str
+                    .lines()
+                    .skip(1)
+                    .take(5)
+                    .map(|s| s.to_string())
+                    .collect();
                 println!("    Result: {} timeline events recorded", events.len());
                 Ok(json!({ "timeline": events }))
             }
@@ -81,7 +106,8 @@ impl ToolExecutor for LiveKubeExecutor {
                     .args(["get", kind, name, "-n", ns, "-o", "json"])
                     .output()
                     .map_err(|e| e.to_string())?;
-                let json: Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+                let json: Value =
+                    serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
                 println!("    Result: Live resource {}/{} retrieved", kind, name);
                 Ok(json)
             }
@@ -92,9 +118,15 @@ impl ToolExecutor for LiveKubeExecutor {
                     .args(["get", kind, "-n", ns, "-o", "json"])
                     .output()
                     .map_err(|e| e.to_string())?;
-                let json: Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+                let json: Value =
+                    serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
                 let items = json["items"].as_array().cloned().unwrap_or_default();
-                println!("    Result: Found {} {} resources in {}", items.len(), kind, ns);
+                println!(
+                    "    Result: Found {} {} resources in {}",
+                    items.len(),
+                    kind,
+                    ns
+                );
                 Ok(json!({ "items": items, "hasMore": false }))
             }
             "get_workload_diagnostics" => {
@@ -108,8 +140,12 @@ impl ToolExecutor for LiveKubeExecutor {
                 if !output.status.success() {
                     return Err(String::from_utf8_lossy(&output.stderr).to_string());
                 }
-                let json: Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
-                println!("    Result: Workload diagnostics for {}/{} gathered", kind, name);
+                let json: Value =
+                    serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+                println!(
+                    "    Result: Workload diagnostics for {}/{} gathered",
+                    kind, name
+                );
                 Ok(json!({
                     "kind": kind,
                     "name": name,
@@ -127,7 +163,10 @@ impl ToolExecutor for LiveKubeExecutor {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let model = args.get(1).cloned().unwrap_or_else(|| "qwen3.8:iq3-fast".into());
+    let model = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "qwen3.8:iq3-fast".into());
     let prompt_type = args.get(2).map(|s| s.as_str()).unwrap_or("both");
 
     println!("============================================================");
@@ -186,6 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_replicas: 10,
                 rules: vec![],
                 denied_paths: vec![],
+                ..AgentPolicy::default()
             },
             ClusterCapabilities::default(),
         );
@@ -211,7 +251,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             diag_prompt,
             host.clone(),
             emit,
-        ).await;
+        )
+        .await;
 
         println!("\n\n--- Turn 1 Result ---");
         match outcome {
@@ -222,7 +263,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test 2: Action Plan Request in Plan Phase
     if prompt_type == "plan" || prompt_type == "both" {
-        println!("\n\n>>> TEST 2: Action Plan Request ('Составь пошаговый план действий как устранить CrashLoopBackOff в caretta-2z27t') <<<");
+        println!(
+            "\n\n>>> TEST 2: Action Plan Request ('Составь пошаговый план действий как устранить CrashLoopBackOff в caretta-2z27t') <<<"
+        );
         let session = Session::new(
             "test-plan-session".into(),
             "main".into(),
@@ -251,6 +294,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_replicas: 10,
                 rules: vec![],
                 denied_paths: vec![],
+                ..AgentPolicy::default()
             },
             ClusterCapabilities::default(),
         );
@@ -267,7 +311,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        let plan_prompt = "Составь пошаговый план действий как устранить CrashLoopBackOff в поде caretta-2z27t".to_string();
+        let plan_prompt =
+            "Составь пошаговый план действий как устранить CrashLoopBackOff в поде caretta-2z27t"
+                .to_string();
         println!("Prompt: {}\n", plan_prompt);
         let outcome = run(
             session.clone(),
@@ -279,22 +325,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             plan_prompt,
             host.clone(),
             emit,
-        ).await;
+        )
+        .await;
 
         println!("\n\n--- Turn 2 Result ---");
         match outcome {
             Ok(_) => {
                 println!("Agent turn completed successfully.");
                 let final_text = collected_text.lock().unwrap().clone();
-                let has_plan_heading = final_text.lines().any(|l| l.trim_start().starts_with("#") && (l.to_lowercase().contains("plan") || l.to_lowercase().contains("план")));
+                let has_plan_heading = final_text.lines().any(|l| {
+                    l.trim_start().starts_with("#")
+                        && (l.to_lowercase().contains("plan") || l.to_lowercase().contains("план"))
+                });
                 let has_numbered_steps = final_text.lines().any(|l| {
                     let trimmed = l.trim_start();
-                    trimmed.starts_with("1.") || trimmed.starts_with("1)") || trimmed.starts_with("- ")
+                    trimmed.starts_with("1.")
+                        || trimmed.starts_with("1)")
+                        || trimmed.starts_with("- ")
                 });
                 println!("\n🔍 [Plan Detection Verification]");
                 println!("    Plan heading present: {}", has_plan_heading);
                 println!("    Numbered/bullet steps present: {}", has_numbered_steps);
-                println!("    isPlanMessage() result: {}", has_plan_heading || has_numbered_steps);
+                println!(
+                    "    isPlanMessage() result: {}",
+                    has_plan_heading || has_numbered_steps
+                );
             }
             Err(e) => println!("Agent error: {}", e),
         }

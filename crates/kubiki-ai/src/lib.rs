@@ -11,7 +11,10 @@ pub use provider::ProviderClient;
 pub use runtime::*;
 pub use types::*;
 
-pub use diagnostics::{controller_verified, diagnostic_selector, workload_health};
+pub use diagnostics::{
+    config_reference_diagnostics, container_diagnostics, controller_verified,
+    diagnostic_selector, node_diagnostics, pvc_diagnostics, service_diagnostics, workload_health,
+};
 
 pub mod query;
 pub use query::{FieldSelection, profile_fields};
@@ -27,5 +30,3 @@ pub use summary::ResourceSummary;
 
 pub mod memory;
 pub use memory::{ConversationMemory, EvidenceStore};
-
-pub use diagnostics::container_diagnostics;

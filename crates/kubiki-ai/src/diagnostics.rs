@@ -305,6 +305,303 @@ pub fn container_diagnostics(
         json!({"name":name,"image":container.get("image"),"ready":container.get("ready"),"restartCount":container.get("restartCount"),"state":state_name,"stateDetails":details,"lastTermination":last})
     }).collect()
 }
+
+/// Interpret projected observations, never assuming filtered fields are false.
+pub fn service_diagnostics(
+    service: &Value,
+    endpoint_slices: Option<&Value>,
+    matching_pods: Option<&[Value]>,
+) -> Value {
+    let spec = &service["spec"];
+    let service_type = spec["type"].as_str();
+    let cluster_ip = spec["clusterIP"].as_str();
+    let mut issues = Vec::<String>::new();
+    let selector = spec.get("selector").and_then(Value::as_object);
+    let selector_str =
+        selector.and_then(|s| crate::diagnostic_selector(&json!({"matchLabels":s})).ok());
+    let ports = spec["ports"].as_array();
+    if service_type == Some("LoadBalancer")
+        && service
+            .pointer("/status/loadBalancer/ingress")
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.is_empty())
+    {
+        issues.push(
+            "LoadBalancer ingress IP or hostname is not yet assigned in the observed status".into(),
+        );
+    }
+    if selector.is_some_and(|s| s.is_empty()) && service_type != Some("ExternalName") {
+        issues.push(
+            "Observed empty Service selector; inspect manually managed EndpointSlices".into(),
+        );
+    }
+    let mut pods_summary = Vec::new();
+    if let Some(pods) = matching_pods {
+        if pods.is_empty() {
+            issues.push("No permitted matching Pods observed in this bounded selection; this does not prove no Pods match".into());
+        }
+        for pod in pods {
+            let condition = |name: &str| {
+                pod["status"]["conditions"]
+                    .as_array()
+                    .and_then(|cs| cs.iter().find(|c| c["type"] == name))
+                    .and_then(|c| c["status"].as_str())
+            };
+            let ready = condition("Ready").and_then(|s| match s {
+                "True" => Some(true),
+                "False" => Some(false),
+                _ => None,
+            });
+            if ready == Some(false) {
+                issues.push("An observed matching Pod has Ready=False; inspect conditions to determine the cause".into());
+            }
+            pods_summary.push(json!({"name":pod["metadata"]["name"],"uid":pod["metadata"]["uid"],"phase":pod["status"]["phase"],"ready":ready,"containersReady":condition("ContainersReady")}));
+        }
+    }
+    let endpoints=endpoint_slices.and_then(Value::as_array).map(|slices| {
+        let mut ready=0; let mut not_ready=0; let mut unknown=0; let mut missing=0;
+        for slice in slices {
+            match slice["endpoints"].as_array() {
+                Some(eps)=>for ep in eps { match ep.pointer("/conditions/ready").and_then(Value::as_bool) {Some(true)=>ready+=1,Some(false)=>not_ready+=1,None=>unknown+=1} },
+                None=>missing+=1,
+            }
+        }
+        if not_ready>0 { issues.push(format!("{not_ready} observed endpoints explicitly report ready=false")); }
+        json!({"slicesExamined":slices.len(),"readyCount":ready,"notReadyCount":not_ready,"unknownReadinessCount":unknown,"slicesWithoutPermittedEndpoints":missing,"coverage":"Observed endpoint entries only; entries may repeat across slices/address families. Missing readiness is unknown after policy projection."})
+    });
+    json!({"serviceType":service_type,"clusterIp":cluster_ip,"isHeadless":cluster_ip.map(|ip|ip=="None"),"externalName":spec.get("externalName"),"publishNotReadyAddresses":spec.get("publishNotReadyAddresses"),"ports":ports,"selector":selector_str,"endpoints":endpoints,"matchingPods":pods_summary,"issuesSummary":issues,"coverage":"Partial projected observations; Pod readiness does not prove probe failure, numeric containerPort declarations do not establish listeners or connectivity"})
+}
+
+/// Pure interpretation of policy-projected PersistentVolumeClaim storage data. Missing fields stay unknown.
+pub fn pvc_diagnostics(pvc: &Value, pv: Option<&Value>, events: Option<&[Value]>) -> Value {
+    let spec = &pvc["spec"];
+    let status = &pvc["status"];
+    let mut issues = Vec::new();
+
+    let phase = status
+        .get("phase")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let storage_class = spec
+        .get("storageClassName")
+        .or_else(|| pvc.pointer("/metadata/annotations/volume.beta.kubernetes.io/storage-class"))
+        .and_then(Value::as_str);
+    let volume_name = spec.get("volumeName").and_then(Value::as_str);
+    let requested_storage = spec
+        .pointer("/resources/requests/storage")
+        .and_then(Value::as_str);
+    let capacity_storage = status.pointer("/capacity/storage").and_then(Value::as_str);
+    let access_modes = spec.get("accessModes").cloned();
+
+    match phase {
+        "Pending" => {
+            // Inspect events or conditions for specific pending reasons
+            let mut detected_reason = false;
+            if let Some(evs) = events {
+                for ev in evs {
+                    let reason = ev.get("reason").and_then(Value::as_str).unwrap_or("");
+                    let msg = ev.get("message").and_then(Value::as_str).unwrap_or("");
+                    if reason == "WaitForFirstConsumer" || msg.contains("WaitForFirstConsumer") {
+                        issues.push("PVC is Pending: Waiting for first consumer (a pod using this volume must be scheduled to a node)".into());
+                        detected_reason = true;
+                        break;
+                    } else if reason == "ProvisioningFailed" || reason == "FailedBinding" {
+                        issues.push(format!("PVC provisioning failed: {msg}"));
+                        detected_reason = true;
+                        break;
+                    }
+                }
+            }
+            if !detected_reason {
+                issues.push("PVC is Pending: Volume is not yet bound or provisioned".into());
+            }
+        }
+        "Lost" => {
+            issues.push("PVC reports Lost; inspect the bound volume identity and controller events before inferring its cause".into());
+        }
+        "Bound" => {
+            if let Some(conditions) = status.get("conditions").and_then(Value::as_array) {
+                for c in conditions {
+                    if c.get("status").and_then(Value::as_str) == Some("True") {
+                        let c_type = c.get("type").and_then(Value::as_str).unwrap_or("unknown");
+                        issues.push(format!("PVC has active condition: {c_type}"));
+                    }
+                }
+            }
+        }
+        _ => {
+            issues.push("PVC phase is unknown or omitted by policy".into());
+        }
+    }
+
+    let pv_summary = pv.map(|v| {
+        json!({
+            "name": v.pointer("/metadata/name"),
+            "phase": v.pointer("/status/phase"),
+            "capacity": v.pointer("/spec/capacity/storage"),
+            "reclaimPolicy": v.pointer("/spec/persistentVolumeReclaimPolicy"),
+            "storageClassName": v.pointer("/spec/storageClassName"),
+        })
+    });
+
+    json!({
+        "phase": phase,
+        "storageClassName": storage_class,
+        "volumeName": volume_name,
+        "requestedStorage": requested_storage,
+        "capacityStorage": capacity_storage,
+        "accessModes": access_modes,
+        "boundVolume": pv_summary,
+        "issuesSummary": issues,
+    })
+}
+
+/// Pure interpretation of policy-projected Node conditions, pressure, and taints.
+pub fn node_diagnostics(node: &Value) -> Value {
+    let spec = &node["spec"];
+    let status = &node["status"];
+    let mut issues = Vec::new();
+
+    let name = node
+        .pointer("/metadata/name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let unschedulable = spec.get("unschedulable").and_then(Value::as_bool);
+    if unschedulable == Some(true) {
+        issues.push("Node is marked unschedulable (cordoned)".into());
+    }
+
+    let mut ready_state = "unknown";
+    let conditions = status.get("conditions").and_then(Value::as_array);
+    let mut condition_summaries = Vec::new();
+    if let Some(cs) = conditions {
+        for c in cs {
+            let c_type = c.get("type").and_then(Value::as_str).unwrap_or("");
+            let c_status = c.get("status").and_then(Value::as_str).unwrap_or("");
+            let c_reason = c.get("reason").and_then(Value::as_str).unwrap_or("");
+            let c_msg = c.get("message").and_then(Value::as_str).unwrap_or("");
+
+            match c_type {
+                "Ready" => {
+                    ready_state = match c_status {
+                        "True" => "ready",
+                        "False" => "degraded",
+                        _ => "unknown",
+                    };
+                    if c_status != "True" {
+                        issues.push(format!(
+                            "Node is NotReady: reason={c_reason}, message={c_msg}"
+                        ));
+                    }
+                }
+                "MemoryPressure" if c_status == "True" => {
+                    issues.push("Node has MemoryPressure: available compute memory is low".into());
+                }
+                "DiskPressure" if c_status == "True" => {
+                    issues.push("Node has DiskPressure: available disk space is low".into());
+                }
+                "PIDPressure" if c_status == "True" => {
+                    issues
+                        .push("Node has PIDPressure: available process IDs are constrained".into());
+                }
+                "NetworkUnavailable" if c_status == "True" => {
+                    issues.push(
+                        "Node reports NetworkUnavailable; inspect network controller evidence to determine the cause".into(),
+                    );
+                }
+                _ => {}
+            }
+            condition_summaries.push(json!({
+                "type": c_type,
+                "status": c_status,
+                "reason": c_reason,
+                "message": c_msg,
+            }));
+        }
+    }
+
+    let taints: Vec<Value> = spec
+        .get("taints")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|t| {
+                    let key = t.get("key").and_then(Value::as_str).unwrap_or("");
+                    let value = t.get("value").and_then(Value::as_str).unwrap_or("");
+                    let effect = t.get("effect").and_then(Value::as_str).unwrap_or("");
+                    if effect == "NoSchedule" || effect == "NoExecute" {
+                        issues.push(format!(
+                            "Node has taint '{key}={value}' with effect '{effect}'"
+                        ));
+                    }
+                    json!({
+                        "key": key,
+                        "value": value,
+                        "effect": effect,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let capacity = status.get("capacity");
+    let allocatable = status.get("allocatable");
+
+    json!({
+        "name": name,
+        "readyState": ready_state,
+        "unschedulable": unschedulable,
+        "conditions": condition_summaries,
+        "taints": taints,
+        "capacity": capacity,
+        "allocatable": allocatable,
+        "issuesSummary": issues,
+    })
+}
+
+/// Extract only permitted references. Missing names/optional fields stay unknown.
+pub fn config_reference_diagnostics(spec: &Value) -> Value {
+    let mut maps = Vec::new();
+    let mut secrets = Vec::new();
+    fn visit(value: &Value, path: &str, maps: &mut Vec<Value>, secrets: &mut Vec<Value>) {
+        if let Some(obj) = value.as_object() {
+            for (key, item) in obj {
+                let reference = match key.as_str() {
+                    "configMapRef" | "configMapKeyRef" | "configMap" => Some((false, "name")),
+                    "secretRef" | "secretKeyRef" => Some((true, "name")),
+                    "secret" => Some((true, "secretName")),
+                    _ => None,
+                };
+                if let Some((secret, name_key)) = reference {
+                    if let Some(name) = item[name_key].as_str().filter(|s| !s.is_empty()) {
+                        let out = json!({"name":name,"key":item.get("key"),"optional":item.get("optional"),"source":format!("{path}/{key}")});
+                        if secret {
+                            secrets.push(out)
+                        } else {
+                            maps.push(out)
+                        }
+                    }
+                }
+                if key == "imagePullSecrets" {
+                    if let Some(items) = item.as_array() {
+                        for item in items {
+                            if let Some(name) = item["name"].as_str() {
+                                secrets.push(json!({"name":name,"source":"imagePullSecret","optional":item.get("optional")}));
+                            }
+                        }
+                    }
+                }
+                visit(item, &format!("{path}/{key}"), maps, secrets);
+            }
+        } else if let Some(items) = value.as_array() {
+            for (index, item) in items.iter().enumerate() {
+                visit(item, &format!("{path}/{index}"), maps, secrets);
+            }
+        }
+    }
+    visit(spec, "", &mut maps, &mut secrets);
+    json!({"configMaps":maps,"secrets":secrets,"issuesSummary":[],"coverage":"Projected references only; an absent/filtered reference or optional flag is unknown"})
+}
 #[cfg(test)]
 mod container_tests {
     use super::*;
@@ -324,5 +621,262 @@ mod container_tests {
         assert_eq!(values[1]["stateDetails"]["oomKilled"], true);
         assert!(values[0]["ready"].is_null() && values[0]["restartCount"].is_null());
         assert_eq!(issues.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod network_and_storage_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn filtered_service_fields_remain_unknown_without_invented_probe_or_port_failures() {
+        let result = service_diagnostics(
+            &json!({}),
+            Some(&json!([{"endpoints":[{"conditions":{}}]}])),
+            Some(&[json!({"status":{"phase":"Running"}})]),
+        );
+        assert!(result["serviceType"].is_null());
+        assert!(result["isHeadless"].is_null());
+        assert!(result["matchingPods"][0]["ready"].is_null());
+        assert_eq!(result["endpoints"]["unknownReadinessCount"], 1);
+        assert_eq!(result["endpoints"]["notReadyCount"], 0);
+        assert!(result["issuesSummary"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn unready_service_detects_zero_endpoints_and_unready_pods() {
+        let svc = json!({
+            "spec": {
+                "type": "ClusterIP",
+                "clusterIP": "10.96.0.1",
+                "selector": {"app": "web"},
+                "ports": [{"name": "http", "port": 80, "targetPort": 8080}]
+            }
+        });
+
+        // 1. No pods match selector
+        let diag_no_pods = service_diagnostics(&svc, None, Some(&[]));
+        let issues: Vec<&str> = diag_no_pods["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("No permitted matching Pods observed"))
+        );
+
+        // 2. Matching pod is Running but failed readiness probes
+        let pod_unready = json!({
+            "metadata": {"name": "web-pod-1"},
+            "spec": {"containers": [{"name": "web", "ports": [{"containerPort": 8080}]}]},
+            "status": {
+                "phase": "Running",
+                "conditions": [
+                    {"type": "Ready", "status": "False"},
+                    {"type": "ContainersReady", "status": "False"}
+                ]
+            }
+        });
+        let diag_unready = service_diagnostics(&svc, None, Some(&[pod_unready]));
+        let issues_unready: Vec<&str> = diag_unready["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(issues_unready.iter().any(|i| i.contains("Ready=False")));
+
+        // 3. Port mismatch: targetPort 8080 vs containerPort 3000
+        let pod_wrong_port = json!({
+            "metadata": {"name": "web-pod-2"},
+            "spec": {"containers": [{"name": "web", "ports": [{"containerPort": 3000}]}]},
+            "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]}
+        });
+        let diag_wrong_port = service_diagnostics(&svc, None, Some(&[pod_wrong_port]));
+        let issues_port: Vec<&str> = diag_wrong_port["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            !issues_port
+                .iter()
+                .any(|i| i.contains("does not match any containerPort"))
+        );
+    }
+
+    #[test]
+    fn load_balancer_and_headless_services_diagnose_expected_issues() {
+        let lb_pending = json!({
+            "spec": {"type": "LoadBalancer", "ports": [{"port": 443}]},
+            "status": {"loadBalancer": {"ingress": []}}
+        });
+        let diag = service_diagnostics(&lb_pending, None, None);
+        let issues: Vec<&str> = diag["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("LoadBalancer ingress IP or hostname is not yet assigned"))
+        );
+
+        let headless = json!({
+            "spec": {"clusterIP": "None", "ports": [{"port": 9092}]}
+        });
+        let diag_h = service_diagnostics(&headless, None, None);
+        assert!(diag_h["isHeadless"].as_bool().unwrap());
+        let issues_h: Vec<&str> = diag_h["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            issues_h.is_empty(),
+            "A filtered selector is not proof of no selector"
+        );
+    }
+
+    #[test]
+    fn pvc_diagnostics_detects_pending_consumer_and_lost_volume() {
+        // PVC waiting for first consumer
+        let pvc_pending = json!({
+            "spec": {
+                "storageClassName": "local-path",
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "10Gi"}}
+            },
+            "status": {"phase": "Pending"}
+        });
+        let events = [json!({
+            "reason": "WaitForFirstConsumer",
+            "message": "waiting for first consumer to be created before binding"
+        })];
+        let diag_pvc = pvc_diagnostics(&pvc_pending, None, Some(&events));
+        assert_eq!(diag_pvc["phase"], "Pending");
+        assert_eq!(diag_pvc["storageClassName"], "local-path");
+        let issues: Vec<&str> = diag_pvc["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("Waiting for first consumer"))
+        );
+
+        // PVC Lost
+        let pvc_lost = json!({
+            "spec": {"volumeName": "pv-123"},
+            "status": {"phase": "Lost"}
+        });
+        let diag_lost = pvc_diagnostics(&pvc_lost, None, None);
+        assert_eq!(diag_lost["phase"], "Lost");
+        let issues_lost: Vec<&str> = diag_lost["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(issues_lost.iter().any(|i| i.contains("PVC reports Lost")));
+    }
+
+    #[test]
+    fn node_diagnostics_detects_not_ready_pressure_and_taints() {
+        let node = json!({
+            "metadata": {"name": "worker-1"},
+            "spec": {
+                "unschedulable": true,
+                "taints": [
+                    {"key": "node.kubernetes.io/unreachable", "value": "true", "effect": "NoSchedule"}
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {"type": "Ready", "status": "False", "reason": "KubeletNotReady", "message": "kubelet stopped posting status"},
+                    {"type": "MemoryPressure", "status": "True"},
+                    {"type": "DiskPressure", "status": "False"}
+                ],
+                "allocatable": {"cpu": "4", "memory": "16Gi"}
+            }
+        });
+        let diag = node_diagnostics(&node);
+        assert_eq!(diag["readyState"], "degraded");
+        assert!(diag["unschedulable"].as_bool().unwrap());
+        let issues: Vec<&str> = diag["issuesSummary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(issues.iter().any(|i| i.contains("Node is NotReady")));
+        assert!(issues.iter().any(|i| i.contains("MemoryPressure")));
+        assert!(issues.iter().any(|i| {
+            i.contains("taint 'node.kubernetes.io/unreachable=true' with effect 'NoSchedule'")
+        }));
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("Node is marked unschedulable (cordoned)"))
+        );
+    }
+
+    #[test]
+    fn config_reference_diagnostics_extracts_cm_and_secrets_without_leaking_contents() {
+        let pod_spec = json!({
+            "containers": [
+                {
+                    "name": "app",
+                    "envFrom": [
+                        {"configMapRef": {"name": "app-config"}},
+                        {"secretRef": {"name": "app-secrets", "optional": true}}
+                    ],
+                    "env": [
+                        {"name": "DB_PASS", "valueFrom": {"secretKeyRef": {"name": "db-credentials", "key": "password"}}},
+                        {"name": "APP_ENV", "valueFrom": {"configMapKeyRef": {"name": "app-config", "key": "env"}}}
+                    ]
+                }
+            ],
+            "volumes": [
+                {"name": "tls", "secret": {"secretName": "app-tls"}},
+                {"name": "nginx-conf", "configMap": {"name": "nginx-conf"}}
+            ],
+            "imagePullSecrets": [
+                {"name": "docker-regcred"}
+            ]
+        });
+
+        let diag = config_reference_diagnostics(&pod_spec);
+        let cms: Vec<&str> = diag["configMaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|cm| cm["name"].as_str())
+            .collect();
+        let secs: Vec<&str> = diag["secrets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|sec| sec["name"].as_str())
+            .collect();
+
+        assert!(cms.contains(&"app-config"));
+        assert!(cms.contains(&"nginx-conf"));
+        assert!(secs.contains(&"app-secrets"));
+        assert!(secs.contains(&"db-credentials"));
+        assert!(secs.contains(&"app-tls"));
+        assert!(secs.contains(&"docker-regcred"));
+        // Check that no secret values or credentials are present
+        assert!(!diag.to_string().contains("supersecret"));
     }
 }

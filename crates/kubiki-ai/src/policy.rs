@@ -1,4 +1,4 @@
-use crate::{AgentMode, AgentScope, Target};
+use crate::{AgentMode, AgentPhase, AgentScope, Target};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -96,7 +96,7 @@ impl ClusterCapabilities {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceRule {
     pub group: String,
@@ -107,9 +107,42 @@ pub struct ResourceRule {
     pub writes: Vec<WriteOperation>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyExplanation {
+    pub allowed: bool,
+    pub scope_allowed: bool,
+    pub scope_reason: String,
+    pub matched_rule_index: Option<usize>,
+    pub matched_rule: Option<ResourceRule>,
+    pub data_access: DataAccess,
+    pub write_allowed: bool,
+    pub denied_paths_matched: Vec<String>,
+    pub explanation: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleValidationIssue {
+    pub rule_index: usize,
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleResolution {
+    #[default]
+    FirstMatch,
+    DenyOverrides,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentPolicy {
+    pub schema_version: u32,
+    pub rule_resolution: RuleResolution,
+    pub allowed_fields: Vec<String>,
     pub resources: bool,
     pub events: bool,
     pub logs: bool,
@@ -162,6 +195,9 @@ impl AgentPolicy {
 impl Default for AgentPolicy {
     fn default() -> Self {
         Self {
+            schema_version: 1,
+            rule_resolution: RuleResolution::FirstMatch,
+            allowed_fields: vec![],
             resources: true,
             events: true,
             logs: false,
@@ -218,6 +254,17 @@ impl AgentPolicy {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.schema_version, 1 | 2)
+            || (self.schema_version == 1 && self.rule_resolution != RuleResolution::FirstMatch)
+        {
+            return Err(
+                "Explicitly select policy schema v2 before changing rule resolution".into(),
+            );
+        }
+        if !self.allowed_fields.is_empty() {
+            crate::FieldSelection::new(&self.allowed_fields)?;
+        }
+
         if self.contexts.len() > 100
             || self.namespaces.len() > 100
             || self.rules.len() > 100
@@ -260,24 +307,54 @@ impl AgentPolicy {
     }
 
     fn rule(&self, target: &Target) -> Option<&ResourceRule> {
-        self.rules.iter().find(|r| {
+        let applies = |r: &&ResourceRule| {
             matches(&r.group, &target.group)
                 && matches(&r.kind, &target.kind)
                 && matches(&r.namespace, target.namespace.as_deref().unwrap_or(""))
                 && matches(&r.name, &target.name)
-        })
+        };
+        if self.rule_resolution == RuleResolution::DenyOverrides {
+            if let Some(deny) = self
+                .rules
+                .iter()
+                .filter(applies)
+                .find(|r| r.read == DataAccess::None && r.writes.is_empty())
+            {
+                return Some(deny);
+            }
+        }
+        self.rules.iter().find(applies)
     }
-
     pub fn access(&self, target: &Target, builtin: bool) -> DataAccess {
-        if let Some(rule) = self.rule(target) {
-            return rule.read;
+        let access =
+            self.rule(target)
+                .map(|r| r.read)
+                .unwrap_or_else(|| match target.kind.as_str() {
+                    "Secret" if target.group.is_empty() => self.secrets,
+                    "ConfigMap" if target.group.is_empty() => self.config_maps,
+                    _ if !builtin || !native_api_group(&target.group) => self.custom_resources,
+                    _ => DataAccess::Content,
+                });
+        if access == DataAccess::Content
+            && !self.allowed_fields.is_empty()
+            && crate::FieldSelection::new(&self.allowed_fields).is_ok_and(|f| f.metadata_only())
+        {
+            DataAccess::Metadata
+        } else {
+            access
         }
-        match target.kind.as_str() {
-            "Secret" if target.group.is_empty() => self.secrets,
-            "ConfigMap" if target.group.is_empty() => self.config_maps,
-            _ if !builtin || !native_api_group(&target.group) => self.custom_resources,
-            _ => DataAccess::Content,
-        }
+    }
+    pub fn filter_field_allowed(&self, key: &str) -> bool {
+        self.allowed_fields.is_empty()
+            || ["metadata.name", "metadata.namespace"].contains(&key)
+            || self.allowed_fields.iter().any(|field| {
+                let field = if field.starts_with('/') {
+                    field[1..].replace('/', ".")
+                } else {
+                    field.clone()
+                };
+                key == field || key.starts_with(&format!("{field}."))
+            })
     }
 
     /// Conservative proof that content access is uniform across this collection.
@@ -328,6 +405,139 @@ impl AgentPolicy {
         Ok(())
     }
 
+    pub fn explain_access(
+        &self,
+        mode: AgentMode,
+        phase: AgentPhase,
+        scope: &AgentScope,
+        target: &Target,
+        builtin: bool,
+        write_op: Option<WriteOperation>,
+    ) -> PolicyExplanation {
+        let scope_check = self.check_scope(scope, target);
+        let scope_allowed = scope_check.is_ok();
+        let scope_reason = scope_check
+            .err()
+            .unwrap_or_else(|| "Within allowed scope".into());
+
+        let matched = self.rule(target).and_then(|rule| {
+            self.rules
+                .iter()
+                .enumerate()
+                .find(|(_, r)| std::ptr::eq(*r, rule))
+        });
+
+        let matched_rule_index = matched.map(|(idx, _)| idx);
+        let matched_rule = matched.map(|(_, r)| r.clone());
+        let data_access = self.access(target, builtin);
+
+        let (write_allowed, write_reason) = if let Some(op) = write_op {
+            match if phase == AgentPhase::Plan {
+                Err("Plan phase forbids writes".into())
+            } else {
+                self.check_write(mode, scope, target, op)
+            } {
+                Ok(()) => (true, "Write permitted by policy and mode".to_owned()),
+                Err(err) => (false, err),
+            }
+        } else {
+            (false, "No write operation requested".to_owned())
+        };
+
+        let denied_paths_matched: Vec<String> = self
+            .denied_paths
+            .iter()
+            .filter(|p| !p.is_empty())
+            .cloned()
+            .collect();
+
+        let allowed = if write_op.is_some() {
+            scope_allowed && write_allowed
+        } else {
+            scope_allowed && self.resources && data_access != DataAccess::None
+        };
+
+        let mut explanation_parts = Vec::new();
+        if !scope_allowed {
+            explanation_parts.push(format!("Scope denied: {scope_reason}"));
+        } else {
+            explanation_parts.push("Scope: permitted".into());
+        }
+
+        if let Some(idx) = matched_rule_index {
+            explanation_parts.push(format!(
+                "Matched rule #{idx} (read: {:?}, writes: {:?})",
+                data_access,
+                matched_rule.as_ref().map(|r| &r.writes)
+            ));
+        } else {
+            explanation_parts.push(format!(
+                "Using default policy (read: {:?}, writes: {:?})",
+                data_access, self.writes
+            ));
+        }
+
+        if write_op.is_some() {
+            explanation_parts.push(format!("Write check: {write_reason}"));
+        }
+
+        if !denied_paths_matched.is_empty() {
+            explanation_parts.push(format!(
+                "Excluded subtrees applied: {} path(s)",
+                denied_paths_matched.len()
+            ));
+        }
+
+        PolicyExplanation {
+            allowed,
+            scope_allowed,
+            scope_reason,
+            matched_rule_index,
+            matched_rule,
+            data_access,
+            write_allowed,
+            denied_paths_matched,
+            explanation: explanation_parts.join("; "),
+        }
+    }
+
+    pub fn validate_rules(&self) -> Vec<RuleValidationIssue> {
+        let mut issues = Vec::new();
+        for (i, rule) in self.rules.iter().enumerate() {
+            if rule.group == "*" && rule.kind == "*" && rule.namespace == "*" && rule.name == "*" {
+                if rule.read == DataAccess::Content {
+                    issues.push(RuleValidationIssue {
+                        rule_index: i,
+                        kind: "broad_permission".into(),
+                        message: "Rule matches all resources across all namespaces with Content read access".into(),
+                    });
+                }
+            }
+
+            for (j, earlier) in self.rules[..i].iter().enumerate() {
+                let shadows_group = earlier.group == "*" || earlier.group == rule.group;
+                let shadows_kind = earlier.kind == "*" || earlier.kind == rule.kind;
+                let shadows_ns = earlier.namespace == "*" || earlier.namespace == rule.namespace;
+                let shadows_name = earlier.name == "*" || earlier.name == rule.name;
+
+                if self.rule_resolution == RuleResolution::FirstMatch
+                    && shadows_group
+                    && shadows_kind
+                    && shadows_ns
+                    && shadows_name
+                {
+                    issues.push(RuleValidationIssue {
+                        rule_index: i,
+                        kind: "shadowed".into(),
+                        message: format!("Rule #{i} is completely shadowed by earlier Rule #{j} and will never be evaluated"),
+                    });
+                    break;
+                }
+            }
+        }
+        issues
+    }
+
     pub fn project(&self, target: &Target, source: &Value, builtin: bool) -> Result<Value, String> {
         let access = self.access(target, builtin);
         if access == DataAccess::None {
@@ -359,6 +569,9 @@ impl AgentPolicy {
             target.kind == "Secret" && access == DataAccess::Content,
             0,
         );
+        if !self.allowed_fields.is_empty() {
+            result = crate::FieldSelection::new(&self.allowed_fields)?.apply(&result);
+        }
         Ok(result)
     }
 }

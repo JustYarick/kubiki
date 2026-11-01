@@ -333,3 +333,161 @@ fn prompt_policy_summary_stays_small_without_disclosing_exact_resource_rules() {
         DataAccess::None
     );
 }
+
+#[test]
+fn policy_explain_access_and_validate_rules_detect_shadowing_and_provide_rationale() {
+    let mut policy = AgentPolicy::default();
+    policy.rules.push(ResourceRule {
+        group: "".into(),
+        kind: "Secret".into(),
+        namespace: "apps".into(),
+        name: "nexus-creds".into(),
+        read: DataAccess::Content,
+        writes: vec![],
+    });
+    // Add a second rule that is completely shadowed
+    policy.rules.push(ResourceRule {
+        group: "".into(),
+        kind: "Secret".into(),
+        namespace: "apps".into(),
+        name: "nexus-creds".into(),
+        read: DataAccess::None,
+        writes: vec![],
+    });
+    // Add broad wildcard rule
+    policy.rules.push(ResourceRule {
+        group: "*".into(),
+        kind: "*".into(),
+        namespace: "*".into(),
+        name: "*".into(),
+        read: DataAccess::Content,
+        writes: vec![],
+    });
+
+    // 1. Validation detects shadowed rule and broad wildcard permission
+    let issues = policy.validate_rules();
+    assert_eq!(issues.len(), 2);
+    assert_eq!(issues[0].kind, "shadowed");
+    assert!(
+        issues[0]
+            .message
+            .contains("completely shadowed by earlier Rule #0")
+    );
+    assert_eq!(issues[1].kind, "broad_permission");
+
+    // 2. Explanation for exact Secret with rule match
+    let target_secret = Target {
+        group: "".into(),
+        version: "v1".into(),
+        kind: "Secret".into(),
+        namespace: Some("apps".into()),
+        name: "nexus-creds".into(),
+    };
+    let expl = policy.explain_access(
+        AgentMode::ReadOnly,
+        AgentPhase::Plan,
+        &scope(),
+        &target_secret,
+        true,
+        None,
+    );
+    assert!(expl.allowed);
+    assert!(expl.scope_allowed);
+    assert_eq!(expl.matched_rule_index, Some(0));
+    assert_eq!(expl.data_access, DataAccess::Content);
+    assert!(expl.explanation.contains("Matched rule #0"));
+
+    // 3. Explanation for write check in ReadOnly mode
+    let target_deploy = Target {
+        group: "apps".into(),
+        version: "v1".into(),
+        kind: "Deployment".into(),
+        namespace: Some("apps".into()),
+        name: "web".into(),
+    };
+    let expl_write = policy.explain_access(
+        AgentMode::ReadOnly,
+        AgentPhase::Plan,
+        &scope(),
+        &target_deploy,
+        true,
+        Some(WriteOperation::Scale),
+    );
+    assert!(!expl_write.allowed);
+    assert!(!expl_write.write_allowed);
+    assert!(expl_write.explanation.contains("Plan phase forbids writes"));
+}
+
+#[test]
+fn selected_field_permissions_never_restore_denied_data_or_allow_hidden_filters() {
+    let pod = target("Pod");
+    let policy = AgentPolicy {
+        allowed_fields: vec!["spec.containers[*].image".into()],
+        denied_paths: vec!["/spec/containers/0/image".into()],
+        ..Default::default()
+    };
+    let out=policy.project(&pod,&json!({"metadata":{"name":"web","labels":{"private":"hidden"}},"spec":{"containers":[{"image":"excluded","resources":{"limits":{"cpu":"1"}}}]},"status":{"phase":"Running"}}),true).unwrap();
+    assert!(!out.to_string().contains("excluded"));
+    assert!(out.get("status").is_none());
+    assert!(!policy.filter_field_allowed("metadata.labels"));
+    assert!(!policy.filter_field_allowed("status.phase"));
+    let metadata = AgentPolicy {
+        allowed_fields: vec!["metadata.name".into()],
+        ..Default::default()
+    };
+    assert_eq!(metadata.access(&pod, true), DataAccess::Metadata);
+}
+#[test]
+fn deny_priority_is_explicitly_versioned_and_never_silently_changes_legacy_rules() {
+    let mut policy = AgentPolicy {
+        rules: vec![
+            ResourceRule {
+                group: "*".into(),
+                kind: "*".into(),
+                namespace: "*".into(),
+                name: "*".into(),
+                read: DataAccess::Content,
+                writes: vec![WriteOperation::Scale],
+            },
+            ResourceRule {
+                group: "*".into(),
+                kind: "Deployment".into(),
+                namespace: "apps".into(),
+                name: "web".into(),
+                read: DataAccess::None,
+                writes: vec![],
+            },
+        ],
+        ..Default::default()
+    };
+    let deployment = target("Deployment");
+    assert_eq!(policy.access(&deployment, true), DataAccess::Content);
+    policy.rule_resolution = RuleResolution::DenyOverrides;
+    assert!(policy.validate().is_err());
+    policy.schema_version = 2;
+    policy.validate().unwrap();
+    assert_eq!(policy.access(&deployment, true), DataAccess::None);
+    assert!(
+        policy
+            .check_write(
+                AgentMode::Accept,
+                &scope(),
+                &deployment,
+                WriteOperation::Scale
+            )
+            .is_err()
+    );
+    assert_eq!(
+        policy
+            .explain_access(
+                AgentMode::Ask,
+                AgentPhase::Action,
+                &scope(),
+                &deployment,
+                true,
+                None
+            )
+            .matched_rule_index,
+        Some(1)
+    );
+}
