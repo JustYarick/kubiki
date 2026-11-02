@@ -153,6 +153,12 @@ save the provider, choose an advertised model and save the defaults. Existing
 conversations keep their pinned provider/model; start a new conversation to use
 a changed default. See the [llama.cpp server API](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
 
+The home composer follows changes to the saved default provider/model. Removing
+its selected connection selects the current valid default and resets the model
+for that connection. Model discovery ignores removed provider IDs and responses
+from an endpoint that changed while the request was running, including old 401
+errors. This also applies when settings are reloaded without a full app restart.
+
 HTTP errors identify the server origin and distinguish a missing key from a
 rejected configured key. A 401 does not imply unsupported generation options.
 Provider error bodies, URL paths/queries and key values remain excluded from the

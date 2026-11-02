@@ -439,3 +439,34 @@ it('model detail lookup cannot replace a requested model identity with an unrela
   await useAiStore.getState().inspectModel('provider',id);
   expect(useAiStore.getState().models.provider[0].id).toBe(id);
 });
+
+
+it('removed providers cannot start model discovery or write stale defaults', async () => {
+  await useAiStore.getState().refreshModels('removed-provider');
+  await useAiStore.getState().saveDefaults('removed-provider', 'old-model');
+  expect(agentTransport.models).not.toHaveBeenCalled();
+  expect(agentTransport.save).not.toHaveBeenCalled();
+  expect(useAiStore.getState().settings.defaultProvider).toBe('provider');
+});
+
+it('model discovery ignores a response after settings reload removes the provider', async () => {
+  const pending = deferred<Awaited<ReturnType<typeof agentTransport.models>>>();
+  vi.mocked(agentTransport.models).mockReturnValue(pending.promise);
+  const refresh = useAiStore.getState().refreshModels('provider');
+  vi.mocked(agentTransport.settings).mockResolvedValue({settings: {...settings(), providers: [], defaultProvider: null, defaultModel: null}, credentials: {}});
+  await useAiStore.getState().load();
+  pending.resolve([{id: 'old-model', name: 'Old model', tools: true, contextWindow: null, maxOutputTokens: null}]);
+  await refresh;
+  expect(useAiStore.getState().models.provider).toBeUndefined();
+});
+
+it('model discovery ignores an old 401 after settings reload changes the endpoint', async () => {
+  let reject!: (error: Error) => void;
+  vi.mocked(agentTransport.models).mockReturnValue(new Promise((_resolve, fail) => {reject = fail;}));
+  const refresh = useAiStore.getState().refreshModels('provider');
+  vi.mocked(agentTransport.settings).mockResolvedValue({settings: {...settings(), providers: [{...settings().providers[0], baseUrl: 'http://127.0.0.1:8085'}]}, credentials: {}});
+  await useAiStore.getState().load();
+  reject(new Error('Old endpoint returned HTTP 401'));
+  await refresh;
+  expect(useAiStore.getState().modelErrors.provider).toBeUndefined();
+});

@@ -143,6 +143,7 @@ export const useAiStore = create<AiState>()(
       },
       async saveDefaults(defaultProvider?: string | null, defaultModel?: string | null) {
         const cur = get().settings;
+        if (defaultProvider != null && !cur.providers.some(p => p.id === defaultProvider)) return;
         const next = {
           ...cur,
           defaultProvider: defaultProvider !== undefined ? defaultProvider : cur.defaultProvider,
@@ -156,14 +157,20 @@ export const useAiStore = create<AiState>()(
         }
       },
       async refreshModels(providerId) {
+        const profile = get().settings.providers.find(p => p.id === providerId);
+        if (!profile) return;
         for (const key of inspectedModels) if (key.startsWith(`${providerId}:`)) inspectedModels.delete(key);
         const revision = (modelRevisions.get(providerId) ?? 0) + 1; modelRevisions.set(providerId, revision);
+        const current = () => {
+          const saved = get().settings.providers.find(p => p.id === providerId);
+          return modelRevisions.get(providerId) === revision && saved?.baseUrl === profile.baseUrl && saved.protocol === profile.protocol;
+        };
         set(state => ({ modelLoading: { ...state.modelLoading, [providerId]: true }, modelErrors: { ...state.modelErrors, [providerId]: undefined } }));
         try {
           const models = await agentTransport.models(providerId);
-          if (modelRevisions.get(providerId) === revision) set(state => ({ models: { ...state.models, [providerId]: models } }));
+          if (current()) set(state => ({ models: { ...state.models, [providerId]: models } }));
         } catch (error) {
-          if (modelRevisions.get(providerId) === revision) set(state => ({ modelErrors: { ...state.modelErrors, [providerId]: agentError(error) } }));
+          if (current()) set(state => ({ modelErrors: { ...state.modelErrors, [providerId]: agentError(error) } }));
         } finally {
           if (modelRevisions.get(providerId) === revision) set(state => ({ modelLoading: { ...state.modelLoading, [providerId]: false } }));
         }

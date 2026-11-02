@@ -50,7 +50,11 @@ async function setup(page: Page) {
         if (command === 'ai_list_skills') return w.__aiHarness.skills ?? [{name:'cluster-debug',description:'Investigate a cluster using permitted evidence',directory:'/home/user/.agents/skills/cluster-debug'}];
         if (command === 'ai_test_provider') { if(args.profile.baseUrl.includes('broken')) throw new Error('Provider connection failed'); return structuredClone(w.__aiHarness.models); }
         if (command === 'ai_test_opencode') return {executable:'/usr/local/bin/opencode',version:'opencode v2.0.27'};
-        if (command === 'ai_list_models') return structuredClone(w.__aiHarness.models);
+        if (command === 'ai_list_models') {
+          if (!settings.providers.some(p => p.id === args.providerId)) throw new Error('Unknown AI provider');
+          if (w.__aiHarness.failedProviders?.includes(args.providerId)) throw new Error('AI endpoint returned HTTP 401');
+          return structuredClone(w.__aiHarness.models);
+        }
         if (command === 'ai_create_session') { const id = `native-${++sequence}`; const session = { ...args.request, id, mode: 'read_only', phase: 'plan', policy }; sessions.set(id, session); return session; }
         if (command === 'ai_set_mode') {
           modes.push(args);
@@ -522,3 +526,33 @@ test('OpenCode answers startup terminal queries and fits its screen after font a
   expect(await page.evaluate(() => (window as any).__aiHarness.openCodeStarts.length)).toBe(1);
   expect(errors).toEqual([]);
 });
+
+
+for (const removeOld of [true, false]) {
+  test(`adding llama.cpp ${removeOld ? 'after removing the old provider' : 'as the new default'} loads its models on the existing home screen`, async ({ page }) => {
+    const errors = await setup(page);
+    await page.evaluate(() => { (window as any).__aiHarness.failedProviders = ['local']; });
+    const agent = await openAgent(page);
+    await expect(agent).toContainText('HTTP 401');
+    await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
+    await dialog.getByRole('button', { name: 'Connections & models', exact: true }).click();
+    if (removeOld) await dialog.getByRole('button', { name: 'Remove connection', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add provider', exact: true }).click();
+    await dialog.getByRole('combobox', { name: 'AI connection preset' }).selectOption('Custom / vLLM / llama.cpp');
+    await dialog.getByRole('textbox', { name: 'AI API root' }).fill('http://127.0.0.1:8085/v1');
+    await page.evaluate(() => { (window as any).__aiHarness.models = [{ id: 'llama-model', name: 'Local llama model', tools: true }]; });
+    await dialog.getByRole('button', { name: 'Save provider', exact: true }).click();
+    await expect(dialog.getByRole('combobox', { name: 'Default AI model' }).getByRole('option', { name: 'Local llama model · llama-model' })).toHaveCount(1);
+    const localId = await page.evaluate(() => (window as any).__aiHarness.settings().providers.find((p: any) => p.baseUrl === 'http://127.0.0.1:8085/v1').id);
+    await dialog.getByRole('combobox', { name: 'Default AI model' }).selectOption('llama-model');
+    await dialog.getByRole('button', { name: 'Use as default', exact: true }).click();
+    await expect(dialog.getByText('Default provider, model and generation options saved.', {exact: true})).toBeVisible();
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(agent.getByRole('combobox', { name: 'Conversation AI provider' })).toHaveValue(localId);
+    await expect(agent.getByRole('combobox', { name: 'Conversation AI model' })).toHaveValue('llama-model');
+    await expect(agent).not.toContainText('Unknown AI provider');
+    await expect(agent).not.toContainText('HTTP 401');
+    expect(errors).toEqual([]);
+  });
+}

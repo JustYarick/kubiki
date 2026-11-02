@@ -109,7 +109,7 @@ function KubikiAgentView({ visible = true }: { visible?: boolean }) {
       const profile = state.settings.providers.find(p => p.id === c.providerId)
         ?? state.settings.providers.find(p => p.id === state.settings.defaultProvider) ?? state.settings.providers[0];
       if (!profile) continue;
-      const model = c.model || (profile.id === state.settings.defaultProvider ? state.settings.defaultModel ?? '' : '');
+      const model = (profile.id === c.providerId ? c.model : '') || (profile.id === state.settings.defaultProvider ? state.settings.defaultModel ?? '' : '');
       if (profile.id !== c.providerId || model !== c.model) state.update(c.id, { providerId: profile.id, model });
     }
   }, [state.settings, state.update]);
@@ -309,6 +309,8 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   const settings = useAiStore(s => s.settings);
   const [providerId, setProviderId] = useState(settings.defaultProvider ?? settings.providers[0]?.id ?? '');
   const [model, setModel] = useState(() => getSavedModel(settings.defaultProvider ?? settings.providers[0]?.id ?? '', settings.defaultModel));
+  const previousDefaults = useRef({ provider: settings.defaultProvider, model: settings.defaultModel });
+  const providerExists = settings.providers.some(p => p.id === providerId);
   const [phase, setPhase] = useState<AgentPhase>('plan');
   const [mode, setMode] = useState<AgentMode>('ask');
   const draft = useAiStore(s => s.homeDraft);
@@ -324,12 +326,14 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   }, [currentContext, clusterUserChanged]);
 
   useEffect(() => {
-    if (!providerId && (settings.defaultProvider || settings.providers[0]?.id)) {
-      const pid = settings.defaultProvider ?? settings.providers[0]?.id ?? '';
+    const defaultsChanged = previousDefaults.current.provider !== settings.defaultProvider || previousDefaults.current.model !== settings.defaultModel;
+    previousDefaults.current = { provider: settings.defaultProvider, model: settings.defaultModel };
+    if (!providerExists || defaultsChanged) {
+      const pid = settings.providers.find(p => p.id === settings.defaultProvider)?.id ?? settings.providers[0]?.id ?? '';
       setProviderId(pid);
-      if (!model) setModel(getSavedModel(pid, pid === settings.defaultProvider ? settings.defaultModel : ''));
+      setModel(pid === settings.defaultProvider && settings.defaultModel ? settings.defaultModel : getSavedModel(pid));
     }
-  }, [settings, providerId, model]);
+  }, [settings, providerExists]);
 
   const models = useAiStore(s => s.models[providerId]);
   const modelsLoading = useAiStore(s => s.modelLoading[providerId]);
@@ -337,18 +341,18 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   const refresh = useAiStore(s => s.refreshModels);
 
   useEffect(() => {
-    if (providerId && !models && desktopAiAvailable() && !modelsLoading && !modelsError) {
+    if (providerExists && providerId && !models && desktopAiAvailable() && !modelsLoading && !modelsError) {
       void refresh(providerId);
     }
-  }, [providerId, models, modelsLoading, modelsError, refresh]);
+  }, [providerExists, providerId, models, modelsLoading, modelsError, refresh]);
 
   useEffect(() => {
-    if (models && models.length > 0 && providerId) {
+    if (providerExists && models && models.length > 0 && providerId) {
       if (!model || !models.some(m => m.id === model)) {
         const preferred = getSavedModel(providerId, providerId === settings.defaultProvider ? settings.defaultModel : '');
         if (preferred && models.some(m => m.id === preferred)) {
           setModel(preferred);
-        } else if (!model && models[0]) {
+        } else if (models[0]) {
           const autoModel = models[0].id;
           setModel(autoModel);
           try { localStorage.setItem(`kubiki.ai.model.${providerId}`, autoModel); } catch {}
@@ -356,7 +360,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
         }
       }
     }
-  }, [models, model, providerId, settings]);
+  }, [providerExists, models, model, providerId, settings]);
 
   async function handleStart() {
     if (!draft.trim() || sending) return;
