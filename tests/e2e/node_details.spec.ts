@@ -66,8 +66,8 @@ test('Node metric denial remains unavailable rather than rendering zero usage', 
   const { details } = await setup(page, true);
   const performance = details.getByRole('region', { name: 'Node performance', exact: true });
   await expect(performance.getByRole('status')).toContainText('Node metrics access denied');
-  await expect(performance.locator('.telemetry-value').first()).toHaveText('—');
-  await expect(performance.getByRole('img', { name: 'CPU usage history', exact: true })).toHaveAttribute('data-samples', '0');
+  await expect(performance.locator('.telemetry-value')).toHaveCount(0);
+  await expect(performance.getByRole('img', { name: 'CPU usage history', exact: true })).toHaveCount(0);
 });
 
 test('Node history connects observations across a two-minute pause while viewing another node', async ({ page }) => {

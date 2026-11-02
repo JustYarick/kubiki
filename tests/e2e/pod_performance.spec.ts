@@ -148,8 +148,8 @@ test('Unavailable Pod metrics explain the failure and keep charts empty', async 
   await expect(performance.getByRole('status')).toContainText('Pod metrics access denied');
   for (const dimension of ['CPU', 'RAM']) {
     const metric = performance.getByRole('region', { name: `Pod ${dimension} performance`, exact: true });
-    await expect(metric.locator('.telemetry-value')).toHaveText('—');
-    await expect(metric.getByRole('img', { name: `${dimension} usage history`, exact: true })).toHaveAttribute('data-samples', '0');
+    await expect(metric).toHaveCount(0);
+    await expect(performance.getByRole('img', { name: `${dimension} usage history`, exact: true })).toHaveCount(0);
   }
   const containers = details.getByRole('region', { name: 'Containers', exact: true });
   await expect(containers.locator('.container-card-usage b')).toHaveText(['—', '—', '—', '—', '—', '—', '—', '—']);
