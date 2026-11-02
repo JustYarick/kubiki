@@ -25,7 +25,9 @@ kubiki/
 ├── src-tauri/                  Tauri desktop shell and Rust IPC handlers
 ├── crates/
 │   ├── kubiki-core/            Rust Kubernetes engine
-│   └── kubiki-ai/              AI policy, sessions, runtime and provider protocols
+│   ├── kubiki-ai/              Provider loop, conversation memory and installed skills
+│   ├── kubiki-tools/           Cluster tools, scope/policy, receipts and verification
+│   └── kubiki-mcp/             Shared MCP dispatcher, standalone CLI and attach bridge
 ├── packages/                   Extension SDK, author tools and Node controller/workers
 ├── extensions/                 Bundled SDK Diagnostics package
 ├── scripts/                    Builds, runtime preparation and release validation
@@ -137,22 +139,31 @@ The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reus
 
 ## AI domain
 
-`crates/kubiki-ai/` is a separate headless domain for execution modes, data/tool
-permissions, sessions, provider protocols and the bounded agent loop. It has no
-Tauri or Kubernetes dependency. `src/domains/ai/` owns chat/settings UI, in-memory
-conversations and its native adapter. The workspace panel registry opens the same
-domain used by resource investigation and creation actions.
+`crates/kubiki-ai/` owns provider protocols, generation options, conversation turns,
+compaction, installed skills and the bounded agent loop. `ConversationState` is
+separate from the portable execution session. `crates/kubiki-tools/` owns cluster
+tools, policy/projection, reviewed execution, evidence, accepted operation identities
+and verification. It reuses `kubiki-core` without Tauri. The AI runtime uses exported
+tool contracts and reaches execution through the in-memory MCP client in
+`crates/kubiki-mcp/`. That crate also supplies standalone stdio and attached hosts.
+`src/domains/ai/` owns chat/settings UI, conversation presentation and its native adapter.
 
 `src-tauri/src/agent_commands.rs` composes window ownership, keyring credentials,
-native settings and session lifecycle. `agent_tools.rs` supplies typed Kubernetes
-tools and reuses core mutation preparation, the shared `MutationGuard` and native
-consent. `PreparedMutation::commit_guarded` rechecks revocable authorization after
-the final live reads, immediately before writing. Mode changes invalidate pending
-authorization; dispatched requests still return operation receipts.
+native settings and session lifecycle. `agent_tools.rs` supplies native consent,
+provider/skill adapters and the bridge back to conversation state. Cluster execution
+uses the shared tools/core implementation. `PreparedMutation::commit_guarded`
+rechecks revocable authorization after the final live reads, immediately before
+writing. Mode changes invalidate pending authorization; dispatched requests still
+return operation receipts. Accepted UID/generation are retained per connection,
+so verification cannot silently switch to a replacement resource.
+
+`src-tauri/src/opencode.rs` launches installed OpenCode in a PTY and owns its attached
+MCP lifecycle. OpenCode owns its conversation and permissions; the MCP exposure
+profile still limits scope, data and operations. Pending startup can be stopped
+before the process is scheduled. Runtime selection lives in AI settings.
 
 See [Integrated AI agent](AI_AGENT.md) for defaults, protocols, scope boundaries,
-storage, research and limitations. The external terminal-based Analyze workflow
-remains separate from the integrated domain's permissions.
+storage and limitations.
 
 ## Resource synchronization
 

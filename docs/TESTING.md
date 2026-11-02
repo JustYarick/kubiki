@@ -3,7 +3,9 @@
 | Command | Coverage |
 | --- | --- |
 | `pnpm test` | Pure logic, state, parsing, resource identity, adapters, permissions and cancellation contracts. |
-| `cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml` | Native AI policy, provider stream decoding, model metadata and tool runtime tests using a local HTTP server. |
+| `cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml` | Provider stream decoding, model metadata, conversation compaction and runtime tests using a local HTTP server. |
+| `cargo test --locked --manifest-path crates/kubiki-tools/Cargo.toml` | Policy, reviewed execution, accepted identities and receipt-bound verification against fake Kubernetes HTTP. |
+| `cargo test --locked --manifest-path crates/kubiki-mcp/Cargo.toml` | MCP protocol, scope and request cancellation isolation. |
 | `pnpm test:desktop` | Build provenance, updater manifests, publication gates, release channels and VirusTotal request pacing/report verification. No public files are uploaded by these tests. |
 | `pnpm test:extensions` | Extension package validation, capabilities, settings, cancellation and local host process/RPC lifecycles. |
 | `pnpm test:e2e` | Standard browser regression suite, including large inventories, stream cleanup, reviewed operations and representative responsive layouts. |
@@ -22,7 +24,9 @@ pnpm test:e2e
 
 `tests/e2e/ai_agent.spec.ts` uses mocked native IPC for dynamic model discovery,
 credentials, permission editing, streamed chat, resource entry points, proposals
-and Stop. Agent Rust tests do not call paid providers or a live cluster. Core
+and Stop. OpenCode fixtures cover pending startup, Stop before font loading,
+known pre-start failures and ambiguous delivery without task replay.
+Agent Rust tests do not call paid providers or a live cluster. Core
 `revocable_mutation_tests` verifies cancellation after commit's final read prevents
 an actual write. These fixtures do not establish real model quality or OS keyring
 behavior on every platform.

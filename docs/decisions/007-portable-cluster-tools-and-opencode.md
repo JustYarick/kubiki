@@ -54,7 +54,9 @@ permissions и подтверждения принадлежат OpenCode. MCP �
 
 Зависимости: `kubiki-mcp → kubiki-tools → kubiki-core`.
 `kubiki-ai` получает tools через MCP-клиент/абстракцию транспорта, без зависимости
-от реализации `kubiki-tools`. MCP DTO и versioned JSON Schema не зависят от provider DTO.
+от конкретного Kubernetes executor. Компактные контракты пока экспортируются из
+`kubiki-tools`; отдельный crate только для них не вводится. Provider DTO, история
+диалога и compaction принадлежат `kubiki-ai`; MCP DTO и JSON Schema от них не зависят.
 Ручные операции UI продолжают использовать core и свой пользовательский consent;
 agent policy не становится глобальной политикой всего интерфейса приложения.
 
@@ -385,6 +387,12 @@ SDK/ACP с собственным UI требует повторить чужо�
 на установленном V2 через PTY; скрытые настройки Kubiki не применяются к нему.
 Desktop binary имеет headless attach entrypoint; отдельный CLI нужен только для
 установки без приложения. Внешние MCP и общий shell встроенного агента удалены;
-legacy environment сохраняется инертным для миграции. Проверки реального кластера,
-host permissions с live-моделью и Windows native transport остаются отдельными
+legacy environment сохраняется инертным для миграции.
+
+После release review исправлены изоляция отмены MCP-запросов, сохранение принятых
+UID/generation между вызовами, Stop во время startup и безопасный retry исходного
+задания. Conversation state и provider types возвращены в AI runtime. Проверки
+MCP на testbed прошли, включая замену ресурса и конкурентную смену generation;
+результаты описаны в [отчёте исправлений](../reviews/2026-11-02-review-fixes.md).
+Host permissions с live-моделью и Windows native transport остаются отдельными
 проверками перед объявлением полной совместимости.

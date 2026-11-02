@@ -295,9 +295,15 @@ operation receipt identities/statuses and recent evidence references. It does no
 turn quoted evidence into instructions. `get_evidence` retrieves prior projected
 results: at most 32 entries/512 KB per session, 64 KB each, TTL ten minutes. Evicted
 or expired evidence requires a fresh query. Historical evidence never verifies a write.
-`verify_workload` polls fresh controller state for 1–20 seconds, rejecting UID
-replacement and checking observed generation/expected replicas. Pending or unknown
-results do not prove rollout completion or application health.
+Accepted mutation receipts include `operationId`, UID and generation. The connection
+retains at most 256 accepted identities for one hour, across individual tool calls.
+`verify_workload` accepts `operationId` and pins the recorded target, UID, generation
+and desired state; without an ID it uses the latest accepted operation for the target.
+An unknown/expired ID is rejected. Without a recorded operation, a previously observed
+UID is required; current health alone does not verify a prior change.
+Verification polls fresh controller state for 1–20 seconds, rejecting UID replacement
+and checking observed generation/expected replicas. Pending or unknown results do
+not prove rollout completion or application health.
 
 ### Known diagnostic and scale limitations
 
@@ -362,6 +368,12 @@ One repository contains the desktop application and independently installable
 agent reaches the same dispatcher over an in-memory MCP transport. OpenCode reaches
 it through an authenticated local bridge and reuses the desktop connection pool.
 Standalone MCP hosts the same tools/core without requiring the desktop application.
+`kubiki-ai::ConversationState` owns provider turns, conversation memory and compaction.
+The portable tools session owns execution controls, scope, evidence and accepted
+operation identities. Provider protocols and generation options live in `kubiki-ai`.
+MCP request cancellation is local to that request, including time spent waiting for
+execution; global Stop or connection invalidation still revokes the whole session.
+Dispatched writes finish receipt handling even after cancellation.
 Desktop/core maintainers own tool and connection changes; frontend maintainers own
 the chat/settings and terminal presentation.
 
@@ -505,9 +517,12 @@ writes. Kubernetes RBAC, pinned connection generation, projection, bounds,
 mutation preconditions and receipts remain enforced by the server.
 
 Global context changes disconnect the panel until an explicit restart; they never
-silently retarget a running connection. Restart does not resend an initial Analyze
-or creation prompt. Normal TUI commands and model/provider choices belong to
-OpenCode. Its shell runs under its own permissions and is outside MCP filtering.
+silently retarget a running connection. Stop also cancels pending startup, including
+font loading and native version checks. Restart preserves an initial Analyze or
+creation prompt only after a typed native failure proves that no process was
+scheduled. Delivered tasks and ambiguous startup failures are never replayed.
+Normal TUI commands and model/provider choices belong to OpenCode. Its shell runs
+under its own permissions and is outside MCP filtering.
 
 ### Standalone CLI
 
