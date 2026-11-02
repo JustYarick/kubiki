@@ -55,7 +55,7 @@ impl kubiki_tools::ToolExecutor for IntegratedTools {
         self.environment.definitions(session.control()?.phase).await
     }
     fn accepted_uid(&self, id: &str) -> Option<String> {
-        self.cluster.accepted_uid(id)
+        self.mcp.accepted_uid(id)
     }
     async fn verify_change(
         &self,

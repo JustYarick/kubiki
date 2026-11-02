@@ -56,7 +56,6 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 | `src/views/TopologyCanvas.tsx` | Interactive graph presentation. |
 | `src/views/HelmView.tsx` | Release and repository navigation, release inspection, and action entry points. |
 | `src/views/ExtensionsView.tsx` | Package installation, enable/disable, manual updates, rollback and logs. |
-| `src/views/AnalysisView.tsx` | Diagnostic message preview and local analysis agent launch. |
 | `src/components/updates/AppUpdates.tsx` | Startup update offer, download/install actions and About settings. |
 | `src/navigation/CommandPalette.tsx` | Search and navigation across commands and resource types. |
 
@@ -75,7 +74,8 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/resource_watch.ts` | Starting, stopping, refreshing, and rescoping resource watch sessions. |
 | `src/state/workspace_store.ts` | Workspace sections, remembered documents/splits per section, and resource navigation. |
 | `src/state/dock_store.ts` | Bottom-panel sessions and selection. |
-| `src/state/ui_store.ts` | Appearance, layout, developer mode, selected AI agent and starting instructions. |
+| `src/state/ui_store.ts` | Appearance, layout, and developer mode. |
+| `src/domains/ai/store.ts` | AI agent settings, conversations, models, generation options, and starting instructions. |
 | `src/state/yaml_draft_store.ts` | In-memory editor drafts keyed by context and resource identity. |
 | `src/state/mutation_confirm_store.ts` | Pending native mutation confirmation requests. |
 | `src/state/pf_store.ts` | Port-forward session state. |

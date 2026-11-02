@@ -1,25 +1,18 @@
 import { useEffect, useRef, useState, isValidElement, type ReactNode } from 'react';
 import {
-  AlertCircle,
   ArrowDown,
   ArrowUp,
   Bot,
-  Brain,
   Check,
-  CheckCircle2,
   ChevronDown,
-  ChevronRight,
   Copy,
   Cpu,
   FileCode,
-  HelpCircle,
   Plus,
   RefreshCw,
-  Send,
   Server,
   Settings,
   Shield,
-  ShieldAlert,
   Sparkles,
   Square,
   WandSparkles,
@@ -31,7 +24,7 @@ import { Button } from '../../../components/ui/Button';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
 import { CodeEditor } from '../../../components/ui/CodeEditor';
-import { useMutationConfirmStore, type MutationConfirmRequest } from '../../../state/mutation_confirm_store';
+import { useMutationConfirmStore } from '../../../state/mutation_confirm_store';
 import { toast } from '../../../state/notifications_store';
 import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
@@ -45,9 +38,11 @@ import { highlightSkillChildren } from './SkillReferenceText';
 import { SkillComposer } from './SkillComposer';
 import { OpenCodePane } from './OpenCodePane';
 import { AgentSettings } from './AgentSettings';
-import { getToolIntent, getToolCallSummary } from '../tool_intents';
 import { getClusterTone } from '../../../core/cluster_color';
-import { stringify } from 'yaml';
+import { ActionApprovalCard } from './ActionApprovalCard';
+import { ThinkingBlock, parseThinking } from './ThinkingBlock';
+import { QuestionCard } from './QuestionCard';
+import { CompactToolMessage } from './CompactToolMessage';
 import '../ai.css';
 
 function getSavedModel(providerId: string, fallbackDefault?: string | null): string {
@@ -57,25 +52,6 @@ function getSavedModel(providerId: string, fallbackDefault?: string | null): str
     if (saved) return saved;
   } catch {}
   return fallbackDefault ?? '';
-}
-
-function formatManifestOrDiff(rawDiff: string, appliedYaml?: string): { code: string; language: 'yaml' | 'json' } {
-  if (appliedYaml && appliedYaml.trim()) {
-    return { code: appliedYaml.trim(), language: 'yaml' };
-  }
-  let text = (rawDiff || '').trim();
-  if (text.startsWith('CREATE object:\n')) {
-    text = text.slice('CREATE object:\n'.length).trim();
-  }
-  if (text.startsWith('{') && text.endsWith('}')) {
-    try {
-      const parsed = JSON.parse(text);
-      return { code: stringify(parsed).trim(), language: 'yaml' };
-    } catch {
-      // keep text
-    }
-  }
-  return { code: text, language: 'yaml' };
 }
 
 const statusLabels: Record<string, string> = {
@@ -989,80 +965,6 @@ function formatTokenCount(n: number): string {
 
 function copy(text: string) { void navigator.clipboard.writeText(text).then(() => toast.success('Copied')).catch(() => toast.error('Clipboard unavailable')); }
 
-function ActionApprovalCard({
-  request,
-  onResolve,
-}: {
-  request: MutationConfirmRequest;
-  onResolve: (approved: boolean) => void;
-}) {
-  const { resource, details, review, simple } = request;
-  const yaml = details?.kind === 'yaml';
-  const deleting = simple?.destructive ?? details?.steps.some(step => step.operation === 'DELETE') ?? false;
-  const title = simple?.title ?? (yaml ? 'Apply YAML changes?' : deleting ? 'Delete resource?' : 'Confirm operation?');
-  const summary = simple ? review : details?.kind === 'batch' ? `Perform ${details.steps.length} operations on the selected resources.` : details?.steps[0]?.summary ?? review;
-  const diffContent = yaml && details.steps[0]?.diff ? details.steps[0].diff : '';
-  const formatted = diffContent ? formatManifestOrDiff(diffContent) : { code: '', language: 'yaml' as const };
-
-  return (
-    <div className="ai-action-approval-card my-3 p-4 rounded-lg border-2 border-amber-500/40 bg-[var(--bg-secondary)] shadow-lg animate-fade-in max-w-[900px] mx-auto">
-      <div className="flex items-center justify-between gap-3 mb-2.5">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded bg-amber-500/10 text-amber-400">
-            <ShieldAlert size={16} aria-hidden="true" />
-          </div>
-          <div>
-            <h4 className="text-xs font-semibold text-[var(--text-primary)]">{title}</h4>
-            <p className="text-[10.5px] text-[var(--text-secondary)] font-mono">
-              {resource.kind} <span className="text-[var(--text-primary)] font-semibold">{resource.name}</span>
-              {resource.namespace ? ` · ns: ${resource.namespace}` : ''} · cluster: {resource.context}
-            </p>
-          </div>
-        </div>
-        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-          Awaiting confirmation
-        </span>
-      </div>
-
-      <p className="text-xs text-[var(--text-secondary)] mb-3 leading-relaxed">
-        {simple ? summary.split('\n')[0] : summary}
-      </p>
-      {simple && summary.includes('\n') && <details className="mb-3 text-xs"><summary>Tool arguments</summary><pre className="overflow-auto max-h-48 whitespace-pre-wrap">{summary.slice(summary.indexOf('\n') + 1)}</pre></details>}
-
-      {formatted.code ? (
-        <div className="mb-3 rounded border border-[var(--border-default)] overflow-hidden">
-          <CodeEditor
-            ariaLabel="YAML Mutation Diff"
-            value={formatted.code}
-            language={formatted.language}
-            readOnly={true}
-            height="min(38vh, 300px)"
-            copyable={true}
-            variant="field"
-          />
-        </div>
-      ) : null}
-
-      <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[var(--border-subtle)]">
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onResolve(false)}
-        >
-          Decline
-        </Button>
-        <Button
-          size="sm"
-          variant={deleting ? 'danger' : 'primary'}
-          onClick={() => onResolve(true)}
-        >
-          {simple?.confirm_label ?? (deleting ? 'Delete' : 'Apply')}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 function CodeBlock({ children }: { children?: ReactNode }) {
   let language = 'yaml';
   let rawText = '';
@@ -1109,76 +1011,6 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
-interface ParsedThinking {
-  thinking?: string;
-  isThinkingActive: boolean;
-  content: string;
-}
-
-function parseThinking(text: string, isStreaming: boolean): ParsedThinking {
-  const thinkMatch = text.match(/<think>([\s\S]*?)(?:<\/think>|$)/i) ||
-                     text.match(/<thought>([\s\S]*?)(?:<\/thought>|$)/i);
-  if (!thinkMatch) {
-    return { isThinkingActive: false, content: text };
-  }
-
-  const thinking = thinkMatch[1].trim();
-  const hasClosed = /<\/think>|<\/thought>/i.test(text);
-  const content = text
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
-    .replace(/<think>[\s\S]*$/gi, '')
-    .replace(/<thought>[\s\S]*$/gi, '')
-    .trim();
-
-  return {
-    thinking,
-    isThinkingActive: !hasClosed && isStreaming,
-    content,
-  };
-}
-
-function ThinkingBlock({ thinking, isActive }: { thinking: string; isActive: boolean }) {
-  const [open, setOpen] = useState(isActive);
-
-  useEffect(() => {
-    if (isActive) setOpen(true);
-  }, [isActive]);
-
-  return (
-    <div className={`ai-thinking-block ${isActive ? 'is-active' : ''}`}>
-      <div
-        className="ai-thinking-header"
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open); } }}
-      >
-        <div className="flex items-center gap-2">
-          {isActive ? (
-            <Sparkles size={13} className="ai-thinking-spinner text-amber-400" aria-hidden="true" />
-          ) : (
-            <Brain size={13} className="text-indigo-400" aria-hidden="true" />
-          )}
-          <span className="font-medium">
-            {isActive ? 'Thinking…' : 'Thought process'}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-          <span>{open ? 'Hide' : 'Show'}</span>
-          <ChevronDown size={13} className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
-        </div>
-      </div>
-      {open && (
-        <div className="ai-thinking-content kubiki-scrollbar">
-          {thinking || 'Reasoning about prompt and cluster state…'}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function LiveStatusIndicator({ status }: { status: string }) {
   const [elapsed, setElapsed] = useState(1);
   useEffect(() => {
@@ -1202,282 +1034,6 @@ function LiveStatusIndicator({ status }: { status: string }) {
         {elapsed}s
       </span>
     </div>
-  );
-}
-
-function QuestionCard({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation }) {
-  const [otherText, setOtherText] = useState('');
-  const args = (m.call?.arguments || {}) as Record<string, any>;
-  const result = m.result;
-  const question = String(args.question || result?.question || 'What would you like to do next?');
-  const options: string[] = Array.isArray(result?.options)
-    ? result.options
-    : Array.isArray(args.options)
-    ? args.options
-    : ['Yes', 'No'];
-  const multiSelect = !!(result?.multi_select ?? args.multi_select);
-  const allowOther = (result?.allow_other ?? args.allow_other) !== false;
-  const [selectedMulti, setSelectedMulti] = useState<string[]>([]);
-
-  const msgIndex = c.messages.findIndex(item => item.id === m.id);
-  const answeredMsg = msgIndex >= 0 ? c.messages.slice(msgIndex + 1).find(item => item.role === 'user') : undefined;
-  const isAnswered = !!answeredMsg;
-
-  const handleSelect = (optionText: string) => {
-    if (c.busy || isAnswered) return;
-    useAiStore.getState().update(c.id, { draft: optionText });
-    void useAiStore.getState().send(c.id);
-  };
-
-  const handleToggleOption = (optionText: string) => {
-    if (c.busy || isAnswered) return;
-    setSelectedMulti(prev =>
-      prev.includes(optionText) ? prev.filter(x => x !== optionText) : [...prev, optionText]
-    );
-  };
-
-  const handleMultiSubmit = () => {
-    if (c.busy || isAnswered || selectedMulti.length === 0) return;
-    const answer = selectedMulti.join(', ');
-    useAiStore.getState().update(c.id, { draft: answer });
-    void useAiStore.getState().send(c.id);
-  };
-
-  const handleOtherSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otherText.trim() || c.busy || isAnswered) return;
-    const text = otherText.trim();
-    setOtherText('');
-    useAiStore.getState().update(c.id, { draft: text });
-    void useAiStore.getState().send(c.id);
-  };
-
-  return (
-    <article
-      className={`ai-question-card ${isAnswered ? 'is-answered' : ''}`}
-      aria-label="AI tool ask_user"
-    >
-      <div className="ai-question-header">
-        <div className="flex items-center gap-2 font-medium">
-          <HelpCircle size={14} className={isAnswered ? 'text-emerald-400' : 'text-indigo-400'} aria-hidden="true" />
-          <span>Agent Question</span>
-          {multiSelect && !isAnswered && (
-            <span className="text-[10px] text-[var(--text-muted)] font-mono">(Multi-choice)</span>
-          )}
-        </div>
-        <span className={`ai-question-badge ${isAnswered ? 'is-answered' : ''}`}>
-          {isAnswered ? 'Answered' : 'Awaiting input'}
-        </span>
-      </div>
-
-      <p className="ai-question-text">{question}</p>
-
-      {isAnswered ? (
-        <div className="ai-question-answered-box">
-          <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold mb-1">
-            <CheckCircle2 size={13} aria-hidden="true" />
-            <span>Your response:</span>
-          </div>
-          <p className="ai-question-answered-content">{answeredMsg.text}</p>
-        </div>
-      ) : (
-        <>
-          {options.length > 0 && (
-            <div className="ai-question-options" role="group" aria-label="Suggested responses">
-              {multiSelect ? (
-                <>
-                  {options.map((opt, idx) => {
-                    const checked = selectedMulti.includes(opt);
-                    return (
-                      <label key={idx} className={`ai-question-checkbox-row ${checked ? 'is-checked' : ''}`}>
-                        <input
-                          type="checkbox"
-                          className="ui-checkbox"
-                          checked={checked}
-                          disabled={c.busy}
-                          onChange={() => handleToggleOption(opt)}
-                        />
-                        <span>{opt}</span>
-                      </label>
-                    );
-                  })}
-                  <div className="w-full ai-question-actions">
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      disabled={c.busy || selectedMulti.length === 0}
-                      onClick={handleMultiSubmit}
-                    >
-                      <Check size={12} aria-hidden="true" />
-                      <span>Confirm selection ({selectedMulti.length})</span>
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                options.map((opt, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    className="ai-question-option-btn"
-                    disabled={c.busy}
-                    onClick={() => handleSelect(opt)}
-                  >
-                    <span className="ai-question-choice-dot" aria-hidden="true" />
-                    <span>{opt}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-
-          {allowOther && (
-            <form onSubmit={handleOtherSubmit} className="ai-question-other">
-              <input
-                type="text"
-                className="ide-input ai-question-other-input"
-                placeholder="Type custom response…"
-                value={otherText}
-                disabled={c.busy}
-                onChange={e => setOtherText(e.target.value)}
-              />
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={!otherText.trim() || c.busy}
-                type="submit"
-              >
-                <Send size={12} aria-hidden="true" />
-                <span>Reply</span>
-              </Button>
-            </form>
-          )}
-        </>
-      )}
-    </article>
-  );
-}
-
-
-
-function CompactToolMessage({
-  message: m,
-  conversation: c,
-}: {
-  message: ChatMessage;
-  conversation: Conversation;
-}) {
-  const result = m.result;
-  const error = typeof result?.error === 'string' ? result.error : result?.isError === true ? 'MCP tool reported an error' : ['failed', 'cancelled', 'uncertain'].includes(String(result?.status)) ? `Change ${result?.status}; inspect the recorded outcome` : undefined;
-  const isRunning = !result && c.busy;
-  const args = (m.call?.arguments || {}) as Record<string, any>;
-  const targetSummary = args ? [args.namespace, args.kind, args.name].filter(Boolean).join('/') : '';
-  const intent = getToolIntent(m.call?.name ?? '', args);
-  const summary = getToolCallSummary(m.call?.name ?? '', args, result);
-  const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const rawJson = result ? JSON.stringify(result, null, 2) : JSON.stringify(m.call?.arguments ?? {}, null, 2);
-
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    void navigator.clipboard.writeText(rawJson).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  return (
-    <article
-      className={`ai-tool-compact ${error ? 'has-error' : ''} ${isRunning ? 'is-running' : ''}`}
-      aria-label={`AI tool ${m.call?.name}`}
-    >
-      <div
-        className="ai-tool-compact-bar"
-        onClick={() => !isRunning && setExpanded(!expanded)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            if (!isRunning) setExpanded(!expanded);
-          }
-        }}
-      >
-        <div className="ai-tool-compact-left">
-          {isRunning ? (
-            <RefreshCw size={12} className="ai-thinking-spinner text-amber-400 shrink-0" aria-hidden="true" />
-          ) : error ? (
-            <AlertCircle size={12} className="text-[var(--status-danger)] shrink-0" aria-hidden="true" />
-          ) : (
-            <Check size={12} className="text-emerald-400 shrink-0" aria-hidden="true" />
-          )}
-
-          <span className="ai-tooling-badge">TOOL</span>
-          <span className={`ai-tool-intent-badge is-${intent.color}`}>{intent.badge}</span>
-          <span className="font-mono font-semibold text-[var(--text-primary)] text-xs">{m.call?.name}</span>
-
-          {targetSummary && (
-            <span className="ai-tool-badge font-mono truncate max-w-[180px]" title={targetSummary}>
-              {targetSummary}
-            </span>
-          )}
-
-          <span className="ai-tool-compact-arrow" aria-hidden="true">→</span>
-          <span className={`ai-tool-compact-summary truncate ${error ? 'text-[var(--status-danger)]' : 'text-[var(--text-secondary)]'}`}>
-            {summary}
-          </span>
-        </div>
-
-        <div className="ai-tool-compact-right">
-          {m.durationMs ? (
-            <span className="text-[var(--text-muted)] font-mono text-[10.5px]">
-              {(m.durationMs / 1000).toFixed(1)}s
-            </span>
-          ) : null}
-
-          {!isRunning && (
-            <span className="ai-tool-expand-btn" title={expanded ? 'Hide raw output' : 'Show raw output'}>
-              {expanded ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="ai-tool-expanded-drawer">
-          <div className="ai-tool-drawer-header">
-            <div className="text-[11px] text-[var(--text-secondary)] flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-[var(--text-primary)]">{intent.title}</span>
-              {intent.description && (
-                <span className="text-[10px] text-[var(--text-muted)]">
-                  · {intent.description}
-                </span>
-              )}
-            </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleCopy}
-              className="h-6 px-2 text-[10.5px] shrink-0"
-            >
-              {copied ? (
-                <span className="text-emerald-400 flex items-center gap-1">
-                  <Check size={11} aria-hidden="true" /> Copied
-                </span>
-              ) : (
-                <span className="flex items-center gap-1">
-                  <Copy size={11} aria-hidden="true" /> Copy Output
-                </span>
-              )}
-            </Button>
-          </div>
-          {m.call?.name === 'run_command' && result && !result.payloadOmitted ? <div>
-            <pre className="ai-tool-result kubiki-scrollbar" aria-label="Command output">{String(result.stdout ?? '')}{result.stderr ? `\n${result.stderr}` : ''}</pre>
-            <details><summary>Raw result</summary><pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre></details>
-          </div> : <pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre>}
-        </div>
-      )}
-    </article>
   );
 }
 

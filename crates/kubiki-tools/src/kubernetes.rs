@@ -214,7 +214,7 @@ impl ToolExecutor for KubernetesTools {
         }
         if matches!(
             target.kind.as_str(),
-            "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet"
+            "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet" | "Job"
         ) {
             let mut arguments =
                 serde_json::to_value(target).map_err(|_| "Cannot encode verification target")?;
@@ -738,7 +738,6 @@ impl KubernetesTools {
             } else {
                 None
             };
-            let mut cancellation = session.cancellation();
             let read = async {
                 let mut page = match pending {
                     Some(page) => page,
@@ -825,7 +824,7 @@ impl KubernetesTools {
                     json!({"source":if session.scope.all_namespaces {"kubernetesMetadata"}else{"conversationScope"},"namespaces":names,"hasMore":more,"cursor":cursor,"capturedAt":captured_at,"omittedByPolicy":omitted,"completeness":if more||omitted>0 {"partial"}else{"complete"},"coverage":"Namespace names only, projected by allowed scope and policy; missing names do not prove absence"}),
                 )
             };
-            return tokio::select! {biased; _=cancelled(&mut cancellation)=>Err("Namespace discovery cancelled".into()), result=tokio::time::timeout(Duration::from_secs(20),read)=>result.map_err(|_|"Namespace discovery timed out")?};
+            return timed_read(session, "Namespace discovery cancelled", "Namespace discovery timed out", read).await;
         }
         if [
             "get_logs",
@@ -1134,7 +1133,6 @@ impl KubernetesTools {
         };
         validate_target(&target, call.name == "get_resource")?;
         state.policy.check_scope(&session.scope, &target)?;
-        let mut cancellation = session.cancellation();
         let read = async {
             let query = ResourceQuery {
                 context: session.scope.context.clone(),
@@ -1240,7 +1238,7 @@ impl KubernetesTools {
                 Err("Unknown AI tool".into())
             }
         };
-        tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Read cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "AI resource read timed out")? }
+        timed_read(session, "Read cancelled", "AI resource read timed out", read).await
     }
 }
 
@@ -1685,7 +1683,6 @@ impl KubernetesTools {
         };
         validate_target(&target, call.name == "get_logs")?;
         state.policy.check_scope(&session.scope, &target)?;
-        let mut cancellation = session.cancellation();
         let read = async {
             if call.name == "get_logs" {
                 if !state.policy.logs || state.policy.access(&target, true) != DataAccess::Content {
@@ -1918,7 +1915,7 @@ impl KubernetesTools {
                 )
             }
         };
-        tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Read cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Diagnostic read timed out")? }
+        timed_read(session, "Read cancelled", "Diagnostic read timed out", read).await
     }
 
     async fn read_pod_diagnostics(
@@ -1955,7 +1952,6 @@ impl KubernetesTools {
             );
         }
 
-        let mut cancellation = session.cancellation();
         let read = async {
             let api_dyn = resource_access(client.clone(), &target).await?;
             let pod = api_dyn
@@ -2057,7 +2053,7 @@ impl KubernetesTools {
                 "containers": containers,
             }))
         };
-        tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Pod diagnostics cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Pod diagnostics timed out")? }
+        timed_read(session, "Pod diagnostics cancelled", "Pod diagnostics timed out", read).await
     }
 
     async fn read_workload_diagnostics(
@@ -2094,7 +2090,6 @@ impl KubernetesTools {
             return Err("Workload diagnostics require content access; use get_resource for permitted metadata".into());
         }
 
-        let mut cancellation = session.cancellation();
         let read = async {
             let api_dyn = resource_access(client.clone(), &target).await?;
             let obj = api_dyn
@@ -2378,7 +2373,7 @@ impl KubernetesTools {
                 "childPods": child_pods_summary,
             }))
         };
-        tokio::select! { biased; _ = cancelled(&mut cancellation) => Err("Workload diagnostics cancelled".into()), result = tokio::time::timeout(Duration::from_secs(20), read) => result.map_err(|_| "Workload diagnostics timed out")? }
+        timed_read(session, "Workload diagnostics cancelled", "Workload diagnostics timed out", read).await
     }
 
     // Compose generic projected reads so policy, selectors, UID checks, paging and
@@ -3135,6 +3130,25 @@ impl KubernetesTools {
         .await
         .map_err(|_| "AI journal task failed")?
         .map_err(str::to_owned)
+    }
+}
+
+async fn timed_read<T, F>(
+    session: &Session,
+    cancelled_message: &str,
+    timeout_message: &str,
+    future: F,
+) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    let mut cancellation = session.cancellation();
+    tokio::select! {
+        biased;
+        _ = cancelled(&mut cancellation) => Err(cancelled_message.into()),
+        result = tokio::time::timeout(Duration::from_secs(20), future) => {
+            result.map_err(|_| timeout_message.to_string())?
+        }
     }
 }
 

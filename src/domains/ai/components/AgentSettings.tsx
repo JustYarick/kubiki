@@ -228,13 +228,13 @@ function ProviderSettings() {
   </section>;
 }
 
-function DataSelect({ label, value, onChange }: { label: string; value: DataAccess; onChange: (value: DataAccess) => void }) {
+export function DataSelect({ label, value, onChange }: { label: string; value: DataAccess; onChange: (value: DataAccess) => void }) {
   return <label className="ai-field">{label}<Select aria-label={label} className="ide-select" value={value} onChange={e => onChange(e.target.value as DataAccess)}>
     <option value="none">No access</option><option value="metadata">Metadata only</option><option value="content">Contents</option>
   </Select></label>;
 }
 
-function Writes({ value, onChange, label = 'Allowed AI changes' }: { value: WriteOperation[]; onChange: (value: WriteOperation[]) => void; label?: string }) {
+export function Writes({ value, onChange, label = 'Allowed AI changes' }: { value: WriteOperation[]; onChange: (value: WriteOperation[]) => void; label?: string }) {
   return <div role="group" aria-label={label} className="ai-permission-checks">{WRITE_OPERATIONS.map(op => <CheckboxRow key={op} label={op[0].toUpperCase() + op.slice(1)} checked={value.includes(op)} onChange={e => onChange(e.target.checked ? [...value, op] : value.filter(v => v !== op))} />)}</div>;
 }
 
