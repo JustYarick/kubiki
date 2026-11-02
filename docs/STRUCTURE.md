@@ -279,9 +279,9 @@ diagrams may discover more required resource kinds in successive internal graph
 passes; the view publishes only after those requirements and their graph result
 agree. A failed pass preserves its discovered requirements to avoid a retry loop.
 
-The namespace chooser labels complete cached inventories as loaded counts and
-leaves unknown counts unset. Graph and namespace counters distinguish visible
-resources from totals when types are hidden. Live structural changes retain the
+The namespace chooser lists namespace names without inventory reads or resource
+counts. Graph and namespace-frame counters distinguish visible resources from
+totals when types are hidden. Live structural changes retain the
 previous scene during layout and preserve the camera. Initial layout, explicit
 Arrange, direction and grouping changes fit the viewport; changing context,
 scope, focus or depth starts a new diagram.

@@ -26,10 +26,3 @@ it('waits for all demo snapshots and never publishes a disconnected cluster', ()
   expect(topologyReadiness({...input, mode: 'demo', loading: {Pod: false, Service: false}}).ready).toBe(true);
   expect(topologyReadiness({...input, mode: 'demo', connected: false, loading: {Pod: false, Service: false}}).ready).toBe(false);
 });
-
-
-it('permits complete stopped snapshots for explicitly labelled cached counts only', () => {
-  const watches = {Pod: watched('Pod', {phase: 'stopped'}), Service: watched('Service', {phase: 'stopped'})};
-  expect(topologyReadiness({...input, watches}).ready).toBe(false);
-  expect(topologyReadiness({...input, watches, allowStopped: true}).ready).toBe(true);
-});

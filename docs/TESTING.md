@@ -46,7 +46,8 @@ navigation preserves a running conversation without stopping it.
 snapshots, verifies context and namespace coverage, and covers failed,
 unsupported, stopped and demo collections. `topology_loading.spec.ts` delays
 individual Kubernetes reads and Helm inventory and counts actual ELK requests:
-the first diagram must have one layout after all required inputs settle,
+the namespace chooser shows only names and does not request diagram collections
+before selection. The first diagram must have one layout after all required inputs settle,
 including a denied API and dependencies discovered on a later focused-graph
 pass. A failed dependency pass must not retry itself. Further scenarios check
 visible/total counters and retain the scene and camera during live structural

@@ -72,8 +72,8 @@ for (const denied of [false, true]) {
   test(`namespace topology waits for complete snapshots and Helm before its first layout${denied ? ', including RBAC failure' : ''}`, async ({page}) => {
     const {view, requested, waits, helm} = await setup(page, denied);
     const choice = view.getByRole('button', {name: /^team\b/});
-    await expect(choice).toContainText('Load to count');
-    await expect(choice).not.toContainText('0 resources');
+    await expect(choice).toHaveText('team');
+    expect(requested.filter(kind => !['Namespace', 'CustomResourceDefinition'].includes(kind))).toEqual([]);
     await choice.click();
     expect(await page.evaluate(() => (window as any).__topologyLayouts.length)).toBe(0);
     for (const [kind, wait] of Object.entries(waits)) {
