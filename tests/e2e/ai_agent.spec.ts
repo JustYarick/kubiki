@@ -160,7 +160,7 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
   await agent.getByRole('combobox', { name: 'Conversation AI model' }).click();
   await expect(agent.getByRole('combobox', { name: 'Conversation AI model' }).locator('option[value="newly-installed-local-model"]')).toHaveCount(1);
   await agent.getByRole('combobox', { name: 'Conversation AI model' }).selectOption('newly-installed-local-model');
-  await expect(agent).toContainText('advertises no tool support');
+  await expect(agent).toContainText('does not support tools');
   expect(errors).toEqual([]);
 });
 
@@ -173,11 +173,11 @@ test('provider credentials stay out of rendered settings and access rules persis
   await expect(dialog.getByRole('combobox', { name: 'ConfigMap access', exact: true })).toHaveValue('metadata');
   await expect(dialog.getByRole('checkbox', { name: 'Read Pod logs', exact: true })).not.toBeChecked();
   await dialog.getByRole('button', { name: 'Connections & models', exact: true }).click();
-  await dialog.getByRole('button', { name: 'Add provider', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add connection', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'AI connection name' }).fill('My cloud connection');
-  await dialog.getByRole('textbox', { name: 'AI API root' }).fill('https://my-provider.example/v1');
+  await dialog.getByRole('textbox', { name: 'AI API URL' }).fill('https://my-provider.example/v1');
   await dialog.getByLabel('AI API key', { exact: true }).fill('test-only-provider-credential');
-  await dialog.getByRole('button', { name: 'Save provider', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save connection', exact: true }).click();
   await expect(dialog.getByLabel('AI API key', { exact: true })).toHaveValue('');
   await expect(dialog).toContainText('stored in OS credential store');
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('test-only-provider-credential');
@@ -280,7 +280,7 @@ test('reasoning never gains a Plan badge and typed remediation prepares native r
   await agent.getByRole('combobox',{name:'Conversation AI model'}).click();
   await agent.getByRole('combobox',{name:'Conversation AI model'}).selectOption('another-model');
   await expect(agent.getByRole('button',{name:'Ask',exact:true})).toHaveAttribute('aria-pressed','true');
-  await expect(agent.getByText(/This is a fresh session/)).toBeVisible();
+  await expect(agent.getByText(/The agent cannot see earlier messages/)).toBeVisible();
   await expect(plan.getByRole('button',{name:'#e1',exact:true})).toBeDisabled();
   await expect(plan.getByRole('button',{name:'Apply selected steps'})).toBeDisabled();
   await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.stops.at(-1)?.close)).toBe(true);
@@ -325,14 +325,14 @@ test('provider can be tested before saving and skill completion works in both co
   await agent.getByRole('button', {name:'AI settings',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
   await dialog.getByRole('button',{name:'Connections & models',exact:true}).click();
-  await dialog.getByRole('button',{name:'Add provider',exact:true}).click();
-  await dialog.getByRole('textbox',{name:'AI API root'}).fill('https://unsaved.example/v1');
+  await dialog.getByRole('button',{name:'Add connection',exact:true}).click();
+  await dialog.getByRole('textbox',{name:'AI API URL'}).fill('https://unsaved.example/v1');
   await dialog.getByLabel('AI API key',{exact:true}).fill('temporary-test-key');
   const savedBefore=await page.evaluate(()=>(window as any).__aiHarness.commands.filter((c:any)=>c.command==='ai_save_settings').length);
   await dialog.getByRole('button',{name:'Test connection',exact:true}).click();
   await expect(dialog.getByText('Connected. 1 models available.',{exact:true})).toBeVisible();
   expect(await page.evaluate(()=>(window as any).__aiHarness.commands.filter((c:any)=>c.command==='ai_save_settings').length)).toBe(savedBefore);
-  await dialog.getByRole('textbox',{name:'AI API root'}).fill('https://broken.example/v1');
+  await dialog.getByRole('textbox',{name:'AI API URL'}).fill('https://broken.example/v1');
   await dialog.getByRole('button',{name:'Test connection',exact:true}).click();
   await expect(dialog.getByRole('alert')).toContainText('Provider connection failed');
   await dialog.getByRole('button',{name:'Done',exact:true}).click();
@@ -538,21 +538,60 @@ for (const removeOld of [true, false]) {
     const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
     await dialog.getByRole('button', { name: 'Connections & models', exact: true }).click();
     if (removeOld) await dialog.getByRole('button', { name: 'Remove connection', exact: true }).click();
-    await dialog.getByRole('button', { name: 'Add provider', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add connection', exact: true }).click();
     await dialog.getByRole('combobox', { name: 'AI connection preset' }).selectOption('Custom / vLLM / llama.cpp');
-    await dialog.getByRole('textbox', { name: 'AI API root' }).fill('http://127.0.0.1:8085/v1');
+    await dialog.getByRole('textbox', { name: 'AI API URL' }).fill('http://127.0.0.1:8085/v1');
     await page.evaluate(() => { (window as any).__aiHarness.models = [{ id: 'llama-model', name: 'Local llama model', tools: true }]; });
-    await dialog.getByRole('button', { name: 'Save provider', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Save connection', exact: true }).click();
     await expect(dialog.getByRole('combobox', { name: 'Default AI model' }).getByRole('option', { name: 'Local llama model · llama-model' })).toHaveCount(1);
     const localId = await page.evaluate(() => (window as any).__aiHarness.settings().providers.find((p: any) => p.baseUrl === 'http://127.0.0.1:8085/v1').id);
     await dialog.getByRole('combobox', { name: 'Default AI model' }).selectOption('llama-model');
     await dialog.getByRole('button', { name: 'Use as default', exact: true }).click();
-    await expect(dialog.getByText('Default provider, model and generation options saved.', {exact: true})).toBeVisible();
+    await expect(dialog.getByText('Default model and options saved.', {exact: true})).toBeVisible();
     await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-    await expect(agent.getByRole('combobox', { name: 'Conversation AI provider' })).toHaveValue(localId);
+    await expect(agent.getByRole('combobox', { name: 'Conversation AI connection' })).toHaveValue(localId);
     await expect(agent.getByRole('combobox', { name: 'Conversation AI model' })).toHaveValue('llama-model');
     await expect(agent).not.toContainText('Unknown AI provider');
     await expect(agent).not.toContainText('HTTP 401');
     expect(errors).toEqual([]);
   });
 }
+
+test('rule matching help follows the selected policy and persists its semantics', async ({page}) => {
+  const errors = await setup(page);
+  const agent = await openAgent(page);
+  await agent.getByRole('button', {name: 'AI settings', exact: true}).click();
+  const dialog = page.getByRole('dialog', {name: 'AI Agent settings', exact: true});
+  await dialog.getByRole('button', {name: 'Scope & rules', exact: true}).click();
+  const matching = dialog.getByRole('combobox', {name: 'AI rule matching'});
+  await expect(dialog.getByText('The first matching rule applies.', {exact: false})).toBeVisible();
+  await matching.selectOption('deny_overrides');
+  await expect(dialog.getByText('Rules that deny both reading and changes', {exact: false})).toBeVisible();
+  await expect(dialog.getByText('The first matching rule applies.', {exact: false})).toHaveCount(0);
+  await dialog.getByRole('button', {name: 'Save agent permissions'}).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy)).toMatchObject({schemaVersion: 2, ruleResolution: 'deny_overrides'});
+  await matching.selectOption('first_match');
+  await expect(dialog.getByText('Rules that deny both reading and changes', {exact: false})).toHaveCount(0);
+  await expect(dialog.getByText('The first matching rule applies.', {exact: false})).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('integration detection is shown only for discovered APIs in Auto', async ({page}) => {
+  const errors = await setup(page);
+  await page.evaluate(() => Object.assign((window as any).__aiHarness.settings().policy, {helm: 'auto', argocd: 'auto', flux: 'auto'}));
+  const agent = await openAgent(page);
+  await agent.getByRole('button', {name: 'AI settings', exact: true}).click();
+  const dialog = page.getByRole('dialog', {name: 'AI Agent settings', exact: true});
+  await dialog.getByRole('button', {name: 'Integrations', exact: true}).click();
+  const rows = dialog.locator('.ai-integration-row');
+  const helm = rows.filter({has: page.getByText('Helm', {exact: true})});
+  await expect(helm.locator('.ai-integration-status')).toHaveCount(0);
+  const argo = rows.filter({has: page.getByText('Argo CD', {exact: true})});
+  await expect(argo.locator('.ai-integration-status')).toHaveText('Detected');
+  await argo.getByRole('button', {name: 'Disabled', exact: true}).click();
+  await expect(argo.locator('.ai-integration-status')).toHaveCount(0);
+  await argo.getByRole('button', {name: 'Auto', exact: true}).click();
+  await expect(argo.locator('.ai-integration-status')).toHaveText('Detected');
+  await expect(dialog).not.toContainText('list_helm_releases');
+  expect(errors).toEqual([]);
+});

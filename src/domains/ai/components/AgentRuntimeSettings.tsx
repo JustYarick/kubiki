@@ -18,12 +18,12 @@ export function AgentRuntimeSettings() {
   async function test(){setError('');setMessage('');setTesting(true);try{const info=await agentTransport.testOpenCode(draft);setMessage(`${info.version} · ${info.executable}`);}catch(e){setError(agentError(e));}finally{setTesting(false);}}
   return <section className="ai-settings-section" aria-label="Agent selection">
     <h3>Agent</h3>
-    <label className="ai-field">Agent<Select className="ide-select" aria-label="AI agent" value={settings.runtime ?? 'kubiki'} disabled={saving || !desktopAiAvailable()} onChange={e=>void save(e.target.value as 'kubiki'|'open_code')}><option value="kubiki">Kubiki</option><option value="open_code">OpenCode</option></Select></label>
-    <p className="ai-help">{settings.runtime==='open_code'?'Use your installed OpenCode with its own models, skills and permissions. Kubiki supplies the cluster connection and tools.':'The integrated agent works with Kubiki and your cluster.'}</p>
+    <label className="ai-field">Use agent<Select className="ide-select" aria-label="AI agent" value={settings.runtime ?? 'kubiki'} disabled={saving || !desktopAiAvailable()} onChange={e=>void save(e.target.value as 'kubiki'|'open_code')}><option value="kubiki">Kubiki</option><option value="open_code">OpenCode</option></Select></label>
+    <p className="ai-help">{settings.runtime==='open_code'?'Use your installed OpenCode with its own models, skills and permissions. Kubiki supplies the cluster connection and tools.':'Use your saved connections, skills and access rules.'}</p>
     {settings.runtime==='open_code' && <div className="ai-settings-card">
       <label className="ai-field">OpenCode executable<Input aria-label="OpenCode executable" value={draft.executable} placeholder="Find opencode on PATH" onChange={e=>setDraft({...draft,executable:e.target.value})}/></label>
-      <label className="ai-field">Kubiki workspace directory<Input aria-label="OpenCode workspace directory" value={draft.workingDirectory} placeholder="Use Kubiki’s dedicated workspace" onChange={e=>setDraft({...draft,workingDirectory:e.target.value})}/></label>
-      <p className="ai-help">Global OpenCode settings are inherited. Use a dedicated directory for Kubiki’s MCP connection.</p>
+      <label className="ai-field">OpenCode working directory<Input aria-label="OpenCode working directory" value={draft.workingDirectory} placeholder="Use Kubiki's default directory" onChange={e=>setDraft({...draft,workingDirectory:e.target.value})}/></label>
+      <p className="ai-help">Uses your OpenCode settings. Leave the directory empty to use the Kubiki default.</p>
       <div className="ai-form-line"><Button size="sm" disabled={saving || testing || !desktopAiAvailable()} onClick={()=>void test()}>Check installation</Button><Button size="sm" disabled={saving || testing || !desktopAiAvailable()} onClick={()=>void save()}>Save OpenCode settings</Button></div>
     </div>}
     {message && <p role="status" className="ai-help">{message}</p>}{error && <p role="alert" className="ai-error">{error}</p>}

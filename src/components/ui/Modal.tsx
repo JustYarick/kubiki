@@ -16,9 +16,11 @@ interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   padded?: boolean;
+  className?: string;
+  centered?: boolean;
 }
 
-export function Modal({ open, onClose, title, width = 480, children, footer, padded = true }: ModalProps) {
+export function Modal({ open, onClose, title, width = 480, children, footer, padded = true, className, centered = false }: ModalProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -61,14 +63,14 @@ export function Modal({ open, onClose, title, width = 480, children, footer, pad
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-start justify-center pt-[12vh]">
+    <div className={cx('fixed inset-0 z-[90] flex justify-center', centered ? 'items-center' : 'items-start pt-[12vh]')}>
       <div className="absolute inset-0 bg-black/45 kub-fade" onClick={onClose} />
       <div
         ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={title !== undefined ? titleId : undefined} aria-label={title === undefined ? "Dialog" : undefined} tabIndex={-1}
         style={{ width: uiPixels(width), maxWidth: 'calc(100vw - 24px)' }}
         className={cx(
           'relative max-h-[76vh] flex flex-col rounded-[calc(8px*var(--ui-factor))] border border-[var(--border-default)]',
-          'bg-[var(--bg-overlay)] shadow-[var(--shadow-dialog)] kub-pop'
+          'bg-[var(--bg-overlay)] shadow-[var(--shadow-dialog)] kub-pop', className
         )}
       >
         {title !== undefined && (
@@ -77,7 +79,7 @@ export function Modal({ open, onClose, title, width = 480, children, footer, pad
             <IconButton icon={X} onClick={onClose} aria-label="Close" />
           </div>
         )}
-        <div className={cx('flex-1 overflow-y-auto kubiki-scrollbar', padded && 'p-4')}>{children}</div>
+        <div className={cx('modal-body flex-1 min-h-0 overflow-y-auto kubiki-scrollbar', padded && 'p-4')}>{children}</div>
         {footer && <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-[var(--border-subtle)] shrink-0">{footer}</div>}
       </div>
     </div>,

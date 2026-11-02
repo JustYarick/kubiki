@@ -178,15 +178,15 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     if (tab.session.targetType !== 'local' && tab.session.context && tab.session.context !== context) return <p className="p-4 text-sm text-[var(--text-secondary)]">This terminal belongs to context {tab.session.context}. Switch back to that context to reconnect.</p>;
     return <TerminalSessionPane session={tab.session} visible={visible} onContainerChange={name => useWorkspaceStore.setState(state => ({ tabs: state.tabs.map(entry => entry.id === tab.id ? { ...entry, session: { ...entry.session!, container: name } } : entry) }))} />;
   }
-  if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') return <Suspense fallback={<ResourceLoading label="Loading dashboard…" />}><GitOpsDashboard family={tab.type === 'flux-dashboard' ? 'flux' : 'argocd'} /></Suspense>;
-  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Loading Helm…" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
+  if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') return <Suspense fallback={<ResourceLoading label="Opening dashboard…" description="" />}><GitOpsDashboard family={tab.type === 'flux-dashboard' ? 'flux' : 'argocd'} /></Suspense>;
+  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Opening Helm…" description="" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
 
   if (tab.type !== 'resource-list' && tab.context !== context) {
     return <div className="p-6 text-[var(--text-secondary)]">This tab belongs to context {tab.context || 'unknown'}. Switch back to that context to use it.</div>;
   }
   if (tab.kind && !tab.kind.startsWith('custom:') && !tab.apiVersion?.includes('/') && !RESOURCE_TYPES.some(type => type.kind === tab.kind) && tab.kind !== 'HelmRelease') return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
   if (tab.type === 'resource-list' && tab.kind && !tab.kind.startsWith('custom:') && !RESOURCE_TYPES.some(type => type.kind === tab.kind)) return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
-  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><RegisteredPanel tab={tab} visible={visible} /></Suspense>;
+  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<ResourceLoading label="Opening topology…" description="" />}><RegisteredPanel tab={tab} visible={visible} /></Suspense>;
 
   if (tab.type !== 'resource-list') {
     // A pinned UID must never silently bind to a recreated object with the same name.
@@ -209,7 +209,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     if (!item && !customDefinition && syncMode !== 'watch' && (loadingKinds[kind] ?? clusterLoading)) return <ResourceLoading label={`Loading ${kind}…`} />;
     if (!item && !customDefinition && syncMode === 'watch' && (watchStates[kind] || clusterLoading) && watchStates[kind]?.phase !== 'live') {
       const error = loadErrors[kind];
-      return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <ResourceLoading label={`Loading ${kind}…`} description={`Waiting for a complete ${kind} snapshot…`} />}</div>;
+      return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <ResourceLoading label={`Loading ${kind}…`} description="Waiting for Kubernetes to respond." />}</div>;
     }
     if (!item) {
       return (
@@ -231,7 +231,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
         <ResourceDetails key={item.uid} item={item} onClose={() => useWorkspaceStore.getState().closeTab(tab.id)} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />
       </div>
     );
-    if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><RegisteredPanel tab={tab} item={item} visible={visible} /></Suspense>;
+    if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Opening topology…" description="" />}><RegisteredPanel tab={tab} item={item} visible={visible} /></Suspense>;
     if (tab.type === 'logs' || tab.type === 'terminal') {
       const session = { context: tab.context, uid: item.uid, id: tab.id, type: tab.type, title: tab.title, resourceName: item.name, namespace: item.namespace,
         container: tab.container, allContainers: item.containers?.map((c) => c.name), targetType: item.kind === 'Node' ? 'node' as const : 'pod' as const };

@@ -77,7 +77,7 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
   }), []);
 
   return <div className="ai-settings">
-    {!desktopAiAvailable() && <p className="ai-notice">Configure AI providers and use cluster tools in the desktop app. This preview does not send cluster data or store API keys.</p>}
+    {!desktopAiAvailable() && <p className="ai-notice">AI connections and cluster tools require the desktop app. This preview sends no cluster data and stores no API keys.</p>}
     {loading && <p role="status">Loading AI settings…</p>}
     {error && <div role="alert" className="ai-error">{error} <Button size="sm" onClick={() => void load()}>Reload settings</Button></div>}
     {loaded && <div className={hideNavigation ? undefined : "ai-settings-layout"}>
@@ -160,7 +160,7 @@ function ProviderSettings() {
   }
   async function defaults() {
     setError(''); setMessage('');
-    try { await save({ ...settings, defaultProvider: selected, defaultModel: model, options }); setMessage('Default provider, model and generation options saved.'); }
+    try { await save({ ...settings, defaultProvider: selected, defaultModel: model, options }); setMessage('Default model and options saved.'); }
     catch (e) { setError(agentError(e)); }
   }
   const modelInfo = models.find(m => m.id === model);
@@ -169,8 +169,8 @@ function ProviderSettings() {
   return <section aria-label="AI provider connections" className="ai-settings-section">
     <div className="ai-section-header">
       <div>
-        <h3>Providers and models</h3>
-        <p className="ai-help">Connect cloud APIs or a local server. Model IDs and capabilities are discovered dynamically from the endpoint.</p>
+        <h3>Connections &amp; models</h3>
+        <p className="ai-help">Connect a cloud API or local server, then load its models.</p>
       </div>
     </div>
     <div className="ai-form-line">
@@ -179,7 +179,7 @@ function ProviderSettings() {
         {settings.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         {profile && !saved && <option value={profile.id}>{profile.name} (unsaved)</option>}
       </Select></label>
-      <Button size="sm" onClick={() => add()} disabled={saving || working}><Plus size={12} aria-hidden="true" />Add provider</Button>
+      <Button size="sm" onClick={() => add()} disabled={saving || working}><Plus size={12} aria-hidden="true" />Add connection</Button>
     </div>
     {!profile && <div className="ai-presets" aria-label="AI provider presets">{PROVIDER_PRESETS.map(preset => <Button key={preset.name} size="sm" onClick={() => add(preset)}>{preset.name}</Button>)}</div>}
     {profile && <fieldset disabled={saving || working} className="ai-fieldset">
@@ -191,15 +191,15 @@ function ProviderSettings() {
         <label className="ai-field">Protocol<Select className="ide-select" aria-label="AI protocol" value={profile.protocol} onChange={e => { setProfile({ ...profile, protocol: e.target.value as ProviderProtocol }); setModel(''); }}>
           {Object.entries(protocolNames).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </Select></label>
-        <label className="ai-field">API root<Input aria-label="AI API root" value={profile.baseUrl} maxLength={2048} spellCheck={false} onChange={e => setProfile({ ...profile, baseUrl: e.target.value })} /></label>
+        <label className="ai-field">API URL<Input aria-label="AI API URL" value={profile.baseUrl} maxLength={2048} spellCheck={false} onChange={e => setProfile({ ...profile, baseUrl: e.target.value })} /></label>
       </div>
-      <p className="ai-help">Include /v1 for OpenAI-compatible APIs; use server root for Ollama. HTTPS is required except on localhost.</p>
+      <p className="ai-help">Include /v1 for OpenAI-compatible APIs. Use the server URL for Ollama. HTTP is allowed only on localhost.</p>
       <label className="ai-field">API key {credentials[profile.id] ? '(stored in OS credential store)' : '(optional for local servers)'}
         <Input aria-label="AI API key" type="password" autoComplete="new-password" value={key} placeholder={credentials[profile.id] ? 'Leave empty to keep the stored key' : 'Enter API key if required'} onChange={e => setKey(e.target.value)} />
       </label>
       <div className="ai-form-line">
         <Button size="sm" disabled={!desktopAiAvailable() || !profile.baseUrl.trim()} loading={working} onClick={() => void testConnection()}>Test connection</Button>
-        <Button size="sm" variant="primary" disabled={!desktopAiAvailable() || !profile.name.trim()} onClick={() => void commit()}><Save size={12} aria-hidden="true" />Save provider</Button>
+        <Button size="sm" variant="primary" disabled={!desktopAiAvailable() || !profile.name.trim()} onClick={() => void commit()}><Save size={12} aria-hidden="true" />Save connection</Button>
         {saved && <Button size="sm" variant="danger" disabled={!desktopAiAvailable()} onClick={() => void remove()}><Trash2 size={12} aria-hidden="true" />Remove connection</Button>}
         {saved && credentials[profile.id] && <Button size="sm" disabled={!desktopAiAvailable()} onClick={() => { setWorking(true); void agentTransport.credential(profile.id, null).then(() => { invalidateAiConversations(); return load(); }).catch(e => setError(agentError(e))).finally(() => setWorking(false)); }}>Remove API key</Button>}
       </div>
@@ -214,10 +214,10 @@ function ProviderSettings() {
         <Button size="sm" loading={modelsLoading} disabled={dirty || !desktopAiAvailable()} onClick={() => void refresh(selected)}><RefreshCw size={12} aria-hidden="true" />Load models</Button>
       </div>
       {modelsError && <p role="alert" className="ai-error">{modelsError}</p>}
-      {modelInfo && <p className="ai-help">{modelInfo.contextWindow ? `${modelInfo.contextWindow.toLocaleString()} context tokens · ` : ''}{modelInfo.maxOutputTokens ? `${modelInfo.maxOutputTokens.toLocaleString()} max output tokens · ` : ''}Tools: {modelInfo.tools == null ? 'not advertised' : modelInfo.tools ? 'supported' : 'not supported'}</p>}
+      {modelInfo && <p className="ai-help">{modelInfo.contextWindow ? `${modelInfo.contextWindow.toLocaleString()} context tokens · ` : ''}{modelInfo.maxOutputTokens ? `${modelInfo.maxOutputTokens.toLocaleString()} max output tokens · ` : ''}Tools: {modelInfo.tools == null ? 'unknown' : modelInfo.tools ? 'supported' : 'not supported'}</p>}
       <div className="ai-form-grid">
-        <label className="ai-field">Output token limit (optional)<Input aria-label="AI output token limit" type="number" min={128} max={65536} value={options.maxOutputTokens ?? ''} placeholder="Provider default" onChange={e => setOptions({ ...options, maxOutputTokens: e.target.value ? Number(e.target.value) : null })} /></label>
-        <label className="ai-field">Temperature (optional)<Input aria-label="AI temperature" type="number" min={0} max={2} step={0.1} value={options.temperature ?? ''} placeholder="Provider default" onChange={e => setOptions({ ...options, temperature: e.target.value ? Number(e.target.value) : null })} /></label>
+        <label className="ai-field">Output token limit (optional)<Input aria-label="AI output token limit" type="number" min={128} max={65536} value={options.maxOutputTokens ?? ''} placeholder="Server default" onChange={e => setOptions({ ...options, maxOutputTokens: e.target.value ? Number(e.target.value) : null })} /></label>
+        <label className="ai-field">Temperature (optional)<Input aria-label="AI temperature" type="number" min={0} max={2} step={0.1} value={options.temperature ?? ''} placeholder="Server default" onChange={e => setOptions({ ...options, temperature: e.target.value ? Number(e.target.value) : null })} /></label>
         {saved.protocol === 'ollama' && <label className="ai-field">Local context window (optional)<Input aria-label="Ollama context window" type="number" min={1024} max={Math.min(modelInfo?.contextWindow ?? 262144, 262144)} value={options.contextTokens ?? ''} placeholder="Server default" onChange={e => setOptions({ ...options, contextTokens: e.target.value ? Number(e.target.value) : null })} /></label>}
       </div>
       <CheckboxRow label="Enable tool use (disable for plain chat models)" checked={options.toolUse !== false} onChange={e => setOptions({ ...options, toolUse: e.target.checked })} />
@@ -311,7 +311,7 @@ function PolicySettings({
     <div className="ai-section-header">
       <div>
         <h3>{AI_SETTINGS_PAGES.find(item => item.id === page)?.label}</h3>
-        <p className="ai-help">Choose what the agent may access and when it needs your approval.</p>
+        {page === 'access' && <p className="ai-help">Choose which data the agent can read and which changes it may make.</p>}
       </div>
       <Button size="sm" variant="primary" aria-label="Save agent permissions" disabled={!desktopAiAvailable() || saving} loading={saving} onClick={() => void commit()}>
         <Save size={12} aria-hidden="true" />Save changes
@@ -321,12 +321,12 @@ function PolicySettings({
     <div style={{ display: page === 'confirmations' ? undefined : 'none' }}>
       <div className="ai-settings-card">
         <CheckboxRow label="Ask permission for reads" checked={policy.confirmReads ?? true} onChange={e => patch({ confirmReads: e.target.checked })} />
-        <p className="ai-help">In Ask mode, confirm reads as well as changes. Turn off to confirm changes only. Always ask rules apply in both modes.</p>
+        <p className="ai-help">When off, Ask mode confirms changes only. Tools selected below still require confirmation in Auto accept.</p>
       </div>
     <details className="ai-settings-card">
       <summary>Always ask</summary>
-      <p className="ai-help">Confirm these tools even in Auto accept. Access restrictions still apply.</p>
-      <div className="grid grid-cols-2 gap-2">{[
+      <p className="ai-help">These tools require confirmation in both Ask and Auto accept. Access restrictions still apply.</p>
+      <div className="ai-always-ask-list">{[
         ['read_skill', 'Read skill files'],
         ['propose_manifests', 'Propose manifests'],
         ['get_plan', 'Get plan'],
@@ -341,7 +341,7 @@ function PolicySettings({
         ['get_pod_diagnostics', 'Get pod diagnostics'],
         ['get_workload_diagnostics', 'Get workload diagnostics'],
         ['get_service_diagnostics', 'Get service diagnostics'],
-        ['get_pvc_diagnostics', 'Get pvc diagnostics'],
+        ['get_pvc_diagnostics', 'Get PVC diagnostics'],
         ['get_node_diagnostics', 'Get node diagnostics'],
         ['get_config_diagnostics', 'Get config diagnostics'],
         ['resource_catalog', 'Resource catalog'],
@@ -349,45 +349,43 @@ function PolicySettings({
         ['get_events_timeline', 'Get events timeline'],
         ['get_logs', 'Get logs'],
         ['get_metrics', 'Get metrics'],
-        ['list_helm_releases', 'List helm releases'],
-        ['get_helm_release', 'Get helm release'],
-        ['list_argocd_apps', 'List argocd apps'],
-        ['get_argocd_app', 'Get argocd app'],
+        ['list_helm_releases', 'List Helm releases'],
+        ['get_helm_release', 'Get Helm release'],
+        ['list_argocd_apps', 'List Argo CD applications'],
+        ['get_argocd_app', 'Get Argo CD application'],
         ['list_flux_resources', 'List flux resources'],
         ['get_flux_resource', 'Get flux resource'],
         ['apply_manifest', 'Apply manifest'],
         ['scale_workload', 'Scale workload'],
         ['restart_workload', 'Restart workload'],
         ['delete_resource', 'Delete resource'],
-      ].map(([tool, label]) => <label key={tool} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={(policy.alwaysAsk ?? []).includes(tool)} disabled={saving} onChange={e => patch({ alwaysAsk: e.target.checked ? [...(policy.alwaysAsk ?? []), tool] : (policy.alwaysAsk ?? []).filter(name => name !== tool) })} />{label}</label>)}</div>
+      ].map(([tool, label]) => <CheckboxRow key={tool} label={label} checked={(policy.alwaysAsk ?? []).includes(tool)} disabled={saving} onChange={e => patch({ alwaysAsk: e.target.checked ? [...(policy.alwaysAsk ?? []), tool] : (policy.alwaysAsk ?? []).filter(name => name !== tool) })} />)}</div>
     </details>
     </div>
     <div style={{ display: page === 'scope' ? undefined : 'none' }}><PolicyPreview policy={policy} /></div>
     <details style={{ display: page === 'access' ? undefined : 'none' }} className="ai-settings-card"><summary>Permission presets</summary><p className="ai-help">Replaces the current access rules.</p>{PERMISSION_PROFILES.map(profile=><Button key={profile} size="sm" onClick={()=>patch(permissionProfile(policy,profile))}>{profile}</Button>)}</details>
     <fieldset className="ai-fieldset" disabled={saving}>
       <div className="ai-settings-card" style={{ display: page === 'integrations' ? undefined : 'none' }}>
-        <h4>GitOps & Package Managers (Argo CD, Flux, Helm)</h4>
-        <p className="ai-help mb-2">Controls whether the agent can discover and manage GitOps pipelines and Helm releases. Set to Auto to dynamically enable tools only when detected in the cluster, or explicitly Enable/Disable access.</p>
+        <p className="ai-help mb-2">Auto checks for Argo CD and Flux APIs in the selected cluster.</p>
         <div className="flex flex-col">
           <OptionalToolRow
-            title="Helm Releases & Values"
-            description="Allows agent to list releases, inspect values, and check revision history (list_helm_releases, get_helm_release)."
-            detected={true}
+            title="Helm"
+            description="Read releases, values and revision history."
             value={typeof policy.helm === 'string' ? policy.helm : policy.helm ? 'enabled' : 'disabled'}
             onChange={helm => patch({ helm })}
             disabled={saving}
           />
           <OptionalToolRow
-            title="Argo CD Integration"
-            description="Allows agent to inspect Applications, health/sync conditions, source git repos, (list_argocd_apps, get_argocd_app)."
+            title="Argo CD"
+            description="Read applications, sync status and source repositories."
             detected={hasArgoCd}
             value={typeof policy.argocd === 'string' ? policy.argocd : policy.argocd ? 'enabled' : 'disabled'}
             onChange={argocd => patch({ argocd })}
             disabled={saving}
           />
           <OptionalToolRow
-            title="Flux GitOps Delivery"
-            description="Allows agent to inspect Kustomizations, HelmReleases, GitRepositories, (list_flux_resources, get_flux_resource)."
+            title="Flux"
+            description="Read Kustomizations, HelmReleases and GitRepositories."
             detected={hasFlux}
             value={typeof policy.flux === 'string' ? policy.flux : policy.flux ? 'enabled' : 'disabled'}
             onChange={flux => patch({ flux })}
@@ -407,18 +405,17 @@ function PolicySettings({
       </div>
 
       <div className="ai-settings-card" style={{ display: page === 'access' ? undefined : 'none' }}>
-        <h4>Sensitive resources</h4>
+        <h4>Resource contents</h4>
         <div className="ai-form-grid">
           <DataSelect label="Secret access" value={policy.secrets} onChange={secrets => patch({ secrets })} />
           <DataSelect label="ConfigMap access" value={policy.configMaps} onChange={configMaps => patch({ configMaps })} />
           <DataSelect label="Custom resources" value={policy.customResources} onChange={customResources => patch({ customResources })} />
-          <label className="ai-field">Maximum replicas<Input aria-label="Maximum AI replicas" type="number" min={0} max={10000} value={policy.maxReplicas} onChange={e => patch({ maxReplicas: Number(e.target.value) })} /></label>
         </div>
         <p className="ai-help mt-2">Secret and ConfigMap contents are only read if explicitly permitted. Metadata-only reads omit bodies.</p>
       </div>
 
       <div className="ai-settings-card" style={{ display: page === 'scope' ? undefined : 'none' }}>
-        <h4>Scope Boundaries</h4>
+        <h4>Allowed clusters and namespaces</h4>
         <div className="ai-form-grid">
           <label className="ai-field">Allowed contexts (* matches any)<textarea aria-label="Allowed AI contexts" className="ide-textarea" rows={2} value={policy.contexts.join('\n')} onChange={e => patch({ contexts: tokens(e.target.value) })} /></label>
           <label className="ai-field">Allowed namespaces (* matches any)<textarea aria-label="Allowed AI namespaces" className="ide-textarea" rows={2} value={policy.namespaces.join('\n')} onChange={e => patch({ namespaces: tokens(e.target.value) })} /></label>
@@ -428,16 +425,18 @@ function PolicySettings({
       <div className="ai-settings-card" style={{ display: page === 'access' ? undefined : 'none' }}>
         <h4>Allowed changes</h4>
         <Writes value={policy.writes} onChange={writes => patch({ writes })} />
+        <label className="ai-field">Maximum replicas<Input aria-label="Maximum AI replicas" type="number" min={0} max={10000} value={policy.maxReplicas} onChange={e => patch({ maxReplicas: Number(e.target.value) })} /></label>
+
         <p className="ai-help mt-2">Changes are available only in Action.</p>
       </div>
 
       <div className="ai-settings-card" style={{ display: page === 'scope' ? undefined : 'none' }}>
         <div className="ai-form-line">
           <div>
-            <h4>Resource Rules</h4>
-            <label className="ai-field">Rule semantics<Select aria-label="AI rule semantics" value={policy.ruleResolution??'first_match'} onChange={e=>patch({schemaVersion:e.target.value==='deny_overrides'?2:1,ruleResolution:e.target.value as 'first_match'|'deny_overrides'})}><option value="first_match">v1 · First matching rule (existing behavior)</option><option value="deny_overrides">v2 · No-access/no-write denies override grants</option></Select></label>
-            {policy.ruleResolution==='deny_overrides'&&<p className="ai-help">Explicit migration: matching rules with No access and no writes deny access regardless of position. Preview effective rights before saving.</p>}
-            <p className="ai-help">First matching rule overrides defaults. Order matters: put specific exceptions before broad rules.</p>
+            <h4>Resource rules</h4>
+            <label className="ai-field">Rule matching<Select aria-label="AI rule matching" value={policy.ruleResolution??'first_match'} onChange={e=>patch({schemaVersion:e.target.value==='deny_overrides'?2:1,ruleResolution:e.target.value as 'first_match'|'deny_overrides'})}><option value="first_match">First match</option><option value="deny_overrides">Deny rules take priority</option></Select></label>
+            {policy.ruleResolution==='deny_overrides'&&<p className="ai-help">Rules that deny both reading and changes take priority over other matching rules.</p>}
+            {policy.ruleResolution !== 'deny_overrides' && <p className="ai-help">The first matching rule applies. Put specific exceptions before broad rules.</p>}
           </div>
           <span className="ai-grow" />
           <Button size="sm" aria-label="Add resource rule" disabled={policy.rules.length >= 100} onClick={() => patch({ rules: [...policy.rules, { group: '*', kind: '*', namespace: '*', name: '*', read: 'none', writes: [] }] })}>
@@ -462,15 +461,14 @@ function PolicySettings({
 
       <div className="ai-settings-card" style={{ display: page === 'scope' ? undefined : 'none' }}>
         <h4>Field filters</h4>
-        <label className="ai-field">Allowed fields (empty keeps permitted content)<textarea aria-label="Allowed AI fields" className="ide-textarea font-mono" rows={3} value={policy.allowedFields?.join('\n')??''} placeholder="spec.containers[*].image" onChange={e=>patch({allowedFields:e.target.value.split('\n').map(s=>s.trim()).filter(Boolean)})}/></label>
-        <p className="ai-help">Selection is applied after data access and excluded fields. Permitted identity remains available. Include metadata.labels to allow label filtering.</p>
-        <label className="ai-field">Excluded JSON pointer paths<textarea aria-label="Excluded AI field paths" className="ide-textarea font-mono" rows={3} value={policy.deniedPaths.join('\n')} placeholder={'/spec/template/spec/containers/0/env\n/data/private.conf'} onChange={e => patch({ deniedPaths: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })} /></label>
+        <label className="ai-field">Fields to include<textarea aria-label="Allowed AI fields" className="ide-textarea font-mono" rows={3} value={policy.allowedFields?.join('\n')??''} placeholder="spec.containers[*].image" onChange={e=>patch({allowedFields:e.target.value.split('\n').map(s=>s.trim()).filter(Boolean)})}/></label>
+        <p className="ai-help">Leave empty to include all permitted fields. Excluded fields stay hidden. Include metadata.labels to allow label filtering.</p>
+        <label className="ai-field">Fields to exclude<textarea aria-label="Excluded AI field paths" className="ide-textarea font-mono" rows={3} value={policy.deniedPaths.join('\n')} placeholder={'/spec/template/spec/containers/0/env\n/data/private.conf'} onChange={e => patch({ deniedPaths: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })} /></label>
 
       </div>
       <div className="ai-settings-card" style={{ display: page === 'instructions' ? undefined : 'none' }}>
-        <h4>Custom instructions</h4>
-        <p className="ai-help">Response language, style and investigation conventions. Instructions cannot override permissions.</p>
-        <label className="ai-field mt-3">Agent instructions<textarea aria-label="Integrated agent instructions" className="ide-textarea" rows={3} maxLength={8000} value={draft.instructions} placeholder="Preferred response style, diagnostic conventions, language preferences…" onChange={e => setDraft(d => ({ ...d, instructions: e.target.value }))} /></label>
+        <p className="ai-help">Set a response language or add investigation instructions. These do not change permissions.</p>
+        <label className="ai-field mt-3">Agent instructions<textarea aria-label="Integrated agent instructions" className="ide-textarea" rows={3} maxLength={8000} value={draft.instructions} placeholder="For example: answer in Russian and check Pod events first." onChange={e => setDraft(d => ({ ...d, instructions: e.target.value }))} /></label>
       </div>
     </fieldset>
 
@@ -530,44 +528,18 @@ function OptionalToolRow({
 }: {
   title: string;
   description: string;
-  detected: boolean;
+  detected?: boolean;
   value: OptionalToolMode;
   onChange: (val: OptionalToolMode) => void;
   disabled?: boolean;
 }) {
-  const effectiveActive = value === 'enabled' || (value === 'auto' && detected);
-  return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2 border-b border-[var(--border-subtle)] last:border-b-0">
-      <div className="flex-1 min-w-0 pr-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-medium text-[var(--text-primary)]">{title}</span>
-          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
-            detected
-              ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
-              : 'border-[var(--border-subtle)] text-[var(--text-muted)] bg-[var(--bg-surface)]'
-          }`}>
-            {detected ? 'Detected in cluster' : 'Not detected'}
-          </span>
-          <span className={`text-[10px] font-mono ${
-            value === 'disabled'
-              ? 'text-amber-400/80'
-              : value === 'enabled'
-              ? 'text-sky-400'
-              : effectiveActive
-              ? 'text-emerald-400'
-              : 'text-[var(--text-muted)]'
-          }`}>
-            [{value === 'disabled' ? 'Disabled by user' : value === 'enabled' ? 'Always enabled' : effectiveActive ? 'Active (auto-detected)' : 'Inactive (not in cluster)'}]
-          </span>
-        </div>
-        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{description}</p>
+  return <div className="ai-integration-row">
+    <div className="ai-integration-info">
+      <div className="ai-integration-title"><span>{title}</span>
+        {detected !== undefined && value === 'auto' && <span className="ai-integration-status">{detected ? 'Detected' : 'Not detected'}</span>}
       </div>
-      <ToolModeSelector
-        ariaLabel={`${title} mode`}
-        value={value}
-        onChange={onChange}
-        disabled={disabled}
-      />
+      <p className="ai-help">{description}</p>
     </div>
-  );
+    <ToolModeSelector value={value} onChange={onChange} disabled={disabled} ariaLabel={`${title} access`} />
+  </div>;
 }

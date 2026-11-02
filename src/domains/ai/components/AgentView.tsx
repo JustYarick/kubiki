@@ -250,13 +250,13 @@ function ProviderModelCapsule({
 }) {
   const currentProvider = providers.find(p => p.id === providerId);
   const currentModel = models?.find(m => m.id === model);
-  const providerLabel = currentProvider?.name || (providers.length === 0 ? 'No provider' : 'Select provider');
+  const providerLabel = currentProvider?.name || (providers.length === 0 ? 'No connection' : 'Choose connection');
   const modelLabel = currentModel?.name ? (currentModel.name === currentModel.id ? currentModel.id : `${currentModel.name}`) : model || (modelsLoading ? 'Loading…' : 'Select model');
 
   return (
-    <div className={`ai-provider-model-capsule ${disabled ? 'opacity-80' : ''}`} title="AI Provider and Model selection">
+    <div className={`ai-provider-model-capsule ${disabled ? 'opacity-80' : ''}`} title="Connection and model">
       {/* Provider half (Left) */}
-      <div className="ai-capsule-half-wrapper is-provider" title={`Provider: ${providerLabel}${disabled ? ' (pinned)' : ' · Click to switch'}`}>
+      <div className="ai-capsule-half-wrapper is-provider" title={`Connection: ${providerLabel}${disabled ? ' (pinned)' : ' · Click to switch'}`}>
         <div className="ai-capsule-half-content">
           <Zap size={11} className="text-amber-400 shrink-0" aria-hidden="true" />
           <span className="truncate max-w-[100px] font-medium">{providerLabel}</span>
@@ -264,12 +264,12 @@ function ProviderModelCapsule({
         </div>
         <Select
           className="ai-capsule-select-overlay"
-          aria-label="Conversation AI provider"
+          aria-label="Conversation AI connection"
           disabled={disabled}
           value={providerId}
           onChange={e => onProviderChange(e.target.value)}
         >
-          <option value="">Configure provider</option>
+          <option value="">Choose connection</option>
           {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
       </div>
@@ -532,7 +532,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
       </div>
 
       {modelsError && <p role="alert" className="ai-error mt-2">{modelsError}</p>}
-      {selectedModel?.tools === false && <p className="ai-notice mt-2">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
+      {selectedModel?.tools === false && <p className="ai-notice mt-2">This model does not support tools. Choose another model to work with the cluster.</p>}
       {!settings.providers.length && <p className="ai-help mt-2">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
 
       <div className="ai-home-suggestions" aria-label="Suggested prompts">
@@ -719,7 +719,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       <Button size="sm" variant="ghost" onClick={onSettings}><Settings size={13} aria-hidden="true" />Permissions</Button>
     </header>
 
-    {c.contextReset&&<p className="ai-notice">This is a fresh session. Earlier messages are historical; use Branch here to include them as context.</p>}
+    {c.contextReset&&<p className="ai-notice">The agent cannot see earlier messages in this session. Use "Branch here" on a message to include the conversation up to that point.</p>}
     <div className="ai-transcript-container">
       <div
         ref={transcript}
@@ -731,7 +731,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         onScroll={handleScroll}
       >
         {!c.messages.length && <div className="ai-empty-chat"><h2>{c.title === 'New conversation' ? 'What would you like to investigate?' : c.title}</h2>
-          <p>Ask about Kubernetes, describe a deployment, or request evidence from this conversation's cluster.</p>
+          <p>Ask about a resource. For example: why is this Pod restarting?</p>
           <div className="ai-suggestions">{['Why are my Pods failing?', 'Create a Nexus deployment with persistent storage', 'Explain my workload configuration'].map(text => <button type="button" key={text} onClick={() => { update(c.id, { draft: text }); input.current?.focus(); }}>{text}</button>)}</div>
         </div>}
         {c.messages.map((message, idx) => {
@@ -766,7 +766,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     <footer className="ai-composer">
       <div className="ai-composer-alerts">
         {modelError && <p role="alert" className="ai-error">{modelError}</p>}
-        {selectedModel?.tools === false && <p className="ai-notice">This model advertises no tool support. Choose a tool-capable model for cluster operations.</p>}
+        {selectedModel?.tools === false && <p className="ai-notice">This model does not support tools. Choose another model to work with the cluster.</p>}
         {c.error && !c.invalidated && <p role="alert" className="ai-error">{c.error}</p>}
         {!settings.providers.length && <p className="ai-help">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
       </div>
@@ -783,7 +783,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
               handleStartNew();
             }
           }}
-          aria-label="Settings changed. Start a new conversation to use updated permissions and provider"
+          aria-label="Settings changed. Start a new conversation to use the updated access rules and connection"
         >
           <div className="ai-invalidated-content">
             <div className="ai-invalidated-icon-wrapper">
@@ -999,7 +999,7 @@ function ActionApprovalCard({
   const { resource, details, review, simple } = request;
   const yaml = details?.kind === 'yaml';
   const deleting = simple?.destructive ?? details?.steps.some(step => step.operation === 'DELETE') ?? false;
-  const title = simple?.title ?? (yaml ? 'Review and Approve YAML Mutation' : deleting ? 'Approve Resource Deletion' : 'Action Approval Required');
+  const title = simple?.title ?? (yaml ? 'Apply YAML changes?' : deleting ? 'Delete resource?' : 'Confirm operation?');
   const summary = simple ? review : details?.kind === 'batch' ? `Perform ${details.steps.length} operations on the selected resources.` : details?.steps[0]?.summary ?? review;
   const diffContent = yaml && details.steps[0]?.diff ? details.steps[0].diff : '';
   const formatted = diffContent ? formatManifestOrDiff(diffContent) : { code: '', language: 'yaml' as const };

@@ -75,5 +75,5 @@ export function RegisteredPanel(props: WorkspacePanelProps) {
   const panel = panels.find(entry => props.tab.panelId ? entry.id === props.tab.panelId : entry.tabType === props.tab.type);
   if (!panel) return <p role="status" className="p-4 text-sm">This panel is unavailable. Enable its extension to open it.</p>;
   const Component = panel.component;
-  return <Suspense fallback={<ResourceLoading label={`Loading ${panel.title}…`} />}><Component {...props} /></Suspense>;
+  return <Suspense fallback={<ResourceLoading label={`Opening ${panel.title}…`} description="" />}><Component {...props} /></Suspense>;
 }

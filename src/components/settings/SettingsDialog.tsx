@@ -1,5 +1,6 @@
 import { Select } from '../ui/Select';
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import './settings.css';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { RotateCcw, Search, X } from 'lucide-react';
 import packageJson from '../../../package.json';
 import { Modal } from '../ui/Modal';
@@ -62,17 +63,20 @@ function Highlight({ text, query }: { text: string; query: string }) {
 /* ------------------------------------------------------------------ */
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-[0.07em] text-[var(--text-muted)] pt-1.5 pb-0.5">
-      {children}
-    </div>
-  );
+  return <h2 className="settings-page-title">{children}</h2>;
+}
+
+function SettingsGroup({ title, entries, children, collapsible = false }: { title: string; entries: string[]; children: React.ReactNode; collapsible?: boolean }) {
+  const query = useContext(SearchContext).trim();
+  if (query && !entries.some(id => entryMatches(findEntry(id), query))) return null;
+  return collapsible
+    ? <details className="settings-group" open={query ? true : undefined}><summary>{title}</summary>{children}</details>
+    : <section className="settings-group" aria-label={title}><h3>{title}</h3>{children}</section>;
 }
 
 interface RowProps {
   entry: SettingsEntry;
   children: React.ReactNode;
-  /** Full-width blocks (previews, embedded panels) render label above control. */
   wide?: boolean;
   below?: React.ReactNode;
 }
@@ -80,51 +84,41 @@ interface RowProps {
 function Row({ entry, wide, below, children }: RowProps) {
   const query = useContext(SearchContext);
   if (query.trim() && !entryMatches(entry, query)) return null;
-  const heading = (
-    <div className="min-w-0">
-      <div className="text-[length:calc(12px*var(--ui-factor))] text-[var(--text-primary)]">
-        <Highlight text={entry.label} query={query} />
-      </div>
-      {entry.description && (
-        <div className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mt-0.5 leading-snug">
-          <Highlight text={entry.description} query={query} />
-        </div>
-      )}
+  const toggle = React.isValidElement(children) && children.type === Checkbox;
+  const controlId = `settings-control-${entry.id}`;
+  const label = <Highlight text={entry.label} query={query} />;
+  const control = toggle ? React.cloneElement(children as React.ReactElement<React.InputHTMLAttributes<HTMLInputElement>>, {
+    id: controlId, 'aria-describedby': entry.description ? `${controlId}-help` : undefined,
+  }) : children;
+  return <div id={`settings-row-${entry.id}`} className={cx('settings-row', wide && 'settings-row-wide')} data-control={toggle ? 'toggle' : undefined}>
+    <div className="settings-row-label">
+      {toggle ? <label htmlFor={controlId}>{label}</label> : <div>{label}</div>}
+      {entry.description && <p id={`${controlId}-help`} className="settings-hint"><Highlight text={entry.description} query={query} /></p>}
     </div>
-  );
-  if (wide) {
-    return (
-      <div id={`settings-row-${entry.id}`} className="py-2.5 min-w-0 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-[var(--border-subtle)]">
-        {heading}
-        <div className="mt-2">{children}</div>
-      </div>
-    );
-  }
-  return (
-    <div id={`settings-row-${entry.id}`} className="flex flex-wrap items-center justify-between gap-3 py-2.5 min-w-0 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-[var(--border-subtle)]">
-      {heading}
-      <div className="shrink-0">{children}</div>
-      {below && <div className="w-full">{below}</div>}
-    </div>
-  );
+    <div className="settings-row-control">{control}</div>
+    {below && <div className="settings-row-below">{below}</div>}
+    {entry.details && <details className="settings-row-below settings-detail" open={query.trim() ? true : undefined}><summary>Session behavior</summary><p className="settings-hint">{entry.details}</p></details>}
+  </div>;
 }
 
-function Segmented<T extends string>({ value, options, onChange, ariaLabel }: {
+function Segmented<T extends string>({ value, options, onChange, ariaLabel, disabled }: {
   value: T;
   options: Array<{ value: T; label: string }>;
   onChange: (value: T) => void;
   ariaLabel: string;
+  disabled?: boolean;
 }) {
   return (
-    <div role="group" aria-label={ariaLabel} className="flex items-center rounded-[calc(5px*var(--ui-factor))] border border-[var(--border-default)] overflow-hidden">
+    <div role="group" aria-label={ariaLabel} className="settings-segmented">
       {options.map((option) => (
         <button
           key={option.value}
           type="button"
           aria-pressed={value === option.value}
+          disabled={disabled}
           onClick={() => onChange(option.value)}
           className={cx(
-            'h-[calc(26px*var(--ui-factor))] px-2.5 text-[length:calc(11px*var(--ui-factor))] transition-colors capitalize',
+            'h-[calc(26px*var(--ui-factor))] px-2.5 text-[length:calc(11px*var(--ui-factor))] transition-colors disabled:opacity-50',
             value === option.value ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
           )}
         >
@@ -247,10 +241,13 @@ function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
   const fast = ui.topologyPerformanceMode === 'performance';
   return <div>
     <SectionTitle>{sectionTitle}</SectionTitle>
-    <Row entry={findEntry('topology.performance')}>
+    <Row entry={findEntry('topology.performance')} below={<p className="settings-hint">{fast
+      ? 'Uses compact nodes and straight connections. Turns off shadows, animations, labels, grid and minimap.'
+      : ui.topologyPerformanceMode === 'quality' ? 'Shows node shadows.' : 'Hides node shadows.'}</p>}>
       <Segmented ariaLabel="Topology rendering profile" value={ui.topologyPerformanceMode} onChange={ui.setTopologyPerformanceMode}
         options={[{ value: 'quality', label: 'Quality' }, { value: 'balanced', label: 'Balanced' }, { value: 'performance', label: 'Performance' }]} />
     </Row>
+    <SettingsGroup title="Layout" entries={['topology.grouping', 'topology.edges']}>
     <Row entry={findEntry('topology.grouping')}>
       <Segmented ariaLabel="Cluster layout grouping" value={ui.topologyGrouping} onChange={ui.setTopologyGrouping}
         options={[{ value: 'namespace', label: 'Namespace' }, { value: 'flat', label: 'Flat' }]} />
@@ -260,6 +257,8 @@ function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
         <option value="smooth">Editable routes</option><option value="bezier">Curved</option><option value="straight">Straight</option>
       </Select>
     </Row>
+    </SettingsGroup>
+    <SettingsGroup title="Display" entries={['topology.animations', 'topology.labels', 'topology.minimap', 'topology.background']}>
     <Row entry={findEntry('topology.animations')}>
       <Checkbox aria-label="Animate topology connections" disabled={fast} checked={!fast && ui.topologyAnimations} onChange={event => ui.setTopologyAnimations(event.target.checked)} />
     </Row>
@@ -272,9 +271,10 @@ function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
     <Row entry={findEntry('topology.background')}>
       <Checkbox aria-label="Topology background grid" disabled={fast} checked={!fast && ui.topologyShowBackground} onChange={event => ui.setTopologyShowBackground(event.target.checked)} />
     </Row>
+    </SettingsGroup>
     <Row entry={findEntry('topology.updates')}>
-      <Select aria-label="Topology live redraw interval" className="ide-select" value={ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
-        {TOPOLOGY_UPDATE_INTERVALS.map(value => <option key={value} value={value}>{value < 1000 ? `${value} ms` : `${value / 1000} s`}{fast && value < 3000 ? ' (3 s in Performance)' : ''}</option>)}
+      <Select aria-label="Topology live redraw interval" className="ide-select" value={fast ? Math.max(3000, ui.topologyUpdateIntervalMs) : ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
+        {TOPOLOGY_UPDATE_INTERVALS.filter(value => !fast || value >= 3000).map(value => <option key={value} value={value}>{value < 1000 ? `${value} ms` : `${value / 1000} s`}</option>)}
       </Select>
     </Row>
   </div>;
@@ -348,7 +348,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
       </Row>
       <Row entry={findEntry('terminal.output-timeout')}>
         <Select
-          aria-label="Session output timeout"
+          aria-label="Output processing timeout"
           className="ide-select w-40"
           value={terminalAckTimeoutSecs}
           onChange={(event) => {
@@ -357,7 +357,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
           }}
         >
           {TERMINAL_ACK_TIMEOUT_PRESETS.map((seconds) => (
-            <option key={seconds} value={seconds}>{seconds === 0 ? 'Never (kill switch off)' : seconds === 60 ? '1 minute' : seconds === 300 ? '5 minutes' : `${seconds} seconds`}</option>
+            <option key={seconds} value={seconds}>{seconds === 0 ? 'No timeout' : seconds === 60 ? '1 minute' : seconds === 300 ? '5 minutes' : `${seconds} seconds`}</option>
           ))}
         </Select>
       </Row>
@@ -387,25 +387,30 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <p className="settings-hint">Changes apply to all log panes.</p>
+      <SettingsGroup title="Updates" entries={['logs.mode', 'logs.poll-interval']}>
       <Row entry={findEntry('logs.mode')}>
         <Segmented
-          ariaLabel="Log ingestion mode"
+          ariaLabel="Log updates"
           value={logsMode}
           onChange={(v) => setLogsMode(v as 'poll' | 'watch')}
           options={[
-            { value: 'poll', label: 'Poll' },
-            { value: 'watch', label: 'Watch (stream)' },
+            { value: 'poll', label: 'Polling' },
+            { value: 'watch', label: 'Streaming' },
           ]}
         />
       </Row>
       <Row entry={findEntry('logs.poll-interval')}>
         <Segmented
-          ariaLabel="Default log polling interval"
+          ariaLabel="Polling interval"
+          disabled={logsMode !== 'poll'}
           value={String(Math.round(logsPollMs / 1000))}
           onChange={(v) => setLogsPollMs(Number(v) * 1000)}
           options={LOG_POLL_PRESETS.map((n) => ({ value: String(n / 1000), label: `${n / 1000}s` }))}
         />
       </Row>
+      </SettingsGroup>
+      <SettingsGroup title="Display" entries={['logs.wrap', 'logs.timestamps', 'logs.time-zone', 'logs.color-levels', 'logs.structured']}>
       <Row entry={findEntry('logs.wrap')}>
         <Checkbox aria-label="Wrap log lines by default" checked={logsWrap} onChange={(event) => setLogsWrap(event.target.checked)} />
       </Row>
@@ -421,6 +426,8 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
       <Row entry={findEntry('logs.structured')}>
         <Checkbox aria-label="Parse log lines as JSON by default" checked={logsStructured} onChange={(event) => setLogsStructured(event.target.checked)} />
       </Row>
+      </SettingsGroup>
+      <SettingsGroup title="History and scrolling" entries={['logs.default-tail', 'logs.max-buffer', 'logs.stickiness']} collapsible>
       <Row entry={findEntry('logs.default-tail')}>
         <Segmented
           ariaLabel="Default log tail lines"
@@ -439,17 +446,18 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
       </Row>
       <Row entry={findEntry('logs.stickiness')}>
         <Segmented
-          ariaLabel="Auto-scroll stickiness"
+          ariaLabel="Follow-scroll threshold"
           value={String(logsScrollStickiness)}
           onChange={(v) => setLogsScrollStickiness(Number(v))}
           options={[
-            { value: '20', label: 'Strict (20px)' },
-            { value: '40', label: 'Normal (40px)' },
-            { value: '80', label: 'Relaxed (80px)' },
-            { value: '120', label: 'High (120px)' },
+            { value: '20', label: '20 px' },
+            { value: '40', label: '40 px' },
+            { value: '80', label: '80 px' },
+            { value: '120', label: '120 px' },
           ]}
         />
       </Row>
+      </SettingsGroup>
     </div>
   );
 }
@@ -608,11 +616,8 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
   );
 }
 
-function AiPage({ sectionTitle, page }: { sectionTitle: string; page: AgentSettingsPage }) {
-  return <div>
-    <SectionTitle>{sectionTitle}</SectionTitle>
-    <AgentSettings page={page} hideNavigation />
-  </div>;
+function AiPage({ page }: { page: AgentSettingsPage }) {
+  return <AgentSettings page={page} hideNavigation />;
 }
 
 function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
@@ -627,7 +632,7 @@ function pageContent(page: SettingsPageDef, aiPage: AgentSettingsPage): React.Re
   switch (page.id) {
     case 'topology': return <TopologyPage sectionTitle={page.sectionTitle} />;
     case 'developer': return <DeveloperPage sectionTitle={page.sectionTitle} />;
-    case 'ai': return <AiPage sectionTitle={page.sectionTitle} page={aiPage} />;
+    case 'ai': return <AiPage page={aiPage} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
     case 'editor': return <EditorPage sectionTitle={page.sectionTitle} />;
     case 'terminal': return <TerminalPage sectionTitle={page.sectionTitle} />;
@@ -745,6 +750,7 @@ export const SettingsDialog: React.FC = () => {
   const [query, setQuery] = useState('');
   const [aiPage, setAiPage] = useState<AgentSettingsPage>('agent');
   const [pageId, setPageId] = useState<SettingsPageId>('appearance');
+  const contentRef = useRef<HTMLElement>(null);
 
   const aiSettings=useAiStore(s=>s.settings);
   const aiPages=availableAiSettingsPages(aiSettings);
@@ -754,6 +760,7 @@ export const SettingsDialog: React.FC = () => {
   const requestedAiPage = query.trim() ? aiPages.find(item => entryMatches(findEntry(`ai.${item.id}`), query))?.id ?? aiPage : aiPage;
   const selectedAiPage = aiPages.some(item=>item.id===requestedAiPage) ? requestedAiPage : 'agent';
   const resetHandler = activePage ? RESET_HANDLERS[activePage.id] : undefined;
+  useEffect(() => { contentRef.current?.scrollTo({top: 0}); }, [activePage?.id, selectedAiPage]);
 
   const close = () => setOpen(false);
 
@@ -763,6 +770,8 @@ export const SettingsDialog: React.FC = () => {
         open={open}
         onClose={close}
         width={860}
+        className="settings-modal"
+        centered
         title="Settings"
         padded={false}
         footer={
@@ -802,15 +811,16 @@ export const SettingsDialog: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setPageId(page.id)}
-                    aria-current={selected ? 'true' : undefined}
+                    aria-current={selected && page.id !== 'ai' ? 'page' : undefined}
+                    aria-expanded={page.id === 'ai' ? selected : undefined}
                     className={cx(
                       'w-full flex items-center gap-2 px-2.5 h-[calc(27px*var(--ui-factor))] rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] text-left transition-colors',
-                      selected
+                      selected && page.id !== 'ai'
                         ? 'bg-[var(--bg-selection)] text-white'
                         : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
                     )}
                   >
-                    <Icon size="calc(14px * var(--ui-factor))" strokeWidth={1.75} className={selected ? 'text-white' : 'text-[var(--text-muted)]'} />
+                    <Icon aria-hidden="true" size="calc(14px * var(--ui-factor))" strokeWidth={1.75} className={selected ? 'text-white' : 'text-[var(--text-muted)]'} />
                     <span className="truncate"><Highlight text={page.title} query={query} /></span>
                   </button>
                   {page.id === 'ai' && selected && <div className="pl-5 py-1 space-y-0.5" aria-label="AI settings subsections">
@@ -828,8 +838,9 @@ export const SettingsDialog: React.FC = () => {
               {activePage?.id === 'ai' && <label>Section<Select className="ide-select" aria-label="AI settings section" value={selectedAiPage} onChange={e => { setQuery(''); setAiPage(e.target.value as AgentSettingsPage); }}>{aiPages.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</Select></label>}
             </div>
             <section
+              ref={contentRef}
               aria-label={activePage ? `Settings: ${activePage.title}` : 'Search results'}
-              className="flex-1 min-w-0 overflow-y-auto kubiki-scrollbar px-4 pb-4"
+              className="settings-content flex-1 min-w-0 overflow-y-auto kubiki-scrollbar px-4 pb-4"
             >
               {activePage ? (
                 pageContent(activePage, selectedAiPage)
@@ -838,7 +849,7 @@ export const SettingsDialog: React.FC = () => {
                   <Search size="calc(22px * var(--ui-factor))" className="text-[var(--text-muted)] mb-1" />
                   <p className="text-sm text-[var(--text-primary)]">No settings found</p>
                   <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-                    Nothing matches “{query.trim()}”. Try shorter or different keywords, for example “font” or “scale”.
+                    No results for "{query.trim()}". Try "font" or "scale".
                   </p>
                 </div>
               )}

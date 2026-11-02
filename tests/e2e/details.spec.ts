@@ -234,7 +234,7 @@ test('a large cluster retains all objects and renders offscreen nodes when panne
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', '');
-  await expect(page.getByText('Choose a diagram scope', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose namespaces', exact: true })).toBeVisible();
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
   expect(layoutWorkers).toEqual([]);
   await page.getByRole('button', { name: 'All Namespaces', exact: true }).click();
