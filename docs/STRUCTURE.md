@@ -193,6 +193,13 @@ Logs and terminals use dedicated managers and streaming command interfaces. Inpu
 
 Pod terminals and logs communicate through the Kubernetes API. Node shells prepare debug Pods and then attach an exec session. Host terminals allocate local pseudo-terminals through `portable-pty`.
 
+`src/core/terminal_view.ts` supplies the shared xterm.js setup for OpenCode, local,
+Pod, Node and demo terminals: Unicode 11 cell widths, WebGL rendering with DOM
+fallback, font readiness and fitting inside an unpadded host. Renderer failure
+preserves the buffer and connection. `useTerminalAppearance.ts` applies typography
+and scrollback changes without reconnecting. Log panes use the same typography
+preferences and remeasure virtual rows when it changes. See [Terminal rendering](TERMINAL.md).
+
 Port forwarding opens a loopback TCP listener and connects it to the selected Pod through the Kubernetes API. Service forwarding resolves a matching running Pod and translates the selected Service port to its target port.
 
 Managers track session ownership by desktop window. The window destruction handler stops its watches, terminals, logs, debug sessions, and forwards.

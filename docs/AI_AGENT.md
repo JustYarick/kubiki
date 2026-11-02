@@ -503,7 +503,8 @@ hidden and do not control OpenCode. Switching invalidates integrated sessions an
 stops attached processes; it never transfers approvals or replays tools.
 
 OpenCode uses the installed V2 executable, a real PTY, its user configuration and
-credentials. A dedicated Kubiki workspace adds only our local MCP connection;
+credentials. Its pane uses the same terminal renderer and typography preferences
+as local/Pod/Node shells (see [Terminal rendering](TERMINAL.md)). A dedicated Kubiki workspace adds only our local MCP connection;
 existing project configuration is not overwritten. The desktop executable provides
 a headless `--kubiki-mcp-attach` bridge entrypoint, so desktop bundles do not need a
 separately installed CLI. Scope-specific workspace directories isolate windows and

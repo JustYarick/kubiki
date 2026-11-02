@@ -26,6 +26,11 @@ pnpm test:e2e
 credentials, permission editing, streamed chat, resource entry points, proposals
 and Stop. OpenCode fixtures cover pending startup, Stop before font loading,
 known pre-start failures and ambiguous delivery without task replay.
+`terminal_rendering.spec.ts` checks the shared grid, modern emoji widths, DOM
+fallback, renderer context loss and fitting after resize/hidden-pane restoration.
+Transport tests explicitly disable WebGL to inspect DOM text; rendering tests use
+the available renderer and verify the public terminal buffer. The OpenCode fixture
+checks early terminal queries before startup acknowledgement and live font changes.
 Agent Rust tests do not call paid providers or a live cluster. Core
 `revocable_mutation_tests` verifies cancellation after commit's final read prevents
 an actual write. These fixtures do not establish real model quality or OS keyring
