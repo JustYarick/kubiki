@@ -42,6 +42,16 @@ closing, persisted workspace migration and resource demand from hidden views.
 topology scope and AI drafts. AI browser scenarios also verify that section
 navigation preserves a running conversation without stopping it.
 
+`topology_readiness.test.ts` distinguishes unknown collections from empty
+snapshots, verifies context and namespace coverage, and covers failed,
+unsupported, stopped and demo collections. `topology_loading.spec.ts` delays
+individual Kubernetes reads and Helm inventory and counts actual ELK requests:
+the first diagram must have one layout after all required inputs settle,
+including a denied API and dependencies discovered on a later focused-graph
+pass. A failed dependency pass must not retry itself. Further scenarios check
+visible/total counters and retain the scene and camera during live structural
+updates, including replacement of shared Helm items by another reader.
+
 The suite uses two workers across independent files. Tests within one file stay
 sequential. On a small machine, use `pnpm test:e2e --workers=1`.
 The default browser is Chromium; `PLAYWRIGHT_BROWSER=webkit` selects WebKit when

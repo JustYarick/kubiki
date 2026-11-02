@@ -271,6 +271,21 @@ Node backends are trusted local code, while iframe isolation restricts panel cod
 
 Topology relationship construction runs in `topology_graph_worker.ts`; ELK layout runs in a separate worker. The graph bridge strips lazy YAML getters from worker input, retains at most one current build and one latest pending snapshot, and rejects responses from superseded scopes.
 
+`topology_readiness.ts` gates the first graph on snapshots matching its context
+and namespace coverage. Unsupported APIs are excluded; failed reads settle with
+an incomplete-data warning. Event delivery does not block layout. Helm inventory
+must finish and be projected into the resource store before publication. Focused
+diagrams may discover more required resource kinds in successive internal graph
+passes; the view publishes only after those requirements and their graph result
+agree. A failed pass preserves its discovered requirements to avoid a retry loop.
+
+The namespace chooser labels complete cached inventories as loaded counts and
+leaves unknown counts unset. Graph and namespace counters distinguish visible
+resources from totals when types are hidden. Live structural changes retain the
+previous scene during layout and preserve the camera. Initial layout, explicit
+Arrange, direction and grouping changes fit the viewport; changing context,
+scope, focus or depth starts a new diagram.
+
 See [Workspace extensions](EXTENSIONS.md) for installation and the registration
 contract, and [extension architecture](EXTENSION_PLATFORM.md) for the runtime
 tradeoffs and deferred APIs. Shared application/extension tab styling is documented
