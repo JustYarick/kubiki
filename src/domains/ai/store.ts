@@ -9,6 +9,7 @@ import { useResourceStore } from '../../state/resource_store';
 
 interface AiState {
   openCodeRequestConsumed?: string;
+  openCodeRequestReservation?: string;
   openCodeRequest?: {id:string;scope:AgentScope;prompt:string};
   settings: AiSettings; credentials: Record<string, boolean>; loaded: boolean; loading: boolean; saving: boolean; error?: string;
   models: Record<string, ModelInfo[]>; modelLoading: Record<string, boolean>; modelErrors: Record<string, string | undefined>;

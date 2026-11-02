@@ -26,6 +26,9 @@ export async function connectHostTerminal(request: HostTerminalRequest, receive:
 export async function connectNodeExec(request: NodeExecRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
   return connectTerminal(request, receive, signal, 'node_exec');
 }
+export class OpenCodeNotStartedError extends Error {
+  constructor(message: string) { super(message); this.name = 'OpenCodeNotStartedError'; }
+}
 export interface OpenCodeRequest { scope: import('../domains/ai/types').AgentScope; cols: number; rows: number; prompt: string | null }
 export async function connectOpenCode(request: OpenCodeRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
   return connectTerminal(request,receive,signal,'host_terminal','start_opencode');
@@ -86,5 +89,14 @@ async function connectTerminal(request: ExecRequest | HostTerminalRequest | Node
     await invoke(startCommand, { sessionId: id, request, onEvent: channel, ackTimeoutSecs: useUiStore.getState().terminalAckTimeoutSecs });
     if (closed) stop();
     return connection;
-  } catch (error) { close(); throw normalizeK8sError(error, info); }
+  } catch (error) {
+    close();
+    if (startCommand === 'start_opencode' && error && typeof error === 'object'
+      && 'code' in error && error.code === 'opencode_start_failed'
+      && 'processStarted' in error && error.processStarted === false
+      && 'message' in error && typeof error.message === 'string') {
+      throw new OpenCodeNotStartedError(error.message);
+    }
+    throw normalizeK8sError(error, info);
+  }
 }

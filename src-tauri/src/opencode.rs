@@ -49,15 +49,145 @@ struct Active {
     _endpoint: kubiki_mcp::attached::AttachedEndpoint,
 }
 #[derive(Clone, Default)]
-pub struct OpenCodeManager(Arc<tokio::sync::Mutex<HashMap<String, Active>>>);
+pub struct OpenCodeManager(
+    Arc<tokio::sync::Mutex<HashMap<String, Active>>>,
+    Arc<std::sync::Mutex<PendingStarts>>,
+);
+#[derive(Default)]
+struct PendingStarts {
+    active: HashMap<String, Arc<PendingLaunch>>,
+    cancelled: std::collections::VecDeque<String>,
+}
+#[derive(Default)]
+struct PendingLaunch {
+    cancelled: std::sync::atomic::AtomicBool,
+    stopped: tokio::sync::Notify,
+    session: std::sync::Mutex<Option<Session>>,
+}
+impl PendingLaunch {
+    fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.stopped.notify_waiters();
+        if let Ok(session) = self.session.lock() {
+            if let Some(session) = session.as_ref() {
+                session.invalidate();
+            }
+        }
+    }
+    async fn cancelled(&self) {
+        loop {
+            let stopped = self.stopped.notified();
+            tokio::pin!(stopped);
+            stopped.as_mut().enable();
+            if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            stopped.await;
+        }
+    }
+    fn check(&self) -> Result<(), String> {
+        if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("OpenCode startup was cancelled".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn bind(&self, session: &Session) -> Result<(), String> {
+        *self
+            .session
+            .lock()
+            .map_err(|_| "OpenCode startup state unavailable")? = Some(session.clone());
+        if let Err(error) = self.check() {
+            session.invalidate();
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+struct PendingStart {
+    registry: OpenCodeManager,
+    key: String,
+    launch: Arc<PendingLaunch>,
+}
+impl Drop for PendingStart {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.registry.1.lock() {
+            state.active.remove(&self.key);
+        }
+    }
+}
+
 impl OpenCodeManager {
+    fn begin(&self, owner: &str, id: &str) -> Result<PendingStart, String> {
+        let key = format!("{owner}\0{id}");
+        let mut state = self
+            .1
+            .lock()
+            .map_err(|_| "OpenCode startup registry unavailable")?;
+        if state.cancelled.contains(&key) {
+            return Err("OpenCode startup was cancelled".into());
+        }
+        if state.active.contains_key(&key) || state.active.len() >= 32 {
+            return Err("Too many pending OpenCode launches".into());
+        }
+        let launch = Arc::new(PendingLaunch::default());
+        state.active.insert(key.clone(), launch.clone());
+        Ok(PendingStart {
+            registry: self.clone(),
+            key,
+            launch,
+        })
+    }
+    pub fn cancel_start(&self, owner: &str, id: &str) {
+        if id.is_empty()
+            || id.len() > 128
+            || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+        {
+            return;
+        }
+        let key = format!("{owner}\0{id}");
+        let launch = if let Ok(mut state) = self.1.lock() {
+            if !state.cancelled.contains(&key) {
+                if state.cancelled.len() >= 256 {
+                    state.cancelled.pop_front();
+                }
+                state.cancelled.push_back(key.clone());
+            }
+            state.active.get(&key).cloned()
+        } else {
+            None
+        };
+        if let Some(launch) = launch {
+            launch.cancel();
+        }
+    }
+    fn cancel_pending(&self, owner: Option<&str>) {
+        let pending = self
+            .1
+            .lock()
+            .map(|s| {
+                s.active
+                    .iter()
+                    .filter(|(key, _)| owner.is_none_or(|o| key.starts_with(&format!("{o}\0"))))
+                    .map(|(_, v)| v.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for pending in pending {
+            pending.cancel();
+        }
+    }
+
     pub async fn stop_all(&self) {
+        self.cancel_pending(None);
         let entries = std::mem::take(&mut *self.0.lock().await);
         for entry in entries.into_values() {
             entry.terminals.stop(&entry.owner, &entry.id).await;
         }
     }
     pub async fn stop_owner(&self, owner: &str) {
+        self.cancel_pending(Some(owner));
         if let Some(entry) = self.0.lock().await.remove(owner) {
             entry.terminals.stop(owner, &entry.id).await;
         }
@@ -126,8 +256,32 @@ pub struct StartRequest {
     pub rows: u16,
     pub prompt: Option<String>,
 }
+/// All command errors occur before the PTY process is scheduled. IPC failures
+/// without this envelope remain ambiguous and must not replay the initial task.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeStartFailure {
+    code: &'static str,
+    message: String,
+    process_started: bool,
+}
 #[tauri::command]
 pub async fn start_opencode(
+    session_id: String,
+    request: StartRequest,
+    on_event: Channel<ExecBatch>,
+    ack_timeout_secs: Option<u64>,
+    window: tauri::WebviewWindow,
+) -> Result<(), OpenCodeStartFailure> {
+    start_opencode_inner(session_id, request, on_event, ack_timeout_secs, window)
+        .await
+        .map_err(|message| OpenCodeStartFailure {
+            code: "opencode_start_failed",
+            message,
+            process_started: false,
+        })
+}
+async fn start_opencode_inner(
     session_id: String,
     request: StartRequest,
     on_event: Channel<ExecBatch>,
@@ -142,11 +296,17 @@ pub async fn start_opencode(
     {
         return Err("Invalid OpenCode terminal session ID".into());
     }
+    let registry = window.state::<OpenCodeManager>().inner().clone();
+    let pending = registry.begin(window.label(), &session_id)?;
     let gate = window
         .state::<crate::agent_commands::AgentManager>()
         .settings_gate
         .clone();
-    let _configuration = gate.lock().await;
+    let _configuration = tokio::select! {biased;
+        _=pending.launch.cancelled()=>return Err("OpenCode startup was cancelled".into()),
+        guard=gate.lock()=>guard,
+    };
+    pending.launch.check()?;
     let settings = crate::agent_commands::load(window.app_handle()).await?;
     if settings.runtime != AgentRuntime::OpenCode {
         return Err("Select OpenCode in AI settings first".into());
@@ -157,7 +317,11 @@ pub async fn start_opencode(
     if request.prompt.as_ref().is_some_and(|p| p.len() > 24000) {
         return Err("Initial request is too large".into());
     }
-    let install = ai_test_opencode(settings.opencode.clone()).await?;
+    let install = tokio::select! {biased;
+        _=pending.launch.cancelled()=>return Err("OpenCode startup was cancelled".into()),
+        install=ai_test_opencode(settings.opencode.clone())=>install?,
+    };
+    pending.launch.check()?;
     let pool = window.state::<ClusterClientPool>().inner().clone();
     let mut policy = settings.mcp_policy;
     policy.confirm_reads = false;
@@ -185,6 +349,7 @@ pub async fn start_opencode(
             flux: true,
         },
     );
+    pending.launch.bind(&session)?;
     session.mode(AgentMode::Accept)?;
     session.phase(AgentPhase::Action)?;
     let data = window
@@ -257,8 +422,10 @@ pub async fn start_opencode(
         args.push(prompt);
     }
     let terminals = window.state::<HostTerminalManager>().inner().clone();
-    let registry = window.state::<OpenCodeManager>().inner().clone();
-    registry.stop_owner(window.label()).await;
+    if let Some(previous) = registry.0.lock().await.remove(window.label()) {
+        previous.terminals.stop(window.label(), &previous.id).await;
+    }
+    pending.launch.check()?;
     let mut subscription = terminals
         .start_process(
             window.label(),
@@ -277,6 +444,11 @@ pub async fn start_opencode(
         )
         .await
         .map_err(|e| e.message)?;
+    if pending.launch.check().is_err() {
+        terminals.stop(window.label(), &session_id).await;
+        // A process may already have spawned; return success to keep delivery ambiguous.
+        return Ok(());
+    }
     let owner = window.label().to_owned();
     registry.0.lock().await.insert(
         owner.clone(),
@@ -341,5 +513,58 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    #[test]
+    fn cancellation_before_start_is_retained_and_pending_registry_is_cleaned() {
+        let manager = OpenCodeManager::default();
+        manager.cancel_start("window", "first");
+        assert!(manager.begin("window", "first").is_err());
+        {
+            let _pending = manager.begin("window", "second").unwrap();
+            assert_eq!(manager.1.lock().unwrap().active.len(), 1);
+        }
+        assert!(manager.1.lock().unwrap().active.is_empty());
+        for index in 0..300 {
+            manager.cancel_start("window", &format!("{index}"));
+        }
+        assert_eq!(manager.1.lock().unwrap().cancelled.len(), 256);
+        manager.cancel_start("window", &"x".repeat(129));
+        manager.cancel_start("window", "invalid/id");
+        assert_eq!(manager.1.lock().unwrap().cancelled.len(), 256);
+    }
+    #[tokio::test]
+    async fn stopping_pending_start_revokes_its_cluster_session_and_not_another_window() {
+        let manager = OpenCodeManager::default();
+        let first = manager.begin("one", "same-id").unwrap();
+        let other = manager.begin("two", "same-id").unwrap();
+        let session = Session::new(
+            "session".into(),
+            "one".into(),
+            AgentScope::default(),
+            AgentPolicy::default(),
+            ClusterCapabilities::default(),
+        );
+        first.launch.bind(&session).unwrap();
+        manager.cancel_start("one", "same-id");
+        first.launch.cancelled().await;
+        assert!(first.launch.check().is_err());
+        assert!(session.control().unwrap().invalidated);
+        assert!(other.launch.check().is_ok());
+    }
+    #[test]
+    fn startup_error_envelope_proves_no_process_was_started() {
+        let value = serde_json::to_value(OpenCodeStartFailure {
+            code: "opencode_start_failed",
+            message: "Missing executable".into(),
+            process_started: false,
+        })
+        .unwrap();
+        assert_eq!(value["processStarted"], false);
+        assert_eq!(value["code"], "opencode_start_failed");
     }
 }

@@ -11,12 +11,22 @@ async function setup(page: Page) {
     const keys = new Map<string, string>(); const sessions = new Map<string, any>();
     const callbacks = new Map<number, unknown>(); let sequence = 0;
     const commands: Array<{ command: string; args: any }> = []; const sends: any[] = []; const modes: any[] = []; const stops: any[] = [];
-    w.__aiHarness = { commands, sends, modes, stops, hold: false, models: [{ id: 'model-from-endpoint', name: 'Endpoint model', contextWindow: 32768, maxOutputTokens: 8192, tools: true }], settings: () => settings, key: (id: string) => keys.get(id) };
+    w.__aiHarness = { commands, sends, modes, stops, hold: false, openCodeStarts: [], openCodeCloses: [], openCodeCompletions: 0, models: [{ id: 'model-from-endpoint', name: 'Endpoint model', contextWindow: 32768, maxOutputTokens: 8192, tools: true }], settings: () => settings, key: (id: string) => keys.get(id) };
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     w.__TAURI_INTERNALS__ = {
       transformCallback: (callback: unknown) => { callbacks.set(++sequence, callback); return sequence; }, unregisterCallback: (id: number) => callbacks.delete(id),
       invoke: async (command: string, args: any = {}) => {
         if (command.startsWith('ai_')) commands.push({ command, args: { ...args, onEvent: undefined } });
+        if (command === 'start_opencode') {
+          w.__aiHarness.openCodeStarts.push(structuredClone(args.request));
+          if(w.__aiHarness.openCodeFailure) throw w.__aiHarness.openCodeFailure;
+          if(w.__aiHarness.deferOpenCode) await new Promise<void>(resolve=>{w.__aiHarness.releaseOpenCode=resolve;});
+          args.onEvent.onmessage({session_id:args.sessionId,messages:[{sequence:1,event:{type:'Started'}}]});
+          w.__aiHarness.openCodeCompletions++;return;
+        }
+        if (command === 'close_host_terminal') {w.__aiHarness.openCodeCloses.push(args.sessionId);return;}
+        if (['ack_host_terminal','resize_host_terminal','write_host_terminal'].includes(command))return;
+
         if (command === 'plugin:event|listen') { if(args.event === 'mutation-confirm-request') w.__aiHarness.confirm = (payload: any) => (callbacks.get(args.handler) as ((event: any) => void) | undefined)?.({event: args.event, payload}); return ++sequence; }
         if (command === 'resolve_mutation_confirm') { w.__aiHarness.decision = args.approved; w.__aiHarness.resolveApproval?.(); return true; }
         if (command === 'plugin:event|unlisten' || command.startsWith('stop_')) return;
@@ -414,3 +424,70 @@ test('AI settings sections fit desktop and narrow dialogs without horizontal ove
   await captureScreenshot(page,{path:'test-results/global-settings-narrow.png'});
   expect(errors).toEqual([]);
 });
+
+async function selectOpenCode(page:Page) {
+  const agent=await openAgent(page);
+  await agent.getByRole('button',{name:'AI settings',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
+  await dialog.getByRole('combobox',{name:'AI agent',exact:true}).selectOption('open_code');
+  await dialog.getByRole('button',{name:'Done',exact:true}).click();
+  return page.getByTestId('opencode-pane');
+}
+
+test('Stop aborts pending OpenCode startup and late completion cannot reconnect it',async({page})=>{
+  const errors=await setup(page);
+  await page.evaluate(()=>{(window as any).__aiHarness.deferOpenCode=true;});
+  const pane=await selectOpenCode(page);
+  await expect.poll(()=>page.evaluate(()=>typeof (window as any).__aiHarness.releaseOpenCode)).toBe('function');
+  await pane.getByRole('button',{name:'Stop',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.openCodeCloses.length)).toBeGreaterThan(0);
+  await page.evaluate(()=>{(window as any).__aiHarness.releaseOpenCode();});
+  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.openCodeCompletions)).toBe(1);
+  await expect(pane).toContainText('Stopped');
+  await page.evaluate(()=>{(window as any).__aiHarness.deferOpenCode=false;});
+  await pane.getByRole('button',{name:'Restart',exact:true}).click();
+  await expect(pane).toContainText('Connected');expect(errors).toEqual([]);
+});
+
+test('Stop before terminal fonts load prevents OpenCode from being launched',async({page})=>{
+  const errors=await setup(page);
+  await page.evaluate(()=>{
+    const w=window as any;w.__releaseFonts=[];
+    document.fonts.load=()=>new Promise<FontFace[]>(resolve=>{w.__releaseFonts.push(()=>resolve([]));});
+  });
+  const pane=await selectOpenCode(page);
+  await expect.poll(()=>page.evaluate(()=>(window as any).__releaseFonts.length)).toBeGreaterThan(0);
+  await pane.getByRole('button',{name:'Stop',exact:true}).click();
+  await page.evaluate(async()=>{for(const release of (window as any).__releaseFonts)release();await document.fonts.ready;});
+  await expect(pane).toContainText('Stopped');
+  expect(await page.evaluate(()=>(window as any).__aiHarness.openCodeStarts)).toEqual([]);expect(errors).toEqual([]);
+});
+
+for(const guaranteedNotStarted of [true,false]) {
+  test(`OpenCode retry ${guaranteedNotStarted?'retains undelivered':'does not replay ambiguous'} initial intent`,async({page})=>{
+    const errors=await setup(page);
+    await page.evaluate(async(known)=>{
+      // @ts-expect-error Browser loads this source through Vite.
+      const {useAiStore}=await import('/src/domains/ai/store.ts');
+      // @ts-expect-error Browser loads this source through Vite.
+      const {currentAgentScope}=await import('/src/domains/ai/navigation.ts');
+      useAiStore.setState({openCodeRequest:{id:'retry-intent',scope:currentAgentScope(),prompt:'Analyze selected Deployment'}});
+      (window as any).__aiHarness.openCodeFailure=known?{code:'opencode_start_failed',processStarted:false,message:'OpenCode was not found'}:'IPC connection lost';
+    },guaranteedNotStarted);
+    const pane=await selectOpenCode(page);
+    await expect(pane).toContainText('Failed');
+    await page.evaluate(()=>{(window as any).__aiHarness.openCodeFailure=null;});
+    await pane.getByRole('button',{name:'Restart',exact:true}).click();
+    await expect(pane).toContainText('Connected');
+    const prompts=await page.evaluate(()=>(window as any).__aiHarness.openCodeStarts.map((r:any)=>r.prompt));
+    expect(prompts).toEqual(['Analyze selected Deployment',guaranteedNotStarted?'Analyze selected Deployment':null]);
+    await pane.getByRole('button',{name:'Restart',exact:true}).click();
+    await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.openCodeStarts.length)).toBe(3);
+    expect(await page.evaluate(()=>(window as any).__aiHarness.openCodeStarts[2].prompt)).toBeNull();
+    await page.evaluate(()=>{(window as any).__aiHarness.openCodeFailure={code:'opencode_start_failed',processStarted:false,message:'Later restart failed'};});
+    await pane.getByRole('button',{name:'Restart',exact:true}).click();await expect(pane).toContainText('Failed');
+    await page.evaluate(()=>{(window as any).__aiHarness.openCodeFailure=null;});
+    await pane.getByRole('button',{name:'Restart',exact:true}).click();await expect(pane).toContainText('Connected');
+    expect(await page.evaluate(()=>(window as any).__aiHarness.openCodeStarts[4].prompt)).toBeNull();expect(errors).toEqual([]);
+  });
+}

@@ -2,7 +2,7 @@ use kubiki_core::pod_ops::host_terminal::{
     HostTerminalInfo, HostTerminalManager, HostTerminalRequest, host_terminal_info,
 };
 use kubiki_core::{core::api::ApiError, pod_ops::terminal::ExecBatch};
-use tauri::ipc::Channel;
+use tauri::{Manager, ipc::Channel};
 
 #[tauri::command]
 pub async fn start_host_terminal(
@@ -86,6 +86,9 @@ pub async fn close_host_terminal(
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, HostTerminalManager>,
 ) -> Result<(), ApiError> {
+    window
+        .state::<crate::opencode::OpenCodeManager>()
+        .cancel_start(window.label(), &session_id);
     manager.stop(window.label(), &session_id).await;
     Ok(())
 }
