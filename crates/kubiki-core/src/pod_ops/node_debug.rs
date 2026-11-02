@@ -534,7 +534,11 @@ impl NodeDebugManager {
                 owner,
                 terminal_id,
                 exec.clone(),
-                vec!["chroot".into(), "/host".into(), exec.shell],
+                [
+                    vec!["chroot".into(), "/host".into()],
+                    super::terminal::interactive_shell_command(&exec.shell),
+                ]
+                .concat(),
                 async move { Ok(client) },
             )
             .await?;

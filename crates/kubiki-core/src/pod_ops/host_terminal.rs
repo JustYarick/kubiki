@@ -47,6 +47,35 @@ fn error(status: u16, message: impl Into<String>) -> ApiError {
 fn internal(message: impl Into<String>) -> ApiError {
     ApiError::new(ApiErrorCode::Internal, message, "host_terminal", None, None)
 }
+fn terminal_environment(command: &mut CommandBuilder) {
+    // The parent may be Ghostty/Kitty/tmux, but this PTY is rendered by xterm.js.
+    // Inherited capabilities and fixed dimensions mislead full-screen TUIs.
+    for key in [
+        "KITTY_WINDOW_ID",
+        "KITTY_PID",
+        "WEZTERM_PANE",
+        "WEZTERM_EXECUTABLE",
+        "GHOSTTY_RESOURCES_DIR",
+        "GHOSTTY_BIN_DIR",
+        "VTE_VERSION",
+        "ITERM_SESSION_ID",
+        "ITERM_PROFILE",
+        "WT_SESSION",
+        "WT_PROFILE_ID",
+        "TMUX",
+        "TMUX_PANE",
+        "STY",
+        "WINDOWID",
+        "COLUMNS",
+        "LINES",
+    ] {
+        command.env_remove(key);
+    }
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("TERM_PROGRAM", "kubiki");
+    command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+}
 pub fn host_terminal_info() -> Result<HostTerminalInfo, ApiError> {
     let cwd = dirs::home_dir()
         .filter(|p| p.is_dir())
@@ -431,8 +460,7 @@ fn run(
     }
     let mut command = CommandBuilder::new(shell);
     command.cwd(&info.cwd);
-    command.env("TERM", "xterm-256color");
-    command.env("COLORTERM", "truecolor");
+    terminal_environment(&mut command);
     if let Some(process) = process {
         command.args(process.args);
         for (key, value) in process.environment {
@@ -697,5 +725,55 @@ mod tests {
             reaped: false,
             workers: vec![worker],
         });
+    }
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::*;
+    #[test]
+    fn embedded_pty_does_not_claim_parent_terminal_capabilities_or_dimensions() {
+        let mut command = CommandBuilder::new("shell");
+        for key in [
+            "KITTY_WINDOW_ID",
+            "WEZTERM_PANE",
+            "GHOSTTY_RESOURCES_DIR",
+            "TMUX",
+            "VTE_VERSION",
+            "COLUMNS",
+            "LINES",
+        ] {
+            command.env(key, "parent-value");
+        }
+        command.env("TERM_PROGRAM", "ghostty");
+        command.env("USER_SHELL_SETTING", "keep-me");
+        terminal_environment(&mut command);
+        for key in [
+            "KITTY_WINDOW_ID",
+            "WEZTERM_PANE",
+            "GHOSTTY_RESOURCES_DIR",
+            "TMUX",
+            "VTE_VERSION",
+            "COLUMNS",
+            "LINES",
+        ] {
+            assert!(command.get_env(key).is_none(), "{key}");
+        }
+        assert_eq!(
+            command.get_env("TERM_PROGRAM"),
+            Some(std::ffi::OsStr::new("kubiki"))
+        );
+        assert_eq!(
+            command.get_env("TERM"),
+            Some(std::ffi::OsStr::new("xterm-256color"))
+        );
+        assert_eq!(
+            command.get_env("COLORTERM"),
+            Some(std::ffi::OsStr::new("truecolor"))
+        );
+        assert_eq!(
+            command.get_env("USER_SHELL_SETTING"),
+            Some(std::ffi::OsStr::new("keep-me"))
+        );
     }
 }

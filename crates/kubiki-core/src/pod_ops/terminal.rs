@@ -22,6 +22,16 @@ pub struct ExecRequest {
     pub cols: u16,
     pub rows: u16,
 }
+/// Set terminal capabilities using shell builtins, even in minimal images without env(1).
+/// The selected, validated shell is passed as $0 rather than interpolated into code.
+pub(crate) fn interactive_shell_command(shell: &str) -> Vec<String> {
+    vec![
+        shell.into(),
+        "-c".into(),
+        "export TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=kubiki; exec \"$0\" -i".into(),
+        shell.into(),
+    ]
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum ExecEvent {
@@ -178,7 +188,7 @@ impl PodTerminalManager {
     where
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
     {
-        let command = vec![request.shell.clone()];
+        let command = interactive_shell_command(&request.shell);
         self.start_with_command(owner, id, request, command, client)
             .await
     }
