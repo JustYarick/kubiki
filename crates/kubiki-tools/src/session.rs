@@ -2,7 +2,7 @@ use crate::*;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{Mutex as AsyncMutex, watch};
+use tokio::sync::watch;
 static POLICY_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 #[derive(Clone)]
 pub struct Session {
@@ -11,13 +11,12 @@ pub struct Session {
     pub scope: AgentScope,
     pub intent: AgentIntent,
     control: Arc<Mutex<Control>>,
-    history: Arc<AsyncMutex<Vec<Turn>>>,
     cancel: watch::Sender<bool>,
     pub query_cursors: Arc<Mutex<CursorStore>>,
     pub working_scope: Arc<Mutex<WorkingScope>>,
     pub evidence: Arc<Mutex<EvidenceStore>>,
     pub plans: Arc<Mutex<PlanStore>>,
-    memory: Arc<Mutex<ConversationMemory>>,
+    pub accepted_operations: Arc<Mutex<AcceptedOperations>>,
     approval_wait: Arc<Mutex<std::time::Duration>>,
 }
 
@@ -58,11 +57,10 @@ impl Session {
                 active: false,
                 invalidated: false,
             })),
-            history: Arc::default(),
             query_cursors: Arc::default(),
             evidence: Arc::default(),
             plans: Arc::default(),
-            memory: Arc::default(),
+            accepted_operations: Arc::default(),
             approval_wait: Arc::default(),
             cancel,
         }
@@ -86,17 +84,6 @@ impl Session {
         state.active = true;
         self.cancel.send_replace(false);
         Ok(Running(self.clone()))
-    }
-    pub async fn history_guard(&self) -> tokio::sync::MutexGuard<'_, Vec<Turn>> {
-        self.history.lock().await
-    }
-    pub fn compact(&self, history: &mut Vec<Turn>, bytes: usize) -> Result<(), String> {
-        let mut memory = self
-            .memory
-            .lock()
-            .map_err(|_| "Conversation memory unavailable")?;
-        crate::memory::compact_history(history, bytes, &mut memory);
-        Ok(())
     }
     pub fn control(&self) -> Result<Control, String> {
         self.control
@@ -126,6 +113,17 @@ impl Session {
         state.revision += 1;
         self.cancel.send_replace(true);
         Ok(())
+    }
+    /// Per-tool cancellation has its own signal; global control and scope stay shared.
+    pub fn request_scope(&self) -> Self {
+        let (cancel, _) = watch::channel(*self.cancel.borrow());
+        Self {
+            cancel,
+            ..self.clone()
+        }
+    }
+    pub fn cancel_request(&self) {
+        self.cancel.send_replace(true);
     }
     pub fn stop(&self) {
         if let Ok(mut state) = self.control.lock() {
@@ -159,29 +157,8 @@ impl Session {
         self.cancel.send_replace(false);
         Ok(Running(self.clone()))
     }
-    pub async fn record_execution(&self, call: ToolCall, result: Value) {
-        let mut history = self.history.lock().await;
-        history.push(Turn::Assistant(Completion {
-            text: "User-requested execution of a reviewed plan step".into(),
-            calls: vec![call.clone()],
-            native: Value::Null,
-            input_tokens: None,
-            output_tokens: None,
-        }));
-        history.push(Turn::Tool { call, result });
-        if let Ok(mut memory) = self.memory.lock() {
-            crate::memory::compact_history(&mut history, 48_000, &mut memory);
-        }
-    }
     pub fn cancellation(&self) -> watch::Receiver<bool> {
         self.cancel.subscribe()
-    }
-    pub async fn seed_history(&self, turns: Vec<Turn>) {
-        let mut history = self.history.lock().await;
-        *history = turns;
-    }
-    pub async fn inspect_history(&self) -> Vec<Turn> {
-        self.history.lock().await.clone()
     }
     /// Linearization point for dispatch. A permission change cannot authorize an
     /// old approval or a queued write. A dispatched request may still complete.
@@ -207,6 +184,8 @@ impl Session {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
+    /// Optional consumer of public execution records; cluster tools own no conversation history.
+    async fn record_execution(&self, _call: ToolCall, _result: Value) {}
     async fn additional_tools(&self, _session: &Session) -> Result<Vec<ToolDefinition>, String> {
         Ok(vec![])
     }

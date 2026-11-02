@@ -130,10 +130,12 @@ fn sink() -> EventSink {
 
 #[tokio::test]
 async fn model_cannot_invoke_unoffered_writes_in_read_only() {
+    let conversation = ConversationState::default();
     let (client, _, task) = provider(vec![call("scale_workload")]).await;
     let dispatched = Arc::new(AtomicUsize::new(0));
     let outcome = run(
         session(),
+        conversation.clone(),
         0,
         client,
         "dynamic-model".into(),
@@ -151,6 +153,7 @@ async fn model_cannot_invoke_unoffered_writes_in_read_only() {
 
 #[tokio::test]
 async fn accept_executes_permitted_tool_once_and_returns_receipt_to_model() {
+    let conversation = ConversationState::default();
     let (client, requests, task) = provider(vec![call("scale_workload"), final_text()]).await;
     let session = session();
     session.mode(AgentMode::Accept).unwrap();
@@ -158,6 +161,7 @@ async fn accept_executes_permitted_tool_once_and_returns_receipt_to_model() {
     let dispatched = Arc::new(AtomicUsize::new(0));
     run(
         session.clone(),
+        conversation.clone(),
         2,
         client,
         "dynamic-model".into(),
@@ -184,6 +188,7 @@ async fn accept_executes_permitted_tool_once_and_returns_receipt_to_model() {
 
 #[tokio::test]
 async fn stop_and_invalidation_reject_requests_prepared_before_credentials_resolve() {
+    let conversation = ConversationState::default();
     for invalidate in [false, true] {
         let session = session();
         if invalidate {
@@ -200,6 +205,7 @@ async fn stop_and_invalidation_reject_requests_prepared_before_credentials_resol
         let dispatched = Arc::new(AtomicUsize::new(0));
         let outcome = run(
             session,
+            conversation.clone(),
             0,
             ProviderClient::new(profile, String::new()).unwrap(),
             "model".into(),
@@ -217,6 +223,7 @@ async fn stop_and_invalidation_reject_requests_prepared_before_credentials_resol
 
 #[tokio::test]
 async fn plain_chat_omits_tools_and_rejects_unsolicited_tool_calls() {
+    let conversation = ConversationState::default();
     let (client, requests, task) = provider(vec![call("scale_workload")]).await;
     let session = session();
     session.mode(AgentMode::Accept).unwrap();
@@ -224,6 +231,7 @@ async fn plain_chat_omits_tools_and_rejects_unsolicited_tool_calls() {
     let dispatched = Arc::new(AtomicUsize::new(0));
     let result = run(
         session,
+        conversation.clone(),
         2,
         client,
         "model".into(),
@@ -245,6 +253,7 @@ async fn plain_chat_omits_tools_and_rejects_unsolicited_tool_calls() {
 
 #[tokio::test]
 async fn general_chat_never_advertises_cluster_tools() {
+    let conversation = ConversationState::default();
     let (client, requests, task) = provider(vec![final_text()]).await;
     let session = Session::new(
         "general".into(),
@@ -255,6 +264,7 @@ async fn general_chat_never_advertises_cluster_tools() {
     );
     run(
         session,
+        conversation.clone(),
         0,
         client,
         "model".into(),
@@ -275,6 +285,7 @@ async fn general_chat_never_advertises_cluster_tools() {
 
 #[tokio::test]
 async fn stream_disconnect_does_not_dispatch_partially_received_tools() {
+    let conversation = ConversationState::default();
     let fragment = format!(
         "data: {}\n\n",
         json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","function":{"name":"scale_workload","arguments":"{}"}}]}}]})
@@ -287,6 +298,7 @@ async fn stream_disconnect_does_not_dispatch_partially_received_tools() {
     assert!(
         run(
             session,
+            conversation.clone(),
             2,
             client,
             "model".into(),
@@ -334,6 +346,7 @@ impl ToolExecutor for DelayedHost {
 
 #[tokio::test]
 async fn downgrade_invalidates_authorization_while_a_tool_waits_for_review() {
+    let conversation = ConversationState::default();
     let (client, _, server) = provider(vec![call("scale_workload")]).await;
     let session = session();
     session.mode(AgentMode::Accept).unwrap();
@@ -348,6 +361,7 @@ async fn downgrade_invalidates_authorization_while_a_tool_waits_for_review() {
     });
     let running = tokio::spawn(run(
         session.clone(),
+        conversation.clone(),
         2,
         client,
         "model".into(),
@@ -378,6 +392,7 @@ impl ToolExecutor for AskHost {
 
 #[tokio::test]
 async fn ask_user_completes_turn_without_subsequent_model_call() {
+    let conversation = ConversationState::default();
     let call_json = json!({
         "id": "chatcmpl-test",
         "choices": [{
@@ -413,6 +428,7 @@ async fn ask_user_completes_turn_without_subsequent_model_call() {
     let revision = s.control().unwrap().revision;
     run(
         s,
+        conversation.clone(),
         revision,
         client,
         "model".into(),
@@ -436,6 +452,7 @@ async fn ask_user_completes_turn_without_subsequent_model_call() {
 
 #[tokio::test]
 async fn history_compaction_compresses_older_turns_when_context_budget_is_approached() {
+    let conversation = ConversationState::default();
     let s = session();
     let mut initial_turns = Vec::new();
     for i in 0..25 {
@@ -448,11 +465,12 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
             output_tokens: Some(50),
         }));
     }
-    s.seed_history(initial_turns).await;
+    conversation.seed_history(initial_turns).await;
     let (client, _, task) = provider(vec![final_text()]).await;
     let revision = s.control().unwrap().revision;
     run(
         s.clone(),
+        conversation.clone(),
         revision,
         client,
         "model".into(),
@@ -467,7 +485,7 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
     )
     .await
     .unwrap();
-    let history = s.inspect_history().await;
+    let history = conversation.inspect_history().await;
     let first = &history[0];
     match first {
         Turn::User(summary) => assert!(
@@ -653,6 +671,7 @@ fn action_catalog_requires_operation_grants_in_ask_and_accept() {
 
 #[tokio::test]
 async fn asking_a_question_defers_companion_calls_and_keeps_provider_history_complete() {
+    let conversation = ConversationState::default();
     let fragment = format!(
         "data: {}\n\ndata: [DONE]\n\n",
         json!({"choices":[{"delta":{"tool_calls":[
@@ -665,6 +684,7 @@ async fn asking_a_question_defers_companion_calls_and_keeps_provider_history_com
     let revision = session.control().unwrap().revision;
     run(
         session.clone(),
+        conversation.clone(),
         revision,
         client.clone(),
         "model".into(),
@@ -676,7 +696,7 @@ async fn asking_a_question_defers_companion_calls_and_keeps_provider_history_com
     )
     .await
     .unwrap();
-    let history = session.inspect_history().await;
+    let history = conversation.inspect_history().await;
     let deferred = history
         .iter()
         .find_map(|turn| match turn {
@@ -687,6 +707,7 @@ async fn asking_a_question_defers_companion_calls_and_keeps_provider_history_com
     assert_eq!(deferred["executed"], false);
     run(
         session,
+        conversation.clone(),
         revision,
         client,
         "model".into(),
@@ -719,6 +740,7 @@ impl ToolExecutor for UncertainHost {
 }
 #[tokio::test]
 async fn an_uncertain_write_stops_the_batch_without_replaying_or_dispatching_companions() {
+    let conversation = ConversationState::default();
     let fragment = format!(
         "data: {}\n\ndata: [DONE]\n\n",
         json!({"choices":[{"delta":{"tool_calls":[
@@ -735,6 +757,7 @@ async fn an_uncertain_write_stops_the_batch_without_replaying_or_dispatching_com
     assert!(
         run(
             session.clone(),
+            conversation.clone(),
             revision,
             provider,
             "model".into(),
@@ -748,7 +771,7 @@ async fn an_uncertain_write_stops_the_batch_without_replaying_or_dispatching_com
         .is_err()
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    let history = session.inspect_history().await;
+    let history = conversation.inspect_history().await;
     assert!(history.iter().any(|turn|matches!(turn,Turn::Tool {call,result} if call.id=="first" && result["operationId"]=="op-first")));
     assert!(history.iter().any(|turn|matches!(turn,Turn::Tool {call,result} if call.id=="second" && result["executed"]==false)));
     task.await.unwrap();
@@ -772,6 +795,7 @@ impl ToolExecutor for LongApprovalHost {
 }
 #[tokio::test]
 async fn a_long_human_approval_wait_does_not_expire_post_write_generation() {
+    let conversation = ConversationState::default();
     let (provider, _, task) = provider(vec![call("scale_workload"), final_text()]).await;
     let session = session();
     session.mode(AgentMode::Ask).unwrap();
@@ -779,6 +803,7 @@ async fn a_long_human_approval_wait_does_not_expire_post_write_generation() {
     let revision = session.control().unwrap().revision;
     run(
         session,
+        conversation.clone(),
         revision,
         provider,
         "model".into(),
@@ -808,12 +833,14 @@ impl ToolExecutor for RemediationHost {
 }
 #[tokio::test]
 async fn investigate_requires_a_remediation_artifact_and_performs_one_bounded_correction() {
+    let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;
     let (client, requests, task) =
         provider(vec![final_text(), call("propose_plan"), final_text()]).await;
     run(
         s,
+        conversation.clone(),
         0,
         client,
         "model".into(),
@@ -841,11 +868,13 @@ async fn investigate_requires_a_remediation_artifact_and_performs_one_bounded_co
 }
 #[tokio::test]
 async fn investigation_is_not_reported_complete_when_model_repeatedly_omits_remediation() {
+    let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;
     let (client, requests, task) = provider(vec![final_text(), final_text()]).await;
     let result = run(
         s,
+        conversation.clone(),
         0,
         client,
         "model".into(),
@@ -863,6 +892,7 @@ async fn investigation_is_not_reported_complete_when_model_repeatedly_omits_reme
 
 #[tokio::test]
 async fn an_outline_published_before_new_evidence_is_not_the_final_remediation_plan() {
+    let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;
     let (client, requests, task) = provider(vec![
@@ -875,6 +905,7 @@ async fn an_outline_published_before_new_evidence_is_not_the_final_remediation_p
     .await;
     run(
         s,
+        conversation.clone(),
         0,
         client,
         "model".into(),
@@ -892,6 +923,7 @@ async fn an_outline_published_before_new_evidence_is_not_the_final_remediation_p
 
 #[tokio::test]
 async fn an_older_plan_cannot_certify_a_new_investigation_turn() {
+    let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;
     let proposal:PlanProposal=serde_json::from_value(json!({"title":"Old plan","bodyMarkdown":"Old evidence","diagnosis":"Old diagnosis","uncertainty":"Historical","steps":[{"id":"inspect","title":"Inspect","action":"inspect","reason":"Find cause","risk":"Read only","verification":"Read current state"}]})).unwrap();
@@ -909,6 +941,7 @@ async fn an_older_plan_cannot_certify_a_new_investigation_turn() {
     let (client, _, task) = provider(vec![final_text(), final_text()]).await;
     let outcome = run(
         s,
+        conversation.clone(),
         0,
         client,
         "model".into(),
@@ -927,21 +960,54 @@ struct EnvironmentHost;
 #[async_trait]
 impl ToolExecutor for EnvironmentHost {
     async fn additional_tools(&self, _: &Session) -> Result<Vec<ToolDefinition>, String> {
-        Ok(vec![ToolDefinition {name:"read_skill".into(),description:"Read installed skill".into(),parameters:json!({"type":"object","properties":{},"additionalProperties":false})}])
+        Ok(vec![ToolDefinition {
+            name: "read_skill".into(),
+            description: "Read installed skill".into(),
+            parameters: json!({"type":"object","properties":{},"additionalProperties":false}),
+        }])
     }
     async fn execute(&self, _: &Session, call: &ToolCall, _: &EventSink) -> Result<Value, String> {
-        assert_eq!(call.name,"read_skill");
+        assert_eq!(call.name, "read_skill");
         Ok(json!({"text":"Skill instructions"}))
     }
 }
 #[tokio::test]
 async fn general_chat_can_use_environment_tools_without_advertising_cluster_tools() {
-    let (client,requests,task)=provider(vec![call("read_skill"),final_text()]).await;
-    let session=Session::new("environment".into(),"window".into(),AgentScope::default(),AgentPolicy::default(),ClusterCapabilities::default());
-    run(session,0,client,"model".into(),GenerationOptions::default(),String::new(),"Use a skill".into(),Arc::new(EnvironmentHost),sink()).await.unwrap();
-    let requests=requests.lock().unwrap();
-    let tools=requests[0]["tools"].as_array().unwrap();
-    assert!(tools.iter().any(|tool|tool["function"]["name"]=="read_skill"));
-    assert!(!tools.iter().any(|tool|tool["function"]["name"]=="get_resource"));
-    drop(requests);task.await.unwrap();
+    let conversation = ConversationState::default();
+    let (client, requests, task) = provider(vec![call("read_skill"), final_text()]).await;
+    let session = Session::new(
+        "environment".into(),
+        "window".into(),
+        AgentScope::default(),
+        AgentPolicy::default(),
+        ClusterCapabilities::default(),
+    );
+    run(
+        session,
+        conversation.clone(),
+        0,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Use a skill".into(),
+        Arc::new(EnvironmentHost),
+        sink(),
+    )
+    .await
+    .unwrap();
+    let requests = requests.lock().unwrap();
+    let tools = requests[0]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == "read_skill")
+    );
+    assert!(
+        !tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == "get_resource")
+    );
+    drop(requests);
+    task.await.unwrap();
 }

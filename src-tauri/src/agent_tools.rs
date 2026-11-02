@@ -38,12 +38,16 @@ impl kubiki_tools::kubernetes::Consent for DesktopConsent {
 }
 
 pub struct IntegratedTools {
+    pub conversation: kubiki_ai::ConversationState,
     pub cluster: std::sync::Arc<KubernetesTools>,
     pub mcp: kubiki_mcp::McpExecutor,
     pub environment: std::sync::Arc<kubiki_ai::environment::Environment>,
 }
 #[async_trait]
 impl kubiki_tools::ToolExecutor for IntegratedTools {
+    async fn record_execution(&self, call: kubiki_tools::ToolCall, result: serde_json::Value) {
+        self.conversation.record_execution(call, result).await;
+    }
     async fn additional_tools(
         &self,
         session: &kubiki_tools::Session,

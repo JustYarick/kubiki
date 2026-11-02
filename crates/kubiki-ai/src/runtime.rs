@@ -115,6 +115,7 @@ Structure the summary:\n\
 
 pub async fn run(
     session: Session,
+    conversation: ConversationState,
     expected_revision: u64,
     provider: ProviderClient,
     model: String,
@@ -131,7 +132,7 @@ pub async fn run(
     }
     let _running = session.begin_run(expected_revision)?;
     let mut cancellation = session.cancellation();
-    let mut history = session.history_guard().await;
+    let mut history = conversation.history_guard().await;
 
     let budget_tokens = options
         .context_tokens
@@ -186,7 +187,7 @@ pub async fn run(
             let fixed_tokens = crate::memory::estimate_tokens(&system) + crate::memory::estimate_tokens(&serde_json::to_string(&definitions).unwrap()) + reserved_output;
             let available = budget_tokens.checked_sub(fixed_tokens).filter(|n| *n >= 256).ok_or("Context budget cannot fit instructions, tools and output reserve; choose a larger context or disable tools")?;
             {
-                session.compact(&mut history, available.saturating_mul(3))?;
+                conversation.compact(&mut history, available.saturating_mul(3))?;
             }
             if crate::memory::history_tokens(&history) > available { return Err("Conversation exceeds the estimated model context budget after compaction; reduce the query or start a new conversation. Receipts were retained".into()); }
             emit(AgentEvent::Context {estimated_input_tokens:(fixed_tokens-reserved_output+crate::memory::history_tokens(&history)) as u64,budget_tokens:budget_tokens as u64,reserved_output_tokens:reserved_output as u64});

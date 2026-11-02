@@ -119,7 +119,7 @@ pub async fn execute_reviewed_plan(
             id: public.id.clone(),
             result: result.clone(),
         });
-        session.record_execution(public, result.clone()).await;
+        host.record_execution(public, result.clone()).await;
         let ok = result["status"] == "accepted";
         receipts.push(json!({"stepId":step.id,"receipt":result}));
         if !ok {
@@ -140,7 +140,7 @@ pub async fn execute_reviewed_plan(
                     id: call.id.clone(),
                     result: observation.clone(),
                 });
-                session.record_execution(call, observation.clone()).await;
+                host.record_execution(call, observation.clone()).await;
                 receipts.last_mut().unwrap()["reconciliationObservation"] = observation;
             }
             break;
@@ -173,7 +173,7 @@ pub async fn execute_reviewed_plan(
             id: call.id.clone(),
             result: verification.clone(),
         });
-        session.record_execution(call, verification.clone()).await;
+        host.record_execution(call, verification.clone()).await;
         if verification["verification"] == "verified" {
             verified.insert(step.id.clone());
         }
@@ -232,9 +232,13 @@ mod tests {
         uncertain: bool,
         verified: bool,
         verification_uids: Mutex<Vec<String>>,
+        records: Mutex<Vec<(ToolCall, Value)>>,
     }
     #[async_trait]
     impl ToolExecutor for Host {
+        async fn record_execution(&self, call: ToolCall, result: Value) {
+            self.records.lock().unwrap().push((call, result));
+        }
         fn accepted_uid(&self, _: &str) -> Option<String> {
             Some("actual-accepted-uid".into())
         }
@@ -329,6 +333,7 @@ mod tests {
             uncertain: false,
             verified: false,
             verification_uids: Mutex::new(Vec::new()),
+            records: Mutex::default(),
         });
         let result = execute_reviewed_plan(&session, review, host.clone(), Arc::new(|_| {}))
             .await
@@ -340,7 +345,7 @@ mod tests {
             &*host.verification_uids.lock().unwrap(),
             &["actual-accepted-uid"]
         );
-        let history = format!("{:?}", session.inspect_history().await);
+        let history = format!("{:?}", host.records.lock().unwrap());
         assert!(!history.contains("private-review-uid") && !history.contains("private-review-rv"));
     }
     #[tokio::test]
@@ -352,6 +357,7 @@ mod tests {
             uncertain: false,
             verified: false,
             verification_uids: Mutex::new(Vec::new()),
+            records: Mutex::default(),
         });
         let result = execute_reviewed_plan(&session, review, host.clone(), Arc::new(|_| {}))
             .await
@@ -369,6 +375,7 @@ mod tests {
             uncertain: true,
             verified: true,
             verification_uids: Mutex::new(Vec::new()),
+            records: Mutex::default(),
         });
         let result = execute_reviewed_plan(&session, review, host.clone(), Arc::new(|_| {}))
             .await

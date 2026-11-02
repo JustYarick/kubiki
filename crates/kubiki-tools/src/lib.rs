@@ -8,6 +8,7 @@ pub mod pagination;
 pub mod plans;
 pub mod policy;
 pub mod query;
+pub mod receipts;
 pub mod session;
 pub mod summary;
 pub mod types;
@@ -17,11 +18,12 @@ pub use diagnostics::*;
 pub use execution::{
     PlanReview, ReviewedStep, contains_desired_fields, execute_reviewed_plan, public_execution_call,
 };
-pub use memory::{ConversationMemory, EvidenceStore};
+pub use memory::EvidenceStore;
 pub use pagination::{CursorStore, QueryPage, split_page};
 pub use plans::{PlanProposal, PlanStore};
 pub use policy::*;
 pub use query::{FieldSelection, profile_fields};
+pub use receipts::{AcceptedOperation, AcceptedOperations};
 pub use session::*;
 pub use summary::ResourceSummary;
 pub use types::*;

@@ -243,6 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Prompt: {}\n", diag_prompt);
         let outcome = run(
             session.clone(),
+            ConversationState::default(),
             revision,
             provider.clone(),
             model.clone(),
@@ -317,6 +318,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Prompt: {}\n", plan_prompt);
         let outcome = run(
             session.clone(),
+            ConversationState::default(),
             revision,
             provider.clone(),
             model.clone(),

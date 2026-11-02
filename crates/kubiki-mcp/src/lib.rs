@@ -76,11 +76,19 @@ impl ClusterServer {
         call: &ToolCall,
         cancellation: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<Value, String> {
+        let cancellation = cancellation.unwrap_or_default();
+        let revision = self.session.control()?.revision;
         let _guard = if self.host_owned {
-            Some(self.gate.lock().await)
+            Some(tokio::select! { biased;
+                _ = cancellation.cancelled() => return Err("Tool request cancelled while queued".into()),
+                guard = self.gate.lock() => guard,
+            })
         } else {
             None
         };
+        if self.session.control()?.revision != revision {
+            return Err("Session changed while the tool was queued".into());
+        }
         if self
             .inflight
             .closed
@@ -88,7 +96,7 @@ impl ClusterServer {
         {
             return Err("MCP connection closed".into());
         }
-        if cancellation.as_ref().is_some_and(|c| c.is_cancelled()) {
+        if cancellation.is_cancelled() {
             return Err("Tool request cancelled before dispatch".into());
         }
         if !self.definitions()?.iter().any(|t| t.name == call.name) {
@@ -106,7 +114,15 @@ impl ClusterServer {
             .get(&call.id)
             .cloned()
             .unwrap_or_else(|| self.emit.clone());
-        self.executor.execute(&self.session, call, &sink).await
+        let request_session = self.session.request_scope();
+        let mut global_cancel = self.session.cancellation();
+        let execution = self.executor.execute(&request_session, call, &sink);
+        tokio::pin!(execution);
+        tokio::select! { biased;
+            _ = cancellation.cancelled() => {request_session.cancel_request(); execution.await},
+            _ = cancelled(&mut global_cancel) => {request_session.cancel_request(); execution.await},
+            result = &mut execution => result,
+        }
     }
 }
 impl ServerHandler for ClusterServer {
@@ -176,11 +192,7 @@ impl ServerHandler for ClusterServer {
         let registration = ActiveRequest(server.inflight.clone());
         let work = tokio::spawn(async move {
             let _registration = registration;
-            let execute = server.execute_request(&call, Some(request_cancel.clone()));
-            tokio::pin!(execute);
-            tokio::select! { result=&mut execute=>result,
-                _=request_cancel.cancelled()=>{server.session.stop();execute.await}
-            }
+            server.execute_request(&call, Some(request_cancel)).await
         });
         let value = work
             .await
@@ -342,5 +354,124 @@ impl Drop for ActiveRequest {
             .active
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         self.0.done.notify_waiters();
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use rmcp::service::PeerRequestOptions;
+    struct Blocking {
+        started: Arc<tokio::sync::Notify>,
+        finish: Arc<tokio::sync::Notify>,
+    }
+    #[async_trait::async_trait]
+    impl ToolExecutor for Blocking {
+        async fn execute(
+            &self,
+            session: &Session,
+            call: &ToolCall,
+            _: &EventSink,
+        ) -> Result<Value, String> {
+            if call.arguments["name"] == "A" {
+                self.started.notify_one();
+            }
+            let mut cancelled_request = session.cancellation();
+            tokio::select! {
+                _=cancelled(&mut cancelled_request)=>Err("This request was cancelled".into()),
+                _=self.finish.notified()=>Ok(json!({"completed":call.arguments["name"]})),
+            }
+        }
+    }
+    async fn cancelling_b_does_not_stop_a(host_owned: bool) {
+        let session = Session::new(
+            "cancel-test".into(),
+            "host".into(),
+            AgentScope {
+                context: "fixture".into(),
+                namespaces: vec!["apps".into()],
+                all_namespaces: false,
+            },
+            AgentPolicy::default(),
+            ClusterCapabilities::default(),
+        );
+        let _run = if host_owned {
+            None
+        } else {
+            Some(session.begin_run(0).unwrap())
+        };
+        let started = Arc::new(tokio::sync::Notify::new());
+        let finish = Arc::new(tokio::sync::Notify::new());
+        let server = ClusterServer::new(
+            session,
+            Arc::new(Blocking {
+                started: started.clone(),
+                finish: finish.clone(),
+            }),
+            Arc::new(|_| {}),
+            host_owned,
+        );
+        let (c, s) = tokio::io::duplex(65536);
+        let (client, service) = tokio::join!(().serve(c), server.clone().serve(s));
+        let client = client.unwrap();
+        let service = service.unwrap();
+        let peer = client.peer().clone();
+        let first = tokio::spawn(async move {
+            peer.call_tool(
+                CallToolRequestParams::new("get_resource")
+                    .with_arguments(serde_json::from_value(json!({"name":"A"})).unwrap()),
+            )
+            .await
+        });
+        started.notified().await;
+        let second:ClientRequest=serde_json::from_value(json!({"method":"tools/call","params":{"name":"get_resource","arguments":{"name":"B"}}})).unwrap();
+        let second = client
+            .peer()
+            .send_request_with_option(second, PeerRequestOptions::no_options())
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while server
+                .inflight
+                .active
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 2
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let revision = server.session.control().unwrap().revision;
+        second.cancel(Some("Cancel only B".into())).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while server
+                .inflight
+                .active
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 1
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(server.session.control().unwrap().revision, revision);
+        assert!(!*server.session.cancellation().borrow());
+        assert!(!first.is_finished());
+        finish.notify_one();
+        let first = first.await.unwrap().unwrap();
+        assert_ne!(first.is_error, Some(true));
+        assert_eq!(first.structured_content.unwrap()["completed"], "A");
+        let _ = client.cancel().await;
+        let _ = service.cancel().await;
+    }
+    #[tokio::test]
+    async fn queued_cancellation_does_not_stop_running_host_request() {
+        cancelling_b_does_not_stop_a(true).await;
+    }
+    #[tokio::test]
+    async fn parallel_embedded_cancellation_is_request_local() {
+        cancelling_b_does_not_stop_a(false).await;
     }
 }

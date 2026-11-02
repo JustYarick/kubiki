@@ -37,6 +37,7 @@ pub struct SettingsView {
 
 struct ManagedSession {
     session: Session,
+    conversation: ConversationState,
     provider: ProviderProfile,
     model: String,
     options: GenerationOptions,
@@ -477,6 +478,7 @@ pub async fn ai_create_session(
         id.clone(),
         Arc::new(ManagedSession {
             session,
+            conversation: ConversationState::default(),
             provider: profile,
             model: request.model,
             options: request.options,
@@ -585,6 +587,7 @@ pub async fn ai_send_message(
     let instructions = format!("{}\n{}", managed.instructions, skill_instructions);
     run(
         managed.session.clone(),
+        managed.conversation.clone(),
         revision,
         provider,
         managed.model.clone(),
@@ -678,7 +681,7 @@ async fn tool_host(
         write_rejected,
         read_permits: manager.read_permits.clone(),
         journal,
-        accepted_identities: Arc::default(),
+        accepted_operations: managed.session.accepted_operations.clone(),
     });
     let mcp = kubiki_mcp::McpExecutor::connect(kubiki_mcp::ClusterServer::new(
         managed.session.clone(),
@@ -690,6 +693,7 @@ async fn tool_host(
     Ok(Arc::new(crate::agent_tools::IntegratedTools {
         cluster,
         mcp,
+        conversation: managed.conversation.clone(),
         environment: managed.environment.clone(),
     }))
 }

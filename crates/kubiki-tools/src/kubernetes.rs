@@ -50,12 +50,6 @@ impl Consent for HostConsent {
     }
 }
 
-#[derive(Clone)]
-pub struct AcceptedIdentity {
-    uid: String,
-    generation: Option<u64>,
-}
-
 pub struct KubernetesTools {
     pub consent: std::sync::Arc<dyn Consent>,
     pub pool: kubiki_core::cluster::client::ClusterClientPool,
@@ -65,8 +59,7 @@ pub struct KubernetesTools {
     pub budget: std::sync::Arc<kubiki_core::core::read_budget::ReadBudget>,
     pub journal: PathBuf,
     pub read_permits: std::sync::Arc<tokio::sync::Semaphore>,
-    pub accepted_identities:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, AcceptedIdentity>>>,
+    pub accepted_operations: std::sync::Arc<std::sync::Mutex<AcceptedOperations>>,
 }
 
 fn stamp() -> u128 {
@@ -181,7 +174,7 @@ async fn resource_access(
 #[async_trait]
 impl ToolExecutor for KubernetesTools {
     fn accepted_uid(&self, id: &str) -> Option<String> {
-        self.accepted_identities
+        self.accepted_operations
             .lock()
             .ok()?
             .get(id)
@@ -227,8 +220,8 @@ impl ToolExecutor for KubernetesTools {
                 serde_json::to_value(target).map_err(|_| "Cannot encode verification target")?;
             arguments["uid"] = json!(uid);
             arguments["timeoutSeconds"] = json!(20);
-            let generation = self.accepted_identities.lock().ok().and_then(|ids| {
-                ids.get(&format!("call:{}", call.id))
+            let generation = self.accepted_operations.lock().ok().and_then(|ids| {
+                ids.for_call(&call.id)
                     .filter(|identity| identity.uid == uid)
                     .and_then(|identity| identity.generation)
             });
@@ -506,13 +499,54 @@ impl KubernetesTools {
                 namespace: String,
                 name: String,
                 uid: Option<String>,
+                operation_id: Option<String>,
                 timeout_seconds: Option<u64>,
                 expected_replicas: Option<u32>,
                 expected_generation: Option<u64>,
                 desired_state: Option<Value>,
             }
-            let args: Args = serde_json::from_value(call.arguments.clone())
+            let mut args: Args = serde_json::from_value(call.arguments.clone())
                 .map_err(|_| "Invalid verification request")?;
+            let target = Target {
+                group: args.group.clone(),
+                version: args.version.clone(),
+                kind: args.kind.clone(),
+                namespace: Some(args.namespace.clone()),
+                name: args.name.clone(),
+            };
+            let accepted =
+                {
+                    let registry = self
+                        .accepted_operations
+                        .lock()
+                        .map_err(|_| "Accepted operation registry unavailable")?;
+                    match &args.operation_id {
+                        Some(id) => Some(registry.get(id).ok_or(
+                            "Accepted operation expired or belongs to another connection",
+                        )?),
+                        None => registry.latest(&target),
+                    }
+                };
+            if let Some(operation) = accepted {
+                if operation.target != target
+                    || args.uid.as_ref().is_some_and(|uid| *uid != operation.uid)
+                {
+                    return Err("Verification target does not match the accepted operation".into());
+                }
+                if operation.generation.is_none() {
+                    return Ok(
+                        json!({"verification":"unavailable","observation":"Accepted workload generation is unavailable"}),
+                    );
+                }
+                args.uid = Some(operation.uid);
+                args.expected_generation = operation.generation;
+                args.expected_replicas = operation.replicas.or(args.expected_replicas);
+                args.desired_state = operation.desired_state.or(args.desired_state);
+            } else if args.uid.is_none() {
+                return Ok(
+                    json!({"verification":"unavailable","observation":"Provide an accepted operationId or a previously observed UID. Use workload diagnostics for current health."}),
+                );
+            }
             let timeout = args.timeout_seconds.unwrap_or(15);
             if !(1..=20).contains(&timeout)
                 || !matches!(
@@ -3031,18 +3065,6 @@ impl KubernetesTools {
                     .map_err(|message| kubiki_core::core::mutations::cancelled(&pinned, &message))
             })
             .await;
-        if let Ok(object) = &outcome {
-            if let Some(uid) = object["metadata"]["uid"].as_str() {
-                if let Ok(mut identities) = self.accepted_identities.lock() {
-                    let identity = AcceptedIdentity {
-                        uid: uid.to_owned(),
-                        generation: object["metadata"]["generation"].as_u64(),
-                    };
-                    identities.insert(operation_id.clone(), identity.clone());
-                    identities.insert(format!("call:{}", call.id), identity);
-                }
-            }
-        }
         let status = match &outcome {
             Ok(_) => "accepted",
             Err(_)
@@ -3068,9 +3090,19 @@ impl KubernetesTools {
             );
         }
         match outcome {
-            Ok(_) => Ok(
-                json!({"operationId":operation_id,"status":"accepted","target":target,"message":"Kubernetes API accepted the change. This does not establish rollout completion or application health"}),
-            ),
+            Ok(object) => {
+                if let Some(operation) =
+                    AcceptedOperation::new(operation_id.clone(), call, target.clone(), &object)
+                {
+                    self.accepted_operations
+                        .lock()
+                        .map_err(|_| "Accepted operation registry unavailable")?
+                        .save(operation);
+                }
+                Ok(
+                    json!({"operationId":operation_id,"status":"accepted","target":target,"uid":object["metadata"]["uid"],"generation":object["metadata"]["generation"],"message":"Kubernetes API accepted the change. Verify this operationId; API acceptance does not establish rollout completion or application health"}),
+                )
+            }
             Err(error) => Ok(
                 json!({"operationId":operation_id,"status":status,"target":target,"error":if status=="cancelled" {"Change cancelled before HTTP dispatch".to_owned()}else{error_message(error)},"retry":false}),
             ),
@@ -3543,7 +3575,7 @@ impl KubernetesTools {
             budget,
             write_rejected: rejected,
             read_permits,
-            accepted_identities: std::sync::Arc::default(),
+            accepted_operations: session.accepted_operations.clone(),
         })
     }
 }
