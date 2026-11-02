@@ -64,7 +64,7 @@ impl ProviderClient {
         .send()
         .await
         .map_err(|_| "Cannot connect to the AI endpoint; check address, network and TLS")?;
-        let response = checked(response)?;
+        let response = checked(response, !self.key.is_empty())?;
         let mut bytes = Vec::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -151,7 +151,7 @@ impl ProviderClient {
             .send()
             .await
             .map_err(|_| "Cannot connect to the AI endpoint; check address, network and TLS")?;
-        let response = checked(response)?;
+        let response = checked(response, !self.key.is_empty())?;
         let ndjson = self.profile.protocol == ProviderProtocol::Ollama;
         let mut parser = StreamDecoder::new(ndjson);
         let mut accumulator = Accumulator::default();
@@ -211,13 +211,28 @@ pub fn is_loopback_profile(profile: &ProviderProfile) -> bool {
         .is_some_and(|host| ["localhost", "127.0.0.1", "[::1]", "::1"].contains(&host.as_str()))
 }
 
-fn checked(response: reqwest::Response) -> Result<reqwest::Response, String> {
+fn checked(response: reqwest::Response, authenticated: bool) -> Result<reqwest::Response, String> {
     if response.status().is_success() {
         return Ok(response);
     }
-    // Never expose provider error bodies: some gateways echo prompts or credentials.
+    // The origin identifies a wrong provider without exposing URL paths, queries,
+    // error bodies or credentials (gateways may echo any of these).
+    let origin = response.url().origin().ascii_serialization();
+    let hint = match response.status().as_u16() {
+        401 if authenticated => {
+            "Authentication failed: the configured API key was rejected. Update the saved key, or remove it if this server does not require authentication. Verify that the API root points to the intended server."
+        }
+        401 => {
+            "Authentication required: no API key was sent. Check that the API root points to the intended server and enter its key if required. Local llama.cpp without --api-key needs no key."
+        }
+        403 => "Access denied. Check this provider's credentials and model permissions.",
+        404 => {
+            "Endpoint or model not found. Check the API root, protocol and selected model; OpenAI-compatible APIs normally include /v1 in the root."
+        }
+        _ => "Check the API root, model access and generation options.",
+    };
     Err(format!(
-        "AI endpoint returned HTTP {}. Check credentials, model access, API root and generation options",
+        "AI endpoint {origin} returned HTTP {}. {hint}",
         response.status().as_u16()
     ))
 }

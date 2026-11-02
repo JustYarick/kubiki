@@ -146,6 +146,18 @@ from model names. Explicitly retired models are excluded. Refresh to pick up new
 installed or newly available models. Discovery failure is visible, with no fallback
 to an invented model list.
 
+For a local llama.cpp server, select **OpenAI-compatible chat** and use
+`http://127.0.0.1:<port>/v1` as the API root. The key stays empty unless the server
+requires authentication (`--api-key` / `--api-key-file`). Test the connection,
+save the provider, choose an advertised model and save the defaults. Existing
+conversations keep their pinned provider/model; start a new conversation to use
+a changed default. See the [llama.cpp server API](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
+
+HTTP errors identify the server origin and distinguish a missing key from a
+rejected configured key. A 401 does not imply unsupported generation options.
+Provider error bodies, URL paths/queries and key values remain excluded from the
+error. Authentication failures do not trigger a retry without credentials.
+
 Token limit and temperature are optional; leave them empty for provider defaults.
 Anthropic requires `max_tokens`, for which Kubiki supplies 4096 when unset.
 Ollama additionally supports an explicit runtime context window (`num_ctx`), since
