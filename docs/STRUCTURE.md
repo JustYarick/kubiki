@@ -148,6 +148,17 @@ tool contracts and reaches execution through the in-memory MCP client in
 `crates/kubiki-mcp/`. That crate also supplies standalone stdio and attached hosts.
 `src/domains/ai/` owns chat/settings UI, conversation presentation and its native adapter.
 
+Settings share row layout and responsive rules in
+`src/components/settings/settings.css`. Labels and controls use separate columns
+when space permits; narrow content stacks larger controls while keeping
+checkboxes beside their labels. The dialog uses a compact category selector
+when its width relative to the text size cannot fit the sidebar. Log history and scrolling controls are collapsed
+until opened or found through search. Switching categories resets the content
+scroll position. AI settings use the same labels for connection and data-access
+levels in Kubiki and OpenCode modes. Rule-matching help follows the selected
+policy semantics. Integration detection labels describe discovered Argo CD and
+Flux APIs; Helm has no detection label without a corresponding check.
+
 `src-tauri/src/agent_commands.rs` composes window ownership, keyring credentials,
 native settings and session lifecycle. `agent_tools.rs` supplies native consent,
 provider/skill adapters and the bridge back to conversation state. Cluster execution

@@ -42,6 +42,14 @@ closing, persisted workspace migration and resource demand from hidden views.
 topology scope and AI drafts. AI browser scenarios also verify that section
 navigation preserves a running conversation without stopping it.
 
+`settings_layout.spec.ts` covers desktop, narrow and 200% scale settings:
+controls stay within the content area, checkbox labels toggle their inputs,
+streaming disables the polling interval, search exposes advanced log settings,
+and category changes reset scrolling. Topology shows the effective update
+interval in Performance mode while retaining the saved interval for other
+profiles. AI scenarios verify that rule-matching help changes with its selected
+semantics and that only discovered integrations show a detection label in Auto.
+
 `topology_readiness.test.ts` distinguishes unknown collections from empty
 snapshots, verifies context and namespace coverage, and covers failed,
 unsupported, stopped and demo collections. `topology_loading.spec.ts` delays
