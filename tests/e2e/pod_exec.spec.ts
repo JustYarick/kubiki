@@ -3,6 +3,11 @@ import { test, expect, type Page } from '@playwright/test';
 const name = 'pod-with-init-container-and-a-long-name-for-responsive-toolbar';
 async function setup(page: Page, denied = false) {
   await page.addInitScript(({ name, denied }) => {
+    // Transport assertions read DOM text; explicitly exercise the WebGL-unavailable fallback.
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(this: HTMLCanvasElement, type: string, ...args: any[]) {
+      return type === 'webgl2' ? null : (getContext as any).call(this, type, ...args);
+    } as typeof getContext;
     const w = window as any; const encoder = new TextEncoder(); const callbacks = new Map(); let callbackId = 0;
     const active = new Map<string, any>(); const closed: any[] = []; const starts: any[] = []; const input: string[] = []; const sizes: any[] = []; const acknowledgements: any[] = []; const logContainers: string[] = [];
     const pod = { apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'pod-uid', name, namespace: 'backend' }, spec: { containers: [{ name: 'app', image: 'app' }, { name: 'proxy', image: 'proxy' }], initContainers: [{ name: 'setup', image: 'setup' }, { name: 'shipper', image: 'shipper', restartPolicy: 'Always' }], ephemeralContainers: [{ name: 'debug', image: 'debug' }] }, status: { phase: 'Running', containerStatuses: [{ name: 'app', ready: true, state: { running: {} } }, { name: 'proxy', ready: false, restartCount: 4, state: { waiting: { reason: 'CrashLoopBackOff' } } }], initContainerStatuses: [{ name: 'setup', state: { terminated: { exitCode: 0, reason: 'Completed' } } }, { name: 'shipper', ready: true, state: { running: {} } }], ephemeralContainerStatuses: [{ name: 'debug', state: { running: {} } }] } };
@@ -320,4 +325,22 @@ test('multi-container launches wait for an explicit choice; Cancel creates no te
   await dialog.getByRole('button', { name: 'Open shell for shipper', exact: true }).click();
   await expect(page.getByTestId('live-terminal').getByRole('status')).toHaveText('Connected');
   expect(await page.evaluate(() => (window as any).__execHarness.starts.map((request: any) => request.container))).toEqual(['shipper']);
+});
+
+
+test('global terminal typography updates existing logs without dropping lines', async ({ page }) => {
+  await setup(page);
+  await page.getByTestId('resource-details').getByRole('button', { name: 'Logs', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Open logs for app', exact: true }).click();
+  const output = page.getByTestId('log-output');
+  await expect(output).toContainText('app log output');
+  await page.evaluate(async () => {
+    const { useUiStore } = await import(/* @vite-ignore */ '/src/state/ui_store.ts' as string);
+    useUiStore.getState().setTerminalFontFamily('monospace');
+    useUiStore.getState().setTerminalFontSize(20);
+    useUiStore.getState().setTerminalLineHeight(1.5);
+  });
+  await expect(output.getByTestId('log-line').first()).toHaveCSS('font-size', '20px');
+  await expect(output.getByTestId('log-line').first()).toHaveCSS('line-height', '30px');
+  await expect(output).toContainText('app log output');
 });

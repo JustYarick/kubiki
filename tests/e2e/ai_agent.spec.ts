@@ -11,7 +11,7 @@ async function setup(page: Page) {
     const keys = new Map<string, string>(); const sessions = new Map<string, any>();
     const callbacks = new Map<number, unknown>(); let sequence = 0;
     const commands: Array<{ command: string; args: any }> = []; const sends: any[] = []; const modes: any[] = []; const stops: any[] = [];
-    w.__aiHarness = { commands, sends, modes, stops, hold: false, openCodeStarts: [], openCodeCloses: [], openCodeCompletions: 0, models: [{ id: 'model-from-endpoint', name: 'Endpoint model', contextWindow: 32768, maxOutputTokens: 8192, tools: true }], settings: () => settings, key: (id: string) => keys.get(id) };
+    w.__aiHarness = { commands, sends, modes, stops, hold: false, openCodeStarts: [], openCodeCloses: [], openCodeCompletions: 0, openCodeWrites: [], openCodeSizes: [], models: [{ id: 'model-from-endpoint', name: 'Endpoint model', contextWindow: 32768, maxOutputTokens: 8192, tools: true }], settings: () => settings, key: (id: string) => keys.get(id) };
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     w.__TAURI_INTERNALS__ = {
       transformCallback: (callback: unknown) => { callbacks.set(++sequence, callback); return sequence; }, unregisterCallback: (id: number) => callbacks.delete(id),
@@ -22,10 +22,17 @@ async function setup(page: Page) {
           if(w.__aiHarness.openCodeFailure) throw w.__aiHarness.openCodeFailure;
           if(w.__aiHarness.deferOpenCode) await new Promise<void>(resolve=>{w.__aiHarness.releaseOpenCode=resolve;});
           args.onEvent.onmessage({session_id:args.sessionId,messages:[{sequence:1,event:{type:'Started'}}]});
+          if (w.__aiHarness.negotiateTerminal) {
+            const parsed = new Promise<void>(resolve => { w.__aiHarness.queryParsed = resolve; });
+            args.onEvent.onmessage({session_id:args.sessionId,messages:[{sequence:2,event:{type:'Output',payload:{data:[...new TextEncoder().encode('\x1b[6n\x1b]11;?\x1b\\')]}}}]});
+            await parsed;
+          }
           w.__aiHarness.openCodeCompletions++;return;
         }
         if (command === 'close_host_terminal') {w.__aiHarness.openCodeCloses.push(args.sessionId);return;}
-        if (['ack_host_terminal','resize_host_terminal','write_host_terminal'].includes(command))return;
+        if (command === 'write_host_terminal') { w.__aiHarness.openCodeWrites.push(args.data); return; }
+        if (command === 'resize_host_terminal') { w.__aiHarness.openCodeSizes.push({cols:args.cols,rows:args.rows}); return; }
+        if (command === 'ack_host_terminal') { if(args.sequence===2)w.__aiHarness.queryParsed?.(); return; }
 
         if (command === 'plugin:event|listen') { if(args.event === 'mutation-confirm-request') w.__aiHarness.confirm = (payload: any) => (callbacks.get(args.handler) as ((event: any) => void) | undefined)?.({event: args.event, payload}); return ++sequence; }
         if (command === 'resolve_mutation_confirm') { w.__aiHarness.decision = args.approved; w.__aiHarness.resolveApproval?.(); return true; }
@@ -491,3 +498,27 @@ for(const guaranteedNotStarted of [true,false]) {
     expect(await page.evaluate(()=>(window as any).__aiHarness.openCodeStarts[4].prompt)).toBeNull();expect(errors).toEqual([]);
   });
 }
+
+
+test('OpenCode answers startup terminal queries and fits its screen after font and pane resize', async ({ page }) => {
+  const errors = await setup(page);
+  await page.evaluate(() => { (window as any).__aiHarness.negotiateTerminal = true; });
+  const pane = await selectOpenCode(page);
+  await expect(pane).toContainText('Connected');
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.openCodeWrites.join(''))).toContain('\x1b[1;1R');
+  expect(await page.evaluate(() => (window as any).__aiHarness.openCodeWrites.join(''))).toContain('rgb:');
+  for (const width of [1000, 1440]) {
+    await page.setViewportSize({width,height:900});
+    await page.evaluate(async () => {
+      const { useUiStore } = await import(/* @vite-ignore */ '/src/state/ui_store.ts' as string);
+      useUiStore.getState().setTerminalFontSize(18);
+      useUiStore.getState().setTerminalLineHeight(1.4);
+    });
+    await expect.poll(() => pane.locator('.xterm-screen').evaluate(screen => {
+      const bounds = screen.getBoundingClientRect(); const host = screen.closest('.terminal-surface')!.getBoundingClientRect();
+      return bounds.right <= host.right + 1 && bounds.bottom <= host.bottom + 1 && bounds.width > host.width * .9;
+    })).toBe(true);
+  }
+  expect(await page.evaluate(() => (window as any).__aiHarness.openCodeStarts.length)).toBe(1);
+  expect(errors).toEqual([]);
+});

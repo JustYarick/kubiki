@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
+import type { Terminal } from '@xterm/xterm';
+import { createTerminalView, type TerminalView } from '../../../core/terminal_view';
 import { Button } from '../../../components/ui/Button';
 import { connectOpenCode, OpenCodeNotStartedError, type ExecConnection } from '../../../providers/tauri_exec';
-import { loadTerminalFonts, terminalFontStack } from '../../../core/terminal_appearance';
 import { useTerminalAppearance } from '../../../components/k8s/useTerminalAppearance';
 import { useUiStore } from '../../../state/ui_store';
 import { useClusterStore } from '../../../state/cluster_store';
@@ -21,7 +20,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const connection = useRef<ExecConnection | null>(null);
-  const fit = useRef<FitAddon | null>(null);
+  const fit = useRef<TerminalView | null>(null);
   const startup = useRef<AbortController | null>(null);
   const pinnedContext = useRef<string | null>(context);
 
@@ -37,33 +36,33 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
     const appearance = useUiStore.getState();
     const cancel = new AbortController();
     startup.current = cancel;
-    let live = false; let acknowledged = false; let started = false; let finished = false;
+    let acknowledged = false; let started = false; let finished = false;
     const scope = request && request.scope.context === context ? request.scope : currentAgentScope();
     setScopeLabel(`${scope.context || 'No cluster selected'} / ${scope.allNamespaces ? 'All namespaces' : scope.namespaces.join(', ') || 'No namespaces'}`);
     pinnedContext.current = context;
-    const term = new Terminal({
-      fontFamily: terminalFontStack(appearance.terminalFontFamily), fontSize: appearance.terminalFontSize,
-      lineHeight: appearance.terminalLineHeight, scrollback: appearance.terminalScrollback,
-      cursorBlink: true, disableStdin: true, theme: { background: '#1e1f22', foreground: '#dfe1e5' },
+    const view = createTerminalView(box.current, appearance, (cols, rows) => {
+      if (!cancel.signal.aborted) connection.current?.resize(cols, rows);
     });
-    const addon = new FitAddon(); term.loadAddon(addon); term.open(box.current);
-    terminal.current = term; fit.current = addon;
-    const resize = () => {
-      if (!cancel.signal.aborted && box.current?.clientWidth && box.current.clientHeight) {
-        addon.fit(); connection.current?.resize(term.cols, term.rows);
-      }
-    };
-    const observer = new ResizeObserver(resize); observer.observe(box.current); resize();
+    const term = view.terminal;
+    terminal.current = term; fit.current = view;
+    const resize = view.fit;
+    let pendingInput = '';
     const enable = () => {
-      if (started && acknowledged && !finished && !cancel.signal.aborted) {
-        live = true; term.options.disableStdin = false; setStatus('Connected');
+      if (started && !finished && !cancel.signal.aborted) {
+        // Parser responses (DA/OSC/DSR) also use stdin, before IPC acknowledgement.
+        term.options.disableStdin = false;
+        if (acknowledged) setStatus('Connected');
       }
     };
-    const data = term.onData(value => { if (live && !cancel.signal.aborted) connection.current?.write(value); });
+    const data = term.onData(value => {
+      if (cancel.signal.aborted || finished) return;
+      if (connection.current) connection.current.write(value);
+      else if (pendingInput.length + value.length <= 16384) pendingInput += value;
+    });
     setError(''); setStatus('Starting');
     let reservation: string | undefined;
     void (async () => {
-      await loadTerminalFonts(appearance.terminalFontFamily, appearance.terminalFontSize).catch(() => {});
+      await view.ready;
       if (cancel.signal.aborted) return;
       resize();
       try {
@@ -82,13 +81,13 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
             term.write(new Uint8Array(event.payload.data), done);
           });
           else {
-            finished = true; live = false; term.options.disableStdin = true;
+            finished = true; term.options.disableStdin = true;
             setStatus(event.type === 'Exited' ? `Exited (${event.payload.code})` : 'Failed');
             if (event.type === 'Failed') setError(event.payload.error.message);
           }
         }, cancel.signal);
         if (cancel.signal.aborted) { conn.close(); return; }
-        connection.current = conn; acknowledged = true; enable(); resize(); term.focus();
+        connection.current = conn; conn.write(pendingInput); pendingInput = ''; acknowledged = true; enable(); resize(); term.focus();
       } catch (e) {
         // This envelope proves that no process was started. Retain the task for a manual retry.
         if (e instanceof OpenCodeNotStartedError && request && reservation && useAiStore.getState().openCodeRequestReservation === reservation) {
@@ -99,7 +98,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
     })();
     return () => {
       cancel.abort(); connection.current?.close(); connection.current = null;
-      observer.disconnect(); data.dispose(); term.dispose(); terminal.current = null; fit.current = null;
+      data.dispose(); view.dispose(); terminal.current = null; fit.current = null;
       if (startup.current === cancel) startup.current = null;
     };
   }, [attempt, request?.id]);
@@ -107,7 +106,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   useEffect(() => {
     if (pinnedContext.current !== context) { stop(); setStatus('Cluster changed · Restart to reconnect'); }
   }, [context]);
-  useTerminalAppearance(terminal, () => {
+  useTerminalAppearance(fit, () => {
     fit.current?.fit(); const t = terminal.current; if (t) connection.current?.resize(t.cols, t.rows);
   }, visible, String(attempt));
   useEffect(() => {
@@ -122,6 +121,6 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
       <Button size="sm" onClick={() => useAiStore.getState().setSettingsOpen(true)}>Settings</Button>
     </div>
     {error && <div role="alert" className="ai-error px-3 py-2">{error}</div>}
-    <div ref={box} className="flex-1 min-h-0 min-w-0 overflow-hidden pl-2 pt-1" />
+    <div className="terminal-frame"><div ref={box} className="terminal-surface" /></div>
   </div></div>;
 }

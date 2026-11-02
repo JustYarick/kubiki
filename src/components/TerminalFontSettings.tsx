@@ -38,10 +38,11 @@ export function TerminalFontSettings() {
     <label className="flex items-center justify-between gap-3 text-xs">Terminal line height
       <input aria-label="Terminal line height" type="number" min={1} max={2} step={0.05} value={lineHeight} onChange={event => { if (event.target.value) useUiStore.getState().setTerminalLineHeight(Number(event.target.value)); }} className="ide-select w-20" />
     </label>
+    <p className="text-xs text-[var(--text-secondary)]">Full-screen apps use a compact grid in software rendering to keep borders connected.</p>
     <pre aria-label="Terminal font preview" className="resource-data-value kubiki-scrollbar rounded border border-[var(--border-default)] bg-[var(--bg-canvas)] p-3 whitespace-pre" style={{ fontFamily: terminalFontStack(family), fontSize: size, lineHeight }}>
       {'user@host ~/project   dev \n        󰐊  →  ✓  ┌─┐\n0123456789  Il1 O0  Hello'}
     </pre>
     {loadError && <p role="status" className="text-xs text-[var(--status-warn)]">A font could not be loaded; the terminal uses available fallback fonts.</p>}
-    <p className="text-xs text-[var(--text-secondary)]">Applies to local, Pod and Node terminals without restarting sessions. The local terminal uses your default shell and its startup files; fonts are configured here separately.</p>
+    <p className="text-xs text-[var(--text-secondary)]">Applies to OpenCode, local, Pod and Node terminals, and logs without restarting sessions. The local terminal uses your default shell and its startup files; fonts are configured here separately.</p>
   </section>;
 }

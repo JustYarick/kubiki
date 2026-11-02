@@ -85,9 +85,9 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     sectionTitle: 'Terminal',
     resetLabel: 'Reset terminal defaults',
     entries: [
-      { id: 'terminal.font-size', label: 'Terminal font size', description: 'Independent of the interface scale; applies to open sessions.', keywords: 'size text' },
+      { id: 'terminal.font-size', label: 'Terminal font size', description: 'Independent of the interface scale; applies to OpenCode, shells and logs.', keywords: 'size text' },
       { id: 'terminal.typeface', label: 'Terminal typeface', description: 'Font preset, custom family, line height and live preview. Applies to open sessions without restarting them.', keywords: 'family nerd powerline monospace line height preview custom' },
-      { id: 'terminal.scrollback', label: 'Terminal scrollback limit', description: 'Lines kept above the viewport. Applies to new terminal sessions.', keywords: 'history buffer lines memory' },
+      { id: 'terminal.scrollback', label: 'Terminal scrollback limit', description: 'Lines kept above the viewport. Applies to open terminal sessions.', keywords: 'history buffer lines memory' },
       { id: 'terminal.output-timeout', label: 'Session output timeout', description: 'Stops terminal sessions whose output is not consumed for this long. Never keeps sessions open when the window is hidden or occluded; a shorter value applies to new sessions.', keywords: 'timeout stop disconnect keep alive stall backpressure reconnect 504' },
     ],
   },
