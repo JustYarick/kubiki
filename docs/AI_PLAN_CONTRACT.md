@@ -96,9 +96,12 @@ revision используется review token и проверяется пер�
 5. Принятый write получает durable receipt. UID из ответа API хранится native и
    используется при проверке созданного объекта; объект-замена не считается успехом.
    Служебные concurrency-поля не добавляются в историю модели или tool events.
-6. Controllers проверяются bounded fresh reads по UID/generation/replicas.
-   Для остальных объектов сверяются разрешённые desired fields; PVC дополнительно
-   требует Bound. Недоступные/замаскированные поля не удовлетворяют проверке.
+6. Controllers (`Deployment`, `StatefulSet`, `DaemonSet`, `ReplicaSet`) проверяются
+   bounded fresh reads по UID/generation/replicas. Пакетные задания (`Job`) проверяются
+   по UID, условию завершения (`Complete`), отсутствию `Failed` и снятию с паузы (`suspended`),
+   не требуя generation контроллера или количества реплик. Для остальных объектов
+   сверяются разрешённые desired fields; PVC дополнительно требует Bound.
+   Недоступные/замаскированные поля не удовлетворяют проверке.
    Удаление проверяется отдельным metadata read. Application health этим не доказана.
 7. Failed/declined/uncertain прекращает дальнейшие записи. При uncertain допускается
    read-only observation для reconciliation, но не повтор write и не автоматическое

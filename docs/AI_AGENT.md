@@ -56,7 +56,12 @@ new AI commands.
   reduced to its first namespace.
 
 Text streams into the chat, with Markdown, code copying and structured tool
-results. Generated YAML is a **proposal**, not evidence of a deployment. In
+results. For reasoning models (such as DeepSeek-R1, Qwen-2.5, or Ollama reasoning models),
+the model's `<think>...</think>` or `<thought>...</thought>` stream is dynamically
+extracted and rendered as an interactive, collapsible `<ThinkingBlock />` component
+that indicates active thinking while streaming and collapses completed reasoning.
+This thought process is strictly informative and separate from remediation plans.
+Generated YAML is a **proposal**, not evidence of a deployment. In
 Action a proposal can be passed back to the agent for application through
 the same guarded mutation tools. The application never executes a Markdown code
 block directly. Remote images and raw HTML in model output are not loaded.
@@ -319,9 +324,12 @@ retains at most 256 accepted identities for one hour, across individual tool cal
 and desired state; without an ID it uses the latest accepted operation for the target.
 An unknown/expired ID is rejected. Without a recorded operation, a previously observed
 UID is required; current health alone does not verify a prior change.
-Verification polls fresh controller state for 1–20 seconds, rejecting UID replacement
-and checking observed generation/expected replicas. Pending or unknown results do
-not prove rollout completion or application health.
+Verification polls fresh workload state for 1–20 seconds, rejecting UID replacement.
+For controller workloads (`Deployment`, `StatefulSet`, `DaemonSet`, `ReplicaSet`), it
+checks `observedGeneration == expectedGeneration` and ready replica counts. For batch
+workloads (`Job`), verification evaluates completion conditions (`Complete`, `Failed`,
+or `suspended` state) without requiring generation matching or replica counts. Pending
+or unknown results do not prove rollout completion or application health.
 
 ### Known diagnostic and scale limitations
 
@@ -418,7 +426,10 @@ Transcript/plan export checks the separate local export preference.
 
 Native plans are ephemeral versioned proposals (≤16 versions / 256 KiB; each ≤60 KB),
 with a formal schema, checked evidence references and actual session scope/policy ID.
-The UI renders them as typed cards, never by guessing at Markdown or thinking.
+The UI renders plans as strictly validated typed cards (`PlanArtifact`), never by
+guessing at Markdown or model thinking. Concurrently, streaming thought processes
+(`<think>`/`<thought>`) are handled as distinct UI elements via `ThinkingBlock` to
+visualize reasoning without contaminating plan state.
 Selected concrete steps require an explicit native review and a single-use 5-minute
 token. Current UID/resourceVersion/absence is checked again at dispatch, including
 an independent mode/phase/cancellation guard after connection validation. Native

@@ -143,16 +143,24 @@ The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reus
 compaction, installed skills and the bounded agent loop. `ConversationState` is
 separate from the portable execution session. `crates/kubiki-tools/` owns cluster
 tools, policy/projection, reviewed execution, evidence, accepted operation identities
-and verification. It reuses `kubiki-core` without Tauri. The AI runtime uses exported
-tool contracts and reaches execution through the in-memory MCP client in
-`crates/kubiki-mcp/`. That crate also supplies standalone stdio and attached hosts.
-`src/domains/ai/` owns chat/settings UI, conversation presentation and its native adapter.
+and verification. It reuses `kubiki-core` without Tauri. The native AI runtime executes
+tools directly in-process via `ToolExecutor` / `ToolCatalog` (`kubiki-tools`), while
+`crates/kubiki-mcp/` provides the Model Context Protocol (MCP) server, stdio CLI
+(`kubiki-mcp serve`), and attached client bridges for external agent runtimes like OpenCode.
+`src/domains/ai/` owns the chat and settings interface, conversation presentation, and
+modular components: `ActionApprovalCard` (mutation review & consent), `QuestionCard`
+(interactive clarification prompts), `ThinkingBlock` (animated collapsible model thought
+streaming), `CompactToolMessage` (compact badge-style execution history), `SkillComposer`,
+and `OpenCodePane`.
 
 Settings share row layout and responsive rules in
 `src/components/settings/settings.css`. Labels and controls use separate columns
 when space permits; narrow content stacks larger controls while keeping
-checkboxes beside their labels. The dialog uses a compact category selector
-when its width relative to the text size cannot fit the sidebar. Log history and scrolling controls are collapsed
+checkboxes beside their labels. AI settings use dedicated card-based sections
+(`.ai-settings-card`, `.ai-form-line`) tailored for complex multi-provider, MCP access,
+and permission configuration, while adhering to the global settings dialog lifecycle.
+The dialog uses a compact category selector when its width relative to the text size
+cannot fit the sidebar. Log history and scrolling controls are collapsed
 until opened or found through search. Switching categories resets the content
 scroll position. AI settings use the same labels for connection and data-access
 levels in Kubiki and OpenCode modes. Rule-matching help follows the selected
