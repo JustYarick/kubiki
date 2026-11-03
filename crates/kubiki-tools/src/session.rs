@@ -239,6 +239,8 @@ pub fn parallel_read_tool(name: &str) -> bool {
             | "summarize_resources"
             | "list_namespaces"
             | "resource_catalog"
+            | "get_neighborhood"
+            | "diagnose_resource"
             | "get_pod_diagnostics"
             | "get_workload_diagnostics"
             | "get_service_diagnostics"

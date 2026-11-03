@@ -1,3 +1,4 @@
+import { externalAgentName } from '../types';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bot, Check, Pencil, Pin, Plus, Search, Server, Settings, Trash2, X } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
@@ -20,9 +21,9 @@ function extractSnippet(text: string, term: string): string {
 export const AiConversationsSidebar: React.FC = () => {
   const runtime=useAiStore(s=>s.settings.runtime);
   const setSettingsOpen=useAiStore(s=>s.setSettingsOpen);
-  if(runtime==='open_code') return <aside className="ai-conversations h-full w-full" aria-label="OpenCode agent">
-    <strong><Bot size={15} aria-hidden="true"/>OpenCode</strong>
-    <p className="ai-help">Use OpenCode’s terminal interface to manage conversations, models and permissions.</p>
+  if((runtime ?? 'kubiki')!=='kubiki') return <aside className="ai-conversations h-full w-full" aria-label={`${externalAgentName(runtime)} agent`}>
+    <strong><Bot size={15} aria-hidden="true"/>{externalAgentName(runtime)}</strong>
+    <p className="ai-help">Use {externalAgentName(runtime)}’s terminal interface to manage conversations, models and permissions.</p>
     <span className="ai-grow"/>
     <Button size="sm" onClick={()=>setSettingsOpen(true)}><Settings size={13} aria-hidden="true"/>AI settings</Button>
   </aside>;

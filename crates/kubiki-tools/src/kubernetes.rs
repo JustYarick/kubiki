@@ -698,12 +698,28 @@ impl KubernetesTools {
             .clone()
             .ok_or("Start a conversation bound to a Kubernetes context to use cluster tools")?;
         if call.name == "resource_catalog" {
-            if call.arguments.as_object().is_none_or(|o| !o.is_empty()) {
-                return Err("Catalog takes no arguments".into());
+            #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct Args { discover:Option<bool>, group:Option<String>, page:Option<usize> }
+            let args:Args=serde_json::from_value(call.arguments.clone()).map_err(|_|"Invalid catalog arguments")?;
+            if args.group.as_ref().is_some_and(|g|g.len()>253 || !g.bytes().all(|b|b.is_ascii_alphanumeric() || b".-".contains(&b))) {return Err("Invalid API group".into());}
+            let mut resources=Vec::new();
+            if args.discover==Some(true) {
+                let mut discovery=kube::discovery::Discovery::new(client);
+                if let Some(group)=&args.group {discovery=discovery.filter(&[group.as_str()]);}
+                let discovery=discovery.run().await.map_err(|_|"API discovery unavailable")?;
+                for group in discovery.groups() {
+                    for (ar,caps) in group.resources_by_stability() {
+                        if !ar.plural.contains('/') && caps.supports_operation("get") {
+                            resources.push(json!({"group":ar.group,"version":ar.version,"kind":ar.kind,"plural":ar.plural,"namespaced":caps.scope==kube::discovery::Scope::Namespaced}));
+                        }
+                    }
+                }
+            } else {
+                resources=resource_types().iter().filter(|r|args.group.as_ref().is_none_or(|g|g==&r.group)).map(|r|json!(r)).collect();
             }
-            return Ok(
-                json!({"resources":resource_types(),"coverage":"Kubiki built-in registry; CRDs can also be read by known group/version/kind subject to policy"}),
-            );
+            resources.sort_by_key(|r|r.to_string()); resources.dedup();
+            let start=args.page.unwrap_or(0).checked_mul(100).ok_or("Catalog page overflow")?;
+            let has_more=start.saturating_add(100)<resources.len();
+            return bounded_result(json!({"resources":resources.into_iter().skip(start).take(100).collect::<Vec<_>>(),"hasMore":has_more,"nextPage":if has_more {Some(args.page.unwrap_or(0)+1)} else {None},"coverage":if args.discover==Some(true){"Live API discovery snapshot; object access still requires policy/RBAC"}else{"Built-in registry; use discover=true for CRDs"}}));
         }
         if call.name == "list_namespaces" {
             #[derive(Deserialize)]
@@ -836,6 +852,8 @@ impl KubernetesTools {
         {
             return self.read_diagnostic(session, call, client).await;
         }
+        if call.name == "get_neighborhood" { return self.neighborhood(session, call.arguments.clone()).await; }
+        if call.name == "diagnose_resource" { return self.diagnose_resource(session, call.arguments.clone()).await; }
         if call.name == "get_pod_diagnostics" {
             return self.read_pod_diagnostics(session, call, client).await;
         }
@@ -1957,7 +1975,7 @@ impl KubernetesTools {
             let pod = api_dyn
                 .get_object(&args.name)
                 .await
-                .map_err(|_| "Pod not found or access denied")?;
+                .map_err(query_get_error)?;
 
             let projected = diagnostic_projection(&state.policy, &target, &pod)?;
             let spec = projected.get("spec").cloned().unwrap_or(json!({}));
@@ -2043,6 +2061,7 @@ impl KubernetesTools {
                     "coverage": "Policy-filtered diagnostic projection; omitted fields and bounded child selections do not establish absence"
                 },
                 "phase": phase,
+                "ownerReferences": projected["metadata"].get("ownerReferences"),
                 "nodeName": node_name,
                 "podIP": pod_ip,
                 "hostIP": host_ip,
@@ -2095,7 +2114,7 @@ impl KubernetesTools {
             let obj = api_dyn
                 .get_object(&args.name)
                 .await
-                .map_err(|_| "Workload not found or access denied")?;
+                .map_err(query_get_error)?;
 
             let projected = diagnostic_projection(&state.policy, &target, &obj)?;
             let spec = projected.get("spec").cloned().unwrap_or(json!({}));
@@ -2378,7 +2397,7 @@ impl KubernetesTools {
 
     // Compose generic projected reads so policy, selectors, UID checks, paging and
     // uniform-LIST optimization have exactly one implementation.
-    async fn linked_read(
+    pub(crate) async fn linked_read(
         &self,
         session: &Session,
         name: &str,

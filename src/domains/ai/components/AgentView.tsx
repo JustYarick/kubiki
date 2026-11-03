@@ -63,7 +63,7 @@ const statusLabels: Record<string, string> = {
 export function AgentView({visible=true}:{visible?:boolean}) {
   const runtime=useAiStore(s=>s.settings.runtime);const settingsOpen=useAiStore(s=>s.settingsOpen);
   useEffect(()=>{void useAiStore.getState().load();},[]);
-  if(runtime!=='open_code')return <KubikiAgentView visible={visible}/>;
+  if((runtime ?? 'kubiki')==='kubiki')return <KubikiAgentView visible={visible}/>;
   return <><OpenCodePane visible={visible}/><Modal title="AI Agent settings" width={900} footer={<Button size="sm" onClick={()=>useAiStore.getState().setSettingsOpen(false)}>Done</Button>} open={settingsOpen} onClose={()=>useAiStore.getState().setSettingsOpen(false)}><AgentSettings/></Modal></>;
 }
 
@@ -903,11 +903,17 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
 
         {/* Bottom bar with status and circular send button */}
         <div className="ai-composer-card-bottom">
-          <div className="ai-run-status flex items-center gap-1.5 flex-wrap" role="status">
+          <div className="ai-run-status min-w-0 flex-1 flex items-center gap-1.5 flex-wrap" role="status">
             <span>{statusLabels[c.status] ?? c.status}</span>
             {c.inputTokens + c.outputTokens > 0 && (
               <span>· {c.inputTokens.toLocaleString()} in / {c.outputTokens.toLocaleString()} out</span>
             )}
+            {!!c.generationMetrics?.length && <details className="text-xs min-w-0 max-w-full basis-full">
+              <summary className="cursor-pointer">Request costs</summary>
+              <div className="p-2 overflow-auto"><table className="text-left whitespace-nowrap [&_th]:pr-3 [&_td]:pr-3"><thead><tr><th>Model</th><th>System ≈</th><th>Tools ≈</th><th>History ≈</th><th>Input</th><th>Output</th><th>Cached</th><th>Reasoning</th><th>First token</th><th>Time</th></tr></thead><tbody>
+                {c.generationMetrics.slice(-10).map(m => <tr key={m.id}><td>{m.resolvedModel ?? m.model}</td><td>{m.systemTokens}</td><td>{m.toolTokens}</td><td>{m.historyTokens}</td><td>{m.inputTokens ?? 'Unknown'}</td><td>{m.outputTokens ?? 'Unknown'}</td><td>{m.cachedInputTokens ?? 'Unknown'}</td><td>{m.reasoningOutputTokens ?? 'Unknown'}</td><td>{m.firstTokenMs == null ? 'Unknown' : `${(m.firstTokenMs / 1000).toFixed(1)}s`}</td><td>{m.durationMs == null ? 'Unknown' : `${(m.durationMs / 1000).toFixed(1)}s`}</td></tr>)}
+              </tbody></table><p>≈ Estimated context components. Input/output are provider totals when available. Last 10 requests.</p></div>
+            </details>}
             {maxContextTokens ? (
               <span
                 className="ai-context-indicator inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-mono text-[10.5px]"

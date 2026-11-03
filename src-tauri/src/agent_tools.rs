@@ -76,7 +76,7 @@ impl kubiki_tools::ToolExecutor for IntegratedTools {
         emit: &kubiki_tools::EventSink,
     ) -> Result<serde_json::Value, String> {
         use kubiki_tools::*;
-        if call.name != "read_skill" {
+        if !matches!(call.name.as_str(), "read_skill" | "list_skills") {
             return self.mcp.execute(session, call, emit).await;
         }
         let control = session.control()?;

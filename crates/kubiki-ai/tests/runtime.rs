@@ -463,6 +463,7 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
             native: json!({}),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            ..Default::default()
         }));
     }
     conversation.seed_history(initial_turns).await;
@@ -475,7 +476,9 @@ async fn history_compaction_compresses_older_turns_when_context_budget_is_approa
         client,
         "model".into(),
         GenerationOptions {
-            context_tokens: Some(16_384),
+            // Leave room for the tool catalog, shared investigation guidance and
+            // retained recent turns; the ~80 KB seeded history still needs compaction.
+            context_tokens: Some(20_480),
             ..Default::default()
         },
         String::new(),
@@ -1010,4 +1013,25 @@ async fn general_chat_can_use_environment_tools_without_advertising_cluster_tool
     );
     drop(requests);
     task.await.unwrap();
+}
+
+#[tokio::test]
+async fn phase_switch_keeps_evidence_and_history_and_only_adds_write_tools() {
+    let s = session();
+    s.phase(AgentPhase::Plan).unwrap();
+    let conversation=ConversationState::default();
+    conversation.seed_history(vec![Turn::User("Pod worker belongs to DaemonSet agent, UID owner-1. Preserve this evidence.".into())]).await;
+    let (client, requests, task)=provider(vec![final_text(), final_text()]).await;
+    for phase in [AgentPhase::Plan,AgentPhase::Action] {
+        s.phase(phase).unwrap();
+        run(s.clone(),conversation.clone(),s.control().unwrap().revision,client.clone(),"model".into(),GenerationOptions::default(),String::new(),"Continue with the known owner".into(),Arc::new(Host(Arc::new(AtomicUsize::new(0)))),sink()).await.unwrap();
+    }
+    task.await.unwrap();
+    let requests=requests.lock().unwrap();
+    let names=|request:&Value| request["tools"].as_array().unwrap().iter().map(|t|t["function"]["name"].as_str().unwrap().to_owned()).collect::<std::collections::BTreeSet<_>>();
+    let plan=names(&requests[0]);let action=names(&requests[1]);
+    assert!(plan.is_subset(&action));
+    assert!(!plan.contains("scale_workload")); assert!(action.contains("scale_workload"));
+    assert!(plan.contains("get_neighborhood") && plan.contains("diagnose_resource"));
+    assert!(requests[1]["messages"].to_string().contains("owner-1"));
 }

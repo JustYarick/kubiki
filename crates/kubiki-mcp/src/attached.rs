@@ -104,7 +104,15 @@ pub async fn attach(path: &Path) -> Result<(), String> {
         .write_all(format!("{}\n", data.token).as_bytes())
         .await
         .map_err(|e| e.to_string())?;
-    let (mut reader, mut writer) = stream.into_split();
+    relay(stream).await
+}
+
+/// Preserve pending replies after stdin EOF instead of exiting before stdout drains.
+/// This also makes short-lived MCP discovery clients behave like interactive clients.
+async fn relay<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    stream: S,
+) -> Result<(), String> {
+    let (mut reader, mut writer) = tokio::io::split(stream);
     let upstream = async {
         tokio::io::copy(&mut tokio::io::stdin(), &mut writer).await?;
         writer.shutdown().await
@@ -114,8 +122,17 @@ pub async fn attach(path: &Path) -> Result<(), String> {
         tokio::io::copy(&mut reader, &mut output).await?;
         output.flush().await
     };
-    tokio::select! { result=upstream=>result.map_err(|e|e.to_string()), result=downstream=>result.map_err(|e|e.to_string()) }
+    tokio::pin!(downstream);
+    tokio::select! {
+        result=upstream => {
+            result.map_err(|e|e.to_string())?;
+            tokio::time::timeout(std::time::Duration::from_secs(5), &mut downstream).await
+                .map_err(|_| "MCP reply drain timed out")?.map_err(|e|e.to_string())
+        },
+        result=&mut downstream => result.map_err(|e|e.to_string()),
+    }
 }
+
 #[cfg(windows)]
 #[path = "attached_windows.rs"]
 mod windows;

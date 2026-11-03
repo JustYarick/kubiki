@@ -1,4 +1,5 @@
-//! The installed OpenCode owns its configuration, permissions and conversation UI.
+//! Installed external CLIs own their configuration, permissions and conversation UI.
+//! Legacy OpenCode IPC/type names remain stable for existing clients.
 use kubiki_core::{
     cluster::client::ClusterClientPool,
     pod_ops::{
@@ -20,6 +21,33 @@ pub enum AgentRuntime {
     #[default]
     Kubiki,
     OpenCode,
+    Codex,
+    Claude,
+}
+impl AgentRuntime {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Kubiki => "Kubiki",
+            Self::OpenCode => "OpenCode",
+            Self::Codex => "Codex",
+            Self::Claude => "Claude Code",
+        }
+    }
+    fn binary(self) -> &'static str {
+        match self {
+            Self::OpenCode => "opencode",
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+            Self::Kubiki => "",
+        }
+    }
+    fn settings(self, settings: &crate::agent_commands::AiSettings) -> &OpenCodeSettings {
+        match self {
+            Self::Codex => &settings.codex,
+            Self::Claude => &settings.claude,
+            _ => &settings.opencode,
+        }
+    }
 }
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
@@ -34,7 +62,7 @@ impl OpenCodeSettings {
             || self.executable.contains(['\n', '\r'])
             || self.working_directory.contains(['\n', '\r'])
         {
-            return Err("Invalid OpenCode executable or directory".into());
+            return Err("Invalid agent executable or directory".into());
         }
         if !self.working_directory.is_empty() && !Path::new(&self.working_directory).is_absolute() {
             return Err("Use an absolute workspace directory".into());
@@ -88,7 +116,7 @@ impl PendingLaunch {
     }
     fn check(&self) -> Result<(), String> {
         if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
-            Err("OpenCode startup was cancelled".into())
+            Err("External agent startup was cancelled".into())
         } else {
             Ok(())
         }
@@ -97,7 +125,7 @@ impl PendingLaunch {
         *self
             .session
             .lock()
-            .map_err(|_| "OpenCode startup state unavailable")? = Some(session.clone());
+            .map_err(|_| "External agent startup state unavailable")? = Some(session.clone());
         if let Err(error) = self.check() {
             session.invalidate();
             return Err(error);
@@ -124,9 +152,9 @@ impl OpenCodeManager {
         let mut state = self
             .1
             .lock()
-            .map_err(|_| "OpenCode startup registry unavailable")?;
+            .map_err(|_| "External agent startup registry unavailable")?;
         if state.cancelled.contains(&key) {
-            return Err("OpenCode startup was cancelled".into());
+            return Err("External agent startup was cancelled".into());
         }
         if state.active.contains_key(&key) || state.active.len() >= 32 {
             return Err("Too many pending OpenCode launches".into());
@@ -193,13 +221,14 @@ impl OpenCodeManager {
         }
     }
 }
-fn executable(value: &str) -> Result<PathBuf, String> {
+fn executable_for(runtime: AgentRuntime, value: &str) -> Result<PathBuf, String> {
+    let default = format!(
+        "{}{}",
+        runtime.binary(),
+        if cfg!(windows) { ".exe" } else { "" }
+    );
     let value = if value.trim().is_empty() {
-        if cfg!(windows) {
-            "opencode.exe"
-        } else {
-            "opencode"
-        }
+        default.as_str()
     } else {
         value.trim()
     };
@@ -208,7 +237,7 @@ fn executable(value: &str) -> Result<PathBuf, String> {
         return Ok(path.into());
     }
     if path.components().count() > 1 {
-        return Err("Use an absolute path to OpenCode".into());
+        return Err("Use an absolute executable path".into());
     }
     std::env::var_os("PATH")
         .into_iter()
@@ -216,7 +245,10 @@ fn executable(value: &str) -> Result<PathBuf, String> {
         .map(|p| p.join(value))
         .find(|p| p.is_file())
         .ok_or_else(|| {
-            "OpenCode was not found. Install it or set its executable path in AI settings.".into()
+            format!(
+                "{} was not found. Install it or set its executable path in AI settings.",
+                runtime.label()
+            )
         })
 }
 #[derive(Serialize)]
@@ -227,8 +259,18 @@ pub struct Installation {
 }
 #[tauri::command]
 pub async fn ai_test_opencode(settings: OpenCodeSettings) -> Result<Installation, String> {
+    ai_test_external_agent(AgentRuntime::OpenCode, settings).await
+}
+#[tauri::command]
+pub async fn ai_test_external_agent(
+    runtime: AgentRuntime,
+    settings: OpenCodeSettings,
+) -> Result<Installation, String> {
+    if runtime == AgentRuntime::Kubiki {
+        return Err("Select an external agent".into());
+    }
     settings.validate()?;
-    let path = executable(&settings.executable)?;
+    let path = executable_for(runtime, &settings.executable)?;
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(8),
         tokio::process::Command::new(&path)
@@ -237,11 +279,20 @@ pub async fn ai_test_opencode(settings: OpenCodeSettings) -> Result<Installation
             .output(),
     )
     .await
-    .map_err(|_| "OpenCode version check timed out")?
+    .map_err(|_| "Agent version check timed out")?
     .map_err(|e| e.to_string())?;
     let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() || !version.starts_with("opencode v2.") {
-        return Err("This integration requires OpenCode V2".into());
+    let recognized = match runtime {
+        AgentRuntime::OpenCode => version.starts_with("opencode v2."),
+        AgentRuntime::Codex => version.starts_with("codex-cli "),
+        AgentRuntime::Claude => version.contains("Claude Code"),
+        AgentRuntime::Kubiki => false,
+    };
+    if !output.status.success() || !recognized {
+        return Err(format!(
+            "{} version check failed (OpenCode requires V2)",
+            runtime.label()
+        ));
     }
     Ok(Installation {
         executable: path.to_string_lossy().into(),
@@ -294,7 +345,7 @@ async fn start_opencode_inner(
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || c == b'-')
     {
-        return Err("Invalid OpenCode terminal session ID".into());
+        return Err("Invalid external agent terminal session ID".into());
     }
     let registry = window.state::<OpenCodeManager>().inner().clone();
     let pending = registry.begin(window.label(), &session_id)?;
@@ -303,27 +354,28 @@ async fn start_opencode_inner(
         .settings_gate
         .clone();
     let _configuration = tokio::select! {biased;
-        _=pending.launch.cancelled()=>return Err("OpenCode startup was cancelled".into()),
+        _=pending.launch.cancelled()=>return Err("External agent startup was cancelled".into()),
         guard=gate.lock()=>guard,
     };
     pending.launch.check()?;
     let settings = crate::agent_commands::load(window.app_handle()).await?;
-    if settings.runtime != AgentRuntime::OpenCode {
-        return Err("Select OpenCode in AI settings first".into());
+    if settings.runtime == AgentRuntime::Kubiki {
+        return Err("Select an external agent in AI settings first".into());
     }
     if request.scope.context.is_empty() {
-        return Err("Select a cluster before starting OpenCode".into());
+        return Err("Select a cluster before starting the external agent".into());
     }
     if request.prompt.as_ref().is_some_and(|p| p.len() > 24000) {
         return Err("Initial request is too large".into());
     }
     let install = tokio::select! {biased;
-        _=pending.launch.cancelled()=>return Err("OpenCode startup was cancelled".into()),
-        install=ai_test_opencode(settings.opencode.clone())=>install?,
+        _=pending.launch.cancelled()=>return Err("External agent startup was cancelled".into()),
+        install=ai_test_external_agent(settings.runtime, settings.runtime.settings(&settings).clone())=>install?,
     };
     pending.launch.check()?;
     let pool = window.state::<ClusterClientPool>().inner().clone();
-    let mut policy = settings.mcp_policy;
+    let external_settings = settings.runtime.settings(&settings).clone();
+    let mut policy = settings.mcp_policy.clone();
     policy.confirm_reads = false;
     policy.always_ask.clear();
     policy.rules.clear();
@@ -371,56 +423,94 @@ async fn start_opencode_inner(
         true,
     ))
     .await?;
-    let root = if settings.opencode.working_directory.is_empty() {
-        data.join("opencode/workspaces")
+    let root = if external_settings.working_directory.is_empty() {
+        data.join(format!("{}/workspaces", settings.runtime.binary()))
     } else {
-        PathBuf::from(&settings.opencode.working_directory)
+        PathBuf::from(&external_settings.working_directory)
     };
     let cwd = root.join(workspace_key);
     tokio::fs::create_dir_all(&cwd)
         .await
         .map_err(|e| e.to_string())?;
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-    let overlay = serde_json::json!({"mcp":{"servers":{"kubiki":{"type":"local","command":[executable,"--kubiki-mcp-attach",endpoint.bootstrap],"codemode":false}}}});
-    let config_path = cwd.join("opencode.json");
-    let marker = cwd.join(".kubiki-workspace");
-    if config_path.exists() && !marker.is_file() {
-        return Err("Choose a dedicated Kubiki workspace; existing OpenCode project configuration will not be replaced".into());
-    }
-    if config_path.exists() {
-        let existing: serde_json::Value = serde_json::from_slice(
-            &tokio::fs::read(&config_path)
-                .await
-                .map_err(|e| e.to_string())?,
-        )
-        .map_err(|_| "Workspace opencode.json is not valid JSON")?;
-        if existing.as_object().is_none_or(|m| m.len() != 1)
-            || existing["mcp"]["servers"]
-                .as_object()
-                .is_none_or(|m| m.len() != 1 || !m.contains_key("kubiki"))
-        {
+    if settings.runtime == AgentRuntime::OpenCode {
+        let mut plan_permissions = vec![
+            serde_json::json!({"action":"shell","resource":"*","effect":"deny"}),
+            serde_json::json!({"action":"external_directory","resource":"*","effect":"deny"}),
+        ];
+        // OpenCode's Plan permissions also remove these tools from its model catalog.
+        for tool in tool_definitions(
+            &settings.mcp_policy,
+            AgentMode::Accept,
+            AgentPhase::Action,
+            &ClusterCapabilities::all(),
+        ) {
+            if mutation_tool(&tool.name) {
+                plan_permissions.push(serde_json::json!({"action":format!("kubiki_{}",tool.name),"resource":"*","effect":"deny"}));
+            }
+        }
+        let overlay = serde_json::json!({
+            "default_agent":"plan",
+            "agents":{"plan":{"permissions":plan_permissions}},
+            "instructions":[".kubiki-instructions.md"],
+            "mcp":{"servers":{"kubiki":{"type":"local","command":[executable,"--kubiki-mcp-attach",endpoint.bootstrap],"codemode":true}}}
+        });
+        let config_path = cwd.join("opencode.json");
+        let marker = cwd.join(".kubiki-workspace");
+        if config_path.exists() && !marker.is_file() {
             return Err("Choose a dedicated Kubiki workspace; existing OpenCode project configuration will not be replaced".into());
         }
-    }
-    if cwd.join("opencode.jsonc").exists() || cwd.join(".opencode").exists() {
-        return Err(
-            "Choose a dedicated Kubiki workspace to preserve existing project configuration".into(),
-        );
-    }
-    tokio::fs::write(&marker, b"Kubiki managed OpenCode workspace v1\n")
+        if config_path.exists() {
+            let existing: serde_json::Value = serde_json::from_slice(
+                &tokio::fs::read(&config_path)
+                    .await
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|_| "Workspace opencode.json is not valid JSON")?;
+            if existing.as_object().is_none_or(|m| {
+                m.keys().any(|key| {
+                    !["mcp", "default_agent", "agents", "instructions"].contains(&key.as_str())
+                })
+            }) || existing["mcp"]["servers"]
+                .as_object()
+                .is_none_or(|m| m.len() != 1 || !m.contains_key("kubiki"))
+            {
+                return Err("Choose a dedicated Kubiki workspace; existing OpenCode project configuration will not be replaced".into());
+            }
+        }
+        if cwd.join("opencode.jsonc").exists() || cwd.join(".opencode").exists() {
+            return Err(
+                "Choose a dedicated Kubiki workspace to preserve existing project configuration"
+                    .into(),
+            );
+        }
+        let instructions = cwd.join(".kubiki-instructions.md");
+        const HEADER: &str = "# Kubiki cluster workspace\n";
+        if instructions.exists()
+            && !tokio::fs::read_to_string(&instructions)
+                .await
+                .map_err(|e| e.to_string())?
+                .starts_with(HEADER)
+        {
+            return Err("Existing workspace instructions are not managed by Kubiki".into());
+        }
+        tokio::fs::write(&instructions, format!("{HEADER}Use the kubiki namespace in Code Mode for Kubernetes investigation. Search this namespace once for diagnose_resource, then call the exact returned path with the supplied GVK, namespace, name and UID. All permitted Kubernetes read tools remain discoverable; expand evidence for complex problems. If the namespace/tool is unavailable, report the MCP connection problem and stop. Do not inspect host configuration, environment variables, credentials or bootstrap files, probe local sockets, or substitute shell/curl for cluster tools. Plan is for investigation; switch to Build only for requested changes.\n{INVESTIGATION_GUIDANCE}\n")).await.map_err(|e|e.to_string())?;
+        tokio::fs::write(&marker, b"Kubiki managed OpenCode workspace v2\n")
+            .await
+            .map_err(|e| e.to_string())?;
+        tokio::fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&overlay).map_err(|e| e.to_string())?,
+        )
         .await
         .map_err(|e| e.to_string())?;
-    tokio::fs::write(
-        &config_path,
-        serde_json::to_vec_pretty(&overlay).map_err(|e| e.to_string())?,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    let mut args = vec!["--standalone".into()];
-    if let Some(prompt) = request.prompt.filter(|p| !p.trim().is_empty()) {
-        args.push("--prompt".into());
-        args.push(prompt);
     }
+    let args = external_arguments(
+        settings.runtime,
+        &executable,
+        &endpoint.bootstrap,
+        request.prompt.as_deref(),
+    )?;
     let terminals = window.state::<HostTerminalManager>().inner().clone();
     if let Some(previous) = registry.0.lock().await.remove(window.label()) {
         previous.terminals.stop(window.label(), &previous.id).await;
@@ -478,9 +568,86 @@ async fn start_opencode_inner(
     Ok(())
 }
 
+/// Session-only overrides: never rewrite the user's Codex/Claude configuration.
+fn external_arguments(
+    runtime: AgentRuntime,
+    executable: &Path,
+    bootstrap: &Path,
+    prompt: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let command = executable.to_str().ok_or("Executable path is not UTF-8")?;
+    let bootstrap = bootstrap.to_str().ok_or("MCP path is not UTF-8")?;
+    let args = serde_json::json!(["--kubiki-mcp-attach", bootstrap]);
+    let mut result = match runtime {
+        AgentRuntime::OpenCode => vec!["--standalone".into()],
+        AgentRuntime::Codex => vec!["-c".into(), format!("mcp_servers.kubiki={{command={},args={args},enabled=true}}", serde_json::json!(command))],
+        AgentRuntime::Claude => vec!["--mcp-config".into(), serde_json::json!({"mcpServers":{"kubiki":{"type":"stdio","command":command,"args":args}}}).to_string()],
+        AgentRuntime::Kubiki => return Err("Not an external agent".into()),
+    };
+    if let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) {
+        result.push(
+            if runtime == AgentRuntime::OpenCode {
+                "--prompt"
+            } else {
+                "--"
+            }
+            .into(),
+        );
+        result.push(prompt.into());
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_argv_is_session_scoped_and_preserves_literal_prompts() {
+        let path = Path::new("/path with spaces/kubiki");
+        let bootstrap = Path::new("/tmp/session file.json");
+        let prompt = "--dangerously-skip-permissions $(echo unexpected)";
+        for runtime in [AgentRuntime::Codex, AgentRuntime::Claude] {
+            let args = external_arguments(runtime, path, bootstrap, Some(prompt)).unwrap();
+            assert_eq!(args[args.len() - 2], "--");
+            assert_eq!(args.last().unwrap(), prompt);
+            assert!(
+                !args
+                    .iter()
+                    .any(|a| a == "--dangerously-skip-permissions" || a == "--yolo")
+            );
+            if runtime == AgentRuntime::Claude {
+                let config: serde_json::Value = serde_json::from_str(&args[1]).unwrap();
+                assert_eq!(
+                    config["mcpServers"]["kubiki"]["command"],
+                    path.to_str().unwrap()
+                );
+                assert_eq!(
+                    config["mcpServers"]["kubiki"]["args"][1],
+                    bootstrap.to_str().unwrap()
+                );
+            } else {
+                assert!(args[1].starts_with("mcp_servers.kubiki={command="));
+                assert!(args[1].contains("--kubiki-mcp-attach"));
+            }
+        }
+    }
+    #[test]
+    fn each_external_agent_has_independent_settings() {
+        let mut settings = crate::agent_commands::AiSettings::default();
+        settings.codex.executable = "/usr/bin/codex".into();
+        settings.claude.executable = "/usr/bin/claude".into();
+        for runtime in [AgentRuntime::Codex, AgentRuntime::Claude] {
+            settings.runtime = runtime;
+            let restored: crate::agent_commands::AiSettings =
+                serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+            assert!(restored.runtime == runtime);
+            assert_eq!(
+                runtime.settings(&restored).executable,
+                runtime.settings(&settings).executable
+            );
+        }
+        assert!(settings.opencode.executable.is_empty());
+    }
     #[test]
     fn old_settings_default_to_kubiki_and_keep_environment_inert() {
         let settings:crate::agent_commands::AiSettings=serde_json::from_value(serde_json::json!({"environment":{"commandsEnabled":true,"mcpServers":[{"command":"do-not-launch"}]}})).unwrap();
@@ -503,8 +670,8 @@ mod tests {
     }
     #[test]
     fn installation_requires_an_executable_path_not_a_shell_command() {
-        assert!(executable("opencode; echo wrong").is_err());
-        assert!(executable("./opencode").is_err());
+        assert!(executable_for(AgentRuntime::OpenCode, "opencode; echo wrong").is_err());
+        assert!(executable_for(AgentRuntime::OpenCode, "./opencode").is_err());
         assert!(
             OpenCodeSettings {
                 executable: "opencode\n--auto".into(),

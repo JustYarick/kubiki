@@ -15,3 +15,5 @@ pub use types::*;
 pub mod conversation;
 pub mod memory;
 pub use conversation::ConversationState;
+
+mod read_progress;

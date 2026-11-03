@@ -36,6 +36,7 @@ interface AiState {
 
 /** One conversation entry owns its stream, independent of mounted/visible views. */
 export function applyAgentEvent(conversation: Conversation, event: AgentEvent): Conversation {
+  if (event.type === 'generation_metrics') { const { type: _type, ...metrics } = event; return { ...conversation, generationMetrics: [...(conversation.generationMetrics ?? []), metrics].slice(-100) }; }
   if (event.type === 'context') return { ...conversation, currentContextTokens: event.estimatedInputTokens, contextBudgetTokens: event.budgetTokens, reservedOutputTokens: event.reservedOutputTokens, contextEstimated: true };
   if (event.type === 'status') return { ...conversation, status: event.status };
   if (event.type === 'error') return { ...conversation, error: event.message };
@@ -132,7 +133,7 @@ export const useAiStore = create<AiState>()(
         set({ saving: true, error: undefined });
         try {
           const before = get().settings;
-          const changed = JSON.stringify([before.providers, before.policy, before.instructions, before.environment, before.runtime, before.opencode, before.mcpPolicy]) !== JSON.stringify([settings.providers, settings.policy, settings.instructions, settings.environment, settings.runtime, settings.opencode, settings.mcpPolicy]);
+          const changed = JSON.stringify([before.providers, before.policy, before.instructions, before.environment, before.runtime, before.opencode, before.codex, before.claude, before.mcpPolicy]) !== JSON.stringify([settings.providers, settings.policy, settings.instructions, settings.environment, settings.runtime, settings.opencode, settings.codex, settings.claude, settings.mcpPolicy]);
           await agentTransport.save(settings);
           modelRevisions.forEach((revision, id) => modelRevisions.set(id, revision + 1));
           inspectedModels.clear();

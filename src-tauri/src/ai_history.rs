@@ -141,6 +141,53 @@ fn sanitize(value: &Value) -> Result<Value, String> {
         messages.push(safe);
     }
     let mut result = json!({"id":id,"title":title,"scope":scope,"messages":messages,"mode":"ask","phase":"plan","busy":false,"status":"idle","draft":"","inputTokens":0,"outputTokens":0});
+    // Usage is display-only metadata, never replay or authorization state.
+    // Keep provider totals across restarts instead of silently resetting them.
+    for key in [
+        "inputTokens",
+        "outputTokens",
+        "currentContextTokens",
+        "contextBudgetTokens",
+    ] {
+        if let Some(count) = value[key].as_u64().filter(|n| *n <= 9_007_199_254_740_991) {
+            result[key] = json!(count);
+        }
+    }
+    if let Some(estimated) = value["contextEstimated"].as_bool() {
+        result["contextEstimated"] = json!(estimated);
+    }
+    if let Some(entries) = value["generationMetrics"].as_array() {
+        let mut metrics = Vec::new();
+        for entry in entries.iter().rev().take(100).rev() {
+            let mut row = json!({});
+            for key in ["id", "model", "phase", "resolvedModel"] {
+                if let Some(text) = entry[key].as_str().filter(|v| v.len() <= 512) {
+                    row[key] = json!(text);
+                }
+            }
+            for key in [
+                "systemTokens",
+                "toolTokens",
+                "historyTokens",
+                "inputTokens",
+                "outputTokens",
+                "durationMs",
+                "toolCount",
+                "cachedInputTokens",
+                "reasoningOutputTokens",
+                "firstTokenMs",
+            ] {
+                row[key] = entry[key]
+                    .as_u64()
+                    .filter(|n| *n <= 9_007_199_254_740_991)
+                    .map_or(Value::Null, |n| json!(n));
+            }
+            if row["id"].is_string() {
+                metrics.push(row);
+            }
+        }
+        result["generationMetrics"] = json!(metrics);
+    }
     result["intent"] = json!(
         value["intent"]
             .as_str()
@@ -418,6 +465,49 @@ mod tests {
     }
     fn doc() -> Value {
         json!({"id":"c1","title":"Payments incident","intent":"investigate","scope":{"context":"prod","namespaces":["apps"],"allNamespaces":false},"createdAt":now(),"updatedAt":now(),"sessionId":"live-session","mode":"accept","phase":"action","activePlan":{"bodyMarkdown":"secret-plan"},"messages":[{"id":"m1","role":"user","text":"CrashLoop payment"},{"id":"m2","role":"tool","text":"secret-tool","call":{"id":"call","name":"get_logs","arguments":{"credentials":"secret-args"}},"planArtifact":{"bodyMarkdown":"secret-plan"},"result":{"logs":"secret-logs"}}]})
+    }
+    #[test]
+    fn usage_survives_storage_without_restoring_runtime_state() {
+        let mut db = db();
+        let mut value = doc();
+        value["inputTokens"] = json!(12345);
+        value["outputTokens"] = json!(678);
+        value["currentContextTokens"] = json!(4000);
+        value["contextBudgetTokens"] = json!(32768);
+        value["contextEstimated"] = json!(true);
+        value["generationMetrics"] = json!([{"id":"g1","model":"alias","resolvedModel":"actual","phase":"plan","systemTokens":100,"toolTokens":200,"historyTokens":300,"inputTokens":550,"outputTokens":40,"cachedInputTokens":300,"reasoningOutputTokens":10,"durationMs":500,"firstTokenMs":50,"toolCount":25,"secret":"discard"}]);
+        sync(&mut db, vec![value], vec![], false).unwrap();
+        let payload: String = db
+            .query_row("SELECT payload FROM conversations WHERE id='c1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let saved: Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(saved["inputTokens"], 12345);
+        assert_eq!(saved["outputTokens"], 678);
+        assert_eq!(saved["currentContextTokens"], 4000);
+        assert_eq!(saved["contextBudgetTokens"], 32768);
+        assert_eq!(saved["contextEstimated"], true);
+        assert_eq!(saved["generationMetrics"][0]["cachedInputTokens"], 300);
+        assert_eq!(saved["generationMetrics"][0]["resolvedModel"], "actual");
+        assert_eq!(saved["generationMetrics"][0]["firstTokenMs"], 50);
+        assert!(saved["generationMetrics"][0].get("secret").is_none());
+        assert!(saved.get("sessionId").is_none());
+        assert!(saved["messages"][1]["result"]["payloadOmitted"] == true);
+
+        for invalid in [
+            json!(-1),
+            json!(1.5),
+            json!("123"),
+            json!(9_007_199_254_740_992u64),
+        ] {
+            let mut value = doc();
+            value["inputTokens"] = invalid.clone();
+            value["currentContextTokens"] = invalid;
+            let saved = sanitize(&value).unwrap();
+            assert_eq!(saved["inputTokens"], 0);
+            assert!(saved.get("currentContextTokens").is_none());
+        }
     }
     #[test]
     fn deletion_removes_transcript_and_fts_terms_from_database_bytes() {

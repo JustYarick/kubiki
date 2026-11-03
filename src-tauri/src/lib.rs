@@ -91,6 +91,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             opencode::ai_test_opencode,
+            opencode::ai_test_external_agent,
             opencode::start_opencode,
             agent_commands::ai_get_settings,
             agent_commands::ai_preview_policy,

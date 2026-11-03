@@ -101,6 +101,8 @@ function historyDocument(c: Conversation): Conversation {
     pinned: !!c.pinned, archived: !!c.archived, createdAt: c.createdAt, updatedAt: c.updatedAt,
     inputTokens: c.inputTokens, outputTokens: c.outputTokens,
     currentContextTokens: c.currentContextTokens, contextBudgetTokens: c.contextBudgetTokens,
+    contextEstimated: c.contextEstimated,
+    generationMetrics: c.generationMetrics?.slice(-100),
   };
   persisted.set(c, doc); return doc;
 }

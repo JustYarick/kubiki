@@ -28,3 +28,5 @@ pub use session::*;
 pub use summary::ResourceSummary;
 pub use types::*;
 pub use working_scope::WorkingScope;
+
+mod neighborhood;

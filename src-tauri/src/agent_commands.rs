@@ -18,6 +18,8 @@ static SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub struct AiSettings {
     pub runtime: crate::opencode::AgentRuntime,
     pub opencode: crate::opencode::OpenCodeSettings,
+    pub codex: crate::opencode::OpenCodeSettings,
+    pub claude: crate::opencode::OpenCodeSettings,
     pub mcp_policy: AgentPolicy,
     pub providers: Vec<ProviderProfile>,
     pub default_provider: Option<String>,
@@ -112,6 +114,8 @@ pub(crate) async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
             settings.policy.validate()?;
             settings.mcp_policy.validate()?;
             settings.opencode.validate()?;
+            settings.codex.validate()?;
+            settings.claude.validate()?;
             settings.options.validate()?;
             Ok(settings)
         }
@@ -229,6 +233,8 @@ pub async fn ai_save_settings(
     settings.policy.validate()?;
     settings.mcp_policy.validate()?;
     settings.opencode.validate()?;
+    settings.codex.validate()?;
+    settings.claude.validate()?;
     settings.options.validate()?;
     if settings.providers.len() > 30 || settings.instructions.len() > 8000 {
         return Err("At most 30 providers and 8000 bytes of instructions are supported".into());
@@ -275,6 +281,8 @@ pub async fn ai_save_settings(
         &before.environment,
         &before.runtime,
         &before.opencode,
+        &before.codex,
+        &before.claude,
         &before.mcp_policy,
     ))
     .ok()
@@ -285,6 +293,8 @@ pub async fn ai_save_settings(
             &settings.environment,
             &settings.runtime,
             &settings.opencode,
+            &settings.codex,
+            &settings.claude,
             &settings.mcp_policy,
         ))
         .ok()
@@ -294,6 +304,8 @@ pub async fn ai_save_settings(
     store(window.app_handle(), &settings).await?;
     if before.runtime != settings.runtime
         || before.opencode != settings.opencode
+        || before.codex != settings.codex
+        || before.claude != settings.claude
         || serde_json::to_value(&before.mcp_policy).ok()
             != serde_json::to_value(&settings.mcp_policy).ok()
     {
@@ -398,7 +410,7 @@ pub async fn ai_create_session(
     let _gate = manager.settings_gate.lock().await;
     let settings = load(window.app_handle()).await?;
     if settings.runtime != crate::opencode::AgentRuntime::Kubiki {
-        return Err("OpenCode is selected in settings".into());
+        return Err("An external agent is selected in settings".into());
     }
     let profile = settings
         .providers

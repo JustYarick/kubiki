@@ -43,7 +43,7 @@ it('defers reading and serializing messages until flush and saves only the lates
   const { deferredAiHistoryStorage, flushAiHistory } = await import('../../src/domains/ai/history_storage');
   api.invoke.mockResolvedValue(undefined);
   let reads = 0;
-  const entry = { ...conversation, providerId: 'p', model: 'm', mode: 'ask' as const, phase: 'plan' as const, draft: '', busy: false, status: 'idle', inputTokens: 0, outputTokens: 0,
+  const entry = { ...conversation, providerId: 'p', model: 'm', mode: 'ask' as const, phase: 'plan' as const, draft: '', busy: false, status: 'idle', inputTokens: 12345, outputTokens: 678, currentContextTokens: 4000, contextBudgetTokens: 32768, contextEstimated: true,
     get messages() { reads++; return [{ id: 'm', role: 'assistant' as const, text: 'latest' }]; },
   };
   for (let i = 0; i < 20; i++) deferredAiHistoryStorage.setItem('history', { version: 2, state: { conversations: [entry], activeId: entry.id } });
@@ -52,4 +52,5 @@ it('defers reading and serializing messages until flush and saves only the lates
   expect(reads).toBe(1);
   expect(api.invoke).toHaveBeenCalledTimes(1);
   expect(api.invoke.mock.calls[0][1].documents[0].messages[0].text).toBe('latest');
+  expect(api.invoke.mock.calls[0][1].documents[0]).toMatchObject({ inputTokens: 12345, outputTokens: 678, currentContextTokens: 4000, contextBudgetTokens: 32768, contextEstimated: true });
 });

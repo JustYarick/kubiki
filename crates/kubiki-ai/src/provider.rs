@@ -145,6 +145,7 @@ impl ProviderClient {
         }
         let (path, body) =
             build_request(self.profile.protocol, model, options, system, turns, tools);
+        let started = std::time::Instant::now();
         let response = self
             .request(reqwest::Method::POST, path)
             .json(&body)
@@ -154,7 +155,7 @@ impl ProviderClient {
         let response = checked(response, !self.key.is_empty())?;
         let ndjson = self.profile.protocol == ProviderProtocol::Ollama;
         let mut parser = StreamDecoder::new(ndjson);
-        let mut accumulator = Accumulator::default();
+        let mut accumulator = Accumulator { started: Some(started), ..Default::default() };
         let mut stream = response.bytes_stream();
         let mut total = 0;
         while let Some(chunk) = tokio::time::timeout(Duration::from_secs(120), stream.next())
@@ -484,9 +485,15 @@ struct Accumulator {
     done: bool,
     truncated: bool,
     in_thinking: bool,
+    started: Option<std::time::Instant>,
+    first_token_ms: Option<u64>,
+    resolved_model: Option<String>,
+    cached_input: Option<u64>,
+    reasoning_output: Option<u64>,
 }
 impl Accumulator {
     fn delta(&mut self, text: &str, emit: &EventSink) {
+        if self.first_token_ms.is_none() && !text.is_empty() { self.first_token_ms = self.started.map(|at| at.elapsed().as_millis() as u64); }
         self.text.push_str(text);
         emit(AgentEvent::TextDelta { text: text.into() });
     }
@@ -504,6 +511,12 @@ impl Accumulator {
                 "The provider reported an error during generation; no further tools were executed"
                     .into(),
             );
+        }
+        if let Some(model)=value["model"].as_str().or_else(||value["response"]["model"].as_str()).or_else(||value["message"]["model"].as_str()).filter(|s| s.len()<=512) { self.resolved_model=Some(model.into()); }
+        let usage=value.get("usage").or_else(||value.pointer("/response/usage")).or_else(||value.pointer("/message/usage"));
+        if let Some(usage)=usage {
+            if let Some(n)=usage.pointer("/input_tokens_details/cached_tokens").or_else(||usage.pointer("/prompt_tokens_details/cached_tokens")).or_else(||usage.get("cache_read_input_tokens")).and_then(Value::as_u64) {self.cached_input=Some(n);}
+            if let Some(n)=usage.pointer("/output_tokens_details/reasoning_tokens").or_else(||usage.pointer("/completion_tokens_details/reasoning_tokens")).and_then(Value::as_u64) {self.reasoning_output=Some(n);}
         }
         match protocol {
             ProviderProtocol::Responses => {
@@ -524,7 +537,7 @@ impl Accumulator {
             }
             ProviderProtocol::Anthropic => match value["type"].as_str().unwrap_or("") {
                 "message_start" => {
-                    self.input = value["message"]["usage"]["input_tokens"].as_u64();
+                    self.input = value["message"]["usage"]["input_tokens"].as_u64().map(|n| n.saturating_add(value["message"]["usage"]["cache_read_input_tokens"].as_u64().unwrap_or(0)).saturating_add(value["message"]["usage"]["cache_creation_input_tokens"].as_u64().unwrap_or(0)));
                     self.native = json!([]);
                 }
                 "content_block_start" => {
@@ -777,6 +790,7 @@ impl Accumulator {
             native: self.native,
             input_tokens: self.input,
             output_tokens: self.output,
+            resolved_model:self.resolved_model, cached_input_tokens:self.cached_input, reasoning_output_tokens:self.reasoning_output, first_token_ms:self.first_token_ms,
         })
     }
 }
@@ -839,8 +853,11 @@ mod tests {
             {"type":"function_call","id":"fc1","call_id":"c1","name":"get_resource","arguments":"{}"}
         ]);
         let mut stream = Accumulator::default();
-        stream.frame(ProviderProtocol::Responses, &json!({"type":"response.completed","response":{"output":native,"usage":{"input_tokens":9,"output_tokens":2}}}), &sink()).unwrap();
+        stream.frame(ProviderProtocol::Responses, &json!({"type":"response.completed","response":{"model":"actual-model","output":native,"usage":{"input_tokens":9,"output_tokens":2,"input_tokens_details":{"cached_tokens":5},"output_tokens_details":{"reasoning_tokens":1}}}}), &sink()).unwrap();
         let completion = stream.finish(ProviderProtocol::Responses).unwrap();
+        assert_eq!(completion.resolved_model.as_deref(), Some("actual-model"));
+        assert_eq!(completion.cached_input_tokens, Some(5));
+        assert_eq!(completion.reasoning_output_tokens, Some(1));
         let call = completion.calls[0].clone();
         let (_, body) = build_request(
             ProviderProtocol::Responses,
@@ -867,7 +884,7 @@ mod tests {
     fn anthropic_stream_preserves_tool_blocks_and_combines_results() {
         let mut stream = Accumulator::default();
         for frame in [
-            json!({"type":"message_start","message":{"usage":{"input_tokens":10}}}),
+            json!({"type":"message_start","message":{"model":"actual-claude","usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":30}}}),
             json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
             json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Inspecting"}}),
             json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"a","name":"get_resource","input":{}}}),
@@ -881,6 +898,9 @@ mod tests {
                 .unwrap();
         }
         let completion = stream.finish(ProviderProtocol::Anthropic).unwrap();
+        assert_eq!(completion.input_tokens, Some(140));
+        assert_eq!(completion.cached_input_tokens, Some(100));
+        assert_eq!(completion.resolved_model.as_deref(), Some("actual-claude"));
         assert_eq!(completion.native[1]["input"]["kind"], "Pod");
         assert_eq!(completion.calls[1].arguments["namespace"], "apps");
         let calls = completion.calls.clone();

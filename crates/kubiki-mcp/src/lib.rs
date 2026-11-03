@@ -118,11 +118,17 @@ impl ClusterServer {
         let mut global_cancel = self.session.cancellation();
         let execution = self.executor.execute(&request_session, call, &sink);
         tokio::pin!(execution);
-        tokio::select! { biased;
+        let mut result = tokio::select! { biased;
             _ = cancellation.cancelled() => {request_session.cancel_request(); execution.await},
             _ = cancelled(&mut global_cancel) => {request_session.cancel_request(); execution.await},
             result = &mut execution => result,
+        }?;
+        if parallel_read_tool(&call.name) && !matches!(call.name.as_str(), "get_evidence"|"get_plan") && result.get("error").is_none() && result.is_object() {
+            if let Ok(mut evidence) = self.session.evidence.lock() {
+                if let Some(id) = evidence.save(&result) { result["evidenceId"] = json!(id); }
+            }
         }
+        Ok(result)
     }
 }
 impl ServerHandler for ClusterServer {
@@ -130,6 +136,7 @@ impl ServerHandler for ClusterServer {
         {
             let mut config = ServerConfig::default();
             config.capabilities = ServerCapabilities::builder().enable_tools().build();
+            config.instructions = Some(INVESTIGATION_GUIDANCE.into());
             config
         }
     }

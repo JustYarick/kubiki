@@ -96,15 +96,5 @@ pub async fn attach(path: &Path) -> Result<(), String> {
         .write_all(format!("{}\n", data.token).as_bytes())
         .await
         .map_err(|e| e.to_string())?;
-    let (mut reader, mut writer) = tokio::io::split(stream);
-    let upstream = async {
-        tokio::io::copy(&mut tokio::io::stdin(), &mut writer).await?;
-        writer.shutdown().await
-    };
-    let downstream = async {
-        let mut output = tokio::io::stdout();
-        tokio::io::copy(&mut reader, &mut output).await?;
-        output.flush().await
-    };
-    tokio::select! {result=upstream=>result.map_err(|e|e.to_string()),result=downstream=>result.map_err(|e|e.to_string())}
+    relay(stream).await
 }

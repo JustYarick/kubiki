@@ -20,9 +20,9 @@ export function openAiChat(options: { resource?: ResourceItem; create?: boolean;
   const scope = currentAgentScope(resource?.namespace ?? options.namespace);
   const create = () => {
     const settings = useAiStore.getState().settings;
-    if(settings.runtime==='open_code') {
+    if((settings.runtime ?? 'kubiki')!=='kubiki') {
       const id=crypto.randomUUID();
-      useAiStore.setState({openCodeRequest:{id,scope,prompt:draft.replace(/ and a structured remediation plan via propose_plan.*$/s,'')}});
+      useAiStore.setState({openCodeRequest:{id,scope,prompt:draft.replace('a structured remediation plan via propose_plan (kind=remediation)', 'a remediation plan') + (resource ? ' Use the connected Kubiki cluster tools, starting with diagnose_resource for this exact identity. Follow ownerReferences and UID, never infer Deployment from a Pod name. If cluster tools are unavailable, report that blocker and stop; do not inspect host configs, credentials or sockets.' : '')}});
       return id;
     }
     const providerId = settings.defaultProvider ?? settings.providers[0]?.id ?? '';

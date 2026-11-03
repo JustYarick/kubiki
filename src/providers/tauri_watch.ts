@@ -2,7 +2,7 @@ import type { ResourceQuery } from '../core/resources/resource_types';
 import { normalizeK8sError } from './errors';
 import { sameQuery, type WatchBatch } from './watch_types';
 
-export async function watchTauriResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
+export async function watchTauriResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, customResource?: {name: string; uid: string}): Promise<() => void> {
   const { Channel, invoke } = await import('@tauri-apps/api/core');
   if (signal.aborted) return () => {};
   const id = crypto.randomUUID();
@@ -22,7 +22,7 @@ export async function watchTauriResources(query: ResourceQuery, onBatch: (batch:
   };
   signal.addEventListener('abort', close, { once: true });
   try {
-    await invoke('watch_resources', { query, subscriptionId: id, onEvent: channel });
+    await invoke('watch_resources', { query, subscriptionId: id, onEvent: channel, ...(customResource ? {customResource} : {}) });
     // Cancellation can beat native registration: an idempotent second stop closes that race.
     if (closed) unwatch();
     return close;

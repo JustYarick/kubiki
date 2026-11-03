@@ -1,0 +1,169 @@
+{
+  "sessionId": "ses_e5fcdad44ffegJswM3t0qclQKV",
+  "assistantRounds": 22,
+  "model": {
+    "id": "mimo-v2.6-flash-free",
+    "providerID": "opencode",
+    "variant": "default"
+  },
+  "agent": "build",
+  "providerCounters": {
+    "input": 47714,
+    "output": 2553,
+    "reasoning": 4239,
+    "cache_read": 404864,
+    "cache_write": 0
+  },
+  "perRoundInput": [
+    5040,
+    12528,
+    14113,
+    1247,
+    341,
+    627,
+    943,
+    1994,
+    488,
+    1337,
+    2237,
+    469,
+    633,
+    624,
+    674,
+    832,
+    279,
+    1463,
+    333,
+    1021,
+    491,
+    0
+  ],
+  "toolPartCount": 21,
+  "largestToolParts": [
+    {
+      "type": "tool",
+      "name": "execute",
+      "bytes": 7457,
+      "keys": [
+        "type",
+        "id",
+        "name",
+        "executed",
+        "state",
+        "time"
+      ]
+    },
+    {
+      "type": "tool",
+      "name": "execute",
+      "bytes": 6744,
+      "keys": [
+        "type",
+        "id",
+        "name",
+        "executed",
+        "state",
+        "time"
+      ]
+    },
+    {
+      "type": "tool",
+      "name": "execute",
+      "bytes": 4976,
+      "keys": [
+        "type",
+        "id",
+        "name",
+        "executed",
+        "state",
+        "time"
+      ]
+    },
+    {
+      "type": "tool",
+      "name": "shell",
+      "bytes": 4199,
+      "keys": [
+        "type",
+        "id",
+        "name",
+        "executed",
+        "state",
+        "time"
+      ]
+    },
+    {
+      "type": "tool",
+      "name": "shell",
+      "bytes": 3940,
+      "keys": [
+        "type",
+        "id",
+        "name",
+        "executed",
+        "state",
+        "time"
+      ]
+    }
+  ],
+  "toolCalls": {
+    "execute": 9,
+    "shell": 11,
+    "read": 1
+  },
+  "toolContentBytes": {
+    "execute": 23090,
+    "shell": 13680,
+    "read": 559
+  },
+  "largestToolOutputs": [
+    {
+      "tool": "execute",
+      "contentBytes": 6936
+    },
+    {
+      "tool": "execute",
+      "contentBytes": 6272
+    },
+    {
+      "tool": "execute",
+      "contentBytes": 4351
+    },
+    {
+      "tool": "shell",
+      "contentBytes": 3738
+    },
+    {
+      "tool": "shell",
+      "contentBytes": 3415
+    }
+  ],
+  "elapsedToLastStepSeconds": 246.99,
+  "note": "OpenCode v2.0.27 counters: input is nonCachedInputTokens, output is visibleOutputTokens; cache and reasoning are separate. Last interrupted generation may have missing usage. No raw prompts, credentials or tool bodies.",
+  "perRoundContextTokens": [
+    6320,
+    13296,
+    14881,
+    16095,
+    16341,
+    16883,
+    17711,
+    19658,
+    20072,
+    21305,
+    23485,
+    23893,
+    24441,
+    24944,
+    25506,
+    26304,
+    26519,
+    27959,
+    28237,
+    29181,
+    29547,
+    0
+  ],
+  "totalInputIncludingCache": 452578,
+  "totalOutputIncludingReasoning": 6792
+}

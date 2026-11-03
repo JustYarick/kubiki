@@ -173,6 +173,13 @@ pub enum AgentEvent {
         budget_tokens: u64,
         reserved_output_tokens: u64,
     },
+    GenerationMetrics {
+        id: String, model: String, phase: AgentPhase,
+        system_tokens: u64, tool_tokens: u64, history_tokens: u64,
+        input_tokens: Option<u64>, output_tokens: Option<u64>,
+        duration_ms: u64, tool_count: usize,
+        resolved_model: Option<String>, cached_input_tokens: Option<u64>, reasoning_output_tokens: Option<u64>, first_token_ms: Option<u64>,
+    },
     Usage {
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,

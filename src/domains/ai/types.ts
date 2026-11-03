@@ -28,11 +28,13 @@ export interface AgentPolicy {
   maxReplicas: number; rules: ResourceRule[]; deniedPaths: string[];
 }
 export interface SkillInfo { name: string; description: string; directory: string }
-export type AgentRuntime = 'kubiki' | 'open_code';
+export type AgentRuntime = 'kubiki' | 'open_code' | 'codex' | 'claude';
 export interface OpenCodeSettings { executable: string; workingDirectory: string }
 export interface AiSettings {
   runtime?: AgentRuntime;
   opencode?: OpenCodeSettings;
+  codex?: OpenCodeSettings;
+  claude?: OpenCodeSettings;
   mcpPolicy?: AgentPolicy;
   /** Inert legacy configuration, retained for lossless migration. */
   environment?: unknown;
@@ -70,6 +72,7 @@ export type AgentEvent =
   | { type: 'tool_completed'; id: string; result: Record<string, unknown> }
   | { type: 'plan_updated'; plan: PlanArtifact }
   | { type: 'context'; estimatedInputTokens: number; budgetTokens: number; reservedOutputTokens: number }
+  | ({ type: 'generation_metrics' } & GenerationMetrics)
   | { type: 'usage'; inputTokens: number | null; outputTokens: number | null }
   | { type: 'error'; message: string };
 export interface ChatMessage {
@@ -86,11 +89,19 @@ export interface ChatMessage {
   outputTokens?: number;
   tokensPerSec?: number;
 }
+export interface GenerationMetrics {
+  id: string; model: string; phase: AgentPhase;
+  systemTokens: number; toolTokens: number; historyTokens: number;
+  inputTokens: number | null; outputTokens: number | null;
+  durationMs: number; toolCount: number;
+  resolvedModel?: string | null; cachedInputTokens?: number | null; reasoningOutputTokens?: number | null; firstTokenMs?: number | null;
+}
 export interface Conversation {
   id: string; sessionId?: string; title: string; scope: AgentScope;
   intent?: 'chat' | 'investigate' | 'create';
   providerId: string; model: string; mode: AgentMode; phase: AgentPhase; messages: ChatMessage[];
   draft: string; status: string; error?: string; busy: boolean; invalidated?: boolean;
+  generationMetrics?: GenerationMetrics[];
   inputTokens: number; outputTokens: number;
   currentContextTokens?: number;
   contextBudgetTokens?: number;
@@ -132,3 +143,5 @@ export const PROVIDER_PRESETS: Array<{ name: string; protocol: ProviderProtocol;
   { name: 'Gemini', protocol: 'openai_compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   { name: 'Custom / vLLM / llama.cpp', protocol: 'openai_compatible', baseUrl: 'http://localhost:8000/v1' },
 ];
+
+export const externalAgentName = (runtime?: AgentRuntime) => runtime === 'codex' ? 'Codex' : runtime === 'claude' ? 'Claude Code' : 'OpenCode';

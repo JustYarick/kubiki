@@ -49,6 +49,7 @@ async function setup(page: Page) {
         if (command === 'ai_set_credential') { if (args.apiKey) keys.set(args.providerId, args.apiKey); else keys.delete(args.providerId); return; }
         if (command === 'ai_list_skills') return w.__aiHarness.skills ?? [{name:'cluster-debug',description:'Investigate a cluster using permitted evidence',directory:'/home/user/.agents/skills/cluster-debug'}];
         if (command === 'ai_test_provider') { if(args.profile.baseUrl.includes('broken')) throw new Error('Provider connection failed'); return structuredClone(w.__aiHarness.models); }
+        if (command === 'ai_test_external_agent') return {executable:`/usr/local/bin/${args.runtime}`,version:args.runtime === 'codex' ? 'codex-cli 0.166.0' : '2.1.299 (Claude Code)'};
         if (command === 'ai_test_opencode') return {executable:'/usr/local/bin/opencode',version:'opencode v2.0.27'};
         if (command === 'ai_list_models') {
           if (!settings.providers.some(p => p.id === args.providerId)) throw new Error('Unknown AI provider');
@@ -595,3 +596,22 @@ test('integration detection is shown only for discovered APIs in Auto', async ({
   await expect(dialog).not.toContainText('list_helm_releases');
   expect(errors).toEqual([]);
 });
+
+for (const [runtime, label, version] of [['codex', 'Codex', 'codex-cli'], ['claude', 'Claude Code', 'Claude Code']] as const) {
+  test(`${label} settings and terminal lifecycle preserve the selected agent`, async ({page}) => {
+    const errors = await setup(page); const agent = await openAgent(page);
+    await agent.getByRole('button', {name:'AI settings',exact:true}).click();
+    const dialog = page.getByRole('dialog', {name:'AI Agent settings',exact:true});
+    await dialog.getByRole('combobox', {name:'AI agent',exact:true}).selectOption(runtime);
+    await dialog.getByRole('button', {name:'Check installation',exact:true}).click();
+    await expect(dialog.getByRole('status')).toContainText(version);
+    await dialog.getByRole('textbox', {name:`${label} executable`,exact:true}).fill(`/opt/bin/${runtime}`);
+    await dialog.getByRole('button', {name:`Save ${label} settings`,exact:true}).click();
+    await expect.poll(()=>page.evaluate(key=>(window as any).__aiHarness.settings()[key]?.executable,runtime)).toBe(`/opt/bin/${runtime}`);
+    await expect(page.getByTestId('opencode-pane')).toContainText(label);
+    await expect(dialog.getByRole('button', {name:'Connections & models',exact:true})).toHaveCount(0);
+    await dialog.getByRole('combobox', {name:'AI agent',exact:true}).selectOption('kubiki');
+    await expect(page.getByTestId('opencode-pane')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}

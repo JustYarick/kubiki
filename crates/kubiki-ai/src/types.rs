@@ -78,6 +78,10 @@ pub struct Completion {
     pub native: Value,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    pub resolved_model: Option<String>,
+    pub cached_input_tokens: Option<u64>,
+    pub reasoning_output_tokens: Option<u64>,
+    pub first_token_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]

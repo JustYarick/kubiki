@@ -46,6 +46,23 @@ pub fn history_tokens(history: &[Turn]) -> usize {
         Turn::Tool {call,result}=>estimate_tokens(&call.id)+estimate_tokens(&call.name)+estimate_tokens(&result.to_string()),
     }+16).sum()
 }
+/// Keep the latest tool batch intact. Older large read bodies remain retrievable
+/// by evidence ID; do not alter provider-native reasoning or mutation receipts.
+pub fn compact_read_bodies(history: &mut [Turn]) {
+    let Some(latest) = history.iter().rposition(|t| matches!(t, Turn::Assistant(_))) else { return; };
+    for turn in &mut history[..latest] {
+        if let Turn::Tool { call, result } = turn {
+            if !parallel_read_tool(&call.name) || matches!(call.name.as_str(), "get_plan"|"verify_workload") || result.get("error").is_some() || result.get("operationId").is_some() || !result["evidenceId"].is_string() { continue; }
+            let body=result.to_string();
+            if body.len() <= 6000 {continue;}
+            let evidence_id=result["evidenceId"].clone();
+            let identity=result.get("evidence").cloned().or_else(|| result.pointer("/diagnostic/evidence").cloned());
+            let issues=result.get("issuesSummary").cloned().or_else(||result.pointer("/diagnostic/issuesSummary").cloned());
+            *result=json!({"evidenceId":evidence_id,"evidence":identity,"issuesSummary":issues.filter(|v| v.to_string().len() <= 2000),"historical":true,"abridged":true,"originalBytes":body.len(),"excerpt":body.chars().take(1200).collect::<String>(),"lookup":"Historical partial excerpt, not complete evidence. Use get_evidence with fields for details; refresh live reads after changes."});
+        }
+    }
+}
+
 pub fn compact_history(history: &mut Vec<Turn>, max_bytes: usize, memory: &mut ConversationMemory) {
     if history.len() <= 4 || history_size_bytes(history) < max_bytes * 3 / 4 {
         return;
@@ -174,5 +191,21 @@ mod tests {
             "native arguments must not be counted twice"
         );
         assert!(history_tokens(&[turn]) > 3000);
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::*;
+    use crate::ToolCall;
+    #[test]
+    fn older_read_bodies_are_retrievable_but_latest_batch_and_receipts_stay_intact() {
+        let call=ToolCall{id:"read".into(),name:"get_resource".into(),arguments:json!({})};
+        let body=json!({"evidenceId":"e1","resource":{"payload":"x".repeat(12000)}});
+        let mut history=vec![Turn::Tool{call:call.clone(),result:body.clone()},Turn::Assistant(Completion{native:json!({"signedReasoning":"preserve"}),..Default::default()}),Turn::Tool{call,result:body.clone()}];
+        compact_read_bodies(&mut history);
+        assert!(matches!(&history[0],Turn::Tool{result,..} if result["abridged"]==true && result["evidenceId"]=="e1"));
+        assert!(matches!(&history[1],Turn::Assistant(c) if c.native["signedReasoning"]=="preserve"));
+        assert!(matches!(&history[2],Turn::Tool{result,..} if result==&body));
     }
 }

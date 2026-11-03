@@ -1,0 +1,445 @@
+{
+  "newGuidance": {
+    "bytes": 810,
+    "estimatedTokens": 278
+  },
+  "policySummary": {
+    "bytes": 465,
+    "estimatedTokens": 163
+  },
+  "scenarios": [
+    {
+      "catalog": {
+        "bytes": 16609,
+        "estimatedTokens": 5545
+      },
+      "perTool": [
+        {
+          "cost": {
+            "bytes": 343,
+            "estimatedTokens": 123
+          },
+          "name": "propose_manifests"
+        },
+        {
+          "cost": {
+            "bytes": 553,
+            "estimatedTokens": 193
+          },
+          "name": "ask_user"
+        },
+        {
+          "cost": {
+            "bytes": 346,
+            "estimatedTokens": 124
+          },
+          "name": "get_plan"
+        },
+        {
+          "cost": {
+            "bytes": 2492,
+            "estimatedTokens": 839
+          },
+          "name": "propose_plan"
+        },
+        {
+          "cost": {
+            "bytes": 941,
+            "estimatedTokens": 322
+          },
+          "name": "verify_workload"
+        },
+        {
+          "cost": {
+            "bytes": 435,
+            "estimatedTokens": 153
+          },
+          "name": "get_evidence"
+        },
+        {
+          "cost": {
+            "bytes": 918,
+            "estimatedTokens": 314
+          },
+          "name": "set_working_scope"
+        },
+        {
+          "cost": {
+            "bytes": 381,
+            "estimatedTokens": 135
+          },
+          "name": "list_namespaces"
+        },
+        {
+          "cost": {
+            "bytes": 1086,
+            "estimatedTokens": 370
+          },
+          "name": "summarize_resources"
+        },
+        {
+          "cost": {
+            "bytes": 1276,
+            "estimatedTokens": 434
+          },
+          "name": "list_resources"
+        },
+        {
+          "cost": {
+            "bytes": 908,
+            "estimatedTokens": 311
+          },
+          "name": "get_resource"
+        },
+        {
+          "cost": {
+            "bytes": 708,
+            "estimatedTokens": 244
+          },
+          "name": "get_neighborhood"
+        },
+        {
+          "cost": {
+            "bytes": 650,
+            "estimatedTokens": 225
+          },
+          "name": "diagnose_resource"
+        },
+        {
+          "cost": {
+            "bytes": 465,
+            "estimatedTokens": 163
+          },
+          "name": "get_pod_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 511,
+            "estimatedTokens": 179
+          },
+          "name": "get_workload_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 336,
+            "estimatedTokens": 120
+          },
+          "name": "get_service_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 336,
+            "estimatedTokens": 120
+          },
+          "name": "get_pvc_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 340,
+            "estimatedTokens": 122
+          },
+          "name": "get_node_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 534,
+            "estimatedTokens": 186
+          },
+          "name": "get_config_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 453,
+            "estimatedTokens": 159
+          },
+          "name": "resource_catalog"
+        },
+        {
+          "cost": {
+            "bytes": 362,
+            "estimatedTokens": 129
+          },
+          "name": "get_events"
+        },
+        {
+          "cost": {
+            "bytes": 470,
+            "estimatedTokens": 165
+          },
+          "name": "get_events_timeline"
+        },
+        {
+          "cost": {
+            "bytes": 563,
+            "estimatedTokens": 196
+          },
+          "name": "get_logs"
+        },
+        {
+          "cost": {
+            "bytes": 347,
+            "estimatedTokens": 124
+          },
+          "name": "get_metrics"
+        },
+        {
+          "cost": {
+            "bytes": 300,
+            "estimatedTokens": 108
+          },
+          "name": "list_skills"
+        },
+        {
+          "cost": {
+            "bytes": 528,
+            "estimatedTokens": 184
+          },
+          "name": "read_skill"
+        }
+      ],
+      "scenario": "core",
+      "tools": 26,
+      "version": "implemented_full_read_catalog"
+    },
+    {
+      "catalog": {
+        "bytes": 18872,
+        "estimatedTokens": 6299
+      },
+      "perTool": [
+        {
+          "cost": {
+            "bytes": 343,
+            "estimatedTokens": 123
+          },
+          "name": "propose_manifests"
+        },
+        {
+          "cost": {
+            "bytes": 553,
+            "estimatedTokens": 193
+          },
+          "name": "ask_user"
+        },
+        {
+          "cost": {
+            "bytes": 346,
+            "estimatedTokens": 124
+          },
+          "name": "get_plan"
+        },
+        {
+          "cost": {
+            "bytes": 2492,
+            "estimatedTokens": 839
+          },
+          "name": "propose_plan"
+        },
+        {
+          "cost": {
+            "bytes": 941,
+            "estimatedTokens": 322
+          },
+          "name": "verify_workload"
+        },
+        {
+          "cost": {
+            "bytes": 435,
+            "estimatedTokens": 153
+          },
+          "name": "get_evidence"
+        },
+        {
+          "cost": {
+            "bytes": 918,
+            "estimatedTokens": 314
+          },
+          "name": "set_working_scope"
+        },
+        {
+          "cost": {
+            "bytes": 381,
+            "estimatedTokens": 135
+          },
+          "name": "list_namespaces"
+        },
+        {
+          "cost": {
+            "bytes": 1086,
+            "estimatedTokens": 370
+          },
+          "name": "summarize_resources"
+        },
+        {
+          "cost": {
+            "bytes": 1276,
+            "estimatedTokens": 434
+          },
+          "name": "list_resources"
+        },
+        {
+          "cost": {
+            "bytes": 908,
+            "estimatedTokens": 311
+          },
+          "name": "get_resource"
+        },
+        {
+          "cost": {
+            "bytes": 708,
+            "estimatedTokens": 244
+          },
+          "name": "get_neighborhood"
+        },
+        {
+          "cost": {
+            "bytes": 650,
+            "estimatedTokens": 225
+          },
+          "name": "diagnose_resource"
+        },
+        {
+          "cost": {
+            "bytes": 465,
+            "estimatedTokens": 163
+          },
+          "name": "get_pod_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 511,
+            "estimatedTokens": 179
+          },
+          "name": "get_workload_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 336,
+            "estimatedTokens": 120
+          },
+          "name": "get_service_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 336,
+            "estimatedTokens": 120
+          },
+          "name": "get_pvc_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 340,
+            "estimatedTokens": 122
+          },
+          "name": "get_node_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 534,
+            "estimatedTokens": 186
+          },
+          "name": "get_config_diagnostics"
+        },
+        {
+          "cost": {
+            "bytes": 453,
+            "estimatedTokens": 159
+          },
+          "name": "resource_catalog"
+        },
+        {
+          "cost": {
+            "bytes": 362,
+            "estimatedTokens": 129
+          },
+          "name": "get_events"
+        },
+        {
+          "cost": {
+            "bytes": 470,
+            "estimatedTokens": 165
+          },
+          "name": "get_events_timeline"
+        },
+        {
+          "cost": {
+            "bytes": 563,
+            "estimatedTokens": 196
+          },
+          "name": "get_logs"
+        },
+        {
+          "cost": {
+            "bytes": 347,
+            "estimatedTokens": 124
+          },
+          "name": "get_metrics"
+        },
+        {
+          "cost": {
+            "bytes": 365,
+            "estimatedTokens": 130
+          },
+          "name": "list_helm_releases"
+        },
+        {
+          "cost": {
+            "bytes": 437,
+            "estimatedTokens": 154
+          },
+          "name": "get_helm_release"
+        },
+        {
+          "cost": {
+            "bytes": 345,
+            "estimatedTokens": 123
+          },
+          "name": "list_argocd_apps"
+        },
+        {
+          "cost": {
+            "bytes": 345,
+            "estimatedTokens": 123
+          },
+          "name": "get_argocd_app"
+        },
+        {
+          "cost": {
+            "bytes": 377,
+            "estimatedTokens": 134
+          },
+          "name": "list_flux_resources"
+        },
+        {
+          "cost": {
+            "bytes": 388,
+            "estimatedTokens": 138
+          },
+          "name": "get_flux_resource"
+        },
+        {
+          "cost": {
+            "bytes": 300,
+            "estimatedTokens": 108
+          },
+          "name": "list_skills"
+        },
+        {
+          "cost": {
+            "bytes": 528,
+            "estimatedTokens": 184
+          },
+          "name": "read_skill"
+        }
+      ],
+      "scenario": "all_integrations",
+      "tools": 32,
+      "version": "implemented_full_read_catalog"
+    }
+  ],
+  "skills": 8,
+  "systemPrompt": {
+    "bytes": 2311,
+    "estimatedTokens": 779
+  }
+}

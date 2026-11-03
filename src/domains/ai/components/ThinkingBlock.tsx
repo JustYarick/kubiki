@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Brain, ChevronDown, Sparkles } from 'lucide-react';
 
 export interface ParsedThinking {
@@ -31,11 +31,7 @@ export function parseThinking(text: string, isStreaming: boolean): ParsedThinkin
 }
 
 export function ThinkingBlock({ thinking, isActive }: { thinking: string; isActive: boolean }) {
-  const [open, setOpen] = useState(isActive);
-
-  useEffect(() => {
-    if (isActive) setOpen(true);
-  }, [isActive]);
+  const [open, setOpen] = useState(false);
 
   return (
     <div className={`ai-thinking-block ${isActive ? 'is-active' : ''}`}>

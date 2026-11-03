@@ -91,6 +91,7 @@ async fn external_host_catalog_is_scoped_and_has_no_agent_control_or_shell() {
     let (client, service) = tokio::join!(().serve(client_io), server.serve(server_io));
     let client = client.unwrap();
     let service = service.unwrap();
+    assert_eq!(client.peer().peer_info().unwrap().instructions.as_deref(), Some(INVESTIGATION_GUIDANCE));
     let tools = client.peer().list_all_tools().await.unwrap();
     assert!(tools.iter().any(|t| t.name == "get_resource"));
     assert!(!tools.iter().any(|t| matches!(

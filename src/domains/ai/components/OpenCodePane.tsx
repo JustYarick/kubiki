@@ -8,9 +8,12 @@ import { useUiStore } from '../../../state/ui_store';
 import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
+import { externalAgentName } from '../types';
 import { agentError } from '../transport';
 
 export function OpenCodePane({ visible = true }: { visible?: boolean }) {
+  const runtime = useAiStore(s => s.settings.runtime);
+  const name = externalAgentName(runtime);
   const request = useAiStore(s => s.openCodeRequest);
   const context = useClusterStore(s => s.currentContext);
   const [attempt, setAttempt] = useState(0);
@@ -101,7 +104,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
       data.dispose(); view.dispose(); terminal.current = null; fit.current = null;
       if (startup.current === cancel) startup.current = null;
     };
-  }, [attempt, request?.id]);
+  }, [attempt, request?.id, runtime]);
 
   useEffect(() => {
     if (pinnedContext.current !== context) { stop(); setStatus('Cluster changed · Restart to reconnect'); }
@@ -115,7 +118,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
 
   return <div className="ai-workspace" data-testid="opencode-pane"><div className="ai-chat">
     <div className="ai-form-line px-3 py-2 border-b border-[var(--border-default)]">
-      <strong>OpenCode</strong><span className="ai-help ai-grow">{scopeLabel} · {status}</span>
+      <strong>{name}</strong><span className="ai-help ai-grow">{scopeLabel} · {status}</span>
       <Button size="sm" onClick={stop}>Stop</Button>
       <Button size="sm" onClick={() => setAttempt(v => v + 1)}>Restart</Button>
       <Button size="sm" onClick={() => useAiStore.getState().setSettingsOpen(true)}>Settings</Button>

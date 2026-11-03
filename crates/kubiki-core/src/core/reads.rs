@@ -171,6 +171,15 @@ pub async fn custom_resources(
     uid: String,
     namespace: Option<String>,
 ) -> Result<Value, ApiError> {
+    let (query, ar, _) = resolve_custom_resource(client.clone(), context, name, uid, namespace).await?;
+    list(client, &query, &ar).await
+}
+
+/// Resolve a CRD against the live definition, including its UID and served version.
+/// Shared by one-shot lists and watches; renderer-provided plural/scope are never trusted.
+pub async fn resolve_custom_resource(
+    client: Client, context: String, name: String, uid: String, namespace: Option<String>,
+) -> Result<(ResourceQuery, ApiResource, bool), ApiError> {
     let invalid = |message| ApiError::from_status(400, message, "custom-resources", Some(&context));
     let valid = |s: &str| {
         !s.is_empty()
@@ -226,7 +235,7 @@ pub async fn custom_resources(
             None
         },
     };
-    list(client, &query, &ar).await
+    Ok((query, ar, crd.spec.scope == "Namespaced"))
 }
 
 #[cfg(test)]

@@ -35,7 +35,7 @@ export const AI_SETTINGS_PAGES = [
 export type AgentSettingsPage = typeof AI_SETTINGS_PAGES[number]['id'];
 
 export function availableAiSettingsPages(settings: Pick<AiSettings, 'runtime'>) {
-  return AI_SETTINGS_PAGES.filter(item => settings.runtime === 'open_code' ? item.id === 'agent' || item.id === 'mcp' : item.id !== 'mcp');
+  return AI_SETTINGS_PAGES.filter(item => (settings.runtime ?? 'kubiki') !== 'kubiki' ? item.id === 'agent' || item.id === 'mcp' : item.id !== 'mcp');
 }
 
 export interface AgentSettingsHandle {
@@ -87,7 +87,7 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
       <div className="ai-settings-content">
       {page==='agent' && <AgentRuntimeSettings />}
       {page==='mcp' && <McpAccessSettings />}
-      {settings.runtime!=='open_code' && <>
+      {(settings.runtime ?? 'kubiki')==='kubiki' && <>
       <div style={{ display: page === 'providers' ? undefined : 'none' }}><ProviderSettings /></div>
       <div style={{ display: page === 'history' ? undefined : 'none' }}><HistorySettings /></div>
       <div style={{ display: page === 'environment' ? undefined : 'none' }}><AgentEnvironmentSettings /></div>
