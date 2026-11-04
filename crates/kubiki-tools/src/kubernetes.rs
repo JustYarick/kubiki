@@ -1715,8 +1715,23 @@ impl KubernetesTools {
                     since_seconds: Some(args.since_seconds.unwrap_or(3600)),
                 };
                 let logs = request.read(client).await.map_err(error_message)?;
+                let (filtered_logs, total_lines, matched_lines, is_filtered) =
+                    crate::diagnostics::filter_logs_for_ai(&logs, args.tail_lines.unwrap_or(150) as usize);
                 Ok(
-                    json!({"capturedAt":stamp(),"logs":logs.chars().take(24000).collect::<String>(),"tailLines":args.tail_lines.unwrap_or(150),"sinceSeconds":args.since_seconds.unwrap_or(3600),"coverage":"Bounded container log window; capped at 24000 characters; absence is not proof of health"}),
+                    json!({
+                        "capturedAt": stamp(),
+                        "logs": filtered_logs,
+                        "totalLines": total_lines,
+                        "matchedErrorLines": matched_lines,
+                        "filtered": is_filtered,
+                        "tailLines": args.tail_lines.unwrap_or(150),
+                        "sinceSeconds": args.since_seconds.unwrap_or(3600),
+                        "coverage": if is_filtered {
+                            "Filtered to relevant diagnostic error/warning lines"
+                        } else {
+                            "Recent tail lines (no error patterns detected)"
+                        }
+                    }),
                 )
             } else if call.name == "get_events" {
                 if !state.policy.events {
@@ -1862,6 +1877,7 @@ impl KubernetesTools {
                     let ts_b = b.get("lastTimestamp").and_then(Value::as_str).unwrap_or("");
                     ts_b.cmp(ts_a)
                 });
+                let deduped = crate::diagnostics::deduplicate_events(&timeline, limit as usize);
                 bounded_result(json!({
                     "diagnostic": "events_timeline",
                     "evidence": {
@@ -1870,9 +1886,10 @@ impl KubernetesTools {
                         "uid": args.uid,
                         "capturedAt": stamp(),
                         "total": timeline.len(),
-                        "completeness":"partial", "coverage":"Policy-projected bounded timeline; missing fields and expired Events are unknown"
+                        "deduplicated": deduped.len(),
+                        "completeness":"partial", "coverage":"Policy-projected deduplicated timeline; missing fields and expired Events are unknown"
                     },
-                    "timeline": timeline,
+                    "timeline": deduped,
                 }))
             } else {
                 if !state.policy.metrics

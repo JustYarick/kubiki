@@ -903,3 +903,266 @@ mod accepted_revision_tests {
         assert!(!accepted_generation_matches(&json!({}), Some(4)));
     }
 }
+
+static LOG_ERROR_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?i)(\bERROR\b|\bFATAL\b|\bWARN(?:ING)?\b|\bException\b|\bpanic:|\bpanicked at\b|\bTraceback\b|\bCRITICAL\b|\bSIG(?:SEGV|ABRT|BUS|ILL|FPE)\b|segmentation fault|"level"\s*:\s*"(?:error|fatal|warn)"|(?-i:\b[A-Z][A-Za-z]*(?:Error|Exception)[:)]))"#).unwrap()
+});
+
+static POD_HASH_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"[a-z0-9]+-[a-z0-9]{5,10}(-[a-z0-9]{5})?"#).unwrap()
+});
+
+static UUID_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"#).unwrap()
+});
+
+static TS_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?"#).unwrap()
+});
+
+static IP_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?"#).unwrap()
+});
+
+pub fn filter_logs_for_ai(raw_logs: &str, tail_fallback: usize) -> (String, usize, usize, bool) {
+    let lines: Vec<&str> = raw_logs.lines().collect();
+    let total = lines.len();
+    if total == 0 {
+        return (String::new(), 0, 0, false);
+    }
+
+    let mut matched: Vec<(usize, &str)> = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if LOG_ERROR_RE.is_match(line) {
+            matched.push((idx + 1, *line));
+        }
+    }
+
+    let matched_count = matched.len();
+    if matched_count > 0 {
+        let truncate_line = |l: &str| -> String {
+            if l.chars().count() > 400 {
+                let mut s: String = l.chars().take(400).collect();
+                s.push_str("... [truncated]");
+                s
+            } else {
+                l.to_string()
+            }
+        };
+
+        let selected: Vec<String> = if matched_count <= 50 {
+            matched
+                .into_iter()
+                .map(|(num, l)| format!("[L{}] {}", num, truncate_line(l)))
+                .collect()
+        } else {
+            let mut out = Vec::new();
+            for (num, l) in matched.iter().take(30) {
+                out.push(format!("[L{}] {}", num, truncate_line(l)));
+            }
+            out.push(format!("... [{} intermediate matching error lines omitted] ...", matched_count - 50));
+            for (num, l) in matched.iter().skip(matched_count - 20) {
+                out.push(format!("[L{}] {}", num, truncate_line(l)));
+            }
+            out
+        };
+        (selected.join("\n"), total, matched_count, true)
+    } else {
+        let fallback_count = tail_fallback.clamp(1, 30).min(total);
+        let start = total.saturating_sub(fallback_count);
+        let selected: Vec<String> = lines[start..]
+            .iter()
+            .enumerate()
+            .map(|(offset, l)| {
+                let text = if l.chars().count() > 400 {
+                    let mut s: String = l.chars().take(400).collect();
+                    s.push_str("... [truncated]");
+                    s
+                } else {
+                    l.to_string()
+                };
+                format!("[L{}] {}", start + offset + 1, text)
+            })
+            .collect();
+        (selected.join("\n"), total, 0, false)
+    }
+}
+
+pub fn normalize_event_message(msg: &str) -> String {
+    let s = TS_RE.replace_all(msg, "<time>");
+    let s = UUID_RE.replace_all(&s, "<uuid>");
+    let s = IP_RE.replace_all(&s, "<ip>");
+    let s = POD_HASH_RE.replace_all(&s, "<pod>");
+    s.into_owned()
+}
+
+pub fn deduplicate_events(events: &[Value], limit: usize) -> Vec<Value> {
+    if events.is_empty() {
+        return Vec::new();
+    }
+    use std::collections::HashMap;
+    let mut order = Vec::new();
+    let mut map: HashMap<String, Value> = HashMap::new();
+
+    for ev in events {
+        let event_type = ev.get("type").and_then(Value::as_str).unwrap_or("Normal");
+        let reason = ev.get("reason").and_then(Value::as_str).unwrap_or("");
+        let msg = ev.get("message").and_then(Value::as_str).unwrap_or("");
+        let count = ev.get("count").and_then(Value::as_i64).unwrap_or(1);
+        let last_ts = ev.get("lastTimestamp").and_then(Value::as_str).or_else(|| ev.get("firstTimestamp").and_then(Value::as_str)).unwrap_or("");
+        let involved = ev.get("involvedObject").cloned().unwrap_or(json!({}));
+        let component = ev.get("component").and_then(Value::as_str).unwrap_or("");
+
+        let norm_msg = normalize_event_message(msg);
+        let key = format!("{}:{}:{}", event_type, reason, norm_msg);
+
+        if let Some(existing) = map.get_mut(&key) {
+            let prev_count = existing["count"].as_i64().unwrap_or(1);
+            existing["count"] = json!(prev_count + count);
+            let prev_ts = existing["lastTimestamp"].as_str().unwrap_or("");
+            if last_ts > prev_ts {
+                existing["lastTimestamp"] = json!(last_ts);
+            }
+        } else {
+            order.push(key.clone());
+            map.insert(
+                key,
+                json!({
+                    "type": event_type,
+                    "reason": reason,
+                    "message": msg,
+                    "count": count,
+                    "lastTimestamp": last_ts,
+                    "involvedObject": involved,
+                    "component": component,
+                }),
+            );
+        }
+    }
+
+    order
+        .into_iter()
+        .filter_map(|k| map.remove(&k))
+        .take(limit)
+        .collect()
+}
+
+pub fn extract_crash_causes(diagnostic: &Value) -> Vec<Value> {
+    let mut causes = Vec::new();
+    let containers = diagnostic
+        .get("containers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(
+            diagnostic
+                .get("initContainers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        );
+
+    for c in containers {
+        let name = c.get("name").and_then(Value::as_str).unwrap_or("");
+        let restart_count = c.get("restartCount").and_then(Value::as_i64).unwrap_or(0);
+        let state = c.get("state").and_then(Value::as_str).unwrap_or("");
+
+        if let Some(term) = c.get("lastTermination").or_else(|| {
+            if state == "terminated" {
+                c.get("stateDetails")
+            } else {
+                None
+            }
+        }) {
+            let exit_code = term.get("exitCode").and_then(Value::as_i64);
+            let reason = term.get("reason").and_then(Value::as_str).unwrap_or("");
+            if exit_code.is_some_and(|code| code != 0) || reason == "OOMKilled" {
+                causes.push(json!({
+                    "container": name,
+                    "state": "terminated",
+                    "exitCode": exit_code,
+                    "reason": reason,
+                    "message": term.get("message"),
+                    "restartCount": restart_count,
+                    "finishedAt": term.get("finishedAt")
+                }));
+            }
+        } else if state == "waiting" {
+            let reason = c.pointer("/stateDetails/reason").and_then(Value::as_str).unwrap_or("");
+            if matches!(reason, "CrashLoopBackOff" | "ImagePullBackOff" | "ErrImagePull" | "CreateContainerConfigError" | "CreateContainerError") {
+                causes.push(json!({
+                    "container": name,
+                    "state": "waiting",
+                    "reason": reason,
+                    "message": c.pointer("/stateDetails/message"),
+                    "restartCount": restart_count
+                }));
+            }
+        }
+    }
+    causes
+}
+
+#[cfg(test)]
+mod rca_optimization_tests {
+    use super::*;
+
+    #[test]
+    fn filter_logs_extracts_error_patterns_and_falls_back_when_clean() {
+        let clean_logs = "info: server started\ninfo: listening on port 80\nready: ping ok";
+        let (filtered, total, matched, is_filtered) = filter_logs_for_ai(clean_logs, 10);
+        assert_eq!(total, 3);
+        assert_eq!(matched, 0);
+        assert!(!is_filtered);
+        assert!(filtered.contains("listening on port 80"));
+
+        let error_logs = "info: ok\nERROR: database connection failed: timeout\ninfo: retry\nWARN: high latency\ninfo: ok";
+        let (filtered, total, matched, is_filtered) = filter_logs_for_ai(error_logs, 10);
+        assert_eq!(total, 5);
+        assert_eq!(matched, 2);
+        assert!(is_filtered);
+        assert!(filtered.contains("ERROR: database connection failed"));
+        assert!(filtered.contains("WARN: high latency"));
+        assert!(!filtered.contains("info: ok"));
+    }
+
+    #[test]
+    fn deduplicate_events_collapses_repeated_warning_events() {
+        let events = vec![
+            json!({"type":"Warning","reason":"BackOff","message":"Back-off restarting failed container app in pod web-7c9b8d-2k9x1","count":1,"lastTimestamp":"2026-11-04T10:00:00Z"}),
+            json!({"type":"Warning","reason":"BackOff","message":"Back-off restarting failed container app in pod web-7c9b8d-9y8w2","count":1,"lastTimestamp":"2026-11-04T10:05:00Z"}),
+            json!({"type":"Normal","reason":"Scheduled","message":"Successfully assigned default/web-7c9b8d-2k9x1 to node-1","count":1,"lastTimestamp":"2026-11-04T09:59:00Z"}),
+        ];
+        let deduped = deduplicate_events(&events, 10);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0]["reason"], "BackOff");
+        assert_eq!(deduped[0]["count"], 2);
+        assert_eq!(deduped[0]["lastTimestamp"], "2026-11-04T10:05:00Z");
+    }
+
+    #[test]
+    fn extract_crash_causes_identifies_oom_and_crashloop() {
+        let diag = json!({
+            "containers": [
+                {
+                    "name": "worker",
+                    "state": "waiting",
+                    "restartCount": 5,
+                    "stateDetails": {"reason": "CrashLoopBackOff", "message": "back-off 5m"},
+                    "lastTermination": {"exitCode": 137, "reason": "OOMKilled", "finishedAt": "2026-11-04T10:00:00Z"}
+                },
+                {
+                    "name": "sidecar",
+                    "state": "running",
+                    "restartCount": 0
+                }
+            ]
+        });
+        let causes = extract_crash_causes(&diag);
+        assert_eq!(causes.len(), 1);
+        assert_eq!(causes[0]["container"], "worker");
+        assert_eq!(causes[0]["reason"], "OOMKilled");
+        assert_eq!(causes[0]["exitCode"], 137);
+    }
+}
+

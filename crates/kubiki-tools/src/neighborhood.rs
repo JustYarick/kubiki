@@ -435,9 +435,18 @@ impl KubernetesTools {
             }
             json!({"containers":out,"coverage":"Up to two failing containers, up to 80 lines each. Use get_logs for additional evidence."})
         };
+        let crash_causes = crate::diagnostics::extract_crash_causes(&diagnosis);
         let (events, logs) = tokio::join!(events, logs);
         Ok(
-            json!({"diagnostic":compact_observation(session,diagnosis),"neighborhood":compact_observation(session,observation(neighborhood)),"events":compact_observation(session,observation(events)),"logs":compact_observation(session,logs),"completeness":"partial","next":"Follow exact graph references; use get_config_diagnostics on the root for config issues. Expand graph or logs for unresolved hypotheses."}),
+            json!({
+                "diagnostic": compact_observation(session, diagnosis),
+                "crashCauses": crash_causes,
+                "neighborhood": compact_observation(session, observation(neighborhood)),
+                "events": compact_observation(session, observation(events)),
+                "logs": compact_observation(session, logs),
+                "completeness": "partial",
+                "next": "Follow exact graph references; use get_config_diagnostics on the root for config issues. Expand graph or logs for unresolved hypotheses."
+            }),
         )
     }
 }

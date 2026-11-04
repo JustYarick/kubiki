@@ -37,6 +37,7 @@ impl ProviderClient {
         );
         if self.profile.protocol == ProviderProtocol::Anthropic {
             request = request.header("anthropic-version", "2023-06-01");
+            request = request.header("anthropic-beta", "prompt-caching-2024-07-31");
             if !self.key.is_empty() {
                 request = request.header("x-api-key", &self.key);
             }
@@ -372,20 +373,40 @@ pub fn build_request(
             },
         }
     }
-    let definitions: Vec<_> = tools.iter().map(|t| match protocol {
+    let mut definitions: Vec<_> = tools.iter().map(|t| match protocol {
         ProviderProtocol::Responses => json!({"type":"function", "name":t.name, "description":t.description,"parameters":t.parameters,"strict":false}),
         ProviderProtocol::Anthropic => json!({"name":t.name,"description":t.description,"input_schema":t.parameters}),
         _ => json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.parameters}}),
     }).collect();
+    if protocol == ProviderProtocol::Anthropic {
+        if let Some(last) = definitions.last_mut() {
+            if let Some(map) = last.as_object_mut() {
+                map.insert("cache_control".into(), json!({"type": "ephemeral"}));
+            }
+        }
+    }
     let (path, mut body) = match protocol {
         ProviderProtocol::Responses => (
             "responses",
             json!({"model":model,"instructions":system,"input":messages,"store":false,"stream":true,"include":["reasoning.encrypted_content"]}),
         ),
-        ProviderProtocol::Anthropic => (
-            "messages",
-            json!({"model":model,"system":system,"messages":messages,"max_tokens":options.max_output_tokens.unwrap_or(4096),"stream":true}),
-        ),
+        ProviderProtocol::Anthropic => {
+            let system_blocks = if !system.is_empty() {
+                json!([
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"}
+                    }
+                ])
+            } else {
+                json!([])
+            };
+            (
+                "messages",
+                json!({"model":model,"system":system_blocks,"messages":messages,"max_tokens":options.max_output_tokens.unwrap_or(4096),"stream":true}),
+            )
+        }
         ProviderProtocol::Ollama => (
             "api/chat",
             json!({"model":model,"messages":messages,"stream":true}),

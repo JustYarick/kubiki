@@ -835,46 +835,11 @@ impl ToolExecutor for RemediationHost {
     }
 }
 #[tokio::test]
-async fn investigate_requires_a_remediation_artifact_and_performs_one_bounded_correction() {
+async fn investigate_can_complete_with_direct_answer_without_mandatory_plan() {
     let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;
-    let (client, requests, task) =
-        provider(vec![final_text(), call("propose_plan"), final_text()]).await;
-    run(
-        s,
-        conversation.clone(),
-        0,
-        client,
-        "model".into(),
-        GenerationOptions::default(),
-        String::new(),
-        "Investigate workload".into(),
-        Arc::new(RemediationHost),
-        sink(),
-    )
-    .await
-    .unwrap();
-    task.await.unwrap();
-    let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 3);
-    assert!(
-        !requests[2]
-            .to_string()
-            .contains("do-not-duplicate-plan-body")
-    );
-    assert!(
-        requests[1]
-            .to_string()
-            .contains("ordered steps including risk and verification")
-    );
-}
-#[tokio::test]
-async fn investigation_is_not_reported_complete_when_model_repeatedly_omits_remediation() {
-    let conversation = ConversationState::default();
-    let mut s = session();
-    s.intent = AgentIntent::Investigate;
-    let (client, requests, task) = provider(vec![final_text(), final_text()]).await;
+    let (client, requests, task) = provider(vec![final_text()]).await;
     let result = run(
         s,
         conversation.clone(),
@@ -883,30 +848,54 @@ async fn investigation_is_not_reported_complete_when_model_repeatedly_omits_reme
         "model".into(),
         GenerationOptions::default(),
         String::new(),
-        "Investigate workload".into(),
+        "Why did my pod crash?".into(),
         Arc::new(RemediationHost),
         sink(),
     )
     .await;
-    assert!(result.unwrap_err().contains("Investigation is incomplete"));
+    assert!(result.is_ok());
     task.await.unwrap();
-    assert_eq!(requests.lock().unwrap().len(), 2);
+    assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
-async fn an_outline_published_before_new_evidence_is_not_the_final_remediation_plan() {
+async fn investigate_processes_remediation_plan_when_proposed() {
+    let conversation = ConversationState::default();
+    let mut s = session();
+    s.intent = AgentIntent::Investigate;
+    let (client, requests, task) =
+        provider(vec![call("propose_plan"), final_text()]).await;
+    let result = run(
+        s.clone(),
+        conversation.clone(),
+        0,
+        client,
+        "model".into(),
+        GenerationOptions::default(),
+        String::new(),
+        "Investigate and propose fix".into(),
+        Arc::new(RemediationHost),
+        sink(),
+    )
+    .await;
+    assert!(result.is_ok());
+    task.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    let history = conversation.history_guard().await;
+    assert_eq!(history.len(), 4);
+}
+
+#[tokio::test]
+async fn investigate_allows_tools_without_forcing_propose_plan() {
     let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;
     let (client, requests, task) = provider(vec![
-        call("propose_plan"),
         call("get_resource"),
-        final_text(),
-        call("propose_plan"),
         final_text(),
     ])
     .await;
-    run(
+    let result = run(
         s,
         conversation.clone(),
         0,
@@ -914,49 +903,14 @@ async fn an_outline_published_before_new_evidence_is_not_the_final_remediation_p
         "model".into(),
         GenerationOptions::default(),
         String::new(),
-        "Investigate workload".into(),
-        Arc::new(RemediationHost),
-        sink(),
-    )
-    .await
-    .unwrap();
-    task.await.unwrap();
-    assert_eq!(requests.lock().unwrap().len(), 5);
-}
-
-#[tokio::test]
-async fn an_older_plan_cannot_certify_a_new_investigation_turn() {
-    let conversation = ConversationState::default();
-    let mut s = session();
-    s.intent = AgentIntent::Investigate;
-    let proposal:PlanProposal=serde_json::from_value(json!({"title":"Old plan","bodyMarkdown":"Old evidence","diagnosis":"Old diagnosis","uncertainty":"Historical","steps":[{"id":"inspect","title":"Inspect","action":"inspect","reason":"Find cause","risk":"Read only","verification":"Read current state"}]})).unwrap();
-    s.plans
-        .lock()
-        .unwrap()
-        .propose(
-            proposal,
-            &s.id,
-            &s.scope,
-            s.control().unwrap().policy_revision,
-            &mut *s.evidence.lock().unwrap(),
-        )
-        .unwrap();
-    let (client, _, task) = provider(vec![final_text(), final_text()]).await;
-    let outcome = run(
-        s,
-        conversation.clone(),
-        0,
-        client,
-        "model".into(),
-        GenerationOptions::default(),
-        String::new(),
-        "Investigate a new symptom".into(),
+        "Diagnose service".into(),
         Arc::new(RemediationHost),
         sink(),
     )
     .await;
-    assert!(outcome.unwrap_err().contains("Investigation is incomplete"));
+    assert!(result.is_ok());
     task.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 struct EnvironmentHost;

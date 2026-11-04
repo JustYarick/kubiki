@@ -650,7 +650,16 @@ fn scrub(value: &mut Value, policy: &AgentPolicy, path: &str, secret_content: bo
                     && (policy.annotations || key != "annotations")
                     && key != "managedFields"
                     && key != "last-applied-configuration"
+                    && key != "deletionGracePeriodSeconds"
+                    && key != "terminationMessagePath"
+                    && key != "terminationMessagePolicy"
             });
+            if let Some(Value::Object(annotations)) = map.get_mut("annotations") {
+                annotations.retain(|k, _| {
+                    !k.starts_with("kubectl.kubernetes.io/")
+                        && !k.starts_with("control-plane.alpha.kubernetes.io/")
+                });
+            }
             for (key, entry) in map {
                 scrub(
                     entry,
