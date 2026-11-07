@@ -116,10 +116,18 @@ struct ReadResourceArgs {
     cursor: Option<String>,
 }
 
+fn normalize_core_group(group: &str, version: &str) -> String {
+    if version == "v1" && matches!(group, "v1" | "core") {
+        String::new()
+    } else {
+        group.to_owned()
+    }
+}
+
 impl ResourceArgs {
     fn target(&self) -> Target {
         Target {
-            group: self.group.clone(),
+            group: normalize_core_group(&self.group, &self.version),
             version: self.version.clone(),
             kind: self.kind.clone(),
             namespace: self.namespace.clone(),
@@ -1143,7 +1151,7 @@ impl KubernetesTools {
             })
             .transpose()?;
         let target = Target {
-            group: args.group,
+            group: normalize_core_group(&args.group, &args.version),
             version: args.version,
             kind: args.kind,
             namespace: args.namespace,
@@ -1682,9 +1690,9 @@ impl KubernetesTools {
         if args.tail_lines.is_some_and(|n| !(1..=500).contains(&n))
             || args
                 .since_seconds
-                .is_some_and(|n| !(1..=86400).contains(&n))
+                .is_some_and(|n| !(1..=604800).contains(&n))
         {
-            return Err("Logs require tailLines 1–500 and sinceSeconds 1–86400".into());
+            return Err("Logs require tailLines 1–500 and sinceSeconds 1–604800".into());
         }
         let state = session.control()?;
         let target = Target {
@@ -1706,13 +1714,19 @@ impl KubernetesTools {
                 if !state.policy.logs || state.policy.access(&target, true) != DataAccess::Content {
                     return Err("Pod logs are disabled by policy".into());
                 }
+                if args.uid.as_deref().is_none_or(str::is_empty) {
+                    return Err(
+                        "Pod uid is required for get_logs; read the Pod first to obtain metadata.uid"
+                            .into(),
+                    );
+                }
                 let request = kubiki_core::pod_ops::logs::LogSliceRequest {
                     resource: reference(&session.scope.context, &target, args.uid),
                     container: args.container.ok_or("Container is required")?,
                     previous: args.previous.unwrap_or(false),
                     tail_lines: Some(args.tail_lines.unwrap_or(150)),
                     since_time: None,
-                    since_seconds: Some(args.since_seconds.unwrap_or(3600)),
+                    since_seconds: args.since_seconds,
                 };
                 let logs = request.read(client).await.map_err(error_message)?;
                 let (filtered_logs, total_lines, matched_lines, is_filtered) =
@@ -1725,7 +1739,7 @@ impl KubernetesTools {
                         "matchedErrorLines": matched_lines,
                         "filtered": is_filtered,
                         "tailLines": args.tail_lines.unwrap_or(150),
-                        "sinceSeconds": args.since_seconds.unwrap_or(3600),
+                        "sinceSeconds": args.since_seconds,
                         "coverage": if is_filtered {
                             "Filtered to relevant diagnostic error/warning lines"
                         } else {
@@ -2372,6 +2386,7 @@ impl KubernetesTools {
                                     (!pod_issues.is_empty()).then(|| pod_issues.join("; "));
                                 let mut pod_entry = json!({
                                     "name": pod_name,
+                                    "uid": pod.metadata.uid,
                                     "phase": pod_phase,
                                     "issue": pod_issue,
                                 });
@@ -2708,10 +2723,68 @@ impl KubernetesTools {
         };
         state.policy.check_scope(&session.scope, &target)?;
 
-        if state.policy.access(&target, false) != DataAccess::Content {
-            return Err(
-                "Helm release values/history require content access to this helm.sh Release".into(),
-            );
+        let access = state.policy.access(&target, false);
+        if access == DataAccess::None {
+            return Err("Helm release access is denied by policy".into());
+        }
+        if access == DataAccess::Metadata {
+            let query = ResourceQuery {
+                context: session.scope.context.clone(),
+                group: "".into(),
+                version: "v1".into(),
+                kind: "Secret".into(),
+                namespace: Some(args.namespace.clone()),
+            };
+            let reader =
+                kubiki_core::core::access::ResourceAccess::new(_client, &query, false).await?;
+            let selector = format!("owner=helm,name={}", args.name);
+            let page = reader
+                .page(&ListParams::default().labels(&selector).limit(50), true)
+                .await
+                .map_err(query_list_error)?;
+            let mut latest: Option<(u64, Value)> = None;
+            for storage in page.items {
+                let labels = &storage["metadata"]["labels"];
+                if labels["name"].as_str() != Some(args.name.as_str()) {
+                    continue;
+                }
+                let rev = labels["version"]
+                    .as_str()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0);
+                let value = json!({
+                    "apiVersion": "helm.sh/v1",
+                    "kind": "Release",
+                    "metadata": {
+                        "name": args.name,
+                        "namespace": args.namespace,
+                        "labels": {
+                            "storageRevision": labels["version"],
+                            "status": labels["status"]
+                        }
+                    }
+                });
+                let projected = state.policy.project(&target, &value, false)?;
+                if latest.as_ref().is_none_or(|(old, _)| rev > *old) {
+                    latest = Some((rev, projected));
+                }
+            }
+            let (revision, projected) =
+                latest.ok_or("Helm release not found in namespace")?;
+            return bounded_result(json!({
+                "release": args.name,
+                "namespace": args.namespace,
+                "metadata": projected["metadata"],
+                "values": Value::Null,
+                "history": [],
+                "evidence": {
+                    "context": session.scope.context,
+                    "revision": revision,
+                    "capturedAt": stamp(),
+                    "completeness": "metadata_only",
+                    "coverage": "Helm release chart values and full revision history are omitted under metadata-only custom resource policy; only storage label metadata is available without a content access grant for helm.sh/Release"
+                }
+            }));
         }
         let manager = self.pool.get_config_manager().clone();
         let reader = tokio::task::spawn_blocking(move || {

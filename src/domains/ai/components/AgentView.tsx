@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, isValidElement, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, isValidElement, type ReactNode } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -18,7 +18,7 @@ import {
   WandSparkles,
   Zap,
 } from 'lucide-react';
-import Markdown from 'react-markdown';
+import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '../../../components/ui/Button';
 import { Select } from '../../../components/ui/Select';
@@ -561,83 +561,160 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   const mutationPending = useMutationConfirmStore(s => s.pending);
   const resolveMutation = useMutationConfirmStore(s => s.resolve);
   const transcript = useRef<HTMLDivElement>(null);
-  const userScrolledUp = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isPinnedRef = useRef(true);
+  const programmaticScrollTopRef = useRef<number | null>(null);
+  const isUserInteractingRef = useRef(false);
   const lastScrollTop = useRef(0);
+  const touchY = useRef<number | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const [modePending, setModePending] = useState(false);
 
-  const AT_BOTTOM_THRESHOLD = 30;
+  const REATTACH_THRESHOLD = 18;
 
-  const scrollToBottom = (smooth = false) => {
-    userScrolledUp.current = false;
+  const updateScrollButton = useCallback(() => {
+    const el = transcript.current;
+    if (!el || !el.clientHeight) return;
+    setShowScrollBottom(!isPinnedRef.current && el.scrollHeight - el.clientHeight - el.scrollTop > REATTACH_THRESHOLD);
+  }, []);
+
+  const syncToBottom = useCallback(() => {
+    const el = transcript.current;
+    if (!el || !el.clientHeight || !isPinnedRef.current || isUserInteractingRef.current) return;
+    // Write before paint, including when content shrinks or the viewport resizes.
+    // Smooth scrolling restarts on streamed tokens and races with user gestures.
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    lastScrollTop.current = el.scrollTop;
+    programmaticScrollTopRef.current = el.scrollTop;
     setShowScrollBottom(false);
-    if (transcript.current) {
-      if (smooth) {
-        transcript.current.scrollTo({ top: transcript.current.scrollHeight, behavior: 'smooth' });
-      } else {
-        transcript.current.scrollTop = transcript.current.scrollHeight;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    isPinnedRef.current = true;
+    isUserInteractingRef.current = false;
+    syncToBottom();
+  }, [syncToBottom]);
+
+  const detach = () => {
+    isPinnedRef.current = false;
+    programmaticScrollTopRef.current = null;
+    updateScrollButton();
+  };
+
+  const isScrollingNestedContainer = (target: EventTarget | null, deltaY: number): boolean => {
+    let node = target instanceof HTMLElement ? target : null;
+    const root = transcript.current;
+    while (node && node !== root) {
+      if (node.scrollHeight > node.clientHeight + 1) {
+        const style = window.getComputedStyle(node);
+        if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+          if (deltaY < 0 && node.scrollTop > 0) return true;
+          if (deltaY > 0 && node.scrollTop + node.clientHeight < node.scrollHeight - 1) return true;
+        }
       }
-      lastScrollTop.current = transcript.current.scrollTop;
+      node = node.parentElement;
     }
+    return false;
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (e.deltaY < 0) {
-      // User is scrolling up with mousewheel/trackpad: instantly decouple auto-scroll
-      userScrolledUp.current = true;
-      setShowScrollBottom(true);
-    } else if (e.deltaY > 0 && transcript.current) {
-      const el = transcript.current;
-      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distFromBottom <= AT_BOTTOM_THRESHOLD) {
-        // User scrolled all the way to the bottom
-        userScrolledUp.current = false;
-        setShowScrollBottom(false);
-      }
+    if (e.deltaY < 0 && !isScrollingNestedContainer(e.target, e.deltaY)) detach();
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = transcript.current;
+    if (el && e.clientX >= el.getBoundingClientRect().right - 18) {
+      isUserInteractingRef.current = true;
+    }
+  };
+
+  useEffect(() => {
+    const onPointerUp = () => {
+      if (!isUserInteractingRef.current) return;
+      isUserInteractingRef.current = false;
+      syncToBottom();
+    };
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
+    window.addEventListener('pointercancel', onPointerUp, { passive: true });
+    return () => {
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+    };
+  }, [syncToBottom]);
+
+  const handleKeyDownTranscript = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Editors, tool controls, and text fields own their keyboard navigation.
+    if (e.target !== e.currentTarget) return;
+    if (['PageUp', 'ArrowUp', 'Home'].includes(e.key) || (e.key === ' ' && e.shiftKey)) {
+      detach();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      scrollToBottom();
     }
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
-    const currentScrollTop = el.scrollTop;
-    const isScrollingUp = currentScrollTop < lastScrollTop.current;
-    lastScrollTop.current = currentScrollTop;
+    if (!visible || !el.clientHeight) return;
+    const currentTop = el.scrollTop;
+    const distance = Math.max(0, el.scrollHeight - currentTop - el.clientHeight);
+    const delta = currentTop - lastScrollTop.current;
+    const programmatic = programmaticScrollTopRef.current !== null
+      && Math.abs(currentTop - programmaticScrollTopRef.current) <= 1;
+    programmaticScrollTopRef.current = null;
+    lastScrollTop.current = currentTop;
 
-    const distFromBottom = el.scrollHeight - currentScrollTop - el.clientHeight;
-
-    if (isScrollingUp) {
-      // Any upward movement decouples auto-scroll immediately
-      userScrolledUp.current = true;
-      setShowScrollBottom(true);
-    } else if (distFromBottom <= AT_BOTTOM_THRESHOLD) {
-      // Reached bottom moving downwards or stationary at bottom
-      userScrolledUp.current = false;
-      setShowScrollBottom(false);
-    } else if (distFromBottom > AT_BOTTOM_THRESHOLD + 10) {
-      userScrolledUp.current = true;
-      setShowScrollBottom(true);
+    // Clamping after a collapse is not an upward user gesture.
+    if (!programmatic && delta < -1 && distance > REATTACH_THRESHOLD) {
+      isPinnedRef.current = false;
+    } else if (!programmatic && delta > 0 && distance <= REATTACH_THRESHOLD) {
+      isPinnedRef.current = true;
+      syncToBottom();
     }
+    updateScrollButton();
   };
 
-  useEffect(() => { if (c.providerId && !models && desktopAiAvailable() && !loading && !modelError) void refresh(c.providerId); }, [c.providerId, models, loading, modelError, refresh]);
-  useEffect(() => {
-    if (visible && !userScrolledUp.current && transcript.current) {
-      transcript.current.scrollTop = c.messages.length ? transcript.current.scrollHeight : 0;
-      lastScrollTop.current = transcript.current.scrollTop;
-    }
-  }, [c.messages, c.status, visible]);
-  useEffect(() => {
-    userScrolledUp.current = false;
+  useLayoutEffect(() => {
+    isPinnedRef.current = true;
+    isUserInteractingRef.current = false;
+    lastScrollTop.current = 0;
     setShowScrollBottom(false);
-    if (visible) {
-      if (transcript.current) {
-        transcript.current.scrollTop = transcript.current.scrollHeight;
-        lastScrollTop.current = transcript.current.scrollTop;
-      }
-      input.current?.focus();
+    syncToBottom();
+    input.current?.focus({ preventScroll: true });
+  }, [c.id, syncToBottom]);
+
+  useLayoutEffect(() => {
+    if (!visible) return;
+    if (!isPinnedRef.current && transcript.current) {
+      transcript.current.scrollTop = lastScrollTop.current;
+      programmaticScrollTopRef.current = transcript.current.scrollTop;
     }
-  }, [c.id, visible]);
+    syncToBottom();
+    updateScrollButton();
+  }, [visible, syncToBottom, updateScrollButton]);
+
+  useLayoutEffect(() => {
+    if (!visible) return;
+    syncToBottom();
+    updateScrollButton();
+  }, [c.messages, c.status, visible, syncToBottom, updateScrollButton]);
+
+  useEffect(() => {
+    const contentEl = contentRef.current;
+    const viewport = transcript.current;
+    if (!visible || !contentEl || !viewport) return;
+    const observer = new ResizeObserver(() => {
+      syncToBottom();
+      updateScrollButton();
+    });
+    // Content changes include Markdown, tool cards, and editors settling after layout.
+    observer.observe(contentEl);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [visible, syncToBottom, updateScrollButton]);
+
+  useEffect(() => { if (c.providerId && !models && desktopAiAvailable() && !loading && !modelError) void refresh(c.providerId); }, [c.providerId, models, loading, modelError, refresh]);
 
   async function mode(next: AgentMode) {
     setModePending(true);
@@ -652,7 +729,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   }
 
   const sendCurrent = () => {
-    scrollToBottom(false);
+    scrollToBottom();
     void useAiStore.getState().send(c.id);
   };
 
@@ -670,8 +747,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
   };
 
   const selectedModel = models?.find(m => m.id === c.model);
-  const DEFAULT_CONTEXT_WINDOW = 16384;
-  const maxContextTokens = c.contextBudgetTokens || Math.min(settings.options.contextTokens || DEFAULT_CONTEXT_WINDOW, selectedModel?.contextWindow || 262144);
+  const DEFAULT_CONTEXT_WINDOW = 128000;
+  const maxContextTokens = c.contextBudgetTokens
+    || (settings.options.contextTokens && selectedModel?.contextWindow
+      ? Math.min(settings.options.contextTokens, selectedModel.contextWindow)
+      : settings.options.contextTokens || selectedModel?.contextWindow || DEFAULT_CONTEXT_WINDOW);
   const currentContext = c.currentContextTokens || (c.inputTokens > 0 ? c.inputTokens : 0);
   const contextPercent = maxContextTokens && currentContext > 0
     ? Math.min(100, Math.round((currentContext / maxContextTokens) * 100))
@@ -703,34 +783,47 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         role="log"
         aria-label="AI conversation messages"
         aria-live="off"
+        tabIndex={0}
+        onTouchStart={e => { touchY.current = e.touches[0]?.clientY ?? null; }}
+        onTouchMove={e => {
+          const y = e.touches[0]?.clientY;
+          if (y === undefined || touchY.current === null) return;
+          const delta = touchY.current - y;
+          touchY.current = y;
+          if (delta < 0 && !isScrollingNestedContainer(e.target, delta)) detach();
+        }}
         onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onKeyDown={handleKeyDownTranscript}
         onScroll={handleScroll}
       >
-        {!c.messages.length && <div className="ai-empty-chat"><h2>{c.title === 'New conversation' ? 'What would you like to investigate?' : c.title}</h2>
-          <p>Ask about a resource. For example: why is this Pod restarting?</p>
-          <div className="ai-suggestions">{['Why are my Pods failing?', 'Create a Nexus deployment with persistent storage', 'Explain my workload configuration'].map(text => <button type="button" key={text} onClick={() => { update(c.id, { draft: text }); input.current?.focus(); }}>{text}</button>)}</div>
-        </div>}
-        {c.messages.map((message, idx) => {
-          // If this user message directly answered the preceding ask_user tool,
-          // it is already formatted inside that QuestionCard!
-          const isAnswerToQuestion = message.role === 'user' && idx > 0 && c.messages[idx - 1]?.role === 'tool' && c.messages[idx - 1]?.call?.name === 'ask_user';
-          if (isAnswerToQuestion) return null;
-          return <div key={message.id} data-message-id={message.id}><Message message={message} conversation={c} /></div>;
-        })}
-        {c.status === 'awaiting_approval' && mutationPending && !c.messages.some(m => m.role === 'tool' && !m.result) ? (
-          <ActionApprovalCard
-            request={mutationPending}
-            onResolve={approved => void resolveMutation(approved)}
-          />
-        ) : c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') ? (
-          <LiveStatusIndicator status={c.status} />
-        ) : null}
+        <div ref={contentRef} className="ai-transcript-content">
+          {!c.messages.length && <div className="ai-empty-chat"><h2>{c.title === 'New conversation' ? 'What would you like to investigate?' : c.title}</h2>
+            <p>Ask about a resource. For example: why is this Pod restarting?</p>
+            <div className="ai-suggestions">{['Why are my Pods failing?', 'Create a Nexus deployment with persistent storage', 'Explain my workload configuration'].map(text => <button type="button" key={text} onClick={() => { update(c.id, { draft: text }); input.current?.focus(); }}>{text}</button>)}</div>
+          </div>}
+          {c.messages.map((message, idx) => {
+            // If this user message directly answered the preceding ask_user tool,
+            // it is already formatted inside that QuestionCard!
+            const isAnswerToQuestion = message.role === 'user' && idx > 0 && c.messages[idx - 1]?.role === 'tool' && c.messages[idx - 1]?.call?.name === 'ask_user';
+            if (isAnswerToQuestion) return null;
+            return <div key={message.id} data-message-id={message.id}><MemoizedMessage message={message} conversation={c} isLast={idx === c.messages.length - 1} /></div>;
+          })}
+          {c.status === 'awaiting_approval' && mutationPending && !c.messages.some(m => m.role === 'tool' && !m.result) ? (
+            <ActionApprovalCard
+              request={mutationPending}
+              onResolve={approved => void resolveMutation(approved)}
+            />
+          ) : c.busy && (!c.messages.length || c.messages[c.messages.length - 1]?.role !== 'assistant') ? (
+            <LiveStatusIndicator status={c.status} />
+          ) : null}
+        </div>
       </div>
       {showScrollBottom && (
         <button
           type="button"
           className="ai-scroll-bottom-btn"
-          onClick={() => scrollToBottom(true)}
+          onClick={() => scrollToBottom()}
           aria-label="Scroll to bottom"
         >
           <ArrowDown size={13} aria-hidden="true" />
@@ -1043,9 +1136,47 @@ function LiveStatusIndicator({ status }: { status: string }) {
   );
 }
 
-function Message({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation }) {
+// Stable renderers preserve editor DOM and its scroll position during streaming.
+const messageMarkdownComponents: Components = {
+  p: ({ children }) => <p>{highlightSkillChildren(children)}</p>,
+  li: ({ children }) => <li>{highlightSkillChildren(children)}</li>,
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : '[Image omitted]'}</span>,
+  a: ({ href, children }) => href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={e => {
+        if (desktopAiAvailable()) {
+          e.preventDefault();
+          void import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(href)).catch(() => toast.error('Cannot open link'));
+        }
+      }}
+    >
+      {children}
+    </a>
+  ) : <span>{children}</span>,
+};
+
+const MemoizedMessage = memo(
+  Message,
+  (prev, next) =>
+    prev.message === next.message &&
+    prev.isLast === next.isLast &&
+    prev.conversation.busy === next.conversation.busy &&
+    prev.conversation.status === next.conversation.status &&
+    prev.conversation.phase === next.conversation.phase &&
+    prev.conversation.activePlan === next.conversation.activePlan &&
+    (!next.isLast || prev.conversation.messages === next.conversation.messages),
+);
+
+function Message({ message: m, conversation: c }: { message: ChatMessage; conversation: Conversation; isLast?: boolean }) {
+  const mutationPending = useMutationConfirmStore(s => s.pending);
+  const resolveMutation = useMutationConfirmStore(s => s.resolve);
+
   if (m.role === 'tool') {
-    if (m.call?.name === 'ask_user') {
+    if (m.call?.name === 'ask_user' && typeof m.call?.arguments?.question === 'string') {
       return <QuestionCard message={m} conversation={c} />;
     }
     if (m.call?.name === 'propose_plan' && isPlanArtifact(m.result?.planArtifact || m.planArtifact)) {
@@ -1053,12 +1184,10 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
       return <PlanArtifactCard artifact={artifact} conversation={c} />;
     }
 
-    const mutationPending = useMutationConfirmStore(s => s.pending);
-    const resolveMutation = useMutationConfirmStore(s => s.resolve);
-
     const result = m.result;
     const proposal = result?.proposal === true && typeof result.yaml === 'string';
-    const isAwaitingApproval = !result && c.status === 'awaiting_approval' && !!mutationPending;
+    const activePendingToolId = c.messages.find(msg => msg.role === 'tool' && !msg.result)?.id;
+    const isAwaitingApproval = !result && m.id === activePendingToolId && c.status === 'awaiting_approval' && !!mutationPending;
     if (isAwaitingApproval && mutationPending) {
       return <ActionApprovalCard request={mutationPending} onResolve={approved => void resolveMutation(approved)} />;
     }
@@ -1180,27 +1309,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           remarkPlugins={[remarkGfm]}
           skipHtml
           urlTransform={url => /^https?:\/\//i.test(url) ? url : ''}
-          components={{
-            p: ({ children }) => <p>{highlightSkillChildren(children)}</p>,
-            li: ({ children }) => <li>{highlightSkillChildren(children)}</li>,
-            pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-            img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : '[Image omitted]'}</span>,
-            a: ({ href, children }) => href ? (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={e => {
-                  if (desktopAiAvailable()) {
-                    e.preventDefault();
-                    void import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(href)).catch(() => toast.error('Cannot open link'));
-                  }
-                }}
-              >
-                {children}
-              </a>
-            ) : <span>{children}</span>,
-          }}
+          components={messageMarkdownComponents}
         >
           {thinking || isThinkingActive ? content : m.text}
         </Markdown>

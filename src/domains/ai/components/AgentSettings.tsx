@@ -218,7 +218,7 @@ function ProviderSettings() {
       <div className="ai-form-grid">
         <label className="ai-field">Output token limit (optional)<Input aria-label="AI output token limit" type="number" min={128} max={65536} value={options.maxOutputTokens ?? ''} placeholder="Server default" onChange={e => setOptions({ ...options, maxOutputTokens: e.target.value ? Number(e.target.value) : null })} /></label>
         <label className="ai-field">Temperature (optional)<Input aria-label="AI temperature" type="number" min={0} max={2} step={0.1} value={options.temperature ?? ''} placeholder="Server default" onChange={e => setOptions({ ...options, temperature: e.target.value ? Number(e.target.value) : null })} /></label>
-        {saved.protocol === 'ollama' && <label className="ai-field">Local context window (optional)<Input aria-label="Ollama context window" type="number" min={1024} max={Math.min(modelInfo?.contextWindow ?? 262144, 262144)} value={options.contextTokens ?? ''} placeholder="Server default" onChange={e => setOptions({ ...options, contextTokens: e.target.value ? Number(e.target.value) : null })} /></label>}
+        {saved.protocol === 'ollama' && <label className="ai-field">Local context window (optional)<Input aria-label="Ollama context window" type="number" min={1024} max={Math.min(modelInfo?.contextWindow ?? 2097152, 2097152)} value={options.contextTokens ?? ''} placeholder="Server default" onChange={e => setOptions({ ...options, contextTokens: e.target.value ? Number(e.target.value) : null })} /></label>}
       </div>
       <CheckboxRow label="Enable tool use (disable for plain chat models)" checked={options.toolUse !== false} onChange={e => setOptions({ ...options, toolUse: e.target.checked })} />
       <Button size="sm" disabled={!model || !models.some(m => m.id === model) || dirty || !desktopAiAvailable()} onClick={() => void defaults()}><Check size={12} aria-hidden="true" />Use as default</Button>
@@ -320,7 +320,7 @@ function PolicySettings({
 
     <div style={{ display: page === 'confirmations' ? undefined : 'none' }}>
       <div className="ai-settings-card">
-        <CheckboxRow label="Ask permission for reads" checked={policy.confirmReads ?? true} onChange={e => patch({ confirmReads: e.target.checked })} />
+        <CheckboxRow label="Ask permission for reads" checked={policy.confirmReads ?? false} onChange={e => patch({ confirmReads: e.target.checked })} />
         <p className="ai-help">When off, Ask mode confirms changes only. Tools selected below still require confirmation in Auto accept.</p>
       </div>
     <details className="ai-settings-card">

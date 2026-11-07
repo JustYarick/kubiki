@@ -298,7 +298,8 @@ export const useAiStore = create<AiState>()(
           let sessionId = entry.sessionId;
           if (!sessionId) {
             const metadata = get().models[entry.providerId]?.find(m => m.id === entry.model);
-            const options = { ...get().settings.options, ...(metadata?.contextWindow && metadata.contextWindow >= 1024 ? { contextBudgetTokens: Math.min(metadata.contextWindow, 262144) } : {}), ...(metadata?.tools === false ? { toolUse: false } : {}) };
+            const modelWindow = metadata?.contextWindow && metadata.contextWindow >= 1024 ? Math.min(metadata.contextWindow, 2097152) : undefined;
+            const options = { ...get().settings.options, ...(modelWindow ? { contextBudgetTokens: modelWindow } : {}), ...(metadata?.tools === false ? { toolUse: false } : {}) };
             const crds = useResourceStore.getState().resources.CustomResourceDefinition;
             const crdList = crds ? [...crds.values()] : [];
             const capabilities = {
@@ -309,7 +310,10 @@ export const useAiStore = create<AiState>()(
             const session = await agentTransport.create(entry.scope, entry.providerId, entry.model, options, capabilities, entry.intent);
             sessionId = session.id;
             if (runEpochs.get(id) !== epoch) { await agentTransport.stop(sessionId, true); return; }
-            get().update(id, { sessionId, contextReset:false, contextBudgetTokens: Math.min(options.contextTokens || 16384, options.contextBudgetTokens || 262144) });
+            const effectiveBudget = options.contextTokens && options.contextBudgetTokens
+              ? Math.min(options.contextTokens, options.contextBudgetTokens)
+              : (options.contextTokens || options.contextBudgetTokens || modelWindow || 128000);
+            get().update(id, { sessionId, contextReset:false, contextBudgetTokens: effectiveBudget });
             const desiredMode = get().conversations.find(c => c.id === id)?.mode ?? 'ask';
             await agentTransport.mode(sessionId, desiredMode);
             const desiredPhase = get().conversations.find(c => c.id === id)?.phase ?? 'plan';

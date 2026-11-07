@@ -39,10 +39,34 @@ pub fn estimate_tokens(text: &str) -> usize {
     let ascii = text.bytes().filter(|b| b.is_ascii()).count();
     ascii.div_ceil(3) + text.chars().filter(|c| !c.is_ascii()).count() + 8
 }
+fn assistant_token_wire(completion: &Completion) -> String {
+    let mut val = completion.native.clone();
+    if let Some(calls) = val.get_mut("tool_calls").and_then(Value::as_array_mut) {
+        for tc in calls {
+            if let Some(obj) = tc.as_object_mut() {
+                obj.remove("extra_content");
+            }
+        }
+    }
+    let native_present = match &val {
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => false,
+    };
+    if native_present {
+        val.to_string()
+    } else {
+        format!(
+            "{}{}",
+            completion.text,
+            serde_json::to_string(&completion.calls).unwrap()
+        )
+    }
+}
 pub fn history_tokens(history: &[Turn]) -> usize {
     history.iter().map(|turn| match turn {
         Turn::User(text)=>estimate_tokens(text),
-        Turn::Assistant(c)=>estimate_tokens(&assistant_wire(c)),
+        Turn::Assistant(c)=>estimate_tokens(&assistant_token_wire(c)),
         Turn::Tool {call,result}=>estimate_tokens(&call.id)+estimate_tokens(&call.name)+estimate_tokens(&result.to_string()),
     }+16).sum()
 }

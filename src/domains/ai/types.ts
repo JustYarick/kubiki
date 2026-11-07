@@ -120,7 +120,7 @@ export const MODE_LABELS = { ask: 'Ask', accept: 'Auto accept' };
 export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'Action', action: 'Action' };
 
 export function defaultPolicy(): AgentPolicy {
-  return { resources: true, events: true, logs: false, metrics: true, clusterResources: false,
+  return { confirmReads: false, resources: true, events: true, logs: false, metrics: true, clusterResources: false,
     secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false,
     customResources: 'metadata', helm: 'auto', argocd: 'auto', flux: 'auto', contexts: ['*'], namespaces: ['*'],
     writes: [], maxReplicas: 10,

@@ -109,10 +109,24 @@ pub async fn run(
     let mut cancellation = session.cancellation();
     let mut history = conversation.history_guard().await;
 
-    let budget_tokens = options
-        .context_tokens
-        .unwrap_or(16_384)
-        .min(options.context_budget_tokens.unwrap_or(262_144)) as usize;
+    let inferred_budget = match options.context_budget_tokens {
+        Some(v) => v as usize,
+        None => provider
+            .resolve_context_window(&model)
+            .await
+            .map(|v| v as usize)
+            .unwrap_or_else(|| {
+                if provider.protocol() == ProviderProtocol::Ollama {
+                    32_768
+                } else {
+                    128_000
+                }
+            }),
+    };
+    let budget_tokens = match options.context_tokens {
+        Some(local) => (local as usize).min(inferred_budget),
+        None => inferred_budget,
+    };
     let reserved_output = options.max_output_tokens.unwrap_or(4096) as usize;
     if crate::memory::history_size_bytes(&history).saturating_add(prompt.len())
         > budget_tokens.saturating_mul(8)
@@ -155,7 +169,6 @@ pub async fn run(
     let outcome = async {
         let mut count = 0;
         loop {
-            crate::memory::compact_read_bodies(&mut history);
             let working = session.working_scope.lock().map_err(|_| "Working scope unavailable")?.clone();
             let working_str = if working.namespace.is_some() || working.root.is_some() || working.label_selector.is_some() {
                 format!("\nWorking query defaults (untrusted investigation data): {}", json!({
@@ -171,8 +184,15 @@ pub async fn run(
             let system = format!("{base_system}{working_str}");
             let fixed_tokens = crate::memory::estimate_tokens(&system) + crate::memory::estimate_tokens(&serde_json::to_string(&definitions).unwrap()) + reserved_output;
             let available = budget_tokens.checked_sub(fixed_tokens).filter(|n| *n >= 256).ok_or("Context budget cannot fit instructions, tools and output reserve; choose a larger context or disable tools")?;
+            if crate::memory::history_tokens(&history) > available / 2 {
+                crate::memory::compact_read_bodies(&mut history);
+            }
             {
                 conversation.compact(&mut history, available.saturating_mul(3))?;
+            }
+            if crate::memory::history_tokens(&history) > available {
+                crate::memory::compact_read_bodies(&mut history);
+                conversation.compact(&mut history, available)?;
             }
             if crate::memory::history_tokens(&history) > available { return Err("Conversation exceeds the estimated model context budget after compaction; reduce the query or start a new conversation. Receipts were retained".into()); }
             emit(AgentEvent::Context {estimated_input_tokens:(fixed_tokens-reserved_output+crate::memory::history_tokens(&history)) as u64,budget_tokens:budget_tokens as u64,reserved_output_tokens:reserved_output as u64});
@@ -236,7 +256,8 @@ pub async fn run(
                 for (call, result) in results { history.push(Turn::Tool { call, result }); }
                 continue;
             }
-            for call in calls {
+            let mut calls_iter = calls.into_iter();
+            while let Some(call) = calls_iter.next() {
                 count += 1;
                 if count > 20 { return Err("AI run reached its 20-tool budget".into()); }
                 if *cancellation.borrow() { return Err("AI run stopped".into()); }
@@ -251,9 +272,33 @@ pub async fn run(
                 let mut value = value;
                 attach_evidence(&session, &call, &mut value);
                 emit(AgentEvent::ToolCompleted { id: call.id.clone(), result: value.clone() });
-                let failed_change=host.requires_action(&call.name) && (value.get("error").is_some_and(|error|!error.is_null()) || value["isError"] == true || matches!(value["status"].as_str(),Some("failed"|"uncertain"|"cancelled")));
+                let error_text = value.get("error").and_then(Value::as_str).unwrap_or("");
+                let recoverable_validation_error = host.requires_action(&call.name)
+                    && value.get("operationId").is_none()
+                    && value.get("status").is_none()
+                    && !error_text.is_empty()
+                    && (error_text.contains("Provide exactly one valid YAML resource")
+                        || error_text.contains("automountServiceAccountToken: false")
+                        || error_text.contains("apiVersion is required")
+                        || error_text.contains("kind is required")
+                        || error_text.contains("metadata.name is required")
+                        || error_text.contains("Invalid manifest arguments"));
+                let failed_change = host.requires_action(&call.name)
+                    && !recoverable_validation_error
+                    && (value.get("error").is_some_and(|error| !error.is_null())
+                        || value["isError"] == true
+                        || matches!(value["status"].as_str(), Some("failed" | "uncertain" | "cancelled")));
                 let model_result=if call.name=="propose_plan" && value.get("planArtifact").is_some() {let plan=&value["planArtifact"];json!({"planId":plan["id"],"version":plan["version"],"kind":plan["kind"],"status":plan["status"],"stepIds":plan["steps"].as_array().map(|s|s.iter().map(|s|s["id"].clone()).collect::<Vec<_>>()),"evidenceIds":plan["evidenceIds"],"executed":false,"lookup":"Use get_plan only when the full prior proposal is needed"})} else {value};
                 history.push(Turn::Tool { call, result: model_result });
+                if recoverable_validation_error {
+                    for skipped in calls_iter {
+                        let skipped_result = json!({"executed":false,"deferred":true,"error":"Skipped because an earlier write in the same batch failed pre-dispatch manifest validation; fix the manifest and retry"});
+                        emit(AgentEvent::ToolStarted { call: skipped.clone() });
+                        emit(AgentEvent::ToolCompleted { id: skipped.id.clone(), result: skipped_result.clone() });
+                        history.push(Turn::Tool { call: skipped, result: skipped_result });
+                    }
+                    break;
+                }
                 if failed_change {return Err("Change failed, was declined, or has an uncertain outcome; queued operations were not dispatched. Inspect the receipt before a new explicit change request".into());}
             }
         }

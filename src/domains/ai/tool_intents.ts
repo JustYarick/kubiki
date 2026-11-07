@@ -443,21 +443,6 @@ export function getToolCallSummary(name: string, args: Record<string, any> = {},
       const missing = Array.isArray(result.checks) ? result.checks.filter((c: any) => c.object === 'notFound' || c.keyStatus === 'unknownOrMissing').length : 0;
       return `${checks} config reference${checks === 1 ? '' : 's'} checked${missing > 0 ? ` · ${missing} missing/unknown` : ''}`;
     }
-    case 'verify_workload': {
-      const state = result.verification || 'unknown';
-      return `Verification ${state}`;
-    }
-    case 'summarize_resources': {
-      const scanned = typeof result.scannedCount === 'number' ? result.scannedCount : 0;
-      return `${scanned} resource${scanned === 1 ? '' : 's'} summarized${result.hasMore ? ' (partial)' : ''}`;
-    }
-    case 'set_working_scope': {
-      const ns = result.workingNamespace || args.namespace || 'cluster';
-      return `Working scope set to "${ns}"`;
-    }
-    case 'get_evidence': {
-      return `Evidence "${args.id || ''}" retrieved`;
-    }
     case 'resource_catalog': {
       const kinds = Array.isArray(result.resources) ? result.resources.length : Array.isArray(result.items) ? result.items.length : 0;
       return kinds > 0 ? `${kinds} resource type${kinds === 1 ? '' : 's'} discovered` : 'Resource catalog loaded';

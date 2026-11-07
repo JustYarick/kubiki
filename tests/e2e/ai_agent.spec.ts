@@ -78,6 +78,7 @@ async function setup(page: Page) {
         if (command === 'ai_stop') { stops.push(args); const s = sessions.get(args.sessionId); s?.finish?.(); if (args.close) sessions.delete(args.sessionId); return; }
         if (command === 'ai_send_message') {
           sends.push(args); const emit = (event: object) => args.onEvent.onmessage(event);
+          w.__aiHarness.emit = emit;
           emit({ type: 'status', status: 'running' });
           if (w.__aiHarness.readApproval) {
             emit({type:'tool_started',call:{id:'read',name:'get_logs',arguments:{namespace:'apps',name:'web'}}});
@@ -615,3 +616,86 @@ for (const [runtime, label, version] of [['codex', 'Codex', 'codex-cli'], ['clau
     expect(errors).toEqual([]);
   });
 }
+
+
+test('chat follows streaming at the bottom and releases until the reader returns', async ({ page }) => {
+  const errors = await setup(page);
+  const agent = await openAgent(page);
+  await page.evaluate(() => { (window as any).__aiHarness.hold = true; });
+  const composer = agent.getByRole('textbox', { name: 'Message AI agent' });
+  await composer.fill('Explain the cluster');
+  await composer.press('Enter');
+  const log = agent.getByRole('log', { name: 'AI conversation messages' });
+  const latest = agent.getByRole('button', { name: 'Scroll to bottom' });
+  const distance = () => log.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop);
+  const append = async (text: string) => {
+    await page.evaluate(text => (window as any).__aiHarness.emit({ type: 'text_delta', text }), text);
+    await expect(log).toContainText(text.trim());
+  };
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__aiHarness.emit)).toBe('function');
+  await append('\n\n' + 'Paragraph of a long streaming response.\n\n'.repeat(60));
+  await expect.poll(distance).toBeLessThan(2);
+  // A shorter viewport must keep the latest line visible even without new tokens.
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await expect.poll(distance).toBeLessThan(2);
+  await log.hover();
+  await page.mouse.wheel(0, -450);
+  await expect(latest).toBeVisible();
+  const readingTop = await log.evaluate(el => el.scrollTop);
+  await append('More streamed text.\n\n'.repeat(20));
+  await expect(log).toContainText('More streamed text.');
+  await expect.poll(() => log.evaluate(el => el.scrollTop)).toBeCloseTo(readingTop, 0);
+  await page.getByRole('button', { name: 'Cluster Explorer', exact: true }).click();
+  await page.evaluate(() => (window as any).__aiHarness.emit({ type: 'text_delta', text: 'Tokens while the tab is hidden.\n\n'.repeat(10) }));
+  await page.getByRole('button', { name: 'AI Agent', exact: true }).click();
+  await expect(log).toContainText('Tokens while the tab is hidden.');
+  await expect.poll(() => log.evaluate(el => el.scrollTop)).toBeCloseTo(readingTop, 0);
+  await latest.click();
+  await expect.poll(distance).toBeLessThan(2);
+  await append('Following again.\n\n'.repeat(10));
+  await expect.poll(distance).toBeLessThan(2);
+  // Returning with the wheel also reattaches, without a timer/cooldown.
+  await log.hover();
+  await page.mouse.wheel(0, -250);
+  await expect(latest).toBeVisible();
+  await page.mouse.wheel(0, 100000);
+  await expect.poll(distance).toBeLessThan(2);
+  await append('Following after manual return.\n\n'.repeat(10));
+  await expect.poll(distance).toBeLessThan(2);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect.poll(distance).toBeLessThan(2);
+  await log.focus();
+  await log.press('Home');
+  await expect(latest).toBeVisible();
+  await append('Tokens while reading with the keyboard.\n\n'.repeat(5));
+  await expect.poll(() => log.evaluate(el => el.scrollTop)).toBe(0);
+  await log.press('End');
+  await expect.poll(distance).toBeLessThan(2);
+  await append('Final mobile tokens.\n\n'.repeat(5));
+  await expect.poll(distance).toBeLessThan(2);
+  expect(errors).toEqual([]);
+});
+
+test('streaming Markdown preserves code editor nodes and reading position', async ({ page }) => {
+  const errors = await setup(page);
+  const agent = await openAgent(page);
+  await page.evaluate(() => { (window as any).__aiHarness.hold = true; });
+  await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Explain this YAML');
+  await agent.getByRole('button', { name: 'Send', exact: true }).click();
+  const log = agent.getByRole('log', { name: 'AI conversation messages' });
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__aiHarness.emit)).toBe('function');
+  await page.evaluate(() => (window as any).__aiHarness.emit({ type: 'text_delta', text: '\n\n```yaml\napiVersion: v1\nkind: Pod\nmetadata:\n  name: example\n```\n\n' + 'Long explanation.\n\n'.repeat(60) }));
+  const editor = log.locator('.monaco-editor').first();
+  await expect(editor).toBeVisible();
+  await editor.evaluate(el => { (window as any).__streamingEditor = el; });
+  await log.hover();
+  await page.mouse.wheel(0, -400);
+  await expect(agent.getByRole('button', { name: 'Scroll to bottom' })).toBeVisible();
+  const top = await log.evaluate(el => el.scrollTop);
+  await page.evaluate(() => (window as any).__aiHarness.emit({ type: 'text_delta', text: 'Next token.' }));
+  await expect(log).toContainText('Next token.');
+  expect(await editor.evaluate(el => el === (window as any).__streamingEditor)).toBe(true);
+  await expect.poll(() => log.evaluate(el => el.scrollTop)).toBeCloseTo(top, 0);
+  expect(errors).toEqual([]);
+});

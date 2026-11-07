@@ -78,6 +78,88 @@ impl ProviderClient {
         serde_json::from_slice(&bytes).map_err(|_| "AI endpoint returned invalid JSON".into())
     }
 
+    pub fn protocol(&self) -> ProviderProtocol {
+        self.profile.protocol
+    }
+
+    pub async fn resolve_context_window(&self, model: &str) -> Option<u64> {
+        if let Ok(url) = Url::parse(&self.profile.base_url) {
+            if url.host_str() == Some("generativelanguage.googleapis.com") {
+                let base = self.profile.base_url.trim_end_matches('/');
+                if let Some(native_root) = base.strip_suffix("/openai") {
+                    let short = model.strip_prefix("models/").unwrap_or(model);
+                    let mut req = self
+                        .client
+                        .get(format!("{native_root}/models/{short}"))
+                        .timeout(Duration::from_secs(5));
+                    if !self.key.is_empty() {
+                        req = req.header("x-goog-api-key", &self.key);
+                    }
+                    if let Ok(resp) = req.send().await {
+                        if resp.status().is_success() {
+                            if let Ok(val) = resp.json::<Value>().await {
+                                if let Some(ctx) = val["inputTokenLimit"].as_u64() {
+                                    return Some(ctx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        known_model_context_window(model)
+    }
+
+    async fn enrich_google_models(&self, models: &mut [ModelInfo]) {
+        let Ok(url) = Url::parse(&self.profile.base_url) else {
+            return;
+        };
+        if url.host_str() != Some("generativelanguage.googleapis.com") {
+            return;
+        }
+        let base = self.profile.base_url.trim_end_matches('/');
+        let Some(native_root) = base.strip_suffix("/openai") else {
+            return;
+        };
+        let mut req = self
+            .client
+            .get(format!("{native_root}/models?pageSize=1000"))
+            .timeout(Duration::from_secs(10));
+        if !self.key.is_empty() {
+            req = req.header("x-goog-api-key", &self.key);
+        }
+        let Ok(resp) = req.send().await else {
+            return;
+        };
+        if !resp.status().is_success() {
+            return;
+        }
+        let Ok(value) = resp.json::<Value>().await else {
+            return;
+        };
+        let Some(entries) = value["models"].as_array() else {
+            return;
+        };
+        for m in models.iter_mut() {
+            let short = m.id.strip_prefix("models/").unwrap_or(&m.id);
+            if let Some(entry) = entries.iter().find(|e| {
+                e["name"]
+                    .as_str()
+                    .is_some_and(|n| n == m.id || n.strip_prefix("models/") == Some(short))
+            }) {
+                if let Some(ctx) = entry["inputTokenLimit"].as_u64() {
+                    m.context_window = Some(ctx);
+                }
+                if let Some(out) = entry["outputTokenLimit"].as_u64() {
+                    m.max_output_tokens = Some(out);
+                }
+                if let Some(display) = entry["displayName"].as_str().filter(|s| !s.is_empty()) {
+                    m.name = display.into();
+                }
+            }
+        }
+    }
+
     pub async fn models(&self) -> Result<Vec<ModelInfo>, String> {
         let mut models = Vec::new();
         let mut path: String = if self.profile.protocol == ProviderProtocol::Ollama {
@@ -98,6 +180,7 @@ impl ProviderClient {
             url.query_pairs_mut().append_pair("after_id", cursor);
             path = format!("models?{}", url.query().unwrap());
         }
+        self.enrich_google_models(&mut models).await;
         models.sort_by(|a, b| a.id.cmp(&b.id));
         models.dedup_by(|a, b| a.id == b.id);
         if models.is_empty() {
@@ -147,13 +230,28 @@ impl ProviderClient {
         let (path, body) =
             build_request(self.profile.protocol, model, options, system, turns, tools);
         let started = std::time::Instant::now();
-        let response = self
-            .request(reqwest::Method::POST, path)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| "Cannot connect to the AI endpoint; check address, network and TLS")?;
-        let response = checked(response, !self.key.is_empty())?;
+        let mut attempt = 0u32;
+        let response = loop {
+            let resp = self
+                .request(reqwest::Method::POST, path)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|_| "Cannot connect to the AI endpoint; check address, network and TLS")?;
+            if resp.status().as_u16() == 429 && attempt < 3 {
+                attempt += 1;
+                let retry_after = resp
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map(|s| s.clamp(1, 15))
+                    .unwrap_or(2u64 * u64::from(attempt));
+                tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                continue;
+            }
+            break checked(resp, !self.key.is_empty())?;
+        };
         let ndjson = self.profile.protocol == ProviderProtocol::Ollama;
         let mut parser = StreamDecoder::new(ndjson);
         let mut accumulator = Accumulator { started: Some(started), ..Default::default() };
@@ -231,12 +329,47 @@ fn checked(response: reqwest::Response, authenticated: bool) -> Result<reqwest::
         404 => {
             "Endpoint or model not found. Check the API root, protocol and selected model; OpenAI-compatible APIs normally include /v1 in the root."
         }
+        429 => {
+            "Rate limit or quota exceeded (HTTP 429). Wait a moment and retry, or check your provider's RPM/TPM quota limits."
+        }
         _ => "Check the API root, model access and generation options.",
     };
     Err(format!(
         "AI endpoint {origin} returned HTTP {}. {hint}",
         response.status().as_u16()
     ))
+}
+
+pub fn known_model_context_window(id: &str) -> Option<u64> {
+    let lower = id.to_ascii_lowercase();
+    let short = lower.strip_prefix("models/").unwrap_or(&lower);
+    if short.starts_with("gemini-") || short.contains("/gemini-") {
+        Some(1_048_576)
+    } else if short.starts_with("gpt-4.1") || short.contains("/gpt-4.1") {
+        Some(1_047_576)
+    } else if short.starts_with("gpt-5") || short.contains("/gpt-5") {
+        Some(400_000)
+    } else if short.starts_with("claude-3")
+        || short.starts_with("claude-4")
+        || short.starts_with("claude-sonnet")
+        || short.starts_with("claude-opus")
+        || short.starts_with("claude-haiku")
+        || short.contains("/claude-")
+        || short.starts_with("o3")
+        || short.starts_with("o4-")
+    {
+        Some(200_000)
+    } else if short.starts_with("gpt-4o")
+        || short.starts_with("gpt-4-turbo")
+        || short.starts_with("o1")
+        || short.starts_with("deepseek-")
+        || short.contains("/deepseek-")
+        || short.starts_with("grok-")
+    {
+        Some(128_000)
+    } else {
+        None
+    }
 }
 
 pub fn parse_models(protocol: ProviderProtocol, value: &Value) -> Result<Vec<ModelInfo>, String> {
@@ -266,6 +399,7 @@ pub fn parse_models(protocol: ProviderProtocol, value: &Value) -> Result<Vec<Mod
                 id: id.into(),
                 name: m["display_name"]
                     .as_str()
+                    .or(m["displayName"].as_str())
                     .or(m["name"].as_str())
                     .unwrap_or(id)
                     .into(),
@@ -273,10 +407,17 @@ pub fn parse_models(protocol: ProviderProtocol, value: &Value) -> Result<Vec<Mod
                     .as_u64()
                     .or(m["context_window"].as_u64())
                     .or(m["max_input_tokens"].as_u64())
-                    .or(m["top_provider"]["context_length"].as_u64()),
+                    .or(m["input_token_limit"].as_u64())
+                    .or(m["inputTokenLimit"].as_u64())
+                    .or(m["max_model_len"].as_u64())
+                    .or(m["top_provider"]["context_length"].as_u64())
+                    .or_else(|| known_model_context_window(id)),
                 max_output_tokens: m["max_output_tokens"]
                     .as_u64()
                     .or(m["max_tokens"].as_u64())
+                    .or(m["max_completion_tokens"].as_u64())
+                    .or(m["output_token_limit"].as_u64())
+                    .or(m["outputTokenLimit"].as_u64())
                     .or(m["top_provider"]["max_completion_tokens"].as_u64()),
                 tools: m["capabilities"]["tools"]
                     .as_bool()
@@ -382,6 +523,21 @@ pub fn build_request(
         if let Some(last) = definitions.last_mut() {
             if let Some(map) = last.as_object_mut() {
                 map.insert("cache_control".into(), json!({"type": "ephemeral"}));
+            }
+        }
+        if let Some(last_msg) = messages.last_mut() {
+            if let Some(text) = last_msg["content"].as_str().map(str::to_owned) {
+                if !text.is_empty() {
+                    last_msg["content"] = json!([{
+                        "type": "text",
+                        "text": text,
+                        "cache_control": {"type": "ephemeral"}
+                    }]);
+                }
+            } else if let Some(blocks) = last_msg["content"].as_array_mut() {
+                if let Some(last_block) = blocks.last_mut().and_then(Value::as_object_mut) {
+                    last_block.insert("cache_control".into(), json!({"type": "ephemeral"}));
+                }
             }
         }
     }
@@ -513,7 +669,7 @@ fn parse_frame(text: &str) -> Result<Value, String> {
 #[derive(Default)]
 struct Accumulator {
     text: String,
-    calls: BTreeMap<u64, (String, String, String)>,
+    calls: BTreeMap<u64, (String, String, String, Option<Value>)>,
     native: Value,
     input: Option<u64>,
     output: Option<u64>,
@@ -595,6 +751,7 @@ impl Accumulator {
                                 blocks[index]["id"].as_str().unwrap_or("").into(),
                                 blocks[index]["name"].as_str().unwrap_or("").into(),
                                 String::new(),
+                                None,
                             ),
                         );
                     }
@@ -705,16 +862,65 @@ impl Accumulator {
                         self.delta("</think>\n", emit);
                     }
                     for call in calls {
-                        let index = call["index"].as_u64().ok_or("Tool call has no index")?;
+                        let call_id = call["id"].as_str().filter(|s| !s.is_empty());
+                        let call_name =
+                            call["function"]["name"].as_str().filter(|s| !s.is_empty());
+                        let index = if let Some(idx) = call["index"].as_u64() {
+                            idx
+                        } else if let Some(id) = call_id {
+                            if let Some((&existing_idx, _)) = self.calls.iter().find(
+                                |(_, (existing_id, existing_name, _, _))| {
+                                    existing_id == id
+                                        && (call_name.is_none() || existing_name.is_empty())
+                                },
+                            ) {
+                                existing_idx
+                            } else if let Some((&last_idx, (existing_id, existing_name, _, _))) =
+                                self.calls.iter().next_back()
+                            {
+                                if existing_id.is_empty() && existing_name.is_empty() {
+                                    last_idx
+                                } else {
+                                    last_idx + 1
+                                }
+                            } else {
+                                0
+                            }
+                        } else if call_name.is_some() {
+                            if let Some((&last_idx, (_, existing_name, _, _))) =
+                                self.calls.iter().next_back()
+                            {
+                                if existing_name.is_empty() {
+                                    last_idx
+                                } else {
+                                    last_idx + 1
+                                }
+                            } else {
+                                0
+                            }
+                        } else {
+                            self.calls.keys().next_back().copied().unwrap_or(0)
+                        };
                         let entry = self.calls.entry(index).or_default();
-                        if let Some(id) = call["id"].as_str() {
-                            entry.0.push_str(id);
+                        if let Some(id) = call_id {
+                            if entry.0 != id {
+                                entry.0.push_str(id);
+                            }
                         }
-                        if let Some(name) = call["function"]["name"].as_str() {
-                            entry.1.push_str(name);
+                        if let Some(name) = call_name {
+                            if entry.1 != name {
+                                entry.1.push_str(name);
+                            }
                         }
                         if let Some(args) = call["function"]["arguments"].as_str() {
                             entry.2.push_str(args);
+                        } else if let Some(args_obj) =
+                            call["function"].get("arguments").filter(|v| v.is_object())
+                        {
+                            entry.2.push_str(&args_obj.to_string());
+                        }
+                        if let Some(extra) = call.get("extra_content") {
+                            entry.3 = Some(extra.clone());
                         }
                     }
                 }
@@ -782,9 +988,24 @@ impl Accumulator {
             }
             self.native = json!({"role":"assistant", "content":self.text, "tool_calls":self.native.as_array().cloned().unwrap_or_default()});
         } else {
-            for (index, (id, name, args)) in &self.calls {
-                if id.is_empty() || name.is_empty() {
+            let mut seen_ids = std::collections::HashSet::new();
+            let mut tool_calls_native = Vec::new();
+            for (index, (id, name, args, extra)) in &self.calls {
+                if name.is_empty()
+                    || (id.is_empty() && protocol != ProviderProtocol::OpenaiCompatible)
+                {
                     return Err("Provider returned an incomplete tool call".into());
+                }
+                let mut call_id = if id.is_empty() {
+                    format!("call-{index}")
+                } else {
+                    id.clone()
+                };
+                if protocol == ProviderProtocol::OpenaiCompatible
+                    && !seen_ids.insert(call_id.clone())
+                {
+                    call_id = format!("{call_id}-{index}");
+                    seen_ids.insert(call_id.clone());
                 }
                 let arguments: Value = if args.is_empty() && protocol == ProviderProtocol::Anthropic
                 {
@@ -796,14 +1017,28 @@ impl Accumulator {
                 if protocol == ProviderProtocol::Anthropic {
                     self.native[*index as usize]["input"] = arguments.clone();
                 }
+                if protocol == ProviderProtocol::OpenaiCompatible {
+                    let mut tc = json!({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": arguments.to_string()
+                        }
+                    });
+                    if let Some(extra) = extra {
+                        tc["extra_content"] = extra.clone();
+                    }
+                    tool_calls_native.push(tc);
+                }
                 calls.push(ToolCall {
-                    id: id.clone(),
+                    id: call_id,
                     name: name.clone(),
                     arguments,
                 });
             }
             if protocol == ProviderProtocol::OpenaiCompatible {
-                self.native = json!({"role":"assistant","content":if self.text.is_empty() {Value::Null} else {json!(self.text)},"tool_calls":calls.iter().map(|c| json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments.to_string()}})).collect::<Vec<_>>()});
+                self.native = json!({"role":"assistant","content":if self.text.is_empty() {Value::Null} else {json!(self.text)},"tool_calls":tool_calls_native});
                 if calls.is_empty() {
                     self.native.as_object_mut().unwrap().remove("tool_calls");
                 }
@@ -868,6 +1103,63 @@ mod tests {
         assert_eq!(
             completion.native["tool_calls"][0]["function"]["arguments"],
             "{\"kind\":\"Pod\"}"
+        );
+    }
+
+    #[test]
+    fn gemini_openai_compatible_stream_handles_unindexed_tool_calls_and_preserves_thought_signature() {
+        let mut stream = Accumulator::default();
+        for frame in [
+            json!({
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "function-call-101",
+                                "type": "function",
+                                "function": {
+                                    "name": "diagnose_resource",
+                                    "arguments": "{\"kind\":\"Pod\",\"name\":\"web\",\"namespace\":\"default\"}"
+                                },
+                                "extra_content": {
+                                    "google": {
+                                        "thought_signature": "opaque-gemini-thought-sig"
+                                    }
+                                }
+                            },
+                            {
+                                "id": "function-call-102",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_events_timeline",
+                                    "arguments": "{\"namespace\":\"default\"}"
+                                }
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+        ] {
+            stream
+                .frame(ProviderProtocol::OpenaiCompatible, &frame, &sink())
+                .unwrap();
+        }
+        let completion = stream.finish(ProviderProtocol::OpenaiCompatible).unwrap();
+        assert_eq!(completion.calls.len(), 2);
+        assert_eq!(completion.calls[0].id, "function-call-101");
+        assert_eq!(completion.calls[0].name, "diagnose_resource");
+        assert_eq!(
+            completion.calls[0].arguments,
+            json!({"kind":"Pod","name":"web","namespace":"default"})
+        );
+        assert_eq!(completion.calls[1].id, "function-call-102");
+        assert_eq!(completion.calls[1].name, "get_events_timeline");
+        assert_eq!(
+            completion.native["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            "opaque-gemini-thought-sig"
         );
     }
 
@@ -1000,6 +1292,10 @@ mod tests {
         let req_tools = body["tools"].as_array().unwrap();
         assert!(req_tools[0].get("cache_control").is_none());
         assert_eq!(req_tools[1]["cache_control"], json!({"type":"ephemeral"}));
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"],
+            json!({"type":"ephemeral"})
+        );
     }
 
     #[test]

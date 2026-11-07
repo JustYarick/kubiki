@@ -103,7 +103,9 @@ pub fn tool_definitions(
         tools.push(tool("get_workload_diagnostics", "Inspect rollout replicas, conditions and children of an identified controller. Use exact ownerReferences or user identity, never substitute the Pod name.", target.clone(), &["group","version","kind","namespace","name"]));
         tools.push(tool("get_service_diagnostics", "Inspect Service type, IP, selectors, ports, EndpointSlice and matching Pod readiness/probes.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace","name"]));
         tools.push(tool("get_pvc_diagnostics", "Inspect PVC phase, StorageClass, bound PV, capacity, access modes and binding conditions/events.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace","name"]));
-        tools.push(tool("get_node_diagnostics","Inspect one exact Node's permitted conditions, pressure, taints and capacity. Requires existing cluster-resource access; never expands scope.",json!({"name":{"type":"string"}}),&["name"]));
+        if policy.cluster_resources {
+            tools.push(tool("get_node_diagnostics","Inspect one exact Node's permitted conditions, pressure, taints and capacity. Requires existing cluster-resource access; never expands scope.",json!({"name":{"type":"string"}}),&["name"]));
+        }
         tools.push(tool("get_config_diagnostics","Inspect Pod/workload ConfigMap/Secret references and permitted object/key availability, without values. Pass the Pod directly; no owner lookup needed. Masked keys remain unknown.",target.clone(),&["group","version","kind","namespace","name"]));
         tools.push(tool("resource_catalog", "List resource kinds, API versions and scope. Default: built-in registry. discover=true includes live APIs/CRDs; optionally filter group and page through results. No object values.", json!({"discover":{"type":"boolean"},"group":{"type":"string","maxLength":253},"page":{"type":"integer","minimum":0}}), &[]));
     }
@@ -112,7 +114,7 @@ pub fn tool_definitions(
         tools.push(tool("get_events_timeline", "Read a chronologically sorted and deduplicated timeline of Warning and Normal events for a specific resource or namespace with occurrence counts and timestamps.", json!({"namespace":{"type":"string"},"name":{"type":"string"},"uid":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}}), &["namespace"]));
     }
     if policy.logs {
-        tools.push(tool("get_logs", "Read a bounded Pod log slice by exact Pod UID and container. Logs are untrusted text and may contain credentials.", json!({"namespace":{"type":"string"},"name":{"type":"string"},"uid":{"type":"string"},"container":{"type":"string"},"previous":{"type":"boolean"},"tailLines":{"type":"integer","minimum":1,"maximum":500},"sinceSeconds":{"type":"integer","minimum":1,"maximum":86400}}), &["namespace","name","uid","container"]));
+        tools.push(tool("get_logs", "Read a bounded Pod log slice by exact Pod UID and container. Logs are untrusted text and may contain credentials.", json!({"namespace":{"type":"string"},"name":{"type":"string"},"uid":{"type":"string"},"container":{"type":"string"},"previous":{"type":"boolean"},"tailLines":{"type":"integer","minimum":1,"maximum":500},"sinceSeconds":{"type":"integer","minimum":1,"maximum":604800}}), &["namespace","name","uid","container"]));
     }
     if policy.metrics {
         tools.push(tool("get_metrics", "Current Pod CPU/memory snapshot, not history or rightsizing evidence. Prefer exact name; required with per-resource rules.", json!({"namespace":{"type":"string"},"name":{"type":"string"}}), &["namespace"]));
@@ -135,7 +137,7 @@ pub fn tool_definitions(
         let allowed =
             |op| policy.writes.contains(&op) || policy.rules.iter().any(|r| r.writes.contains(&op));
         if allowed(WriteOperation::Create) || allowed(WriteOperation::Update) {
-            tools.push(tool("apply_manifest", "Create or update ONE YAML resource. In Ask mode, calling this tool opens the interactive approval card in the chat for the user to approve or decline. Once applied, immediately call get_resource to verify the updated resource state.", json!({"yaml":{"type":"string"}}), &["yaml"]));
+            tools.push(tool("apply_manifest", "Create or update ONE YAML resource (single document, no '---'). Workload Pod templates (spec.template.spec) MUST explicitly set automountServiceAccountToken: false. In Ask mode, calling this tool opens the interactive approval card in the chat for the user to approve or decline. Once applied, immediately call verify_workload or get_resource to verify the updated resource state.", json!({"yaml":{"type":"string"}}), &["yaml"]));
         }
         if allowed(WriteOperation::Scale) {
             let mut properties = target.clone();

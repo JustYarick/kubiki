@@ -77,15 +77,19 @@ export function PlanArtifactCard({ artifact, conversation: c }: { artifact: Plan
       </div>
 
       <div className="ai-plan-body">
-        <p className="p-2 text-sm"><strong>Diagnosis:</strong> {artifact.diagnosis}</p>
-        <p className="p-2 text-xs"><strong>Uncertainty:</strong> {artifact.uncertainty || 'None stated; verify evidence before changes.'}</p>
-        <ol className="p-3 list-decimal list-inside space-y-3">{artifact.steps.map(step => <li key={step.id}>
-          <strong>{step.title}</strong>
-          <p>{step.reason}</p>
-          <p className="text-xs">Risk: {step.risk}</p>
-          {step.target && <code>{step.target.kind} {step.target.namespace}/{step.target.name}</code>}
-          <details className="text-xs mt-1"><summary>Verification</summary>
-            <p>{step.verification}</p>
+        <div className="px-3 pt-2.5 pb-1 space-y-1">
+          <p className="text-xs leading-relaxed text-[var(--text-primary)]"><strong className="text-[var(--text-secondary)]">Diagnosis:</strong> {artifact.diagnosis}</p>
+          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]"><strong>Uncertainty:</strong> {artifact.uncertainty || 'None stated; verify evidence before changes.'}</p>
+        </div>
+        <ol className="px-3 py-2 list-decimal list-inside space-y-2.5">{artifact.steps.map(step => <li key={step.id} className="rounded border border-[var(--border-subtle)] bg-[var(--bg-secondary)]/50 p-2.5 text-xs space-y-1">
+          <span className="font-semibold text-[var(--text-primary)]">{step.title}</span>
+          <p className="text-[var(--text-secondary)] leading-relaxed">{step.reason}</p>
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <span className="text-[11px] text-[var(--text-muted)]">Risk: {step.risk}</span>
+            {step.target && <code className="px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] font-mono text-[11px] text-[var(--text-secondary)]">{step.target.kind} {step.target.namespace}/{step.target.name}</code>}
+          </div>
+          <details className="text-[11px] text-[var(--text-muted)] pt-1"><summary className="cursor-pointer select-none font-medium text-[var(--text-secondary)]">Verification</summary>
+            <p className="mt-1">{step.verification}</p>
             {!!step.dependsOn?.length && <p>Requires verified: {step.dependsOn.join(', ')}</p>}
             {!!step.dependsOnAccepted?.length && <p>Requires API acceptance: {step.dependsOnAccepted.join(', ')}</p>}
           </details>

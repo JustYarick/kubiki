@@ -54,8 +54,11 @@ impl KubernetesTools {
         session: &Session,
         arguments: Value,
     ) -> Result<Value, String> {
-        let args: NeighborhoodArgs =
+        let mut args: NeighborhoodArgs =
             serde_json::from_value(arguments).map_err(|_| "Invalid neighborhood arguments")?;
+        if args.version == "v1" && matches!(args.group.as_str(), "v1" | "core") {
+            args.group.clear();
+        }
         let hops = args.hops.unwrap_or(2);
         let cap = args.max_nodes.unwrap_or(25);
         if !(1..=4).contains(&hops) || !(1..=100).contains(&cap) {
@@ -200,7 +203,11 @@ impl KubernetesTools {
                         target["name"].as_str().unwrap_or("")
                     )),
                 )),
-                "ConfigMap" | "Secret" | "PersistentVolumeClaim" | "ServiceAccount" => {
+                "ConfigMap" | "Secret" | "PersistentVolumeClaim" | "ServiceAccount"
+                    if !(depth > 0
+                        && ((kind == "ServiceAccount" && target["name"] == "default")
+                            || (kind == "ConfigMap" && target["name"] == "kube-root-ca.crt"))) =>
+                {
                     Some(("", "Pod", json!(FIELDS), None))
                 }
                 "CronJob" => Some(("batch", "Job", json!(["metadata"]), None)),
@@ -339,8 +346,11 @@ impl KubernetesTools {
             uid: Option<String>,
             include_logs: Option<bool>,
         }
-        let a: Args =
+        let mut a: Args =
             serde_json::from_value(arguments).map_err(|_| "Invalid diagnosis arguments")?;
+        if a.version == "v1" && matches!(a.group.as_str(), "v1" | "core") {
+            a.group.clear();
+        }
         let root = json!({"group":a.group,"version":a.version,"kind":a.kind,"namespace":a.namespace,"name":a.name});
         let mut graph = root.clone();
         graph["uid"] = json!(a.uid);
@@ -405,35 +415,127 @@ impl KubernetesTools {
             }
         };
         let logs = async {
-            if !builtin || a.kind != "Pod" || a.include_logs == Some(false) {
+            if !builtin || a.include_logs == Some(false) {
                 return json!({"collected":false,"reason":"Not requested for this target"});
             }
-            if !state.policy.logs || uid.is_none() {
-                return json!({"collected":false,"reason":"Logs unavailable: policy or UID"});
-            }
-            let mut out = vec![];
-            for c in diagnosis["initContainers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .chain(diagnosis["containers"].as_array().into_iter().flatten())
-            {
-                let Some(container) = c["name"].as_str() else {
-                    continue;
-                };
-                if c["restartCount"].as_u64().unwrap_or(0) == 0
-                    && c["state"] != "terminated"
-                    && c["state"] != "waiting"
+            if a.kind == "Pod" {
+                if !state.policy.logs || uid.is_none() {
+                    return json!({"collected":false,"reason":"Logs unavailable: policy or UID"});
+                }
+                let mut out = vec![];
+                for c in diagnosis["initContainers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .chain(diagnosis["containers"].as_array().into_iter().flatten())
                 {
-                    continue;
+                    let Some(container) = c["name"].as_str() else {
+                        continue;
+                    };
+                    if c["restartCount"].as_u64().unwrap_or(0) == 0
+                        && c["state"] != "terminated"
+                        && c["state"] != "waiting"
+                    {
+                        continue;
+                    }
+                    if out.len() >= 2 {
+                        break;
+                    }
+                    let want_prev = c["restartCount"].as_u64().unwrap_or(0) > 0;
+                    let mut result = self
+                        .linked_read(
+                            session,
+                            "get_logs",
+                            json!({"namespace":a.namespace,"name":a.name,"uid":uid,"container":container,"previous":want_prev,"tailLines":80}),
+                        )
+                        .await;
+                    if want_prev
+                        && result
+                            .as_ref()
+                            .is_ok_and(|v| {
+                                v["logs"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .contains("unable to retrieve container logs")
+                            })
+                    {
+                        if let Ok(curr) = self
+                            .linked_read(
+                                session,
+                                "get_logs",
+                                json!({"namespace":a.namespace,"name":a.name,"uid":uid,"container":container,"previous":false,"tailLines":80}),
+                            )
+                            .await
+                        {
+                            result = Ok(curr);
+                        }
+                    }
+                    out.push(json!({"container":container,"result":compact_observation(session,observation(result))}));
                 }
-                if out.len() >= 2 {
-                    break;
-                }
-                let result=self.linked_read(session,"get_logs",json!({"namespace":a.namespace,"name":a.name,"uid":uid,"container":container,"previous":c["restartCount"].as_u64().unwrap_or(0)>0,"tailLines":80})).await;
-                out.push(json!({"container":container,"result":compact_observation(session,observation(result))}));
+                return json!({"containers":out,"coverage":"Up to two failing containers, up to 80 lines each. Use get_logs for additional evidence."});
             }
-            json!({"containers":out,"coverage":"Up to two failing containers, up to 80 lines each. Use get_logs for additional evidence."})
+            if matches!(
+                a.kind.as_str(),
+                "Deployment" | "DaemonSet" | "StatefulSet" | "ReplicaSet" | "Job"
+            ) {
+                if !state.policy.logs {
+                    return json!({"collected":false,"reason":"Logs unavailable: policy or UID"});
+                }
+                let mut out = vec![];
+                for pod in diagnosis["childPods"].as_array().into_iter().flatten() {
+                    let Some(pod_name) = pod["name"].as_str() else {
+                        continue;
+                    };
+                    let Some(pod_uid) = pod["uid"].as_str() else {
+                        continue;
+                    };
+                    for cause in pod["crashCauses"].as_array().into_iter().flatten() {
+                        let Some(container) = cause["container"].as_str() else {
+                            continue;
+                        };
+                        if out.len() >= 2 {
+                            break;
+                        }
+                        let want_prev = cause["restartCount"].as_u64().unwrap_or(0) > 0;
+                        let mut result = self
+                            .linked_read(
+                                session,
+                                "get_logs",
+                                json!({"namespace":a.namespace,"name":pod_name,"uid":pod_uid,"container":container,"previous":want_prev,"tailLines":80}),
+                            )
+                            .await;
+                        if want_prev
+                            && result
+                                .as_ref()
+                                .is_ok_and(|v| {
+                                    v["logs"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .contains("unable to retrieve container logs")
+                                })
+                        {
+                            if let Ok(curr) = self
+                                .linked_read(
+                                    session,
+                                    "get_logs",
+                                    json!({"namespace":a.namespace,"name":pod_name,"uid":pod_uid,"container":container,"previous":false,"tailLines":80}),
+                                )
+                                .await
+                            {
+                                result = Ok(curr);
+                            }
+                        }
+                        out.push(json!({"pod":pod_name,"container":container,"result":compact_observation(session,observation(result))}));
+                    }
+                    if out.len() >= 2 {
+                        break;
+                    }
+                }
+                if !out.is_empty() {
+                    return json!({"containers":out,"coverage":"Up to two failing child pod containers, up to 80 lines each. Use get_logs for additional evidence."});
+                }
+            }
+            json!({"collected":false,"reason":"Not requested for this target"})
         };
         let crash_causes = crate::diagnostics::extract_crash_causes(&diagnosis);
         let (events, logs) = tokio::join!(events, logs);

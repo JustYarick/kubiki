@@ -34,15 +34,15 @@ impl GenerationOptions {
     pub fn validate(&self) -> Result<(), String> {
         if self
             .context_budget_tokens
-            .is_some_and(|v| !(1024..=262144).contains(&v))
+            .is_some_and(|v| !(1024..=2_097_152).contains(&v))
         {
-            return Err("Model context budget must be 1024–262144 tokens or omitted".into());
+            return Err("Model context budget must be 1024–2097152 tokens or omitted".into());
         }
         if self
             .context_tokens
-            .is_some_and(|v| !(1024..=262144).contains(&v))
+            .is_some_and(|v| !(1024..=2_097_152).contains(&v))
         {
-            return Err("Local context window must be 1024–262144 tokens or omitted".into());
+            return Err("Local context window must be 1024–2097152 tokens or omitted".into());
         }
         if self
             .max_output_tokens

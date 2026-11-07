@@ -299,13 +299,17 @@ pub fn container_diagnostics(
         } else if let Some(running)=state.get("running") { ("running",json!({"startedAt":running.get("startedAt")})) }
         else if let Some(terminated)=state.get("terminated") {
             if terminated["exitCode"].as_i64().is_some_and(|n|n!=0) || terminated["reason"]=="OOMKilled" {
-                issues.push(format!("{prefix} '{}' terminated: exitCode {:?}, reason {}",name.unwrap_or("unknown"),terminated["exitCode"].as_i64(),terminated["reason"].as_str().unwrap_or("unavailable")));
+                let code = terminated["exitCode"]
+                    .as_i64()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "unavailable".into());
+                issues.push(format!("{prefix} '{}' terminated: exitCode {}, reason {}",name.unwrap_or("unknown"),code,terminated["reason"].as_str().unwrap_or("unavailable")));
             }
             ("terminated",termination_details(terminated))
         } else {("unknown",Value::Null)};
         let last=container.pointer("/lastState/terminated").map(termination_details);
-        if container["restartCount"].as_i64().is_some_and(|n|n>0) {
-            issues.push(format!("{prefix} '{}' has restarted {:?} times",name.unwrap_or("unknown"),container["restartCount"].as_i64()));
+        if let Some(restarts) = container["restartCount"].as_i64().filter(|&n| n > 0) {
+            issues.push(format!("{prefix} '{}' has restarted {} times",name.unwrap_or("unknown"),restarts));
         }
         json!({"name":name,"image":container.get("image"),"ready":container.get("ready"),"restartCount":container.get("restartCount"),"state":state_name,"stateDetails":details,"lastTermination":last})
     }).collect()
