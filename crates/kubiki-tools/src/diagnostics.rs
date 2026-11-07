@@ -931,11 +931,41 @@ pub fn filter_logs_for_ai(raw_logs: &str, tail_fallback: usize) -> (String, usiz
         return (String::new(), 0, 0, false);
     }
 
-    let mut matched: Vec<(usize, &str)> = Vec::new();
-    for (idx, line) in lines.iter().enumerate() {
-        if LOG_ERROR_RE.is_match(line) {
-            matched.push((idx + 1, *line));
+    let is_stacktrace_continuation = |line: &str| -> bool {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            return false;
         }
+        (line.starts_with(' ') || line.starts_with('\t')) && !trimmed.starts_with('[') && !trimmed.starts_with('{')
+            || trimmed.starts_with("at ")
+            || trimmed.starts_with("File \"")
+            || trimmed.starts_with("Caused by:")
+            || trimmed.starts_with("goroutine ")
+            || trimmed.starts_with("...")
+    };
+
+    let mut matched: Vec<(usize, &str)> = Vec::new();
+    let mut i = 0;
+    while i < total {
+        let line = lines[i];
+        if LOG_ERROR_RE.is_match(line) {
+            matched.push((i + 1, line));
+            let mut cont = 0;
+            while i + 1 < total && cont < 6 {
+                let next_line = lines[i + 1];
+                if LOG_ERROR_RE.is_match(next_line) {
+                    break;
+                }
+                if is_stacktrace_continuation(next_line) {
+                    i += 1;
+                    cont += 1;
+                    matched.push((i + 1, next_line));
+                } else {
+                    break;
+                }
+            }
+        }
+        i += 1;
     }
 
     let matched_count = matched.len();
@@ -1066,6 +1096,11 @@ pub fn extract_crash_causes(diagnostic: &Value) -> Vec<Value> {
         let name = c.get("name").and_then(Value::as_str).unwrap_or("");
         let restart_count = c.get("restartCount").and_then(Value::as_i64).unwrap_or(0);
         let state = c.get("state").and_then(Value::as_str).unwrap_or("");
+        let waiting_reason = if state == "waiting" {
+            c.pointer("/stateDetails/reason").and_then(Value::as_str)
+        } else {
+            None
+        };
 
         if let Some(term) = c.get("lastTermination").or_else(|| {
             if state == "terminated" {
@@ -1077,18 +1112,25 @@ pub fn extract_crash_causes(diagnostic: &Value) -> Vec<Value> {
             let exit_code = term.get("exitCode").and_then(Value::as_i64);
             let reason = term.get("reason").and_then(Value::as_str).unwrap_or("");
             if exit_code.is_some_and(|code| code != 0) || reason == "OOMKilled" {
-                causes.push(json!({
+                let mut entry = json!({
                     "container": name,
-                    "state": "terminated",
+                    "state": if state.is_empty() { "terminated" } else { state },
                     "exitCode": exit_code,
                     "reason": reason,
                     "message": term.get("message"),
                     "restartCount": restart_count,
                     "finishedAt": term.get("finishedAt")
-                }));
+                });
+                if let Some(wr) = waiting_reason {
+                    entry["waitingReason"] = json!(wr);
+                    if let Some(wm) = c.pointer("/stateDetails/message") {
+                        entry["waitingMessage"] = wm.clone();
+                    }
+                }
+                causes.push(entry);
             }
         } else if state == "waiting" {
-            let reason = c.pointer("/stateDetails/reason").and_then(Value::as_str).unwrap_or("");
+            let reason = waiting_reason.unwrap_or("");
             if matches!(reason, "CrashLoopBackOff" | "ImagePullBackOff" | "ErrImagePull" | "CreateContainerConfigError" | "CreateContainerError") {
                 causes.push(json!({
                     "container": name,
@@ -1097,6 +1139,29 @@ pub fn extract_crash_causes(diagnostic: &Value) -> Vec<Value> {
                     "message": c.pointer("/stateDetails/message"),
                     "restartCount": restart_count
                 }));
+            }
+        }
+    }
+
+    if causes.is_empty() {
+        if let Some(child_pods) = diagnostic.get("childPods").and_then(Value::as_array) {
+            for pod in child_pods {
+                if let Some(pod_causes) = pod.get("crashCauses").and_then(Value::as_array) {
+                    let pod_name = pod.get("name").and_then(Value::as_str).unwrap_or("");
+                    for cause in pod_causes {
+                        let mut entry = cause.clone();
+                        if !pod_name.is_empty() {
+                            entry["pod"] = json!(pod_name);
+                        }
+                        causes.push(entry);
+                    }
+                } else if let Some(issue) = pod.get("issue").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                    causes.push(json!({
+                        "pod": pod.get("name"),
+                        "phase": pod.get("phase"),
+                        "issue": issue,
+                    }));
+                }
             }
         }
     }
@@ -1116,12 +1181,13 @@ mod rca_optimization_tests {
         assert!(!is_filtered);
         assert!(filtered.contains("listening on port 80"));
 
-        let error_logs = "info: ok\nERROR: database connection failed: timeout\ninfo: retry\nWARN: high latency\ninfo: ok";
+        let error_logs = "info: ok\nERROR: database connection failed: timeout\n  at db.connect (db.js:42:11)\n  at main (index.js:10:5)\ninfo: retry\nWARN: high latency\ninfo: ok";
         let (filtered, total, matched, is_filtered) = filter_logs_for_ai(error_logs, 10);
-        assert_eq!(total, 5);
-        assert_eq!(matched, 2);
+        assert_eq!(total, 7);
+        assert_eq!(matched, 4);
         assert!(is_filtered);
         assert!(filtered.contains("ERROR: database connection failed"));
+        assert!(filtered.contains("at db.connect (db.js:42:11)"));
         assert!(filtered.contains("WARN: high latency"));
         assert!(!filtered.contains("info: ok"));
     }
@@ -1161,8 +1227,35 @@ mod rca_optimization_tests {
         let causes = extract_crash_causes(&diag);
         assert_eq!(causes.len(), 1);
         assert_eq!(causes[0]["container"], "worker");
+        assert_eq!(causes[0]["state"], "waiting");
+        assert_eq!(causes[0]["waitingReason"], "CrashLoopBackOff");
         assert_eq!(causes[0]["reason"], "OOMKilled");
         assert_eq!(causes[0]["exitCode"], 137);
+
+        let workload_diag = json!({
+            "childPods": [
+                {
+                    "name": "api-7f8b9c-x2k9p",
+                    "phase": "Running",
+                    "crashCauses": [
+                        {
+                            "container": "api",
+                            "state": "waiting",
+                            "waitingReason": "CrashLoopBackOff",
+                            "reason": "Error",
+                            "exitCode": 1,
+                            "restartCount": 3
+                        }
+                    ]
+                }
+            ]
+        });
+        let workload_causes = extract_crash_causes(&workload_diag);
+        assert_eq!(workload_causes.len(), 1);
+        assert_eq!(workload_causes[0]["pod"], "api-7f8b9c-x2k9p");
+        assert_eq!(workload_causes[0]["container"], "api");
+        assert_eq!(workload_causes[0]["waitingReason"], "CrashLoopBackOff");
+        assert_eq!(workload_causes[0]["exitCode"], 1);
     }
 }
 

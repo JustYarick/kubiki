@@ -470,3 +470,31 @@ it('model discovery ignores an old 401 after settings reload changes the endpoin
   await refresh;
   expect(useAiStore.getState().modelErrors.provider).toBeUndefined();
 });
+
+it('formats tool intents and summaries for diagnostic bundles, neighborhoods and filtered logs', async () => {
+  const { getToolIntent, getToolCallSummary } = await import('../../src/domains/ai/tool_intents');
+  const diagIntent = getToolIntent('diagnose_resource', { kind: 'Deployment', name: 'api', namespace: 'apps' });
+  expect(diagIntent.title).toContain('Diagnose Deployment "api"');
+  expect(diagIntent.badge).toBe('DIAGNOSE');
+
+  const diagSummary = getToolCallSummary(
+    'diagnose_resource',
+    { kind: 'Deployment', name: 'api' },
+    { crashCauses: [{ container: 'api', reason: 'OOMKilled' }], diagnostic: { issuesSummary: ['OOM'] } },
+  );
+  expect(diagSummary).toBe('Diagnostic bundle collected · 1 crash cause(s) identified');
+
+  const neighborhoodSummary = getToolCallSummary(
+    'get_neighborhood',
+    { kind: 'Pod', name: 'api-1' },
+    { nodes: [{}, {}], edges: [{}], truncated: true },
+  );
+  expect(neighborhoodSummary).toBe('2 nodes, 1 edge mapped (bounded)');
+
+  const logsSummary = getToolCallSummary(
+    'get_logs',
+    { name: 'api-1' },
+    { logs: 'line1\nline2', filtered: true, matchedErrorLines: 4, totalLines: 120 },
+  );
+  expect(logsSummary).toBe('Filtered 4 error/warning line(s) from 120 total');
+});

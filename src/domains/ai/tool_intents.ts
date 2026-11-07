@@ -153,6 +153,107 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
         color: 'indigo',
       };
     }
+    case 'diagnose_resource': {
+      const kind = args.kind || 'Resource';
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `Diagnose ${kind} "${args.name || ''}"${ns}`,
+        description: `Collects a comprehensive diagnostic bundle: workload/pod health, crash causes, bounded neighborhood graph, UID-bound events, and failing container logs.`,
+        badge: 'DIAGNOSE',
+        color: 'purple',
+      };
+    }
+    case 'get_neighborhood': {
+      const kind = args.kind || 'Resource';
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `Explore neighborhood graph for ${kind} "${args.name || ''}"${ns}`,
+        description: `Traverses owner references, dependency links, and selector relationships around the target resource.`,
+        badge: 'GRAPH',
+        color: 'indigo',
+      };
+    }
+    case 'get_service_diagnostics': {
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `Service & endpoint diagnostics for "${args.name || ''}"${ns}`,
+        description: `Inspects Service type, ClusterIP/LoadBalancer status, selectors, EndpointSlices, and matching Pod readiness.`,
+        badge: 'SVC DIAG',
+        color: 'sky',
+      };
+    }
+    case 'get_pvc_diagnostics': {
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `Storage diagnostics for PVC "${args.name || ''}"${ns}`,
+        description: `Inspects PersistentVolumeClaim phase, StorageClass, bound PersistentVolume, capacity, and provisioning events.`,
+        badge: 'PVC DIAG',
+        color: 'amber',
+      };
+    }
+    case 'get_node_diagnostics': {
+      return {
+        title: `Node diagnostics for "${args.name || ''}"`,
+        description: `Inspects Node readiness conditions, memory/disk/PID pressure, scheduling taints, and allocatable capacity.`,
+        badge: 'NODE DIAG',
+        color: 'purple',
+      };
+    }
+    case 'get_config_diagnostics': {
+      const kind = args.kind || 'Resource';
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `ConfigMap & Secret reference diagnostics for ${kind} "${args.name || ''}"${ns}`,
+        description: `Verifies existence and key availability of referenced ConfigMaps, Secrets, and imagePullSecrets without exposing sensitive values.`,
+        badge: 'CONFIG',
+        color: 'sky',
+      };
+    }
+    case 'verify_workload': {
+      const kind = args.kind || 'Workload';
+      const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
+      return {
+        title: `Verify rollout of ${kind} "${args.name || ''}"${ns}`,
+        description: `Polls fresh controller state to verify observedGeneration, replica readiness, or Job completion for an accepted change.`,
+        badge: 'VERIFY',
+        color: 'emerald',
+      };
+    }
+    case 'summarize_resources': {
+      const kind = args.kind || 'resources';
+      const ns = args.namespace ? ` in "${args.namespace}"` : '';
+      return {
+        title: `Summarize ${kind}${ns} by ${args.groupBy || 'health'}`,
+        description: `Aggregates bounded pages of ${kind} into counts and representative examples without loading full object bodies into context.`,
+        badge: 'SUMMARY',
+        color: 'sky',
+      };
+    }
+    case 'set_working_scope': {
+      const ns = args.namespace ? `namespace "${args.namespace}"` : 'cleared';
+      return {
+        title: `Set working scope (${ns})`,
+        description: args.reason || `Updates default namespace, selector, and root resource anchor for subsequent investigation queries.`,
+        badge: 'SCOPE',
+        color: 'slate',
+      };
+    }
+    case 'get_evidence': {
+      return {
+        title: `Retrieve historical evidence ${args.evidenceId || ''}`,
+        description: `Loads previously projected tool output from the session evidence store by ID.`,
+        badge: 'EVIDENCE',
+        color: 'slate',
+      };
+    }
+    case 'resource_catalog': {
+      return {
+        title: args.discover ? 'Discover cluster API resources & CRDs' : 'Inspect built-in resource catalog',
+        description: `Lists available Kubernetes API groups, versions, kinds, and namespace scope.`,
+        badge: 'CATALOG',
+        color: 'slate',
+      };
+    }
     case 'get_pod_diagnostics': {
       const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
       return {
@@ -307,19 +408,73 @@ export function getToolCallSummary(name: string, args: Record<string, any> = {},
     }
     case 'get_workload_diagnostics': {
       const state = result.rolloutState || 'unknown';
-      const issues = Array.isArray(result.issuesSummary) ? result.issuesSummary.length : 0;
-      return `Rollout ${state}${issues > 0 ? ` · ${issues} issue(s)` : ''}`;
+      const pods = Array.isArray(result.childPods) ? result.childPods.length : 0;
+      const partial = result.evidence?.completeness !== 'complete';
+      return `Rollout ${state} (${pods} pod${pods === 1 ? '' : 's'} checked${partial ? ', partial' : ''})`;
+    }
+    case 'diagnose_resource': {
+      const causes = Array.isArray(result.crashCauses) ? result.crashCauses.length : 0;
+      const diagIssues = Array.isArray(result.diagnostic?.issuesSummary) ? result.diagnostic.issuesSummary.length : 0;
+      if (causes > 0) return `Diagnostic bundle collected · ${causes} crash cause(s) identified`;
+      if (diagIssues > 0) return `Diagnostic bundle collected · ${diagIssues} issue(s) detected`;
+      return 'Diagnostic bundle collected (partial coverage)';
+    }
+    case 'get_neighborhood': {
+      const nodes = Array.isArray(result.nodes) ? result.nodes.length : 0;
+      const edges = Array.isArray(result.edges) ? result.edges.length : 0;
+      return `${nodes} node${nodes === 1 ? '' : 's'}, ${edges} edge${edges === 1 ? '' : 's'} mapped${result.truncated ? ' (bounded)' : ''}`;
+    }
+    case 'get_service_diagnostics': {
+      const issues = Array.isArray(result.service?.issuesSummary) ? result.service.issuesSummary.length : 0;
+      return issues > 0 ? `Service inspected · ${issues} issue(s) detected` : 'Service & endpoints inspected · health unverified';
+    }
+    case 'get_pvc_diagnostics': {
+      const phase = result.pvc?.phase || 'unknown';
+      const issues = Array.isArray(result.pvc?.issuesSummary) ? result.pvc.issuesSummary.length : 0;
+      return `PVC ${phase}${issues > 0 ? ` · ${issues} issue(s)` : ''}`;
+    }
+    case 'get_node_diagnostics': {
+      const state = result.node?.readyState || 'unknown';
+      const issues = Array.isArray(result.node?.issuesSummary) ? result.node.issuesSummary.length : 0;
+      return `Node ${state}${issues > 0 ? ` · ${issues} issue(s)` : ''}`;
+    }
+    case 'get_config_diagnostics': {
+      const checks = Array.isArray(result.checks) ? result.checks.length : 0;
+      const missing = Array.isArray(result.checks) ? result.checks.filter((c: any) => c.object === 'notFound' || c.keyStatus === 'unknownOrMissing').length : 0;
+      return `${checks} config reference${checks === 1 ? '' : 's'} checked${missing > 0 ? ` · ${missing} missing/unknown` : ''}`;
+    }
+    case 'verify_workload': {
+      const state = result.verification || 'unknown';
+      return `Verification ${state}`;
+    }
+    case 'summarize_resources': {
+      const scanned = typeof result.scannedCount === 'number' ? result.scannedCount : 0;
+      return `${scanned} resource${scanned === 1 ? '' : 's'} summarized${result.hasMore ? ' (partial)' : ''}`;
+    }
+    case 'set_working_scope': {
+      const ns = result.workingNamespace || args.namespace || 'cluster';
+      return `Working scope set to "${ns}"`;
+    }
+    case 'get_evidence': {
+      return `Evidence "${args.id || ''}" retrieved`;
+    }
+    case 'resource_catalog': {
+      const kinds = Array.isArray(result.resources) ? result.resources.length : Array.isArray(result.items) ? result.items.length : 0;
+      return kinds > 0 ? `${kinds} resource type${kinds === 1 ? '' : 's'} discovered` : 'Resource catalog loaded';
     }
     case 'get_events_timeline': {
-      const events = Array.isArray(result.timeline) ? result.timeline : [];
-      return `${events.length} event${events.length === 1 ? '' : 's'} recorded in timeline`;
+      const count = Array.isArray(result.timeline) ? result.timeline.length : 0;
+      return `${count} timeline event${count === 1 ? '' : 's'} analyzed`;
     }
     case 'get_events': {
-      const events = Array.isArray(result.items) ? result.items : Array.isArray(result.events) ? result.events : [];
-      return `${events.length} event${events.length === 1 ? '' : 's'} retrieved`;
+      const events = Array.isArray(result.events) ? result.events : Array.isArray(result.items) ? result.items : [];
+      return `${events.length} event${events.length === 1 ? '' : 's'} analyzed`;
     }
     case 'get_logs': {
       const lines = typeof result.logs === 'string' ? result.logs.split('\n').filter(Boolean).length : 0;
+      if (result.filtered && typeof result.matchedErrorLines === 'number') {
+        return `Filtered ${result.matchedErrorLines} error/warning line(s) from ${result.totalLines ?? lines} total`;
+      }
       return `Fetched ${lines} log line${lines === 1 ? '' : 's'}`;
     }
     default: {

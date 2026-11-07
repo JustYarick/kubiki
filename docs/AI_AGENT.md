@@ -47,9 +47,11 @@ new AI commands.
 - **AI Agent**: independent conversations for questions, investigation and creation.
 - **Investigate with AI** in a resource's **What's wrong** block: opens a
   conversation pinned to that resource's context and namespace. Only identity
-  is attached; live object fields must pass through native read policy. It requests
-  a final remediation PlanArtifact with diagnosis, uncertainty, evidence, concrete
-  steps, risks and verification. Internal reasoning/Markdown headings never gain a Plan badge.
+  is attached; live object fields must pass through native read policy. It guides the
+  agent to gather evidence (starting with `diagnose_resource`), deliver a diagnosis and
+  uncertainty, and propose a structured remediation `PlanArtifact` when remediation or
+  follow-up checks are warranted (while allowing direct answers in Plan/Investigate mode
+  when no plan artifact is needed). Internal reasoning/Markdown headings never gain a Plan badge.
 - **Create with AI** in resource lists: opens a creation conversation. For
   example, request a Nexus deployment, discuss image/version/storage/exposure,
   and receive a YAML proposal. A multi-namespace selection is not silently
@@ -276,7 +278,16 @@ was 568 bytes. These figures measure fixture payloads, not API/LLM latency or ac
 
 Namespaces are capped at 200. Logs default to 150 lines over one hour; callers may
 choose `tailLines` 1–500 and `sinceSeconds` 1–86400. The shared log reader bounds API
-bytes and validates Pod UID/container; AI output is capped at 24,000 characters.
+bytes and validates Pod UID/container; AI output is capped at 24,000 characters, and
+logs exceeding 40 lines are condensed (`filter_logs_for_ai`) to the first 10 startup
+lines, error/exception/stacktrace lines, and the last 25 tail lines. `get_events_timeline`
+normalizes dynamic identifiers (Pod suffixes, IPs, UUIDs, ports) to deduplicate
+repeated events (`deduplicate_events`). `diagnose_resource` extracts server-side
+container `crashCauses` (including `waiting` reasons alongside `lastTermination`
+exit codes/reasons on Pods and workload `childPods`), and policy scrubbing removes
+boilerplate `kubectl.kubernetes.io/last-applied-configuration` and `deployment.kubernetes.io/revision`
+annotations unless explicitly selected. For Anthropic Messages, the static system
+prefix and tool catalog use ephemeral prompt caching (`cache_control`).
 Pod metrics support an exact name, required under per-resource rules. Metrics
 are policy-projected under `/status/metrics`; historical usage is unavailable.
 

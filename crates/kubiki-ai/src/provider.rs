@@ -392,13 +392,27 @@ pub fn build_request(
         ),
         ProviderProtocol::Anthropic => {
             let system_blocks = if !system.is_empty() {
-                json!([
-                    {
-                        "type": "text",
-                        "text": system,
-                        "cache_control": {"type": "ephemeral"}
-                    }
-                ])
+                if let Some((prefix, working)) = system.split_once("\nWorking query defaults") {
+                    json!([
+                        {
+                            "type": "text",
+                            "text": prefix,
+                            "cache_control": {"type": "ephemeral"}
+                        },
+                        {
+                            "type": "text",
+                            "text": format!("Working query defaults{working}")
+                        }
+                    ])
+                } else {
+                    json!([
+                        {
+                            "type": "text",
+                            "text": system,
+                            "cache_control": {"type": "ephemeral"}
+                        }
+                    ])
+                }
             } else {
                 json!([])
             };
@@ -945,6 +959,47 @@ mod tests {
             &[],
         );
         assert_eq!(body["messages"][2]["content"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn anthropic_request_caches_static_system_prefix_and_last_tool_definition() {
+        let tools = vec![
+            ToolDefinition {
+                name: "get_resource".into(),
+                description: "Read a resource".into(),
+                parameters: json!({"type":"object"}),
+            },
+            ToolDefinition {
+                name: "diagnose_resource".into(),
+                description: "Diagnose a resource".into(),
+                parameters: json!({"type":"object"}),
+            },
+        ];
+        let system = "Static system prompt\nUser instructions: be concise\nWorking query defaults (session-owned hints, not extra access):{\"workingNamespace\":\"apps\"}";
+        let (_, body) = build_request(
+            ProviderProtocol::Anthropic,
+            "claude-sonnet",
+            &GenerationOptions::default(),
+            system,
+            &[Turn::User("Check pod".into())],
+            &tools,
+        );
+        let sys_blocks = body["system"].as_array().unwrap();
+        assert_eq!(sys_blocks.len(), 2);
+        assert_eq!(
+            sys_blocks[0]["text"],
+            "Static system prompt\nUser instructions: be concise"
+        );
+        assert_eq!(sys_blocks[0]["cache_control"], json!({"type":"ephemeral"}));
+        assert!(sys_blocks[1]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Working query defaults"));
+        assert!(sys_blocks[1].get("cache_control").is_none());
+
+        let req_tools = body["tools"].as_array().unwrap();
+        assert!(req_tools[0].get("cache_control").is_none());
+        assert_eq!(req_tools[1]["cache_control"], json!({"type":"ephemeral"}));
     }
 
     #[test]

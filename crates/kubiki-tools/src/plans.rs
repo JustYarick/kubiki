@@ -196,11 +196,6 @@ impl PlanStore {
         }
         Ok(plan.clone())
     }
-    pub fn has_remediation(&self) -> bool {
-        self.versions
-            .iter()
-            .any(|p| p.kind == PlanKind::Remediation && p.status != PlanStatus::Stale)
-    }
     pub fn stale(&mut self) {
         for p in &mut self.versions {
             p.status = PlanStatus::Stale;

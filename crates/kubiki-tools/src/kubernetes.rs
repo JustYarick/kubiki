@@ -533,7 +533,7 @@ impl KubernetesTools {
                 {
                     return Err("Verification target does not match the accepted operation".into());
                 }
-                if operation.generation.is_none() {
+                if target.kind != "Job" && operation.generation.is_none() {
                     return Ok(
                         json!({"verification":"unavailable","observation":"Accepted workload generation is unavailable"}),
                     );
@@ -2354,23 +2354,31 @@ impl KubernetesTools {
                                     .unwrap_or("Unknown")
                                     .to_string();
                                 let mut pod_issues = Vec::new();
-                                for (key, is_init) in [
-                                    ("initContainerStatuses", true),
-                                    ("containerStatuses", false),
-                                ] {
-                                    container_diagnostics(
-                                        &pod.data["status"][key],
-                                        is_init,
-                                        &mut pod_issues,
-                                    );
-                                }
+                                let init_diag = container_diagnostics(
+                                    &pod.data["status"]["initContainerStatuses"],
+                                    true,
+                                    &mut pod_issues,
+                                );
+                                let cont_diag = container_diagnostics(
+                                    &pod.data["status"]["containerStatuses"],
+                                    false,
+                                    &mut pod_issues,
+                                );
+                                let pod_causes = crate::diagnostics::extract_crash_causes(&json!({
+                                    "initContainers": init_diag,
+                                    "containers": cont_diag,
+                                }));
                                 let pod_issue =
                                     (!pod_issues.is_empty()).then(|| pod_issues.join("; "));
-                                child_pods_summary.push(json!({
+                                let mut pod_entry = json!({
                                     "name": pod_name,
                                     "phase": pod_phase,
                                     "issue": pod_issue,
-                                }));
+                                });
+                                if !pod_causes.is_empty() {
+                                    pod_entry["crashCauses"] = json!(pod_causes);
+                                }
+                                child_pods_summary.push(pod_entry);
                             }
                         } else {
                             coverage_reasons.push("Pod list unavailable".into());
