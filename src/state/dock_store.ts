@@ -24,6 +24,7 @@ export interface DockSession {
   container?: string;
   allContainers?: string[];
   pinned?: boolean;
+  terminalMode?: 'exec' | 'attach';
 }
 
 interface DockState {
@@ -36,6 +37,7 @@ interface DockState {
   openLocalTerminal: () => string;
   openNodeShell: (nodeName: string) => string;
   openTerminal: (resourceName?: string, namespace?: string, container?: string, allContainers?: string[]) => string;
+  openAttachTerminal: (resourceName: string, namespace?: string, container?: string, allContainers?: string[]) => string;
   openLogs: (resourceName: string, namespace?: string, container?: string, allContainers?: string[]) => string;
   openPorts: () => void;
   openEvents: () => void;
@@ -145,7 +147,7 @@ export const useDockStore = create<DockState>()(
         container ??= defaultContainer(pod, true) ?? allContainers[0] ?? '';
         if (pod) allContainers = podContainers(pod).map((c) => c.name);
         const id = `dock-terminal-${crypto.randomUUID()}`;
-        const existing = sessions.find((s) => s.type === 'terminal' && s.context === context && s.uid === pod?.uid && s.resourceName === effectiveName && s.namespace === namespace && s.container === container);
+        const existing = sessions.find((s) => s.type === 'terminal' && s.context === context && s.uid === pod?.uid && s.resourceName === effectiveName && s.namespace === namespace && s.container === container && s.terminalMode !== 'attach');
         if (existing) {
           set({ activeSessionId: existing.id, dockCollapsed: false });
           return existing.id;
@@ -164,6 +166,63 @@ export const useDockStore = create<DockState>()(
           container,
           allContainers: allContainers.length > 0 ? allContainers : [container],
           pinned: false,
+          terminalMode: 'exec',
+        };
+
+        set({
+          sessions: [...sessions, newSession],
+          activeSessionId: id,
+          dockCollapsed: false,
+        });
+
+        return id;
+      },
+
+      openAttachTerminal: (resourceName, namespace = 'default', container, allContainers = []) => {
+        const { sessions } = get();
+        const context = useClusterStore.getState().currentContext;
+        let pod = [...useResourceStore.getState().resources.Pod.values()].find((item) => item.name === resourceName && item.namespace === namespace);
+        let resolvedTitle = `Attach: ${resourceName}`;
+        if (!pod) {
+          const resources = useResourceStore.getState().resources;
+          for (const kind of ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'CronJob'] as const) {
+            const wl = resources[kind]?.get(`${namespace}/${resourceName}`) || [...(resources[kind]?.values() ?? [])].find(i => i.name === resourceName && i.namespace === namespace);
+            if (wl) {
+              const childPods = findWorkloadPods(wl, resources);
+              const active = preferredWorkloadPod(childPods);
+              if (active) {
+                pod = active;
+                resolvedTitle = `Attach: ${resourceName} (${active.name})`;
+                break;
+              }
+            }
+          }
+        }
+        const effectiveName = pod ? pod.name : resourceName;
+        if (useContainerLaunchStore.getState().request(pod, container, true, chosen => get().openAttachTerminal(resourceName, namespace, chosen, allContainers))) return '';
+        container ??= defaultContainer(pod, true) ?? allContainers[0] ?? '';
+        if (pod) allContainers = podContainers(pod).map((c) => c.name);
+        const id = `dock-attach-${crypto.randomUUID()}`;
+        const existing = sessions.find((s) => s.type === 'terminal' && s.context === context && s.uid === pod?.uid && s.resourceName === effectiveName && s.namespace === namespace && s.container === container && s.terminalMode === 'attach');
+        if (existing) {
+          set({ activeSessionId: existing.id, dockCollapsed: false });
+          return existing.id;
+        }
+
+        const newSession: DockSession = {
+          id,
+          type: 'terminal',
+          context, uid: pod?.uid,
+          title: resolvedTitle,
+          subtitle: `${namespace} · ${container} (PID 1)`,
+          targetType: 'pod',
+          kind: 'Pod',
+          resourceName: effectiveName,
+          namespace,
+          container,
+          allContainers: allContainers.length > 0 ? allContainers : [container],
+          pinned: false,
+          terminalMode: 'attach',
         };
 
         set({

@@ -5,7 +5,7 @@ import { useUiStore } from '../state/ui_store';
 export interface NodeExecRequest { resource: ResourceRef; debug_session_id: string; shell: string; cols: number; rows: number }
 export interface HostTerminalInfo { shells: string[]; default_shell: string; cwd: string }
 export interface HostTerminalRequest { shell: string; cols: number; rows: number }
-export interface ExecRequest { resource: ResourceRef; container: string; shell: string; cols: number; rows: number }
+export interface ExecRequest { resource: ResourceRef; container: string; shell: string; cols: number; rows: number; mode?: 'exec' | 'attach' }
 export type ExecEvent = { type: 'Started' } | { type: 'Output'; payload: { data: number[] } } | { type: 'Exited'; payload: { code: number } } | { type: 'Failed'; payload: { error: K8sErrorPayload } };
 export interface ExecBatch { session_id: string; messages: Array<{ sequence: number; event: ExecEvent }> }
 export interface ExecConnection { write(data: string): void; resize(cols: number, rows: number): void; close(): void }
@@ -18,7 +18,10 @@ export async function resetExecSessions(): Promise<void> {
 
 /** No automatic reconnect: resending input to a new shell could repeat a destructive command. */
 export async function connectPodExec(request: ExecRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
-  return connectTerminal(request, receive, signal, 'pod_exec');
+  return connectTerminal({ ...request, mode: 'exec' }, receive, signal, 'pod_exec');
+}
+export async function connectPodAttach(request: Omit<ExecRequest, 'shell'> & { shell?: string }, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
+  return connectTerminal({ ...request, shell: request.shell ?? '', mode: 'attach' }, receive, signal, 'pod_exec', 'start_pod_attach');
 }
 export async function connectHostTerminal(request: HostTerminalRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
   return connectTerminal(request, receive, signal, 'host_terminal');
@@ -40,7 +43,8 @@ export async function getHostTerminalInfo(): Promise<HostTerminalInfo> {
 }
 async function connectTerminal(request: ExecRequest | HostTerminalRequest | NodeExecRequest | OpenCodeRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal, target: 'pod_exec' | 'host_terminal' | 'node_exec', startCommand = `start_${target}`): Promise<ExecConnection> {
   const node = target === 'node_exec';
-  const info = 'resource' in request ? (node ? { operation: 'node_debug', context: request.resource.context } : { operation: 'exec', context: request.resource.context, resource: request.resource }) : { operation: 'host_terminal' };
+  const isAttach = 'mode' in request && request.mode === 'attach';
+  const info = 'resource' in request ? (node ? { operation: 'node_debug', context: request.resource.context } : { operation: isAttach ? 'attach' : 'exec', context: request.resource.context, resource: request.resource }) : { operation: 'host_terminal' };
   const routing = 'debug_session_id' in request ? { debugSessionId: request.debug_session_id } : {};
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Interactive shell is available in the desktop app. Start Kubiki with pnpm tauri dev.', info);
   const { Channel, invoke } = await import('@tauri-apps/api/core');

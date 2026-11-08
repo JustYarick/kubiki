@@ -21,6 +21,7 @@ pub struct AiSettings {
     pub codex: crate::opencode::OpenCodeSettings,
     pub claude: crate::opencode::OpenCodeSettings,
     pub mcp_policy: AgentPolicy,
+    pub mcp_phase: AgentPhase,
     pub providers: Vec<ProviderProfile>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
@@ -35,6 +36,48 @@ pub struct AiSettings {
 pub struct SettingsView {
     settings: AiSettings,
     credentials: HashMap<String, bool>,
+}
+
+#[cfg(test)]
+mod live_policy_tests {
+    use super::*;
+
+    #[test]
+    fn policy_updates_cancel_current_work_but_keep_the_native_session_and_scope() {
+        let manager = AgentManager::default();
+        let scope = AgentScope { context: "fixture".into(), namespaces: vec!["apps".into()], all_namespaces: false };
+        let session = Session::new("existing".into(), "window".into(), scope.clone(), AgentPolicy::default(), ClusterCapabilities::default());
+        let revision = session.control().unwrap().revision;
+        let running = session.begin_run(revision).unwrap();
+        manager.sessions.lock().unwrap().insert(session.id.clone(), Arc::new(ManagedSession {
+            session: session.clone(), conversation: ConversationState::default(),
+            provider: ProviderProfile { id:"local".into(),name:"Local".into(),protocol:ProviderProtocol::Ollama,base_url:"http://127.0.0.1:11434".into() },
+            model:"fixture".into(), options:GenerationOptions::default(), instructions:String::new(),
+            client:None,connection_generation:None,plan_review:Mutex::new(None),
+            environment:Arc::new(kubiki_ai::environment::Environment::new(serde_json::Value::Null,vec![])),
+        }));
+        manager.update_policy(&AgentPolicy { resources:false, ..Default::default() }).unwrap();
+        let control = session.control().unwrap();
+        assert!(!control.invalidated);
+        assert!(!control.policy.resources);
+        assert!(control.revision > revision);
+        assert!(*session.cancellation().borrow());
+        assert_eq!(session.scope, scope);
+        drop(running);
+        assert!(manager.get("existing", "window").is_ok());
+        assert!(session.begin_run(control.revision).is_ok());
+    }
+
+    #[test]
+    fn external_connections_default_to_plan_and_explicit_denials_survive_loading() {
+        let settings = AiSettings::default();
+        assert_eq!(settings.mcp_phase, AgentPhase::Plan);
+        let configured: AiSettings = serde_json::from_value(serde_json::json!({"mcpPolicy":{"writes":[],"logs":false,"clusterResources":false}})).unwrap();
+        let policy = crate::opencode::sanitize_mcp_policy(&configured.mcp_policy);
+        assert!(policy.writes.is_empty());
+        assert!(!policy.logs);
+        assert!(!policy.cluster_resources);
+    }
 }
 
 struct ManagedSession {
@@ -68,6 +111,14 @@ impl Default for AgentManager {
     }
 }
 impl AgentManager {
+    fn update_policy(&self, policy: &AgentPolicy) -> Result<(), String> {
+        let sessions = self.sessions.lock().map_err(|_| "AI session registry unavailable")?;
+        for managed in sessions.values() {
+            managed.session.set_policy(policy.clone())?;
+            *managed.plan_review.lock().map_err(|_| "Plan review unavailable")? = None;
+        }
+        Ok(())
+    }
     pub fn stop_owner(&self, owner: &str) {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.retain(|_, s| {
@@ -276,32 +327,31 @@ pub async fn ai_save_settings(
     }
     if serde_json::to_value((
         &before.providers,
-        &before.policy,
         &before.instructions,
         &before.environment,
         &before.runtime,
         &before.opencode,
         &before.codex,
         &before.claude,
-        &before.mcp_policy,
     ))
     .ok()
         != serde_json::to_value((
             &settings.providers,
-            &settings.policy,
             &settings.instructions,
             &settings.environment,
             &settings.runtime,
             &settings.opencode,
             &settings.codex,
             &settings.claude,
-            &settings.mcp_policy,
         ))
         .ok()
     {
         manager.invalidate();
     }
     store(window.app_handle(), &settings).await?;
+    if serde_json::to_value(&before.policy).ok() != serde_json::to_value(&settings.policy).ok() {
+        manager.update_policy(&settings.policy)?;
+    }
     if before.runtime != settings.runtime
         || before.opencode != settings.opencode
         || before.codex != settings.codex
@@ -313,11 +363,12 @@ pub async fn ai_save_settings(
             .await;
     } else if serde_json::to_value((&before.mcp_policy, &before.policy)).ok()
         != serde_json::to_value((&settings.mcp_policy, &settings.policy)).ok()
+        || before.mcp_phase != settings.mcp_phase
     {
         window
             .state::<crate::opencode::OpenCodeManager>()
-            .update_policy(&settings.mcp_policy)
-            .await;
+            .update_policy(&settings.mcp_policy, settings.mcp_phase)
+            .await?;
     }
     Ok(())
 }

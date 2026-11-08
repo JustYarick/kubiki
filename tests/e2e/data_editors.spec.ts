@@ -207,6 +207,7 @@ test('Helm values viewer is searchable and upgrade values keep comments and edit
   await page.keyboard.type('replicas');
   await expect(values.locator('.find-widget')).toContainText('1 of 1');
   await page.keyboard.press('Escape');
+  await page.getByTestId('inspector-panel').getByRole('button', { name: 'Close details', exact: true }).click();
   await row.click({ button: 'right' });
   await page.getByRole('button', { name: 'Upgrade…', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Upgrade Helm release', exact: true });

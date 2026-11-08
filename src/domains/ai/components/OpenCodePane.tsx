@@ -3,6 +3,7 @@ import type { Terminal } from '@xterm/xterm';
 import { createTerminalView, type TerminalView } from '../../../core/terminal_view';
 import { Button } from '../../../components/ui/Button';
 import { CheckboxRow } from '../../../components/ui/Checkbox';
+import { Select } from '../../../components/ui/Select';
 import { connectOpenCode, OpenCodeNotStartedError, type ExecConnection } from '../../../providers/tauri_exec';
 import { useTerminalAppearance } from '../../../components/k8s/useTerminalAppearance';
 import { useUiStore } from '../../../state/ui_store';
@@ -15,6 +16,9 @@ import { agentError, desktopAiAvailable } from '../transport';
 export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const runtime = useAiStore(s => s.settings.runtime);
   const mcpPolicy = normalizeMcpPolicy(useAiStore(s => s.settings.mcpPolicy));
+  const savedMcpPhase = useAiStore(s => s.settings.mcpPhase);
+  const mcpPhase = !savedMcpPhase || savedMcpPhase === 'plan' ? 'plan' : 'action';
+  const saving = useAiStore(s => s.saving);
   const name = externalAgentName(runtime);
   const request = useAiStore(s => s.openCodeRequest);
   const context = useClusterStore(s => s.currentContext);
@@ -30,7 +34,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const pinnedContext = useRef<string | null>(context);
 
   const readOnly = Boolean(mcpPolicy.readOnly);
-  const activeToolCount = MCP_TOOL_CATALOG.filter(tool => isToolActiveInPolicy(tool.id, mcpPolicy, 'action')).length;
+  const activeToolCount = MCP_TOOL_CATALOG.filter(tool => isToolActiveInPolicy(tool.id, mcpPolicy, mcpPhase)).length;
 
   async function updateMcpPolicyLive(patch: Partial<AgentPolicy>) {
     if (!desktopAiAvailable()) return;
@@ -147,9 +151,17 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   return <div className="ai-workspace" data-testid="opencode-pane"><div className="ai-chat">
     <div className="ai-form-line px-3 py-2 border-b border-[var(--border-default)]">
       <strong>{name}</strong><span className="ai-help ai-grow">{scopeLabel} · {status}</span>
+      <label className="flex items-center gap-1.5 text-xs" title="Enforced by the Kubiki MCP server. The external agent's own mode is independent.">
+        MCP phase
+        <Select aria-label="MCP server phase" value={mcpPhase} disabled={saving} onChange={e => {
+          const current = useAiStore.getState().settings;
+          void useAiStore.getState().save({ ...current, mcpPhase: e.target.value as 'plan' | 'action' }).catch(e => setError(agentError(e)));
+        }}><option value="plan">Plan</option><option value="action">Action</option></Select>
+      </label>
       <CheckboxRow
         label="Read-only MCP"
         checked={readOnly}
+        disabled={saving}
         onChange={e => void updateMcpPolicyLive(toggleReadOnlyMcpPolicy(e.target.checked, mcpPolicy))}
       />
       <Button

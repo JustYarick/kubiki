@@ -75,12 +75,66 @@ describe('AI domain conversations', () => {
     const first = useAiStore.getState().create(scope, 'First');
     const second = useAiStore.getState().create({ ...scope, context: 'dev' }, 'Second');
     const callbacks: Array<(event: AgentEvent) => void> = [];
-    vi.mocked(agentTransport.send).mockImplementation(async (_session, _message, receive) => { callbacks.push(receive); });
-    await useAiStore.getState().send(first); await useAiStore.getState().send(second);
+    const pending = deferred<void>();
+    vi.mocked(agentTransport.send).mockImplementation(async (_session, _message, receive) => { callbacks.push(receive); await pending.promise; });
+    const firstRun = useAiStore.getState().send(first); const secondRun = useAiStore.getState().send(second);
+    await vi.waitFor(() => expect(callbacks).toHaveLength(2));
     callbacks[0]({ type: 'text_delta', text: 'Answer for prod' });
     callbacks[1]({ type: 'text_delta', text: 'Answer for dev' });
     expect(useAiStore.getState().conversations[0].messages.at(-1)?.text).toBe('Answer for prod');
     expect(useAiStore.getState().conversations[1].messages.at(-1)?.text).toBe('Answer for dev');
+    pending.resolve(); await Promise.all([firstRun, secondRun]);
+  });
+
+  it('ignores old session events and completion after a model change starts another run', async () => {
+    const oldRun = deferred<void>(); const nextRun = deferred<void>();
+    const callbacks: Array<(event: AgentEvent) => void> = [];
+    vi.mocked(agentTransport.create).mockResolvedValueOnce({ id: 'old', scope, mode: 'ask', phase: 'plan', policy: settings().policy })
+      .mockResolvedValueOnce({ id: 'next', scope, mode: 'ask', phase: 'plan', policy: settings().policy });
+    vi.mocked(agentTransport.send).mockImplementation(async (session, _message, receive) => {
+      callbacks.push(receive); await (session === 'old' ? oldRun.promise : nextRun.promise);
+    });
+    const id = useAiStore.getState().create(scope, 'First');
+    const first = useAiStore.getState().send(id);
+    await vi.waitFor(() => expect(callbacks).toHaveLength(1));
+    useAiStore.getState().update(id, { model: 'new-model', draft: 'Second' });
+    const second = useAiStore.getState().send(id);
+    await vi.waitFor(() => expect(callbacks).toHaveLength(2));
+    callbacks[0]({ type: 'text_delta', text: 'stale answer' });
+    callbacks[0]({ type: 'error', message: 'stale error' });
+    oldRun.resolve(); await first;
+    expect(useAiStore.getState().conversations[0]).toMatchObject({ sessionId: 'next', busy: true, error: undefined });
+    expect(useAiStore.getState().conversations[0].messages.some(m => m.text.includes('stale'))).toBe(false);
+    callbacks[1]({ type: 'text_delta', text: 'new answer' });
+    nextRun.resolve(); await second;
+    expect(useAiStore.getState().conversations[0]).toMatchObject({ busy: false });
+    expect(useAiStore.getState().conversations[0].messages.at(-1)?.text).toBe('new answer');
+  });
+
+  it('retains dispatched write receipts while Stop drains the active run', async () => {
+    const pending = deferred<void>(); let receive!: (event: AgentEvent) => void;
+    vi.mocked(agentTransport.send).mockImplementation(async (_session, _message, callback) => { receive = callback; await pending.promise; });
+    const id = useAiStore.getState().create(scope, 'Change workload');
+    const run = useAiStore.getState().send(id);
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    receive({ type: 'tool_started', call: { id: 'write', name: 'scale_workload', arguments: {} } });
+    await useAiStore.getState().stop(id);
+    receive({ type: 'tool_completed', id: 'write', result: { status: 'accepted', operationId: 'receipt' } });
+    pending.resolve(); await run;
+    expect(useAiStore.getState().conversations[0].messages.at(-1)?.result?.operationId).toBe('receipt');
+    expect(useAiStore.getState().conversations[0].busy).toBe(false);
+  });
+
+  it('a pending Stop cannot overwrite the status of a replacement session', async () => {
+    const stopping = deferred<void>();
+    vi.mocked(agentTransport.stop).mockReturnValue(stopping.promise);
+    const id = useAiStore.getState().create(scope);
+    useAiStore.getState().update(id, { sessionId: 'old', busy: true });
+    const stop = useAiStore.getState().stop(id);
+    useAiStore.getState().update(id, { model: 'replacement' });
+    useAiStore.getState().update(id, { sessionId: 'next', busy: true, status: 'running' });
+    stopping.resolve(); await stop;
+    expect(useAiStore.getState().conversations[0]).toMatchObject({ sessionId: 'next', busy: true, status: 'running' });
   });
 
   it('preserves earlier tool receipts when a provider repeats call IDs', () => {
@@ -94,16 +148,20 @@ describe('AI domain conversations', () => {
     expect(c.messages[1].result?.resource).toBe('current');
   });
 
-  it('revokes existing conversations when access policy changes, while default model changes do not', async () => {
+  it('updates access without replacing the native session, while endpoint changes invalidate it', async () => {
     const id = useAiStore.getState().create(scope, 'Hello'); await useAiStore.getState().send(id);
     await useAiStore.getState().save({ ...settings(), defaultModel: 'another-dynamic-model' });
     expect(useAiStore.getState().conversations[0].invalidated).not.toBe(true);
     const next = { ...useAiStore.getState().settings, policy: { ...settings().policy, resources: false } };
     await useAiStore.getState().save(next);
-    expect(useAiStore.getState().conversations[0].invalidated).toBe(true);
-    useAiStore.getState().update(id, { draft: 'Read old data' });
+    expect(useAiStore.getState().conversations[0].invalidated).not.toBe(true);
+    expect(useAiStore.getState().conversations[0].contextReset).toBe(true);
+    useAiStore.getState().update(id, { draft: 'Read with new permissions' });
     await useAiStore.getState().send(id);
-    expect(agentTransport.send).toHaveBeenCalledTimes(1);
+    expect(agentTransport.send).toHaveBeenCalledTimes(2);
+    expect(agentTransport.create).toHaveBeenCalledTimes(1);
+    await useAiStore.getState().save({ ...next, providers: next.providers.map(p => ({ ...p, baseUrl: 'http://localhost:11435' })) });
+    expect(useAiStore.getState().conversations[0].invalidated).toBe(true);
   });
 
   it('resource actions attach identity only, pin the action namespace, and select default provider and model', () => {
@@ -509,7 +567,8 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
     MCP_TOOL_CATALOG,
   } = await import('../../src/domains/ai/types');
 
-  const base = defaultMcpPolicy();
+  expect(defaultMcpPolicy().writes).toEqual([]);
+  const base = { ...defaultMcpPolicy(), logs: true, clusterResources: true, writes: ['create', 'update', 'delete', 'scale', 'restart'] as import('../../src/domains/ai/types').WriteOperation[] };
   const activeAll = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, base));
   expect(activeAll.length).toBe(31);
 
@@ -524,13 +583,12 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
   expect(isToolActiveInPolicy('diagnose_resource', readOnlyPolicy)).toBe(true);
   expect(isToolActiveInPolicy('get_logs', readOnlyPolicy)).toBe(true);
 
-  // Legacy or unpopulated policy with writes: [] correctly normalized when readOnly: false
+  // Explicit denials must never be mistaken for missing configuration.
   const legacyPolicy = normalizeMcpPolicy({ ...defaultPolicy(), readOnly: false, writes: [] });
-  expect(legacyPolicy.writes.length).toBe(5);
-  expect(legacyPolicy.logs).toBe(true);
-  expect(legacyPolicy.clusterResources).toBe(true);
-  const activeLegacy = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, legacyPolicy));
-  expect(activeLegacy.length).toBe(31);
+  expect(legacyPolicy.writes).toEqual([]);
+  expect(legacyPolicy.logs).toBe(false);
+  expect(legacyPolicy.clusterResources).toBe(false);
+  expect(toggleReadOnlyMcpPolicy(false, { ...legacyPolicy, readOnly: true }).writes).toEqual([]);
 
   // Enabling a tool like get_logs when logs: false enables policy.logs
   const noLogs = { ...base, logs: false };
@@ -560,6 +618,8 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
   const actionDisabledPolicy = patchToolInPolicy('scale_workload', false, base, 'action');
   expect(actionDisabledPolicy.actionDisabledTools).toContain('scale_workload');
   expect(isToolActiveInPolicy('scale_workload', actionDisabledPolicy, 'action')).toBe(false);
+  expect(isToolActiveInPolicy('scale_workload', actionDisabledPolicy, 'tooling')).toBe(false);
+  expect(patchToolInPolicy('get_logs', false, base, 'tooling').actionDisabledTools).toContain('get_logs');
   expect(isToolActiveInPolicy('apply_manifest', actionDisabledPolicy, 'action')).toBe(true);
 
   // Explicit empty writes (e.g. unchecking all 5 write ops) is preserved when already configured

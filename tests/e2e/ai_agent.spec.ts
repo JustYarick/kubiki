@@ -368,8 +368,7 @@ test('agent selection is in settings and OpenCode only exposes effective setting
   await dialog.getByRole('button',{name:'Check installation',exact:true}).click();
   await expect(dialog.getByRole('status')).toContainText('opencode v2.0.27');
   await dialog.getByRole('button',{name:'Cluster tools (MCP)',exact:true}).click();
-  await expect(dialog.getByRole('checkbox',{name:'Logs',exact:true})).toBeChecked();
-  await dialog.getByRole('checkbox',{name:'Logs',exact:true}).uncheck();
+  await expect(dialog.getByRole('checkbox',{name:'Logs',exact:true})).not.toBeChecked();
   await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(false);
   await dialog.getByRole('checkbox',{name:'Logs',exact:true}).check();
   await dialog.getByRole('button',{name:'Save cluster access',exact:true}).click();
@@ -386,6 +385,46 @@ test('agent selection is in settings and OpenCode only exposes effective setting
   await dialog.getByRole('button',{name:'Connections & models',exact:true}).click();
   await expect(dialog.getByRole('combobox',{name:'Saved AI connection',exact:true})).toHaveValue('local');
   expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('external MCP phase changes live without restarting the terminal', async ({ page }) => {
+  const errors = await setup(page); const agent = await openAgent(page);
+  await agent.getByRole('button', { name:'AI settings', exact:true }).click();
+  const dialog = page.getByRole('dialog', { name:'AI Agent settings', exact:true });
+  await dialog.getByRole('combobox', { name:'AI agent', exact:true }).selectOption('open_code');
+  await page.keyboard.press('Escape');
+  const pane = page.getByTestId('opencode-pane');
+  await expect(pane).toContainText('Connected');
+  const starts = await page.evaluate(() => (window as any).__aiHarness.openCodeStarts.length);
+  const phase = pane.getByRole('combobox', { name:'MCP server phase', exact:true });
+  await expect(phase).toHaveValue('plan');
+  await phase.selectOption('action');
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().mcpPhase)).toBe('action');
+  await expect(phase).toBeEnabled();
+  await phase.selectOption('plan');
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().mcpPhase)).toBe('plan');
+  expect(await page.evaluate(() => (window as any).__aiHarness.openCodeStarts.length)).toBe(starts);
+  await expect(pane).toContainText('Connected');
+  expect(errors).toEqual([]);
+});
+
+test('changing tool permissions keeps an integrated conversation usable', async ({ page }) => {
+  const errors = await setup(page); const agent = await openAgent(page);
+  await agent.getByRole('textbox', { name:'Message AI agent', exact:true }).fill('First question');
+  await agent.getByRole('button', { name:'Send', exact:true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.sends.length)).toBe(1);
+  const firstSession = await page.evaluate(() => (window as any).__aiHarness.sends[0].sessionId);
+  await agent.getByRole('button', { name:/^MCP Tools/ }).click();
+  const dialog = page.getByRole('dialog', { name:'AI Agent settings', exact:true });
+  await dialog.getByRole('checkbox', { name:'Logs', exact:true }).check();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy.logs)).toBe(true);
+  await page.keyboard.press('Escape');
+  const composer = agent.getByRole('textbox', { name:'Message AI agent', exact:true });
+  await composer.fill('Continue with updated permissions');
+  await agent.getByRole('button', { name:'Send', exact:true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.sends.length)).toBe(2);
+  expect(await page.evaluate(() => (window as any).__aiHarness.sends[1].sessionId)).toBe(firstSession);
   expect(errors).toEqual([]);
 });
 

@@ -115,12 +115,23 @@ impl Session {
         Ok(())
     }
     pub fn set_policy(&self, policy: AgentPolicy) -> Result<(), String> {
+        self.set_access(policy, None)
+    }
+    pub fn set_access(&self, policy: AgentPolicy, phase: Option<AgentPhase>) -> Result<(), String> {
         policy.validate()?;
         let mut state = self.control.lock().map_err(|_| "AI session lock failed")?;
+        if phase == Some(AgentPhase::Action) && state.mode == AgentMode::ReadOnly {
+            return Err("Action phase is not permitted in Read only mode".into());
+        }
         state.policy = policy;
+        if let Some(phase) = phase { state.phase = phase; }
         state.policy_revision = POLICY_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         state.revision += 1;
         self.cancel.send_replace(true);
+        self.evidence.lock().map_err(|_| "Evidence store unavailable")?.clear();
+        *self.query_cursors.lock().map_err(|_| "Cursor store unavailable")? = CursorStore::default();
+        *self.working_scope.lock().map_err(|_| "Working scope unavailable")? = WorkingScope::initial(&self.scope);
+        self.plans.lock().map_err(|_| "Plan registry unavailable")?.stale();
         Ok(())
     }
     /// Per-tool cancellation has its own signal; global control and scope stay shared.
@@ -168,6 +179,13 @@ impl Session {
     }
     pub fn cancellation(&self) -> watch::Receiver<bool> {
         self.cancel.subscribe()
+    }
+    pub fn save_evidence(&self, revision: u64, result: &Value) -> Result<Option<String>, String> {
+        let state = self.control.lock().map_err(|_| "Session unavailable")?;
+        if state.revision != revision || state.invalidated || *self.cancel.borrow() {
+            return Err("Evidence belongs to revoked permissions or a cancelled run".into());
+        }
+        Ok(self.evidence.lock().map_err(|_| "Evidence store unavailable")?.save(result))
     }
     /// Linearization point for dispatch. A permission change cannot authorize an
     /// old approval or a queued write. A dispatched request may still complete.

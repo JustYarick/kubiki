@@ -6,8 +6,24 @@ use std::sync::{Arc, Mutex};
 pub struct ConversationState {
     history: Arc<tokio::sync::Mutex<Vec<Turn>>>,
     memory: Arc<Mutex<ConversationMemory>>,
+    policy_revision: Arc<Mutex<Option<u64>>>,
 }
 impl ConversationState {
+    pub fn bind_policy(&self, history: &mut Vec<Turn>, revision: u64) -> Result<(), String> {
+        let mut previous = self
+            .policy_revision
+            .lock()
+            .map_err(|_| "Conversation policy unavailable")?;
+        if previous.is_some_and(|old| old != revision) {
+            history.clear();
+            *self
+                .memory
+                .lock()
+                .map_err(|_| "Conversation memory unavailable")? = ConversationMemory::default();
+        }
+        *previous = Some(revision);
+        Ok(())
+    }
     pub async fn history_guard(&self) -> tokio::sync::MutexGuard<'_, Vec<Turn>> {
         self.history.lock().await
     }

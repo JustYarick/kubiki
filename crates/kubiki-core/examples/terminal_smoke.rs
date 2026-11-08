@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shell: "/bin/sh".into(),
         cols: 80,
         rows: 24,
+        mode: kubiki_core::pod_ops::terminal::TerminalMode::Exec,
     };
     let manager = PodTerminalManager::default();
     let mut output = manager

@@ -20,6 +20,7 @@ interface McpToolsPanelProps {
   title?: string;
   subtitle?: string;
   className?: string;
+  disabled?: boolean;
 }
 
 export function McpToolsPanel({
@@ -30,12 +31,13 @@ export function McpToolsPanel({
   title = 'MCP Cluster Tools & Permissions',
   subtitle = 'Changes apply live to active sessions without restarting',
   className,
+  disabled = false,
 }: McpToolsPanelProps) {
   const [selectedTab, setSelectedTab] = useState<'current' | 'plan' | 'action' | 'global'>('current');
   const [search, setSearch] = useState('');
 
   const activePhase: AgentPhase | undefined =
-    selectedTab === 'current' ? currentPhase : selectedTab === 'global' ? undefined : selectedTab;
+    selectedTab === 'current' ? (currentPhase === 'plan' ? 'plan' : 'action') : selectedTab === 'global' ? undefined : selectedTab;
 
   const readOnly = Boolean(policy.readOnly);
   const activeCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, policy, activePhase)).length;
@@ -186,6 +188,7 @@ export function McpToolsPanel({
           <Button
             size="sm"
             variant="ghost"
+            disabled={disabled}
             onClick={handleEnableAll}
             title="Enable all permitted tools and categories for this mode"
           >
@@ -194,6 +197,7 @@ export function McpToolsPanel({
           <Button
             size="sm"
             variant={readOnly ? 'primary' : 'ghost'}
+            disabled={disabled}
             onClick={() => void onChange(toggleReadOnlyMcpPolicy(!readOnly, policy))}
             title={readOnly ? 'Disable read-only mode to allow resource changes' : 'Lock the agent into read-only mode (blocks all mutations)'}
           >
@@ -237,6 +241,7 @@ export function McpToolsPanel({
               label={label}
               title={title}
               checked={policy[key]}
+              disabled={disabled}
               onChange={e => void onChange({ ...policy, [key]: e.target.checked })}
             />
           ))}
@@ -276,7 +281,7 @@ export function McpToolsPanel({
                 label={labels[op]}
                 title={tooltips[op]}
                 checked={!isBlocked && policy.writes.includes(op)}
-                disabled={isBlocked}
+                disabled={disabled || isBlocked}
                 onChange={e => toggleWriteOp(op, e.target.checked)}
               />
             );
@@ -326,7 +331,7 @@ export function McpToolsPanel({
                   label={tool.label}
                   title={tooltip}
                   checked={enabled}
-                  disabled={blockedByReadOnly}
+                  disabled={disabled || blockedByReadOnly}
                   onChange={e => void onChange(patchToolInPolicy(tool.id, e.target.checked, policy, activePhase))}
                 />
               </div>

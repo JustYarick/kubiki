@@ -11,6 +11,10 @@ pub struct EvidenceStore {
     entries: VecDeque<(String, Instant, Value)>,
 }
 impl EvidenceStore {
+    pub fn clear(&mut self) {
+        // Keep the sequence: a revoked ID must never alias a newer result.
+        self.entries.clear();
+    }
     pub fn save(&mut self, value: &Value) -> Option<String> {
         let bytes = value.to_string().len();
         if bytes > 64_000 {

@@ -63,12 +63,38 @@ export function relatedResourceScope(resources: Record<ResourceKind, Map<string,
     if (!cached) { cached = new Map(); namespaceCache.set(map, cached); }
     let scoped = cached.get(namespace);
     if (!scoped) {
-      scoped = new Map([...map].filter(([, item]) => !item.namespace || item.namespace === namespace));
+      scoped = new Map([...map].filter(([, item]) => !item.namespace || item.namespace === namespace || item.kind === 'HelmRelease' || !!gitOpsFamily(item)));
       if (cached.size >= 8) cached.delete(cached.keys().next().value!);
       cached.set(namespace, scoped);
     }
     return [kind, scoped];
   })) as typeof resources;
+}
+
+/** Direct neighbours plus exact controller/delivery ancestors, without sibling fan-out. */
+export function buildRelatedGraph(resources: Record<ResourceKind, Map<string, ResourceItem>>, focus: ResourceItem, depth = 3): ResourceGraph {
+  const key = resourceKey(focus);
+  const graph = buildResourceGraph(resources, { adjacentTo: new Set([key]) });
+  const relations = new Map(graph.relations.map(edge => [edge.id, edge]));
+  const visited = new Set([key]);
+  let frontier = new Set([key]);
+  let adjacent = graph;
+  for (let hop = 0; hop < depth && frontier.size; hop++) {
+    if (hop) adjacent = buildResourceGraph(resources, { adjacentTo: frontier, includeContains: false });
+    const next = new Set<string>();
+    for (const edge of adjacent.relations) {
+      if (!frontier.has(edge.target) || !['owns', 'manages'].includes(edge.type)) continue;
+      relations.set(edge.id, edge);
+      if (edge.missing || visited.has(edge.source)) continue;
+      const ancestor = adjacent.items.get(edge.source);
+      if (!ancestor) continue;
+      graph.items.set(edge.source, ancestor);
+      visited.add(edge.source);
+      next.add(edge.source);
+    }
+    frontier = next;
+  }
+  return { items: graph.items, relations: [...relations.values()] };
 }
 
 /** Resolve API references, never infer ownership from a resource's name. */

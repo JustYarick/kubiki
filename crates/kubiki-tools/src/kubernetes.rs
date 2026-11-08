@@ -3331,48 +3331,65 @@ fn check_manifest_data_access(
     {
         return Err("AI workload manifests must explicitly set spec.template.spec.automountServiceAccountToken: false".into());
     }
-    fn visit(
-        value: &Value,
-        policy: &AgentPolicy,
-        scope: &AgentScope,
-        target: &Target,
-    ) -> Result<(), String> {
-        if let Some(map) = value.as_object() {
-            for (key, value) in map {
-                let reference = match key.as_str() {
-                    "secretKeyRef" | "secretRef" => Some(("Secret", value["name"].as_str())),
-                    "secret" if value.is_object() => Some(("Secret", value["secretName"].as_str())),
-                    "configMapKeyRef" | "configMapRef" => {
-                        Some(("ConfigMap", value["name"].as_str()))
-                    }
-                    "configMap" if value.is_object() => Some(("ConfigMap", value["name"].as_str())),
-                    _ => None,
-                };
-                if let Some((kind, name)) = reference {
-                    let referenced = Target {
-                        group: "".into(),
-                        version: "v1".into(),
-                        kind: kind.into(),
-                        namespace: target.namespace.clone(),
-                        name: name
-                            .ok_or("A referenced Secret/ConfigMap must have a name")?
-                            .into(),
-                    };
-                    policy.check_scope(scope, &referenced)?;
-                    if policy.access(&referenced, true) != DataAccess::Content {
-                        return Err("This workload would consume Secret/ConfigMap contents that the AI policy does not permit. Grant an exact content-access rule or review the manifest manually".into());
-                    }
-                }
-                visit(value, policy, scope, target)?;
-            }
-        } else if let Some(items) = value.as_array() {
-            for item in items {
-                visit(item, policy, scope, target)?;
-            }
+    let Some(spec) = value.pointer("/spec/template/spec") else {
+        return Ok(());
+    };
+    // Use Kubernetes' schema: SecretVolumeSource uses secretName, while
+    // SecretProjection uses name. Unknown fields must never select the grant.
+    let pod: k8s_openapi::api::core::v1::PodSpec = serde_json::from_value(spec.clone())
+        .map_err(|_| "Invalid workload Pod spec")?;
+    let check = |kind: &str, name: Option<&str>| -> Result<(), String> {
+        let referenced = Target {
+            group: String::new(),
+            version: "v1".into(),
+            kind: kind.into(),
+            namespace: target.namespace.clone(),
+            name: name.filter(|name| !name.is_empty())
+                .ok_or("A referenced Secret/ConfigMap must have a name")?.into(),
+        };
+        policy.check_scope(scope, &referenced)?;
+        if policy.access(&referenced, true) != DataAccess::Content {
+            return Err("This workload would consume Secret/ConfigMap contents that the AI policy does not permit. Grant an exact content-access rule or review the manifest manually".into());
         }
         Ok(())
+    };
+    for volume in pod.volumes.iter().flatten() {
+        if let Some(secret) = &volume.secret {
+            check("Secret", secret.secret_name.as_deref())?;
+        }
+        if let Some(config) = &volume.config_map {
+            check("ConfigMap", Some(&config.name))?;
+        }
+        for source in volume.projected.iter().flat_map(|p| p.sources.iter().flatten()) {
+            if let Some(secret) = &source.secret {
+                check("Secret", Some(&secret.name))?;
+            }
+            if let Some(config) = &source.config_map {
+                check("ConfigMap", Some(&config.name))?;
+            }
+        }
     }
-    visit(value, policy, scope, target)
+    for container in pod.containers.iter().chain(pod.init_containers.iter().flatten()) {
+        for env in container.env.iter().flatten() {
+            if let Some(source) = &env.value_from {
+                if let Some(secret) = &source.secret_key_ref {
+                    check("Secret", Some(&secret.name))?;
+                }
+                if let Some(config) = &source.config_map_key_ref {
+                    check("ConfigMap", Some(&config.name))?;
+                }
+            }
+        }
+        for source in container.env_from.iter().flatten() {
+            if let Some(secret) = &source.secret_ref {
+                check("Secret", Some(&secret.name))?;
+            }
+            if let Some(config) = &source.config_map_ref {
+                check("ConfigMap", Some(&config.name))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3633,7 +3650,7 @@ mod tests {
             namespace: Some("apps".into()),
             name: "web".into(),
         };
-        let mut manifest = json!({"spec":{"template":{"spec":{"automountServiceAccountToken":false,"containers":[{"envFrom":[{"secretRef":{"name":"creds"}}]}]}}}});
+        let mut manifest = json!({"spec":{"template":{"spec":{"automountServiceAccountToken":false,"containers":[{"name":"app","envFrom":[{"secretRef":{"name":"creds"}}]}]}}}});
         assert!(check_manifest_data_access(&manifest, &policy, &scope, &target).is_err());
         let policy = AgentPolicy {
             secrets: DataAccess::Content,
@@ -3642,6 +3659,35 @@ mod tests {
         assert!(check_manifest_data_access(&manifest, &policy, &scope, &target).is_ok());
         manifest["spec"]["template"]["spec"]["automountServiceAccountToken"] = Value::Null;
         assert!(check_manifest_data_access(&manifest, &policy, &scope, &target).is_err());
+    }
+
+    #[test]
+    fn workload_references_check_schema_fields_even_when_unknown_fields_spoof_a_grant() {
+        let scope = AgentScope { context: "prod".into(), namespaces: vec!["apps".into()], all_namespaces: false };
+        let target = Target { group: "apps".into(), version: "v1".into(), kind: "Deployment".into(), namespace: Some("apps".into()), name: "web".into() };
+        let policy = AgentPolicy {
+            rules: vec![ResourceRule { group: "".into(), kind: "Secret".into(), namespace: "apps".into(), name: "allowed".into(), read: DataAccess::Content, writes: vec![] }],
+            ..Default::default()
+        };
+        let manifest = |volume: Value| json!({"spec":{"template":{"spec":{"automountServiceAccountToken":false,"containers":[{"name":"app"}],"volumes":[volume]}}}});
+        for volume in [
+            json!({"name":"data","secret":{"secretName":"allowed"}}),
+            json!({"name":"data","projected":{"sources":[{"secret":{"name":"allowed"}}]}}),
+        ] {
+            assert!(check_manifest_data_access(&manifest(volume), &policy, &scope, &target).is_ok());
+        }
+        for volume in [
+            json!({"name":"data","secret":{"secretName":"denied","name":"allowed"}}),
+            json!({"name":"data","projected":{"sources":[{"secret":{"name":"denied","secretName":"allowed"}}]}}),
+            json!({"name":"data","projected":{"sources":[{"secret":{"secretName":"allowed"}}]}}),
+            json!({"name":"data","projected":{"sources":[{"configMap":{"name":"denied"}}]}}),
+        ] {
+            assert!(check_manifest_data_access(&manifest(volume), &policy, &scope, &target).is_err());
+        }
+        let full = AgentPolicy { secrets: DataAccess::Content, config_maps: DataAccess::Content, ..Default::default() };
+        assert!(check_manifest_data_access(&manifest(json!({"name":"data","projected":{"sources":[{"secret":{"name":"creds"}},{"configMap":{"name":"config"}}]}})), &full, &scope, &target).is_ok());
+        // Arbitrary ConfigMap payload keys are data, not workload references.
+        assert!(check_manifest_data_access(&json!({"data":{"secret":"text","configMap":{"text":"value"}}}), &policy, &scope, &target).is_ok());
     }
 }
 

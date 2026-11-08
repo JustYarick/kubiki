@@ -221,7 +221,7 @@ impl OpenCodeManager {
             entry.terminals.stop(owner, &entry.id).await;
         }
     }
-    pub async fn update_policy(&self, policy: &AgentPolicy) {
+    pub async fn update_policy(&self, policy: &AgentPolicy, phase: AgentPhase) -> Result<(), String> {
         let sanitized = sanitize_mcp_policy(policy);
         let servers = self
             .0
@@ -231,31 +231,14 @@ impl OpenCodeManager {
             .map(|entry| entry.server.clone())
             .collect::<Vec<_>>();
         for server in servers {
-            let _ = server.update_policy(sanitized.clone());
+            server.update_access(sanitized.clone(), phase)?;
         }
+        Ok(())
     }
 }
 
 pub fn sanitize_mcp_policy(policy: &AgentPolicy) -> AgentPolicy {
     let mut sanitized = policy.clone();
-    let is_legacy_unconfigured = !sanitized.read_only
-        && sanitized.writes.is_empty()
-        && !sanitized.logs
-        && !sanitized.cluster_resources
-        && sanitized.disabled_tools.is_empty()
-        && sanitized.plan_disabled_tools.is_empty()
-        && sanitized.action_disabled_tools.is_empty();
-    if is_legacy_unconfigured {
-        sanitized.logs = true;
-        sanitized.cluster_resources = true;
-        sanitized.writes = vec![
-            WriteOperation::Create,
-            WriteOperation::Update,
-            WriteOperation::Delete,
-            WriteOperation::Scale,
-            WriteOperation::Restart,
-        ];
-    }
     sanitized.confirm_reads = false;
     sanitized.always_ask.clear();
     sanitized.rules.clear();
@@ -440,7 +423,7 @@ async fn start_opencode_inner(
     );
     pending.launch.bind(&session)?;
     session.mode(AgentMode::Accept)?;
-    session.phase(AgentPhase::Action)?;
+    session.phase(settings.mcp_phase)?;
     let data = window
         .app_handle()
         .path()
@@ -723,12 +706,12 @@ mod tests {
         assert_eq!(args[3], "features.mcp_tool_list_changed=true");
     }
     #[test]
-    fn sanitize_mcp_policy_normalizes_legacy_defaults_and_preserves_explicit_empty_writes() {
+    fn sanitize_mcp_policy_never_expands_explicit_denials() {
         let legacy = AgentPolicy::default();
         let normalized = sanitize_mcp_policy(&legacy);
-        assert!(normalized.logs);
-        assert!(normalized.cluster_resources);
-        assert_eq!(normalized.writes.len(), 5);
+        assert!(!normalized.logs);
+        assert!(!normalized.cluster_resources);
+        assert!(normalized.writes.is_empty());
         let count_external = |p: &AgentPolicy| {
             tool_definitions(
                 p,
@@ -740,13 +723,14 @@ mod tests {
             .filter(|t| !matches!(t.name.as_str(), "ask_user" | "get_plan" | "propose_plan"))
             .count()
         };
-        assert_eq!(count_external(&normalized), 31);
+        let full = AgentPolicy { logs:true, cluster_resources:true, writes:vec![WriteOperation::Create,WriteOperation::Update,WriteOperation::Delete,WriteOperation::Scale,WriteOperation::Restart], ..Default::default() };
+        assert_eq!(count_external(&sanitize_mcp_policy(&full)), 31);
 
-        let mut read_only = normalized.clone();
+        let mut read_only = full.clone();
         read_only.read_only = true;
         assert_eq!(count_external(&sanitize_mcp_policy(&read_only)), 27);
 
-        let mut explicit_no_writes = normalized.clone();
+        let mut explicit_no_writes = full.clone();
         explicit_no_writes.writes.clear();
         let preserved = sanitize_mcp_policy(&explicit_no_writes);
         assert!(preserved.writes.is_empty());

@@ -21,7 +21,6 @@ import { k8s } from '../../providers/k8s_provider';
 import { IconButton } from '../ui/Button';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
-import { cx } from '../../core/utils/cx';
 import { toast } from '../../state/notifications_store';
 import { FileCode, Loader2, LayoutDashboard, Boxes, Layers, Network, X } from 'lucide-react';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
@@ -73,7 +72,7 @@ export const WorkspaceArea: React.FC<{
     return next;
   }); }, [tabs, activeTab?.id, splitTab?.id]);
   const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension' || tab.type === 'topology')));
-  return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
+  return <div data-testid="workspace-area" className="relative isolate z-0 flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
     <div ref={headerRef} className="shrink-0 flex flex-col">
       <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
     </div>
@@ -86,11 +85,8 @@ export const WorkspaceArea: React.FC<{
       {mounted.map((tab) => {
         const split = tab.id === splitTab?.id;
         const visible = tab.id === activeTab?.id || split;
-        // The resource table keeps its full width and scrolls under the floating
-        // details panel; every other view is pushed to the left of the panel so
-        // no control ends up hidden behind it.
-        const underOverlay = tab.type === 'resource-list';
-        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className={cx('min-h-0 min-w-0 flex-col overflow-hidden', !underOverlay && 'workspace-overlay-inset')} style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
+        // Every document uses the same background layer beneath tool windows.
+        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
           {split && <div className="h-7 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center gap-2 text-xs text-[var(--text-muted)]"><span className="truncate flex-1">{tab.title}</span><span className="shrink-0">Split View</span><IconButton icon={X} size="sm" aria-label="Close split view" tooltip="Close split view" onClick={() => { useWorkspaceStore.getState().setSplit(null); document.getElementById(`workspace-tab-${encodeURIComponent(activeTab?.id ?? '')}`)?.focus(); }} /></div>}
           <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
         </div>;

@@ -11,10 +11,10 @@ import { useTopologyGraph } from '../../providers/use_topology_graph';
 import { relatedResourceKinds } from '../../core/resources/resource_demand';
 import { useHelmGraph } from '../../providers/use_helm_graph';
 import { resourceKey, resourceRef } from '../../core/resources/identity';
+import type { ResourceRelation } from '../../core/resources/relationships';
 import { resourceEvents } from '../../core/resources/resource_events';
 import { podContainers } from '../../core/resources/containers';
 import { findWorkloadPods, preferredWorkloadPod } from '../../core/resources/workload_pods';
-import { gitOpsReferences } from '../../core/resources/gitops';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
 import { ResourceWarnings } from '../k8s/ResourceWarnings';
 import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
@@ -91,7 +91,7 @@ function getResourceKindRank(kind?: string): number {
 export interface RelatedItemEntry {
   id: string;
   target?: ResourceItem;
-  missing?: { kind: string; name: string; namespace?: string };
+  missing?: ResourceRelation['missing'];
   label: string;
   outgoing: boolean;
   kind: string;
@@ -168,7 +168,7 @@ function KubernetesResourceDetails({
     setExpandedKinds(new Set());
   }, [item?.uid]);
 
-  const { graph, loading: relatedLoading, notice: relatedError } = useTopologyGraph(resources, 'related', item, 2, !!item && rightTab === 'related');
+  const { graph, loading: relatedLoading, notice: relatedError } = useTopologyGraph(resources, 'related', item, 3, !!item && rightTab === 'related');
 
   const toggleKindGroup = (kind: string) => {
     setExpandedKinds((prev) => {
@@ -200,7 +200,7 @@ function KubernetesResourceDetails({
     const addEntry = (entry: RelatedItemEntry) => {
       const entryKey = entry.target
         ? resourceKey(entry.target)
-        : `${entry.kind}:${entry.namespace ?? ''}:${entry.name}`;
+        : resourceKey({ kind: entry.kind, name: entry.name, namespace: entry.namespace, apiVersion: entry.missing?.apiVersion ?? '' });
       if (seenKeys.has(entryKey)) return;
       seenKeys.add(entryKey);
       entries.push(entry);
@@ -211,7 +211,7 @@ function KubernetesResourceDetails({
     for (const edge of relations) {
       const isSource = edge.source === key;
       const isTarget = edge.target === key;
-      if (isSource || isTarget) {
+      if (isSource || isTarget || edge.type === 'owns' || edge.type === 'manages') {
         const outgoing = isSource;
         const targetKey = outgoing ? edge.target : edge.source;
         const target = edge.missing ? undefined : graph?.items.get(targetKey);
@@ -221,8 +221,8 @@ function KubernetesResourceDetails({
         addEntry({
           id: edge.id,
           target,
-          missing: edge.missing ? { kind, name, namespace } : undefined,
-          label: edge.label,
+          missing: edge.missing,
+          label: !isSource && !isTarget && edge.type === 'owns' ? 'root controller' : edge.label,
           outgoing,
           kind,
           name,
@@ -231,211 +231,8 @@ function KubernetesResourceDetails({
       }
     }
 
-    // 2. Upstream Owner references traversal (e.g. Pod -> ReplicaSet -> Deployment / Job -> CronJob)
-    const visitedOwners = new Set<string>();
-    let currentAncestors: ResourceItem[] = [item];
-    for (let hop = 0; hop < 3 && currentAncestors.length > 0; hop++) {
-      const nextAncestors: ResourceItem[] = [];
-      for (const current of currentAncestors) {
-        const owners = (current.raw?.metadata ?? current.metadata)?.ownerReferences ?? [];
-        for (const owner of owners) {
-          if (!owner.kind || !owner.name) continue;
-          const ownerKey = `${owner.kind}:${owner.name}`;
-          if (visitedOwners.has(ownerKey)) continue;
-          visitedOwners.add(ownerKey);
-
-          const ownerMap = (resources as any)[owner.kind] as Map<string, ResourceItem> | undefined;
-          let target: ResourceItem | undefined;
-          if (ownerMap) {
-            target = [...ownerMap.values()].find(
-              (r) => r.name === owner.name && (!r.namespace || r.namespace === current.namespace)
-            );
-          }
-          if (!target && graph?.items) {
-            target = [...graph.items.values()].find(
-              (r) => r.kind === owner.kind && r.name === owner.name && (!r.namespace || r.namespace === current.namespace)
-            );
-          }
-
-          addEntry({
-            id: `owner-${owner.kind}-${owner.name}`,
-            target,
-            missing: target ? undefined : { kind: owner.kind, name: owner.name, namespace: current.namespace },
-            label: hop === 0 ? 'controller' : 'root controller',
-            outgoing: false,
-            kind: owner.kind,
-            name: owner.name,
-            namespace: current.namespace,
-          });
-
-          if (target) nextAncestors.push(target);
-        }
-      }
-      currentAncestors = nextAncestors;
-    }
-
-    // 3. Delivery & GitOps root resolution (Helm, Flux, Argo CD)
-    const allAncestors = [
-      item,
-      ...[...visitedOwners].flatMap((k) => {
-        const [kind, name] = k.split(':');
-        const map = (resources as any)[kind] as Map<string, ResourceItem> | undefined;
-        return map ? [...map.values()].filter((r) => r.name === name) : [];
-      }),
-    ];
-
-    for (const candidate of allAncestors) {
-      const raw = candidate.raw ?? {};
-      const metadata = raw.metadata ?? candidate.metadata ?? {};
-      const annotations = metadata.annotations ?? {};
-      const labels = metadata.labels ?? {};
-
-      // Helm release lookup
-      const helmReleaseName =
-        annotations['meta.helm.sh/release-name'] ??
-        labels['helm.sh/release-name'] ??
-        labels['app.kubernetes.io/instance'];
-      const helmNamespace =
-        annotations['meta.helm.sh/release-namespace'] ?? candidate.namespace ?? item.namespace;
-      if (helmReleaseName && typeof helmReleaseName === 'string') {
-        const helmMap = (resources as any)['HelmRelease'] as Map<string, ResourceItem> | undefined;
-        let helmTarget: ResourceItem | undefined;
-        if (helmMap) {
-          helmTarget = [...helmMap.values()].find(
-            (r) => r.name === helmReleaseName && (!r.namespace || !helmNamespace || r.namespace === helmNamespace)
-          );
-        }
-        if (!helmTarget && graph?.items) {
-          helmTarget = [...graph.items.values()].find(
-            (r) => r.kind === 'HelmRelease' && r.name === helmReleaseName
-          );
-        }
-        addEntry({
-          id: `helm-${helmReleaseName}`,
-          target: helmTarget,
-          missing: helmTarget ? undefined : { kind: 'HelmRelease', name: helmReleaseName, namespace: helmNamespace },
-          label: 'Helm Release',
-          outgoing: false,
-          kind: 'HelmRelease',
-          name: helmReleaseName,
-          namespace: helmNamespace,
-        });
-      }
-
-      // Flux Kustomization lookup
-      const fluxKustomizationName = labels['kustomize.toolkit.fluxcd.io/name'];
-      const fluxKustomizationNs =
-        labels['kustomize.toolkit.fluxcd.io/namespace'] ?? candidate.namespace ?? item.namespace;
-      if (fluxKustomizationName && typeof fluxKustomizationName === 'string') {
-        const kustomizationMap = (resources as any)['Kustomization'] as Map<string, ResourceItem> | undefined;
-        let fluxTarget: ResourceItem | undefined;
-        if (kustomizationMap) {
-          fluxTarget = [...kustomizationMap.values()].find(
-            (r) => r.name === fluxKustomizationName && (!r.namespace || !fluxKustomizationNs || r.namespace === fluxKustomizationNs)
-          );
-        }
-        addEntry({
-          id: `flux-${fluxKustomizationName}`,
-          target: fluxTarget,
-          missing: fluxTarget
-            ? undefined
-            : { kind: 'Kustomization', name: fluxKustomizationName, namespace: fluxKustomizationNs },
-          label: 'Flux Kustomization',
-          outgoing: false,
-          kind: 'Kustomization',
-          name: fluxKustomizationName,
-          namespace: fluxKustomizationNs,
-        });
-      }
-
-      // Flux HelmRelease lookup
-      const fluxHelmName = labels['helm.toolkit.fluxcd.io/name'];
-      const fluxHelmNs =
-        labels['helm.toolkit.fluxcd.io/namespace'] ?? candidate.namespace ?? item.namespace;
-      if (fluxHelmName && typeof fluxHelmName === 'string') {
-        const hrMap = (resources as any)['HelmRelease'] as Map<string, ResourceItem> | undefined;
-        let fluxHrTarget: ResourceItem | undefined;
-        if (hrMap) {
-          fluxHrTarget = [...hrMap.values()].find(
-            (r) => r.name === fluxHelmName && (!r.namespace || !fluxHelmNs || r.namespace === fluxHelmNs)
-          );
-        }
-        addEntry({
-          id: `flux-hr-${fluxHelmName}`,
-          target: fluxHrTarget,
-          missing: fluxHrTarget
-            ? undefined
-            : { kind: 'HelmRelease', name: fluxHelmName, namespace: fluxHelmNs },
-          label: 'Flux HelmRelease',
-          outgoing: false,
-          kind: 'HelmRelease',
-          name: fluxHelmName,
-          namespace: fluxHelmNs,
-        });
-      }
-
-      // ArgoCD Application lookup
-      const argoAppName =
-        labels['argocd.argoproj.io/instance'] ??
-        annotations['argocd.argoproj.io/tracking-id']?.split(':')?.[0];
-      if (argoAppName && typeof argoAppName === 'string') {
-        const argoMap = (resources as any)['Application'] as Map<string, ResourceItem> | undefined;
-        let argoTarget: ResourceItem | undefined;
-        if (argoMap) {
-          argoTarget = [...argoMap.values()].find((r) => r.name === argoAppName);
-        }
-        addEntry({
-          id: `argocd-${argoAppName}`,
-          target: argoTarget,
-          missing: argoTarget ? undefined : { kind: 'Application', name: argoAppName, namespace: candidate.namespace },
-          label: 'Argo CD Application',
-          outgoing: false,
-          kind: 'Application',
-          name: argoAppName,
-          namespace: candidate.namespace,
-        });
-      }
-    }
-
-    // Also check GitOps status managed inventories (Flux & Argo)
-    const candidateKustomizations = (resources as any)['Kustomization'] as Map<string, ResourceItem> | undefined;
-    if (candidateKustomizations) {
-      for (const kustomization of candidateKustomizations.values()) {
-        if (kustomization.namespace && item.namespace && kustomization.namespace !== item.namespace) continue;
-        const refs = gitOpsReferences(kustomization);
-        if (refs.managed.some((m) => m.kind === item.kind && m.name === item.name)) {
-          addEntry({
-            id: `flux-inv-${kustomization.name}`,
-            target: kustomization,
-            label: 'Flux Kustomization',
-            outgoing: false,
-            kind: 'Kustomization',
-            name: kustomization.name,
-            namespace: kustomization.namespace,
-          });
-        }
-      }
-    }
-    const candidateApplications = (resources as any)['Application'] as Map<string, ResourceItem> | undefined;
-    if (candidateApplications) {
-      for (const app of candidateApplications.values()) {
-        const refs = gitOpsReferences(app);
-        if (refs.managed.some((m) => m.kind === item.kind && m.name === item.name)) {
-          addEntry({
-            id: `argocd-inv-${app.name}`,
-            target: app,
-            label: 'Argo CD Application',
-            outgoing: false,
-            kind: 'Application',
-            name: app.name,
-            namespace: app.namespace,
-          });
-        }
-      }
-    }
-
     return entries;
-  }, [item, graph, resources]);
+  }, [item, graph]);
 
   const filteredRelated = useMemo(() => {
     const q = relatedQuery.trim().toLowerCase();
@@ -639,7 +436,7 @@ function KubernetesResourceDetails({
 
   const attach = (container?: string) => {
     const target = activePod ?? item;
-    useDockStore.getState().openTerminal(target.name, target.namespace, container, containers);
+    useDockStore.getState().openAttachTerminal(target.name, target.namespace, container, containers);
   };
 
   return (

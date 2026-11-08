@@ -75,11 +75,14 @@ function DemoTerminalSessionPane({ session, visible, onContainerChange }: { sess
     const term = termRef.current;
     if (!term) return;
 
+    const isAttach = session.terminalMode === 'attach';
     let intro = '';
     if (isLocal) {
       intro = `\r\n\x1b[1;36mKubiki Local Terminal (Host PC)\x1b[0m — simulated shell session using \x1b[33m${shellBinary}\x1b[0m.\r\nWorkstation: \x1b[1;32mdemo@localhost\x1b[0m (demo workstation)\r\nType \`help\`, \`kubectl get pods\`, \`whoami\`, \`pwd\`, or any command.\r\n`;
     } else if (isNode) {
       intro = `\r\n\x1b[1;33mKubiki Node Shell\x1b[0m — simulated shell for node \x1b[1m${session.resourceName}\x1b[0m.\r\nDemo only. No debug container is created.\r\nType \`help\` or any node inspection command.\r\n`;
+    } else if (isAttach) {
+      intro = `\r\n\x1b[1;36mDemo Attach to\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m).\r\nConnected to PID 1 container entrypoint stream (demo mode).\r\nType any command to simulate entrypoint input.\r\n`;
     } else {
       intro = `\r\n\x1b[1;32mDemo Pod shell for\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m) using \x1b[33m${shellBinary}\x1b[0m.\r\nType \`help\` or any container command.\r\n`;
     }

@@ -14,13 +14,24 @@ use tokio::{
     task::JoinHandle,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalMode {
+    #[default]
+    Exec,
+    Attach,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExecRequest {
     pub resource: ResourceRef,
     pub container: String,
+    #[serde(default)]
     pub shell: String,
     pub cols: u16,
     pub rows: u16,
+    #[serde(default)]
+    pub mode: TerminalMode,
 }
 /// Set terminal capabilities using shell builtins, even in minimal images without env(1).
 /// When bash is requested, attempts to run bash with transparent fallback to ash or sh
@@ -93,15 +104,23 @@ pub struct PodTerminalManager {
 }
 
 fn error(request: &ExecRequest, status: u16, message: impl Into<String>) -> ApiError {
+    let operation = match request.mode {
+        TerminalMode::Attach => "attach",
+        TerminalMode::Exec => "exec",
+    };
     ApiError::from_status(
         status,
         message,
-        "exec",
+        operation,
         Some(&request.resource.query.context),
     )
     .with_resource(&request.resource.query)
 }
 fn api_error(request: &ExecRequest, err: kube::Error) -> ApiError {
+    let operation = match request.mode {
+        TerminalMode::Attach => "attach",
+        TerminalMode::Exec => "exec",
+    };
     let result = match err {
         kube::Error::Api(response) => error(request, response.code, response.message),
         // kube-rs 0.98 reports a refused upgrade as ProtocolSwitch, not Error::Api.
@@ -111,13 +130,13 @@ fn api_error(request: &ExecRequest, err: kube::Error) -> ApiError {
             request,
             status.as_u16(),
             format!(
-                "Pod exec WebSocket upgrade rejected ({status}); check pods/exec permissions and API proxy support"
+                "Pod {operation} WebSocket upgrade rejected ({status}); check pods/{operation} permissions and API proxy support"
             ),
         ),
         error => ApiError::new(
             ApiErrorCode::Unavailable,
             error.to_string(),
-            "exec",
+            operation,
             Some(&request.resource.query.context),
             None,
         )
@@ -154,7 +173,9 @@ pub fn validate_request(request: &ExecRequest) -> Result<(), ApiError> {
             "A Pod reference with namespace, UID and container is required",
         ));
     }
-    if !["/bin/sh", "/bin/bash", "/bin/ash", "/bin/zsh"].contains(&request.shell.as_str()) {
+    if request.mode != TerminalMode::Attach
+        && !["/bin/sh", "/bin/bash", "/bin/ash", "/bin/zsh"].contains(&request.shell.as_str())
+    {
         return Err(error(request, 400, "Choose a supported shell binary"));
     }
     validate_size(request, request.cols, request.rows)
@@ -187,6 +208,12 @@ fn running(status: &PodStatus, container: &str) -> bool {
     })
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum TerminalTarget {
+    Exec(Vec<String>),
+    Attach,
+}
+
 impl PodTerminalManager {
     pub async fn start<F>(
         &self,
@@ -198,9 +225,12 @@ impl PodTerminalManager {
     where
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
     {
-        let command = interactive_shell_command(&request.shell);
-        self.start_with_command(owner, id, request, command, client)
-            .await
+        let target = if request.mode == TerminalMode::Attach {
+            TerminalTarget::Attach
+        } else {
+            TerminalTarget::Exec(interactive_shell_command(&request.shell))
+        };
+        self.start_internal(owner, id, request, target, client).await
     }
     pub(crate) async fn start_with_command<F>(
         &self,
@@ -208,6 +238,33 @@ impl PodTerminalManager {
         id: &str,
         request: ExecRequest,
         command: Vec<String>,
+        client: F,
+    ) -> Result<ExecSubscription, ApiError>
+    where
+        F: Future<Output = Result<Client, ApiError>> + Send + 'static,
+    {
+        self.start_internal(owner, id, request, TerminalTarget::Exec(command), client)
+            .await
+    }
+    pub async fn start_attach<F>(
+        &self,
+        owner: &str,
+        id: &str,
+        request: ExecRequest,
+        client: F,
+    ) -> Result<ExecSubscription, ApiError>
+    where
+        F: Future<Output = Result<Client, ApiError>> + Send + 'static,
+    {
+        self.start_internal(owner, id, request, TerminalTarget::Attach, client)
+            .await
+    }
+    async fn start_internal<F>(
+        &self,
+        owner: &str,
+        id: &str,
+        request: ExecRequest,
+        target: TerminalTarget,
         client: F,
     ) -> Result<ExecSubscription, ApiError>
     where
@@ -231,12 +288,12 @@ impl PodTerminalManager {
         let (ack, acknowledgements) = watch::channel(0);
         let (output, rx) = mpsc::channel(64);
         let (input, controls) = mpsc::channel(64);
-        let target = request.clone();
+        let req = request.clone();
         let task = tokio::spawn(async move {
             let mut sequence = 0;
             let result = tokio::select! {
                 _=output.closed()=>return,
-                result=run(&target,command,client,controls,&output,&mut sequence)=>result,
+                result=run(&req,target,client,controls,&output,&mut sequence)=>result,
             };
             if let Err(error) = result {
                 emit(&output, &mut sequence, ExecEvent::Failed { error }).await;
@@ -352,7 +409,7 @@ impl Drop for AbortProcess {
 
 async fn run<F>(
     request: &ExecRequest,
-    command: Vec<String>,
+    target: TerminalTarget,
     client: F,
     mut controls: mpsc::Receiver<Control>,
     tx: &mpsc::Sender<ExecMessage>,
@@ -398,102 +455,104 @@ where
             max_stdout_buf_size: Some(65536),
             ..Default::default()
         };
-        pods.exec(&request.resource.name, command, &params)
-            .await
-            .map_err(|e| api_error(request, e))
+        match target {
+            TerminalTarget::Exec(command) => {
+                pods.exec(&request.resource.name, command, &params)
+                    .await
+                    .map_err(|e| api_error(request, e))
+            }
+            TerminalTarget::Attach => {
+                pods.attach(&request.resource.name, &params)
+                    .await
+                    .map_err(|e| api_error(request, e))
+            }
+        }
     };
+    let operation = match request.mode {
+        TerminalMode::Attach => "Attach",
+        TerminalMode::Exec => "Exec",
+    };
+    let timeout_msg = format!("Pod {} connection timed out", operation.to_lowercase());
     let attached = tokio::time::timeout(Duration::from_secs(20), connect)
         .await
-        .map_err(|_| error(request, 504, "Pod exec connection timed out"))??;
+        .map_err(|_| error(request, 504, timeout_msg))??;
     let mut process = AbortProcess(attached);
-    let mut stdin = process
-        .0
-        .stdin()
-        .ok_or_else(|| error(request, 500, "Exec stdin was not attached"))?;
-    let mut stdout = process
-        .0
-        .stdout()
-        .ok_or_else(|| error(request, 500, "Exec stdout was not attached"))?;
-    let mut resize = process
-        .0
-        .terminal_size()
-        .ok_or_else(|| error(request, 500, "Exec TTY resize was not attached"))?;
-    let status = process
-        .0
-        .take_status()
-        .ok_or_else(|| error(request, 500, "Exec status was not attached"))?;
-    resize
-        .send(TerminalSize {
-            width: request.cols,
-            height: request.rows,
-        })
-        .await
-        .map_err(|_| error(request, 503, "Exec TTY closed before resize"))?;
+    let mut stdin = process.0.stdin();
+    let stdout = process.0.stdout();
+    let mut resize = process.0.terminal_size();
+    let status = process.0.take_status();
+    if let Some(ref mut resize) = resize {
+        let _ = resize
+            .send(TerminalSize {
+                width: request.cols,
+                height: request.rows,
+            })
+            .await;
+    }
     if !emit(tx, sequence, ExecEvent::Started).await {
         return Ok(());
     }
-    // Read output concurrently with writes: a large paste must not block draining stdout.
+    // Read stdout concurrently with writes: a large paste must not block draining stdout.
     let output = async {
         let mut buffer = [0; 8192];
-        loop {
-            let count = stdout
-                .read(&mut buffer)
+        if let Some(mut stdout) = stdout {
+            loop {
+                let count = stdout
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| error(request, 503, format!("{operation} output failed: {e}")))?;
+                if count == 0 {
+                    return Ok::<_, ApiError>(());
+                }
+                if !emit(
+                    tx,
+                    sequence,
+                    ExecEvent::Output {
+                        data: buffer[..count].to_vec(),
+                    },
+                )
                 .await
-                .map_err(|e| error(request, 503, format!("Exec output failed: {e}")))?;
-            if count == 0 {
-                return Ok::<_, ApiError>(());
-            }
-            if !emit(
-                tx,
-                sequence,
-                ExecEvent::Output {
-                    data: buffer[..count].to_vec(),
-                },
-            )
-            .await
-            {
-                return Ok(());
+                {
+                    return Ok(());
+                }
             }
         }
+        Ok::<_, ApiError>(())
     };
     let input = async {
         while let Some(control) = controls.recv().await {
             match control {
-                Control::Input(data) => stdin
-                    .write_all(data.as_bytes())
-                    .await
-                    .map_err(|e| error(request, 503, format!("Exec input failed: {e}")))?,
-                Control::Resize(cols, rows) => resize
-                    .send(TerminalSize {
-                        width: cols,
-                        height: rows,
-                    })
-                    .await
-                    .map_err(|_| error(request, 503, "Exec TTY resize failed"))?,
+                Control::Input(data) => {
+                    if let Some(ref mut stdin) = stdin {
+                        stdin
+                            .write_all(data.as_bytes())
+                            .await
+                            .map_err(|e| error(request, 503, format!("{operation} input failed: {e}")))?;
+                    }
+                }
+                Control::Resize(cols, rows) => {
+                    if let Some(ref mut resize) = resize {
+                        let _ = resize
+                            .send(TerminalSize {
+                                width: cols,
+                                height: rows,
+                            })
+                            .await;
+                    }
+                }
             }
         }
         Ok::<_, ApiError>(())
     };
     tokio::select! {result=output=>result?,result=input=>return result,}
-    let status = tokio::time::timeout(Duration::from_secs(3), status)
-        .await
-        .ok()
-        .flatten()
-        .ok_or_else(|| {
-            ApiError::new(
-                ApiErrorCode::Unavailable,
-                "Exec connection closed without an exit status. Reconnect explicitly.",
-                "exec",
-                Some(&request.resource.query.context),
-                None,
-            )
-            .with_resource(&request.resource.query)
-        })?;
-    let code =
-        if status.status.as_deref() == Some("Success") {
-            0
-        } else {
-            let code = status
+    let status = match status {
+        Some(st) => tokio::time::timeout(Duration::from_secs(3), st).await.ok().flatten(),
+        None => None,
+    };
+    let code = match status {
+        Some(ref s) if s.status.as_deref() == Some("Success") => 0,
+        Some(ref s) => {
+            let code = s
                 .details
                 .as_ref()
                 .and_then(|d| d.causes.as_ref())
@@ -506,16 +565,37 @@ where
                 .and_then(|message| message.parse::<i32>().ok());
             match code {
                 Some(code) => code,
-                None => return Err(error(
-                    request,
-                    500,
-                    status.message.unwrap_or_else(|| {
-                        "Exec failed to start. Check that the selected shell exists in the image."
-                            .into()
-                    }),
-                )),
+                None => {
+                    if request.mode == TerminalMode::Attach {
+                        0
+                    } else {
+                        return Err(error(
+                            request,
+                            500,
+                            s.message.clone().unwrap_or_else(|| {
+                                "Exec failed to start. Check that the selected shell exists in the image."
+                                    .into()
+                            }),
+                        ));
+                    }
+                }
             }
-        };
+        }
+        None => {
+            if request.mode == TerminalMode::Attach {
+                0
+            } else {
+                return Err(ApiError::new(
+                    ApiErrorCode::Unavailable,
+                    "Exec connection closed without an exit status. Reconnect explicitly.",
+                    "exec",
+                    Some(&request.resource.query.context),
+                    None,
+                )
+                .with_resource(&request.resource.query));
+            }
+        }
+    };
     emit(tx, sequence, ExecEvent::Exited { code }).await;
     Ok(())
 }

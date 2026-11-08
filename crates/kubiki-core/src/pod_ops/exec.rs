@@ -33,8 +33,8 @@ impl Default for PodExecOptions {
 pub struct PodExecService;
 
 impl PodExecService {
-    /// Execute an interactive shell in a pod container and return the attached process
-    pub async fn attach(
+    /// Execute a command in a pod container and return the attached process
+    pub async fn exec(
         client: Client,
         namespace: &str,
         pod_name: &str,
@@ -56,6 +56,34 @@ impl PodExecService {
             .exec(pod_name, opts.command, &ap)
             .await
             .map_err(|e| KubikiError::KubeApiError(format!("Failed to exec into pod: {e}")))?;
+
+        Ok(attached)
+    }
+
+    /// Attach directly to a running container's entrypoint process (PID 1)
+    pub async fn attach(
+        client: Client,
+        namespace: &str,
+        pod_name: &str,
+        container: Option<String>,
+        tty: bool,
+    ) -> Result<kube::api::AttachedProcess, KubikiError> {
+        let pods: Api<Pod> = Api::namespaced(client, namespace);
+
+        let ap = AttachParams {
+            container,
+            stdin: true,
+            stdout: true,
+            stderr: !tty,
+            tty,
+            max_stdin_buf_size: Some(1024 * 64),
+            ..Default::default()
+        };
+
+        let attached = pods
+            .attach(pod_name, &ap)
+            .await
+            .map_err(|e| KubikiError::KubeApiError(format!("Failed to attach to pod: {e}")))?;
 
         Ok(attached)
     }

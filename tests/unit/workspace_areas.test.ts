@@ -2,6 +2,7 @@ import { beforeEach, expect, it } from 'vitest';
 import { useWorkspaceStore, restoreWorkspace } from '../../src/state/workspace_store';
 import { activeWorkspaceArea } from '../../src/core/workspace_areas';
 import { resourceDemand } from '../../src/core/resources/resource_demand';
+import { useTableViewStore } from '../../src/state/table_view_store';
 
 const store = () => useWorkspaceStore.getState();
 const explorer = (id = 'pods') => store().openTab({ id, type: 'resource-list', kind: id === 'pods' ? 'Pod' : id === 'nodes' ? 'Node' : 'Service', title: id });
@@ -9,6 +10,18 @@ const agent = () => store().openTab({ id: 'agent', type: 'extension', panelId: '
 const topology = (id = 'diagram') => store().openTab({ id, type: 'topology', title: id, context: 'test', uid: id === 'focused' ? 'pod-uid' : undefined });
 
 beforeEach(() => useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true));
+
+it('closing details and YAML documents preserves the search of an open resource table', () => {
+  explorer();
+  useTableViewStore.getState().update('kind:Pod', { searchQuery: '^web', searchRegex: true });
+  for (const type of ['resource-detail', 'yaml-editor'] as const) {
+    store().openTab({ id: type, type, kind: 'Pod', name: 'web', title: 'web' });
+    store().closeTab(type);
+    expect(useTableViewStore.getState().views['kind:Pod']).toMatchObject({ searchQuery: '^web', searchRegex: true });
+  }
+  store().closeTab('pods');
+  expect(useTableViewStore.getState().views['kind:Pod']).toMatchObject({ searchQuery: '', searchRegex: false });
+});
 
 it('restores the Explorer document and split after opening other sections and direct resource links', () => {
   explorer(); explorer('services'); store().setSplit('pods');

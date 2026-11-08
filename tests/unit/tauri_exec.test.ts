@@ -78,3 +78,15 @@ it('forwards the configured output timeout to the backend start command', async 
   expect(mock.invoke.mock.calls[0][1].ackTimeoutSecs).toBe(60);
   useUiStore.setState({ terminalAckTimeoutSecs: 0 });
 });
+it('routes pod attach to start_pod_attach with mode=attach and empty shell by default', async () => {
+  const { connectPodAttach } = await import('../../src/providers/tauri_exec');
+  const attachReq = { resource: { ...resourceQuery('test', 'Pod', 'backend'), name: 'web', uid: 'uid' }, container: 'app', cols: 80, rows: 24 };
+  const conn = await connectPodAttach(attachReq, vi.fn(), new AbortController().signal);
+  expect(mock.invoke.mock.calls[0][0]).toBe('start_pod_attach');
+  expect(mock.invoke.mock.calls[0][1].request).toEqual({
+    ...attachReq,
+    shell: '',
+    mode: 'attach',
+  });
+  conn.close();
+});

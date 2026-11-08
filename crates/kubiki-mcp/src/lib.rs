@@ -60,6 +60,20 @@ impl ClusterServer {
     }
     pub fn update_policy(&self, policy: AgentPolicy) -> Result<(), String> {
         self.session.set_policy(policy)?;
+        self.notify_tools_changed();
+        Ok(())
+    }
+    pub fn update_phase(&self, phase: AgentPhase) -> Result<(), String> {
+        self.session.phase(phase)?;
+        self.notify_tools_changed();
+        Ok(())
+    }
+    pub fn update_access(&self, policy: AgentPolicy, phase: AgentPhase) -> Result<(), String> {
+        self.session.set_access(policy, Some(phase))?;
+        self.notify_tools_changed();
+        Ok(())
+    }
+    fn notify_tools_changed(&self) {
         let peers = self
             .peers
             .lock()
@@ -87,7 +101,6 @@ impl ClusterServer {
                 let _ = sink.notify_tool_list_changed().await;
             });
         }
-        Ok(())
     }
     /// Revoke undispatched work and retain receipts before the owning runtime exits.
     pub async fn shutdown(&self) {
@@ -176,10 +189,11 @@ impl ClusterServer {
             _ = cancelled(&mut global_cancel) => {request_session.cancel_request(); execution.await},
             result = &mut execution => result,
         }?;
+        if !mutation_tool(&call.name) && self.session.control()?.revision != revision {
+            return Err("Read result belongs to revoked permissions".into());
+        }
         if parallel_read_tool(&call.name) && !matches!(call.name.as_str(), "get_evidence"|"get_plan") && result.get("error").is_none() && result.is_object() {
-            if let Ok(mut evidence) = self.session.evidence.lock() {
-                if let Some(id) = evidence.save(&result) { result["evidenceId"] = json!(id); }
-            }
+            if let Some(id) = self.session.save_evidence(revision, &result)? { result["evidenceId"] = json!(id); }
         }
         Ok(result)
     }

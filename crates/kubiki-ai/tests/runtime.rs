@@ -822,6 +822,29 @@ async fn a_long_human_approval_wait_does_not_expire_post_write_generation() {
 }
 
 struct RemediationHost;
+
+#[tokio::test]
+async fn a_live_policy_change_keeps_the_session_but_does_not_replay_prior_tool_payloads() {
+    let s = session();
+    let conversation = ConversationState::default();
+    let (client, _, task) = provider(vec![call("get_resource"), final_text()]).await;
+    run(s.clone(), conversation.clone(), 0, client, "model".into(), GenerationOptions::default(),
+        String::new(), "OLD-POLICY-PROMPT".into(), Arc::new(RemediationHost), sink()).await.unwrap();
+    task.await.unwrap();
+    assert!(conversation.inspect_history().await.len() > 2);
+    let mut policy = s.control().unwrap().policy; policy.events = false;
+    s.set_policy(policy).unwrap();
+    let revision = s.control().unwrap().revision;
+    let (client, requests, task) = provider(vec![final_text()]).await;
+    run(s.clone(), conversation, revision, client, "model".into(), GenerationOptions::default(),
+        String::new(), "Continue with current permissions".into(), Arc::new(RemediationHost), sink()).await.unwrap();
+    task.await.unwrap();
+    assert!(!s.control().unwrap().invalidated);
+    let request = requests.lock().unwrap()[0].to_string();
+    assert!(!request.contains("OLD-POLICY-PROMPT"));
+    assert!(!request.contains("tool_call_id"));
+    assert!(request.contains("Continue with current permissions"));
+}
 #[async_trait]
 impl ToolExecutor for RemediationHost {
     async fn execute(&self, _: &Session, call: &ToolCall, _: &EventSink) -> Result<Value, String> {
@@ -833,6 +856,37 @@ impl ToolExecutor for RemediationHost {
             json!({"planArtifact":{"id":"plan-tested","kind":"remediation","bodyMarkdown":"do-not-duplicate-plan-body","steps":[{"id":"check","verification":"Observe Ready condition"}]}}),
         )
     }
+}
+
+#[tokio::test]
+async fn new_evidence_after_a_plan_requests_one_reconciliation_pass() {
+    let conversation = ConversationState::default();
+    let (client, requests, task) = provider(vec![
+        call("propose_plan"), call("get_resource"), final_text(), final_text(),
+    ]).await;
+    run(session(), conversation, 0, client, "model".into(), GenerationOptions::default(),
+        String::new(), "Investigate".into(), Arc::new(RemediationHost), sink()).await.unwrap();
+    task.await.unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    let last = requests.last().unwrap().to_string();
+    assert!(last.contains("plan-tested"));
+    assert!(last.contains("single plan reconciliation pass"));
+}
+
+#[tokio::test]
+async fn a_plan_from_a_previous_turn_does_not_force_reconciliation() {
+    let conversation = ConversationState::default();
+    let (client, _, task) = provider(vec![call("propose_plan"), final_text()]).await;
+    let s = session();
+    run(s.clone(), conversation.clone(), 0, client, "model".into(), GenerationOptions::default(),
+        String::new(), "Propose".into(), Arc::new(RemediationHost), sink()).await.unwrap();
+    task.await.unwrap();
+    let (client, requests, task) = provider(vec![call("get_resource"), final_text()]).await;
+    run(s, conversation, 0, client, "model".into(), GenerationOptions::default(),
+        String::new(), "Read again".into(), Arc::new(RemediationHost), sink()).await.unwrap();
+    task.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 #[tokio::test]
 async fn investigate_can_complete_with_direct_answer_without_mandatory_plan() {

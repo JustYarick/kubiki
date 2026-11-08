@@ -445,7 +445,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
           id: 'dock-attach',
           label: 'Attach in Bottom Drawer',
           icon: Play,
-          onSelect: () => useDockStore.getState().openTerminal(item.name, item.namespace, undefined, podContainers(item).map((c) => c.name)),
+          onSelect: () => useDockStore.getState().openAttachTerminal(item.name, item.namespace, undefined, podContainers(item).map((c) => c.name)),
         },
         { id: 'terminal', label: 'Terminal in Full Tab', icon: ExternalLink, onSelect: () => openTerminalTab(item) },
         { id: 'pf', label: 'Port-forward…', icon: ArrowRightLeft, onSelect: () => setPfFor(item) },

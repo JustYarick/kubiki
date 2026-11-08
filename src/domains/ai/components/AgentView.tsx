@@ -32,7 +32,7 @@ import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
 import { downloadMarkdown, transcriptMarkdown } from '../chat_artifacts';
 import { desktopAiAvailable } from '../transport';
-import { MODE_LABELS, PHASE_LABELS, normalizeMcpPolicy, isToolActiveInPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type ChatMessage, type Conversation } from '../types';
+import { MODE_LABELS, PHASE_LABELS, isToolActiveInPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type ChatMessage, type Conversation } from '../types';
 import { isPlanArtifact } from '../plan_contract';
 import { PlanArtifactCard } from './PlanArtifactCard';
 import { highlightSkillChildren } from './SkillReferenceText';
@@ -328,7 +328,7 @@ function AgentHome({ onSettings }: { onSettings?: (page?: AgentSettingsPage) => 
   const [sending, setSending] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
 
-  const mcpPolicy = normalizeMcpPolicy(settings.mcpPolicy ?? settings.policy);
+  const mcpPolicy = settings.policy;
   const activeToolCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, mcpPolicy, phase)).length;
   const totalTools = phase === 'plan' ? MCP_TOOL_CATALOG.filter(t => t.group !== 'write').length : MCP_TOOL_CATALOG.length;
 
@@ -805,7 +805,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     : 0;
   useEffect(() => { if (selectedModel && c.model) void useAiStore.getState().inspectModel(c.providerId, c.model); }, [c.providerId, c.model, selectedModel]);
 
-  const mcpPolicy = normalizeMcpPolicy(settings.mcpPolicy ?? settings.policy);
+  const mcpPolicy = settings.policy;
   const activeToolCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, mcpPolicy, c.phase)).length;
   const totalTools = c.phase === 'plan' ? MCP_TOOL_CATALOG.filter(t => t.group !== 'write').length : MCP_TOOL_CATALOG.length;
 

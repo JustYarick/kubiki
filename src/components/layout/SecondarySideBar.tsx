@@ -55,9 +55,10 @@ export const SecondarySideBar: React.FC<SecondarySideBarProps> = ({
       data-layout="overlay"
       style={{
         width: uiPixels(detailWidth),
+        maxWidth: '100%',
         top: uiPixels(headerHeight),
       }}
-      className="absolute right-0 bottom-0 z-40 min-h-0 border-l border-[var(--border-default)] shadow-xl bg-[var(--bg-canvas)] flex flex-col"
+      className="absolute right-0 bottom-0 z-20 min-h-0 border-l border-[var(--border-default)] shadow-xl bg-[var(--bg-canvas)] flex flex-col"
     >
       <Resizer
         orientation="vertical"

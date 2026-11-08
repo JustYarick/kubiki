@@ -4,7 +4,7 @@ import { useTerminalAppearance } from './useTerminalAppearance';
 import { useEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { ArrowDown, ArrowUp, Eraser, RotateCw, Search, Unplug, X } from 'lucide-react';
-import { connectPodExec, connectHostTerminal, connectNodeExec, getHostTerminalInfo, type HostTerminalInfo, type ExecConnection } from '../../providers/tauri_exec';
+import { connectPodExec, connectPodAttach, connectHostTerminal, connectNodeExec, getHostTerminalInfo, type HostTerminalInfo, type ExecConnection } from '../../providers/tauri_exec';
 import { errorHint, normalizeK8sError } from '../../providers/errors';
 import { resourceQuery } from '../../core/resources/resource_types';
 import type { ResourceRef } from '../../core/resources/resource_types';
@@ -18,11 +18,13 @@ import { IconButton } from '../ui/Button';
 export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebug }: { nodeDebug?: { sessionId: string; node: string; resource: ResourceRef; shell: string }; session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
   const { containers, container, context, uid } = useSessionContainers(session, true);
   const local = session.targetType === 'local';
+  const isAttach = session.terminalMode === 'attach';
   const [hostInfo, setHostInfo] = useState<HostTerminalInfo>();
   const [hostError, setHostError] = useState('');
   const [shell, setShell] = useState(local ? '' : '/bin/bash'); const [nodeShell, setNodeShell] = useState(''); const [attempt, setAttempt] = useState(0);
   const [phase, setPhase] = useState('Connecting'); const [error, setError] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const searchOpen = useRef(showSearch); searchOpen.current = showSearch;
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFound, setSearchFound] = useState<boolean | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -35,7 +37,7 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
     void getHostTerminalInfo().then((info) => { if (!cancelled) setHostInfo(info); }).catch((error) => { if (!cancelled) setHostError(normalizeK8sError(error, { operation: 'host_terminal' }).message); });
     return () => { cancelled = true; };
   }, [local, attempt]);
-  const target = JSON.stringify([nodeDebug?.sessionId, local, session.id, hostInfo?.cwd, hostError, context, session.namespace, session.resourceName, uid, container, selectedShell, attempt]);
+  const target = JSON.stringify([nodeDebug?.sessionId, local, isAttach, session.id, hostInfo?.cwd, hostError, context, session.namespace, session.resourceName, uid, container, selectedShell, attempt]);
   useEffect(() => {
     if (local && !hostInfo) { setPhase(hostError ? 'Failed' : 'Loading shell'); setError(hostError); return; }
     if (!box.current) return;
@@ -55,7 +57,7 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
         setShowSearch(true);
         return false;
       }
-      if (event.key === 'Escape' && event.type === 'keydown') {
+      if (event.key === 'Escape' && event.type === 'keydown' && searchOpen.current) {
         setShowSearch(false);
         view.search?.clearDecorations();
         term.focus();
@@ -89,14 +91,27 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
           else if (event.type === 'Output') await write(new Uint8Array(event.payload.data));
           else { finished = true; live.current = false; term.options.disableStdin = true;
             if (event.type === 'Exited') { setPhase(`Exited (${event.payload.code})`); await write(`\r\n[Process exited with code ${event.payload.code}]\r\n`); }
-            else { const failure = normalizeK8sError(event.payload.error, { operation: nodeDebug ? 'node_debug' : local ? 'host_terminal' : 'exec', context: local ? undefined : context ?? undefined }); setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`); setPhase('Failed'); }
+            else { const failure = normalizeK8sError(event.payload.error, { operation: nodeDebug ? 'node_debug' : local ? 'host_terminal' : isAttach ? 'attach' : 'exec', context: local ? undefined : context ?? undefined }); setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`); setPhase('Failed'); }
           }
         };
         const conn = local ? await connectHostTerminal({ shell: selectedShell, cols: term.cols, rows: term.rows }, receive, abort.signal)
           : nodeDebug ? await connectNodeExec({ resource: nodeDebug.resource, debug_session_id: nodeDebug.sessionId, shell: selectedShell, cols: term.cols, rows: term.rows }, receive, abort.signal)
-          : await connectPodExec({ resource: { ...resourceQuery(context!, 'Pod', session.namespace), name: session.resourceName!, uid: uid! }, container, shell: selectedShell, cols: term.cols, rows: term.rows }, receive, abort.signal);
+          : isAttach
+            ? await connectPodAttach({ resource: { ...resourceQuery(context!, 'Pod', session.namespace), name: session.resourceName!, uid: uid! }, container, cols: term.cols, rows: term.rows }, receive, abort.signal)
+            : await connectPodExec({ resource: { ...resourceQuery(context!, 'Pod', session.namespace), name: session.resourceName!, uid: uid! }, container, shell: selectedShell, cols: term.cols, rows: term.rows }, receive, abort.signal);
         if (abort.signal.aborted) conn.close(); else { connection.current = conn; conn.write(pendingInput); pendingInput = ''; acknowledged = true; enable(); fitNow(); if (box.current?.offsetParent) term.focus(); }
-      } catch (error) { if (!abort.signal.aborted) { const failure = normalizeK8sError(error, { operation: nodeDebug ? 'node_debug' : local ? 'host_terminal' : 'exec' }); setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`); setPhase('Failed'); } }
+      } catch (error) {
+        if (!abort.signal.aborted) {
+          const failure = normalizeK8sError(error, { operation: nodeDebug ? 'node_debug' : local ? 'host_terminal' : isAttach ? 'attach' : 'exec' });
+          if (failure.code === 'cancelled') {
+            setPhase('Cancelled');
+            setError('Attach confirmation was cancelled.');
+          } else {
+            setError(`${failure.message} ${failure.code === 'unsupported' ? '' : errorHint(failure)}`);
+            setPhase('Failed');
+          }
+        }
+      }
     }
     void start();
     return () => { live.current = false; abort.abort(); connection.current?.close(); connection.current = null; data.dispose(); view.dispose(); terminal.current = null; fit.current = null; };
@@ -114,12 +129,12 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
     <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[var(--border-default)] bg-[var(--bg-secondary)]">
       <span className="flex-[1_1_160px] min-w-0 truncate font-mono text-xs" title={local ? hostInfo?.cwd : `${context} / ${session.namespace} / ${session.resourceName}`}>{nodeDebug ? `Node: ${nodeDebug.node}` : local ? 'Local host' : session.resourceName}<span className="text-[var(--text-muted)] ml-2">{local ? hostInfo?.cwd : session.namespace}</span></span>
       {!local && !nodeDebug && <div className="min-w-0 max-w-full"><ContainerSelect shell containers={containers} value={container} onChange={onContainerChange ?? ((name) => useDockStore.getState().updateSessionContainer(session.id, name))} /></div>}
-      <Select aria-label="Shell binary" className="ide-select max-w-full" value={selectedShell} onChange={(e) => nodeDebug ? setNodeShell(e.target.value) : setShell(e.target.value)}>{(local ? hostInfo?.shells ?? [] : ['/bin/bash', '/bin/sh', '/bin/ash', '/bin/zsh']).map((value) => <option key={value}>{value}</option>)}</Select>
+      {!isAttach && <Select aria-label="Shell binary" className="ide-select max-w-full" value={selectedShell} onChange={(e) => nodeDebug ? setNodeShell(e.target.value) : setShell(e.target.value)}>{(local ? hostInfo?.shells ?? [] : ['/bin/bash', '/bin/sh', '/bin/ash', '/bin/zsh']).map((value) => <option key={value}>{value}</option>)}</Select>}
       <span role="status" className="text-xs text-[var(--text-secondary)]">{phase}</span>
       <div className="flex gap-1 ml-auto">
         <IconButton icon={Search} size="sm" aria-label="Find in terminal (Ctrl+F)" tooltip="Find in terminal (Ctrl+F)" onClick={() => setShowSearch((s) => !s)} />
-        <IconButton icon={RotateCw} size="sm" aria-label="Reconnect shell" tooltip="Reconnect shell" onClick={() => setAttempt((n) => n + 1)} />
-        <IconButton icon={Unplug} size="sm" aria-label="Disconnect shell" tooltip="Disconnect shell" onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} />
+        <IconButton icon={RotateCw} size="sm" aria-label="Reconnect" tooltip="Reconnect" onClick={() => setAttempt((n) => n + 1)} />
+        <IconButton icon={Unplug} size="sm" aria-label="Disconnect" tooltip="Disconnect" onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} />
         <IconButton icon={Eraser} size="sm" aria-label="Clear terminal" tooltip="Clear terminal" onClick={() => terminal.current?.clear()} />
       </div>
     </div>

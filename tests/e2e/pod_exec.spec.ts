@@ -56,7 +56,7 @@ async function setup(page: Page, denied = false) {
           starts.push(args.request); const s = { id: args.sessionId, channel: args.onEvent, sequence: 0 }; active.set(s.id, s);
           queueMicrotask(() => send(s, denied ? [{ type: 'Failed', payload: { error: { code: 'forbidden', status: 403, retryable: false, message: 'pods/exec is forbidden', operation: 'exec' } } }] : [{ type: 'Started' }, out(`${args.request.container}$ `)])); return;
         }
-        if (command === 'write_pod_exec') { input.push(args.data); const s = active.get(args.sessionId); if (s) send(s, [out(args.data.includes('\r') ? '\r\nremote-command-output\r\n' : args.data)]); return; }
+        if (command === 'write_pod_exec') { input.push(args.data); const s = active.get(args.sessionId); if (s && args.data !== '\u001b') send(s, [out(args.data.includes('\r') ? '\r\nremote-command-output\r\n' : args.data)]); return; }
         if (command === 'resize_pod_exec') { sizes.push(args); return; }
         if (command === 'ack_pod_exec') { acknowledgements.push(args); return; }
         if (command === 'close_pod_exec') { const s = active.get(args.sessionId); if (s) closed.push(s); active.delete(args.sessionId); return; }
@@ -195,6 +195,16 @@ test('Pod shell carries real adapter input, resize, UTF-8 and exit; container sw
   await expect(pane.getByRole('status')).toHaveText('Connected');
   expect(await page.evaluate(() => (window as any).__execHarness.starts[0])).toMatchObject({ resource: { context: 'test', namespace: 'backend', name, uid: 'pod-uid' }, container: 'app', shell: '/bin/bash' });
   await terminal.getByRole('textbox', { name: 'Terminal input' }).focus(); await page.keyboard.type('echo test'); await page.keyboard.press('Enter'); await page.keyboard.press('Control+c'); await page.keyboard.press('Control+w');
+  const escapeCount = () => page.evaluate(() => (window as any).__execHarness.input.filter((data: string) => data === '\u001b').length);
+  const beforeEscape = await escapeCount();
+  await page.keyboard.press('Escape');
+  await expect.poll(escapeCount).toBe(beforeEscape + 1);
+  await pane.getByRole('button', { name: 'Find in terminal (Ctrl+F)', exact: true }).click();
+  await pane.getByPlaceholder('Find in terminal…').press('Escape');
+  await expect(pane.getByPlaceholder('Find in terminal…')).toHaveCount(0);
+  expect(await escapeCount()).toBe(beforeEscape + 1);
+  await page.keyboard.press('Escape');
+  await expect.poll(escapeCount).toBe(beforeEscape + 2);
   await expect(terminal.locator('.xterm-rows')).toContainText('remote-command-output');
   expect((await page.evaluate(() => (window as any).__execHarness.input.join('')))).toContain('\u0003');
   expect((await page.evaluate(() => (window as any).__execHarness.input.join('')))).toContain('\u0017');
@@ -248,6 +258,7 @@ test('exec 403 is actionable and closing the UI releases backend sessions and ca
 
 test('full editor tabs keep their terminal session and container selection across navigation', async ({ page }) => {
   await setup(page);
+  await page.getByTestId('inspector-panel').getByRole('button', { name: 'Close details', exact: true }).click();
   await page.getByTestId('resource-table').getByText(name, { exact: true }).click({ button: 'right' });
   await page.getByText('Terminal in Full Tab', { exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open shell for app', exact: true }).click();
   const pane = page.locator('main').getByTestId('live-terminal'); await expect(pane.getByRole('status')).toHaveText('Connected');

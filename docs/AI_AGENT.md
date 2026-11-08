@@ -126,10 +126,19 @@ Access controls are independent:
 For example, keep Secret access disabled and add a rule for group `""`, kind
 `Secret`, namespace `backend`, name `nexus-credentials`, read `Contents`, with
 no writes. That permits this one Secret without opening all Secret contents.
-Changing data policy, instructions, provider endpoints or credentials invalidates
-existing native conversations. Start a new conversation rather than resending
-previously collected sensitive context under a tighter policy. Changing only
-default model/options does not retarget existing conversations.
+Changing data policy cancels current work and applies the new policy to the same
+native session. Evidence, query cursors and reviewed plans are revoked; delayed
+read results cannot repopulate those stores. The transcript remains visible, but
+the next model request starts with fresh context so old sensitive tool payloads
+are not replayed under the new policy. The interface identifies this context reset.
+Instructions, provider endpoints and credential changes still invalidate sessions.
+Changing only default model/options does not retarget existing conversations.
+
+Event and Metrics category denials apply to generic resource reads and lists too,
+including `events.k8s.io/Event` and `metrics.k8s.io` resources. Per-resource content
+grants do not override these category denials. Explicit empty write permissions
+and disabled log/cluster access survive loading and saving unchanged; disabling
+Read-only does not add write grants.
 
 Logs, Events, labels and arbitrary configuration can contain sensitive text.
 Filtering is not a general data-loss-prevention system. Read permissions govern
@@ -556,6 +565,16 @@ Kubiki Ask/Auto/alwaysAsk confirmation is applied to host-owned calls. A separat
 inherited from the hidden Kubiki policy. Defaults expose filtered reads and no
 writes. Kubernetes RBAC, pinned connection generation, projection, bounds,
 mutation preconditions and receipts remain enforced by the server.
+
+Attached external clients have an explicit **MCP server phase** control in the
+terminal toolbar and MCP settings. It defaults to Plan. This server phase is
+independent of the external client's own Plan/Build mode: Kubiki does not infer
+that mode from terminal output or model arguments. Phase changes apply live to
+the MCP catalog and dispatcher without restarting the process. Policy and phase
+updates are atomic; Plan blocks mutation calls and applies `planDisabledTools`,
+while Action applies `actionDisabledTools`. Switching to Action still requires
+explicit write grants. Standalone `kubiki-mcp serve` continues to use its explicit
+host-owned profile in Action; the attached desktop control does not manage it.
 
 Global context changes disconnect the panel until an explicit restart; they never
 silently retarget a running connection. Stop also cancels pending startup, including

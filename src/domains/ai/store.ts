@@ -111,6 +111,8 @@ let loadTask: Promise<void> | undefined;
 const modelRevisions = new Map<string, number>();
 const inspectedModels = new Set<string>();
 const runEpochs = new Map<string, number>();
+// Stop still drains receipts from its run; replacing a session detaches it.
+const activeRuns = new Map<string, number>();
 export const useAiStore = create<AiState>()(
   persist(
     (set, get) => ({
@@ -143,11 +145,20 @@ export const useAiStore = create<AiState>()(
         set({ saving: true, error: undefined });
         try {
           const before = get().settings;
-          const changed = JSON.stringify([before.providers, before.policy, before.instructions, before.environment, before.runtime, before.opencode, before.codex, before.claude, before.mcpPolicy]) !== JSON.stringify([settings.providers, settings.policy, settings.instructions, settings.environment, settings.runtime, settings.opencode, settings.codex, settings.claude, settings.mcpPolicy]);
+          const changed = JSON.stringify([before.providers, before.instructions, before.environment, before.runtime, before.opencode, before.codex, before.claude]) !== JSON.stringify([settings.providers, settings.instructions, settings.environment, settings.runtime, settings.opencode, settings.codex, settings.claude]);
+          const policyChanged = JSON.stringify(before.policy) !== JSON.stringify(settings.policy);
           await agentTransport.save(settings);
           modelRevisions.forEach((revision, id) => modelRevisions.set(id, revision + 1));
           inspectedModels.clear();
-          set(state => ({ settings, models: {}, modelLoading: {}, modelErrors: {}, conversations: state.conversations.map(c => changed && c.sessionId ? { ...c, invalidated: true, mode: 'ask', error: 'Settings changed. Start a new conversation to use the updated permissions and provider.' } : c) }));
+          set(state => ({ settings, models: {}, modelLoading: {}, modelErrors: {}, conversations: state.conversations.map(c => {
+            if (!c.sessionId) return c;
+            if (changed) return { ...c, invalidated: true, mode: 'ask', error: 'Settings changed. Start a new conversation to use the updated permissions and provider.' };
+            if (!policyChanged) return c;
+            return { ...c, contextReset: true, error: undefined,
+              activePlan: c.activePlan ? { ...c.activePlan, status: 'stale' } : undefined,
+              messages: c.messages.map(message => message.planArtifact ? { ...message, planArtifact: { ...message.planArtifact, status: 'stale' } } : message),
+            };
+          }) }));
           const view = await agentTransport.settings(); set({ settings: view.settings, credentials: view.credentials });
         } catch (error) { set({ error: agentError(error) }); throw error; }
         finally { set({ saving: false }); }
@@ -232,7 +243,13 @@ export const useAiStore = create<AiState>()(
           conversations: state.conversations.map(c =>
             c.id === id ? (()=>{
               const changed=(patch.providerId!==undefined&&patch.providerId!==c.providerId)||(patch.model!==undefined&&patch.model!==c.model);
-              if(changed&&c.sessionId){runEpochs.set(id,(runEpochs.get(id)??0)+1);void agentTransport.stop(c.sessionId,true).catch(()=>{});return {...c,...patch,sessionId:undefined,mode:'ask' as const,phase:'plan' as const,busy:false,activePlan:undefined,contextReset:true,updatedAt:Date.now()};}
+              if (changed) {
+                runEpochs.set(id, (runEpochs.get(id) ?? 0) + 1);
+                activeRuns.delete(id);
+                if (c.sessionId) void agentTransport.stop(c.sessionId, true).catch(() => {});
+                return { ...c, ...patch, sessionId: undefined, mode: 'ask' as const, phase: 'plan' as const,
+                  busy: false, activePlan: undefined, contextReset: c.messages.length > 0, updatedAt: Date.now() };
+              }
               return {...c,...patch,updatedAt:Date.now()};
             })() : c
           ),
@@ -243,6 +260,7 @@ export const useAiStore = create<AiState>()(
         const entry = get().conversations.find(c => c.id === id);
         if (entry?.sessionId) await agentTransport.stop(entry.sessionId, true).catch(() => {});
         try { await deleteAiHistory(id); } catch(error) {get().update(id,{error:agentError(error)}); return;}
+        activeRuns.delete(id);
         set(state => ({
           conversations: state.conversations.filter(c => c.id !== id),
           activeId: state.activeId === id ? state.conversations.find(c => c.id !== id)?.id ?? null : state.activeId,
@@ -303,6 +321,7 @@ export const useAiStore = create<AiState>()(
         const message = entry.draft.trim();
         const epoch = (runEpochs.get(id) ?? 0) + 1; runEpochs.set(id, epoch);
         if (!entry.providerId || !entry.model) { get().update(id, { error: 'Choose a provider and load its available models first.' }); return; }
+        activeRuns.set(id, epoch);
         get().update(id, { busy: true, error: undefined, status: 'connecting' });
         try {
           let sessionId = entry.sessionId;
@@ -333,46 +352,56 @@ export const useAiStore = create<AiState>()(
           if (runEpochs.get(id) !== epoch) return;
           const user: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: message };
           get().update(id, { draft: '', title: entry.messages.length ? entry.title : entry.title === 'New conversation' ? message.slice(0, 60) : entry.title, messages: [...current.messages, user] });
-          await agentTransport.send(sessionId, message, event => set(state => ({ conversations: state.conversations.map(c => c.id === id ? applyAgentEvent(c, event) : c) })));
-        } catch (error) { get().update(id, { error: agentError(error), status: 'failed' }); }
+          await agentTransport.send(sessionId, message, event => {
+            if (activeRuns.get(id) !== epoch) return;
+            set(state => ({ conversations: state.conversations.map(c => c.id === id && c.sessionId === sessionId ? applyAgentEvent(c, event) : c) }));
+          });
+        } catch (error) { if (activeRuns.get(id) === epoch) get().update(id, { error: agentError(error), status: 'failed' }); }
         finally {
-          // Calculate token generation stats if usage didn't arrive
-          const conv = get().conversations.find(c => c.id === id);
-          if (conv) {
-            let lastIdx = -1;
-            for (let i = conv.messages.length - 1; i >= 0; i--) {
-              if (conv.messages[i].role === 'assistant') { lastIdx = i; break; }
-            }
-            if (lastIdx >= 0) {
-              const msg = conv.messages[lastIdx];
-              if (!msg.tokensPerSec && msg.text) {
-                const durationMs = Math.max(100, msg.durationMs ?? (Date.now() - (msg.startTime ?? Date.now())));
-                const approxTokens = msg.outputTokens ?? Math.max(1, Math.round(msg.text.length / 3.6));
-                const tokensPerSec = Number(((approxTokens / durationMs) * 1000).toFixed(1));
-                const updated = [...conv.messages];
-                updated[lastIdx] = {
-                  ...msg,
-                  outputTokens: approxTokens,
-                  durationMs,
-                  tokensPerSec,
-                };
-                const totalChars = conv.messages.reduce((acc, m) => acc + m.text.length, 0) + 1200;
-                const currentContextTokens = conv.currentContextTokens ?? Math.round(totalChars / 3.6);
-                get().update(id, { messages: updated, currentContextTokens });
+          if (activeRuns.get(id) === epoch) {
+            // Calculate token generation stats if usage didn't arrive
+            const conv = get().conversations.find(c => c.id === id);
+            if (conv) {
+              let lastIdx = -1;
+              for (let i = conv.messages.length - 1; i >= 0; i--) {
+                if (conv.messages[i].role === 'assistant') { lastIdx = i; break; }
+              }
+              if (lastIdx >= 0) {
+                const msg = conv.messages[lastIdx];
+                if (!msg.tokensPerSec && msg.text) {
+                  const durationMs = Math.max(100, msg.durationMs ?? (Date.now() - (msg.startTime ?? Date.now())));
+                  const approxTokens = msg.outputTokens ?? Math.max(1, Math.round(msg.text.length / 3.6));
+                  const tokensPerSec = Number(((approxTokens / durationMs) * 1000).toFixed(1));
+                  const updated = [...conv.messages];
+                  updated[lastIdx] = {
+                    ...msg,
+                    outputTokens: approxTokens,
+                    durationMs,
+                    tokensPerSec,
+                  };
+                  const totalChars = conv.messages.reduce((acc, m) => acc + m.text.length, 0) + 1200;
+                  const currentContextTokens = conv.currentContextTokens ?? Math.round(totalChars / 3.6);
+                  get().update(id, { messages: updated, currentContextTokens });
+                }
               }
             }
+            get().update(id, { busy: false });
+            activeRuns.delete(id);
+            await flushAiHistory();
           }
-          get().update(id, { busy: false });
-          await flushAiHistory();
         }
       },
       async stop(id) {
-        runEpochs.set(id, (runEpochs.get(id) ?? 0) + 1);
+        const epoch = (runEpochs.get(id) ?? 0) + 1;
+        runEpochs.set(id, epoch);
         const entry = get().conversations.find(c => c.id === id); if (!entry) return;
         try {
           if (entry.sessionId) await agentTransport.stop(entry.sessionId);
-          get().update(id, { status: entry.busy ? 'stopping' : 'cancelled' });
-        } catch (error) { get().update(id, { error: agentError(error) }); }
+          if (runEpochs.get(id) === epoch) {
+            const current = get().conversations.find(c => c.id === id);
+            get().update(id, { status: current?.busy ? 'stopping' : 'cancelled' });
+          }
+        } catch (error) { if (runEpochs.get(id) === epoch) get().update(id, { error: agentError(error) }); }
       },
     }),
     {

@@ -37,19 +37,53 @@ PHASES & ACTIONS
 - After a write receipt, verify fresh controller status via verify_workload or get_resource; API acceptance is not completion. Stop on failed, declined, or uncertain changes. Never retry an ambiguous write without verification.
 - Use Helm/GitOps tools when relevant and offered; inspection does not authorize reconciliation writes."#;
 
-fn attach_evidence(session: &Session, call: &ToolCall, result: &mut Value) {
+fn attach_evidence(session: &Session, revision: u64, call: &ToolCall, result: &mut Value) {
     if result.get("evidenceId").is_some() { return; }
     if parallel_read_tool(&call.name)
         && call.name != "get_evidence"
         && result.get("error").is_none_or(Value::is_null)
     {
-        if let Ok(mut store) = session.evidence.lock() {
-            if let Some(id) = store.save(result) {
+        if let Ok(Some(id)) = session.save_evidence(revision, result) {
                 if let Some(map) = result.as_object_mut() {
                     map.insert("evidenceId".into(), json!(id));
                 }
-            }
         }
+    }
+}
+
+/// Only plans proposed in this run need reconciliation with later live reads.
+#[derive(Default)]
+struct PlanFreshness {
+    plan_id: Option<String>,
+    evidence_after_plan: bool,
+    correction_requested: bool,
+}
+impl PlanFreshness {
+    fn observe(&mut self, call: &ToolCall, result: &Value) {
+        if call.name == "propose_plan" {
+            if let Some(id) = result.pointer("/planArtifact/id").and_then(Value::as_str) {
+                self.plan_id = Some(id.into());
+                self.evidence_after_plan = false;
+            }
+        } else if self.plan_id.is_some()
+            && parallel_read_tool(&call.name)
+            && call.name != "get_evidence"
+            && result.get("evidenceId").is_some()
+            && result.get("error").is_none_or(Value::is_null)
+        {
+            self.evidence_after_plan = true;
+        }
+    }
+
+    fn correction(&mut self) -> Option<String> {
+        if !self.evidence_after_plan || self.correction_requested {
+            return None;
+        }
+        self.correction_requested = true;
+        Some(format!(
+            "Fresh permitted evidence was collected after plan {} was proposed in this turn. Reconcile the plan with that evidence before finishing: if the diagnosis or steps changed, call propose_plan with this planId to create an updated version; otherwise explicitly explain why the existing plan remains valid. This is the single plan reconciliation pass and does not authorize any writes.",
+            self.plan_id.as_deref()?
+        ))
     }
 }
 async fn execute_read_batch(
@@ -58,6 +92,7 @@ async fn execute_read_batch(
     calls: Vec<ToolCall>,
     emit: &EventSink,
 ) -> Vec<(ToolCall, Value)> {
+    let revision = session.control().map(|state| state.revision).unwrap_or(u64::MAX);
     futures::stream::iter(calls)
         .map(|call| async move {
             emit(AgentEvent::ToolStarted { call: call.clone() });
@@ -65,7 +100,7 @@ async fn execute_read_batch(
                 .execute(session, &call, emit)
                 .await
                 .unwrap_or_else(|error| json!({"error":error}));
-            attach_evidence(session, &call, &mut result);
+            attach_evidence(session, revision, &call, &mut result);
             emit(AgentEvent::ToolCompleted {
                 id: call.id.clone(),
                 result: result.clone(),
@@ -108,6 +143,7 @@ pub async fn run(
     let _running = session.begin_run(expected_revision)?;
     let mut cancellation = session.cancellation();
     let mut history = conversation.history_guard().await;
+    conversation.bind_policy(&mut history, session.control()?.policy_revision)?;
 
     let inferred_budget = match options.context_budget_tokens {
         Some(v) => v as usize,
@@ -168,6 +204,7 @@ pub async fn run(
     let approval_before_run = session.approval_wait();
     let outcome = async {
         let mut count = 0;
+        let mut plan_freshness = PlanFreshness::default();
         loop {
             let working = session.working_scope.lock().map_err(|_| "Working scope unavailable")?.clone();
             let working_str = if working.namespace.is_some() || working.root.is_some() || working.label_selector.is_some() {
@@ -218,6 +255,10 @@ pub async fn run(
             if count + calls.len() > 20 {return Err("AI run reached its 20-tool budget before dispatch".into());}
             history.push(Turn::Assistant(completion));
             if calls.is_empty() {
+                if let Some(correction) = plan_freshness.correction() {
+                    history.push(Turn::User(correction));
+                    continue;
+                }
                 return Ok(());
             }
             if calls.iter().any(|c| c.name == "ask_user") {
@@ -253,7 +294,10 @@ pub async fn run(
                     _ = cancelled(&mut cancellation) => return Err("AI run stopped".into()),
                     results = execute_read_batch(host.as_ref(), &session, calls, &emit) => results,
                 };
-                for (call, result) in results { history.push(Turn::Tool { call, result }); }
+                for (call, result) in results {
+                    plan_freshness.observe(&call, &result);
+                    history.push(Turn::Tool { call, result });
+                }
                 continue;
             }
             let mut calls_iter = calls.into_iter();
@@ -270,7 +314,8 @@ pub async fn run(
                     Err(error) => json!({"error":error}),
                 };
                 let mut value = value;
-                attach_evidence(&session, &call, &mut value);
+                attach_evidence(&session, expected_revision, &call, &mut value);
+                plan_freshness.observe(&call, &value);
                 emit(AgentEvent::ToolCompleted { id: call.id.clone(), result: value.clone() });
                 let error_text = value.get("error").and_then(Value::as_str).unwrap_or("");
                 let recoverable_validation_error = host.requires_action(&call.name)

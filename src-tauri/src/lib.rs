@@ -163,6 +163,7 @@ pub fn run() {
             ack_node_exec,
             close_node_exec,
             start_pod_exec,
+            start_pod_attach,
             write_pod_exec,
             resize_pod_exec,
             ack_pod_exec,

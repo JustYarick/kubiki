@@ -6,13 +6,15 @@ import { agentError, desktopAiAvailable } from '../transport';
 import { normalizeMcpPolicy, syncSharedPolicyFields, type AgentPolicy } from '../types';
 import { DataSelect } from './AgentSettings';
 import { McpToolsPanel } from './McpToolsPanel';
+import { Select } from '../../../components/ui/Select';
 
 export function McpAccessSettings() {
   const settings = useAiStore(s => s.settings);
   const saving = useAiStore(s => s.saving);
   const activeId = useAiStore(s => s.activeId);
   const activeConversation = useAiStore(s => s.conversations.find(c => c.id === activeId));
-  const activePhase = activeConversation?.phase ?? 'action';
+  const external = settings.runtime && settings.runtime !== 'kubiki';
+  const activePhase = external ? settings.mcpPhase ?? 'plan' : activeConversation?.phase ?? 'plan';
   const [draft, setDraft] = useState(normalizeMcpPolicy(settings.mcpPolicy));
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -55,11 +57,18 @@ export function McpAccessSettings() {
       <p className="ai-help">
         Configure cluster tools, data permissions, and Plan/Action mode boundaries. These settings apply to both Kubiki and external agents (OpenCode, Codex, Claude Code) in real time.
       </p>
+      {external && <label className="ai-field">MCP server phase
+        <Select aria-label="MCP server phase" disabled={saving} value={activePhase === 'plan' ? 'plan' : 'action'} onChange={e => {
+          void useAiStore.getState().save({ ...useAiStore.getState().settings, mcpPhase: e.target.value as 'plan' | 'action' }).catch(e => setError(agentError(e)));
+        }}><option value="plan">Plan</option><option value="action">Action</option></Select>
+        <span className="ai-help">Enforced by Kubiki independently of the external agent's own mode.</span>
+      </label>}
 
       {/* Embedded unified live tools panel */}
       <div className="rounded border border-[var(--border-default)] overflow-hidden">
         <McpToolsPanel
           policy={draft}
+          disabled={saving}
           onChange={next => void persist(next)}
           currentPhase={activePhase}
           title="Cluster Tools & Mode Permissions"

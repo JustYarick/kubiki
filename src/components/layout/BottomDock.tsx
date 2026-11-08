@@ -52,6 +52,7 @@ const ExpandedDock: React.FC = () => {
     openLocalTerminal,
     openNodeShell,
     openTerminal,
+    openAttachTerminal,
     openLogs,
     openPorts,
     openEvents,
@@ -336,6 +337,15 @@ const ExpandedDock: React.FC = () => {
                           className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[length:calc(10px*var(--ui-factor))]"
                         >
                           Shell
+                        </button>
+                        <button
+                          onClick={() => {
+                            openAttachTerminal(p.name, p.namespace, undefined, p.containers?.map((c) => c.name));
+                            close();
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] hover:bg-[var(--accent)] hover:text-white text-[length:calc(10px*var(--ui-factor))]"
+                        >
+                          Attach
                         </button>
                         <button
                           onClick={() => {

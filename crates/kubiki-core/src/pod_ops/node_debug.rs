@@ -527,6 +527,7 @@ impl NodeDebugManager {
             shell,
             cols: request.cols,
             rows: request.rows,
+            mode: super::terminal::TerminalMode::Exec,
         };
         let subscription = lease
             .terminal

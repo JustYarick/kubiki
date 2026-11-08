@@ -126,7 +126,7 @@ export function restoreWorkspace(persisted: unknown, current: WorkspaceState): W
 function clearDraftForTab(tab?: WorkspaceTab) {
   if (tab) {
     useTableViewStore.getState().clear(tab.id);
-    if ('kind' in tab && tab.kind) {
+    if (tab.type === 'resource-list' && tab.kind) {
       useTableViewStore.getState().update(`kind:${tab.kind}`, { searchQuery: '', searchRegex: false });
     }
   }

@@ -176,6 +176,7 @@ pub async fn confirm_action(
         "batch" => ("Confirm operation?", "Confirm", false),
         "node_shell" => ("Open node shell?", "Open", false),
         "container_shell" => ("Open container shell?", "Open", false),
+        "container_attach" => ("Attach to container process?", "Attach", true),
         "uninstall" => ("Uninstall Helm release?", "Uninstall", true),
         "install" => ("Install Helm release?", "Install", false),
         "upgrade" => ("Upgrade Helm release?", "Upgrade", false),

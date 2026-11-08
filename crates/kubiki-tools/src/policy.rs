@@ -248,19 +248,7 @@ impl Default for AgentPolicy {
 
 impl AgentPolicy {
     pub fn default_mcp() -> Self {
-        Self {
-            confirm_reads: false,
-            logs: true,
-            cluster_resources: true,
-            writes: vec![
-                WriteOperation::Create,
-                WriteOperation::Update,
-                WriteOperation::Delete,
-                WriteOperation::Scale,
-                WriteOperation::Restart,
-            ],
-            ..Self::default()
-        }
+        Self::default()
     }
 }
 
@@ -358,6 +346,9 @@ impl AgentPolicy {
     }
 
     pub fn check_scope(&self, scope: &AgentScope, target: &Target) -> Result<(), String> {
+        if !self.data_category_enabled(target) {
+            return Err("Event or Metrics data access is disabled by policy".into());
+        }
         if scope.context.is_empty() || !self.contexts.iter().any(|p| matches(p, &scope.context)) {
             return Err("This conversation has no permitted Kubernetes context".into());
         }
@@ -392,7 +383,15 @@ impl AgentPolicy {
         }
         self.rules.iter().find(applies)
     }
+    fn data_category_enabled(&self, target: &Target) -> bool {
+        !(!self.events && ["", "events.k8s.io"].contains(&target.group.as_str()) && target.kind == "Event")
+            && (self.metrics || target.group != "metrics.k8s.io")
+    }
+
     pub fn access(&self, target: &Target, builtin: bool) -> DataAccess {
+        if !self.data_category_enabled(target) {
+            return DataAccess::None;
+        }
         let access =
             self.rule(target)
                 .map(|r| r.read)

@@ -38,6 +38,23 @@ behavior on every platform.
 
 `workspace_areas.test.ts` covers section selection, split restoration, scoped tab
 closing, persisted workspace migration and resource demand from hidden views.
+It also checks that closing a resource detail or YAML tab retains the search of
+an open table. `workspace_layers.spec.ts` measures full-width document panes with
+the inspector open/closed and resized, tests hit ordering over document-local
+z-indices, and checks dock/inspector boundaries at desktop, narrow and 200% scale.
+The exec scenario checks that Escape reaches the PTY when search is closed.
+`agent_domain.test.ts` isolates replaced sessions' events/completion while keeping
+dispatched operation receipts during Stop. Native manifest tests exercise both
+Secret volume schemas, including misleading unknown fields; runtime tests cover
+one plan reconciliation pass after fresh evidence and isolation across turns.
+`kubiki-tools/tests/data_permissions.rs` blocks generic Event/Metrics reads and
+lists before any HTTP call, including with broad content rules, and verifies
+that policy updates revoke evidence without reusing its IDs. MCP protocol tests
+cover direct phase-denied calls and late results after revocation. AI runtime
+tests reuse a session after policy changes without replaying old context; native
+tests verify session/scope retention and restrictive settings round trips.
+Browser AI scenarios change the external server phase without restarting its
+terminal and continue an integrated conversation after editing permissions.
 `sidebar_navigation.spec.ts` checks whole-workspace switching, tree filters,
 topology scope and AI drafts. AI browser scenarios also verify that section
 navigation preserves a running conversation without stopping it.

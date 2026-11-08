@@ -5,6 +5,56 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 #[derive(Default)]
 struct Fake(Mutex<Vec<ToolCall>>);
+
+#[tokio::test]
+async fn a_revoked_inflight_read_cannot_repopulate_evidence() {
+    struct LateRead { started: tokio::sync::Notify, finish: tokio::sync::Notify }
+    #[async_trait::async_trait]
+    impl ToolExecutor for LateRead {
+        async fn execute(&self, _: &Session, _: &ToolCall, _: &EventSink) -> Result<serde_json::Value, String> {
+            self.started.notify_one();
+            self.finish.notified().await;
+            Ok(json!({"resource":{"data":{"private":"old-policy-payload"}}}))
+        }
+    }
+    let host = Arc::new(LateRead { started:tokio::sync::Notify::new(), finish:tokio::sync::Notify::new() });
+    let server = ClusterServer::new(session(), host.clone(), Arc::new(|_| {}), true);
+    let task_server = server.clone();
+    let task = tokio::spawn(async move {
+        task_server.execute(&ToolCall {id:"late".into(),name:"get_resource".into(),arguments:json!({})}).await
+    });
+    host.started.notified().await;
+    server.update_policy(AgentPolicy { resources:false, ..Default::default() }).unwrap();
+    host.finish.notify_one();
+    assert!(task.await.unwrap().is_err());
+    assert!(server.session.evidence.lock().unwrap().get("e1").is_err());
+    assert!(!server.session.control().unwrap().invalidated);
+}
+
+#[tokio::test]
+async fn external_server_phase_is_enforced_for_catalog_and_direct_calls_without_reconnect() {
+    let session = session();
+    session.mode(AgentMode::Accept).unwrap();
+    session.set_policy(AgentPolicy {
+        logs:true, plan_disabled_tools:vec!["get_logs".into()], action_disabled_tools:vec!["get_metrics".into()],
+        writes:vec![WriteOperation::Scale], ..Default::default()
+    }).unwrap();
+    let fake = Arc::new(Fake::default());
+    let server = ClusterServer::new(session, fake.clone(), Arc::new(|_| {}), true);
+    let call = |name: &str| ToolCall {id:name.into(),name:name.into(),arguments:json!({})};
+    assert!(server.execute(&call("get_logs")).await.is_err());
+    assert!(server.execute(&call("scale_workload")).await.is_err());
+    assert!(server.execute(&call("get_metrics")).await.is_ok());
+    server.update_phase(AgentPhase::Action).unwrap();
+    assert!(server.execute(&call("get_logs")).await.is_ok());
+    assert!(server.execute(&call("scale_workload")).await.is_ok());
+    assert!(server.execute(&call("get_metrics")).await.is_err());
+    server.update_phase(AgentPhase::Plan).unwrap();
+    assert!(server.execute(&call("get_logs")).await.is_err());
+    assert!(server.execute(&call("scale_workload")).await.is_err());
+    server.update_access(AgentPolicy { writes:vec![WriteOperation::Scale], ..Default::default() }, AgentPhase::Plan).unwrap();
+    assert!(server.execute(&call("scale_workload")).await.is_err());
+}
 #[async_trait::async_trait]
 impl ToolExecutor for Fake {
     async fn execute(

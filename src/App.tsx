@@ -284,7 +284,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px', '--inspector-width': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
+    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} compact={compact} narrow={logicalViewportWidth < 500} />
       <AppUpdatePrompt />
@@ -313,28 +313,29 @@ export default function App() {
         />
 
         {/* Central Workspace: Tabs + Breadcrumbs + DataGrid/Editor + Bottom Dock */}
-        <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
-          <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
+        <div data-testid="central-workbench" className="relative flex-1 min-w-0 min-h-0 flex">
+          <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
+            <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
 
-          {/* Bottom Dock drawer — template slot (full in explorer, local in topology, hidden in ai-agent) */}
-          <BottomDockSlot
+            {/* Bottom Dock drawer — template slot (full in explorer, local in topology, hidden in ai-agent) */}
+            <BottomDockSlot
+              area={area}
+              factor={factor}
+              showInspector={showInspector}
+              detailWidth={detailWidth}
+            />
+          </main>
+          {/* Tool windows share the foreground above every workspace document. */}
+          <SecondarySideBar
             area={area}
+            inspectorWidth={inspectorWidth}
+            inspectorCollapsed={inspectorCollapsed}
+            headerHeight={headerHeight}
             factor={factor}
-            showInspector={showInspector}
-            detailWidth={detailWidth}
+            logicalViewportWidth={logicalViewportWidth}
+            onResize={setInspectorWidth}
           />
-        </main>
-
-        {/* Secondary Side Bar: Right Tool Window (Inspector, Details, Future Tools) */}
-        <SecondarySideBar
-          area={area}
-          inspectorWidth={inspectorWidth}
-          inspectorCollapsed={inspectorCollapsed}
-          headerHeight={headerHeight}
-          factor={factor}
-          logicalViewportWidth={logicalViewportWidth}
-          onResize={setInspectorWidth}
-        />
+        </div>
 
         {/* Right Activity Bar: Slot for future right-rail tool icons */}
         <RightActivityBar />

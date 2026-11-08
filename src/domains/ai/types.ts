@@ -55,6 +55,7 @@ export interface AiSettings {
   codex?: OpenCodeSettings;
   claude?: OpenCodeSettings;
   mcpPolicy?: AgentPolicy;
+  mcpPhase?: AgentPhase;
   /** Inert legacy configuration, retained for lossless migration. */
   environment?: unknown;
   providers: ProviderProfile[]; defaultProvider: string | null; defaultModel: string | null;
@@ -147,32 +148,16 @@ export function defaultPolicy(): AgentPolicy {
 }
 
 export function defaultMcpPolicy(): AgentPolicy {
-  return {
-    ...defaultPolicy(),
-    logs: true,
-    clusterResources: true,
-    writes: ['create', 'update', 'delete', 'scale', 'restart'],
-  };
+  return defaultPolicy();
 }
 
 export function normalizeMcpPolicy(policy?: AgentPolicy): AgentPolicy {
   if (!policy) return defaultMcpPolicy();
-  const isLegacyUnconfigured =
-    !policy.readOnly &&
-    (!policy.writes || policy.writes.length === 0) &&
-    !policy.logs &&
-    !policy.clusterResources &&
-    (!policy.disabledTools || policy.disabledTools.length === 0) &&
-    (!policy.planDisabledTools || policy.planDisabledTools.length === 0) &&
-    (!policy.actionDisabledTools || policy.actionDisabledTools.length === 0);
-  const writes = isLegacyUnconfigured
-    ? (['create', 'update', 'delete', 'scale', 'restart'] as WriteOperation[])
-    : (policy.writes ?? []);
   return {
     ...policy,
-    logs: isLegacyUnconfigured ? true : Boolean(policy.logs),
-    clusterResources: isLegacyUnconfigured ? true : Boolean(policy.clusterResources),
-    writes,
+    logs: Boolean(policy.logs),
+    clusterResources: Boolean(policy.clusterResources),
+    writes: policy.writes ?? [],
     disabledTools: policy.disabledTools ?? [],
     planDisabledTools: policy.planDisabledTools ?? [],
     actionDisabledTools: policy.actionDisabledTools ?? [],
@@ -208,7 +193,7 @@ export function syncSharedPolicyFields(source: AgentPolicy, target: AgentPolicy)
 export function isToolActiveInPolicy(toolId: string, policy: AgentPolicy, phase?: AgentPhase): boolean {
   if (policy.disabledTools?.includes(toolId)) return false;
   if (phase === 'plan' && policy.planDisabledTools?.includes(toolId)) return false;
-  if (phase === 'action' && policy.actionDisabledTools?.includes(toolId)) return false;
+  if ((phase === 'action' || phase === 'tooling') && policy.actionDisabledTools?.includes(toolId)) return false;
 
   // In Plan mode, write/mutation tools are never active
   const isWriteTool = ['apply_manifest', 'scale_workload', 'restart_workload', 'delete_resource'].includes(toolId);
@@ -249,13 +234,9 @@ export function isToolActiveInPolicy(toolId: string, policy: AgentPolicy, phase?
 }
 
 export function toggleReadOnlyMcpPolicy(readOnly: boolean, policy: AgentPolicy): AgentPolicy {
-  const writes = !readOnly && (!policy.writes || policy.writes.length === 0)
-    ? (['create', 'update', 'delete', 'scale', 'restart'] as WriteOperation[])
-    : policy.writes;
   return {
     ...policy,
     readOnly,
-    writes,
   };
 }
 
@@ -270,7 +251,7 @@ export function patchToolInPolicy(toolId: string, enabled: boolean, policy: Agen
     if (enabled && next.disabledTools?.includes(toolId)) {
       next.disabledTools = next.disabledTools.filter(id => id !== toolId);
     }
-  } else if (phase === 'action') {
+  } else if (phase === 'action' || phase === 'tooling') {
     const actionDisabled = next.actionDisabledTools ?? [];
     next.actionDisabledTools = enabled
       ? actionDisabled.filter(id => id !== toolId)

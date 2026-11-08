@@ -37,6 +37,7 @@ fn request() -> ExecRequest {
         shell: "/bin/sh".into(),
         cols: 80,
         rows: 24,
+        mode: kubiki_core::pod_ops::terminal::TerminalMode::Exec,
     }
 }
 fn pod() -> Value {
@@ -377,4 +378,71 @@ async fn exec_upgrade_rbac_denial_preserves_403_and_cancellation_closes_an_attac
         assert_eq!(manager.active_count().await, 0);
         server.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn real_websocket_attach_connects_without_command_and_carries_streams() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = Client::try_from(Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    ))
+    .unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        http(&mut socket, 200, pod()).await;
+        drop(socket);
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut ws = accept_hdr_async(socket, |request: &Request, mut response: Response| {
+            let uri = request.uri().to_string();
+            assert!(uri.starts_with("/api/v1/namespaces/backend/pods/web/attach?"), "{uri}");
+            assert!(uri.contains("container=app"), "{uri}");
+            assert!(!uri.contains("command="), "{uri}");
+            assert!(uri.contains("stdin=true"), "{uri}");
+            assert!(uri.contains("stdout=true"), "{uri}");
+            assert!(!uri.contains("stderr=true"), "{uri}");
+            assert!(uri.contains("tty=true"), "{uri}");
+            response.headers_mut().insert(
+                "sec-websocket-protocol",
+                "v4.channel.k8s.io".parse().unwrap(),
+            );
+            Ok(response)
+        })
+        .await
+        .unwrap();
+        // Server sends output
+        let bytes = "container pid1 output\r\n".as_bytes();
+        ws.send(Message::Binary([&[1][..], bytes].concat().into()))
+            .await
+            .unwrap();
+        // Server exits cleanly
+        ws.send(Message::Binary([&[3][..], json!({"status":"Success"}).to_string().as_bytes()].concat().into()))
+            .await
+            .unwrap();
+        let _ = ws.close(None).await;
+    });
+    let mut req = request();
+    req.mode = kubiki_core::pod_ops::terminal::TerminalMode::Attach;
+    req.shell = "".into();
+    let manager = PodTerminalManager::default();
+    let mut stream = manager
+        .start("main", "attach-test", req, async move { Ok(client) })
+        .await
+        .unwrap()
+        .output;
+    let mut output = Vec::new();
+    while let Some(message) = stream.recv().await {
+        match message.event {
+            ExecEvent::Started => {}
+            ExecEvent::Output { data } => output.extend(data),
+            ExecEvent::Exited { code } => {
+                assert_eq!(code, 0);
+                break;
+            }
+            ExecEvent::Failed { error } => panic!("{error:?}"),
+        }
+    }
+    assert_eq!(String::from_utf8_lossy(&output), "container pid1 output\r\n");
+    server.await.unwrap();
 }
