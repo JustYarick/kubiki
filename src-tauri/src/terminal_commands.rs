@@ -17,20 +17,6 @@ pub async fn start_pod_exec(
     _guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
 ) -> Result<(), ApiError> {
     kubiki_core::pod_ops::terminal::validate_request(&request)?;
-    let review = format!("Open {} in container {}.", request.shell, request.container);
-    if !crate::mutation_guard::confirm_action(
-        window.clone(),
-        &request.resource,
-        review,
-        "container_shell",
-    )
-    .await?
-    {
-        return Err(kubiki_core::core::mutations::cancelled(
-            &request.resource,
-            "Interactive shell access was cancelled",
-        ));
-    }
     let pool = pool.inner().clone();
     let manager = manager.inner().clone();
     let owner = window.label().to_owned();
