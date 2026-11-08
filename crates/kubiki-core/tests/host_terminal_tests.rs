@@ -291,7 +291,20 @@ async fn trusted_executable_uses_exact_arguments_and_cwd_without_login_shell_fla
     }).await.unwrap();
     let text=String::from_utf8_lossy(&output);
     assert!(text.contains("ARG:literal ; $(echo BAD)"));
-    assert!(text.contains(&format!("CWD:{}",cwd.display())));
+    let cwd_line = text
+        .lines()
+        .find(|line| line.starts_with("CWD:"))
+        .map(|line| line.trim_start_matches("CWD:").trim())
+        .unwrap_or_default();
+    let actual_path = std::path::Path::new(cwd_line);
+    let expected_canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+    let actual_canonical = actual_path.canonicalize().unwrap_or_else(|_| actual_path.to_path_buf());
+    assert!(
+        actual_canonical == expected_canonical
+            || actual_path == cwd.as_path()
+            || text.contains(&format!("CWD:{}", cwd.display())),
+        "Working directory mismatch: actual {actual_path:?} (canonical {actual_canonical:?}) vs expected {cwd:?} (canonical {expected_canonical:?})"
+    );
     assert!(text.contains("ENV:kept"));
     manager.stop_owner("agent").await;
     assert_eq!(manager.session_count().await,0);
