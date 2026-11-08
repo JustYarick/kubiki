@@ -8,6 +8,10 @@ mod mutation_guard;
 mod update_commands;
 use mutation_guard::resolve_mutation_confirm;
 mod mutation_commands;
+mod agent_commands;
+mod ai_history;
+mod agent_tools;
+mod opencode;
 use mutation_commands::*;
 mod extension_commands;
 use extension_commands::{ExtensionManager, extension_cancel, extension_request};
@@ -21,6 +25,8 @@ mod log_commands;
 mod node_commands;
 mod terminal_commands;
 mod watch_commands;
+#[cfg(test)]
+mod kubernetes_tls_tests;
 use helm_commands::*;
 
 use host_terminal_commands::*;
@@ -77,11 +83,34 @@ pub fn run() {
         .manage(PortForwardManager::default())
         .manage(ExtensionManager::default())
         .manage(mutation_guard::MutationGuard::default())
+        .manage(agent_commands::AgentManager::default())
+        .manage(opencode::OpenCodeManager::default())
         .manage(update_commands::DesktopUpdater::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            opencode::ai_test_opencode,
+            opencode::ai_test_external_agent,
+            opencode::start_opencode,
+            agent_commands::ai_get_settings,
+            agent_commands::ai_preview_policy,
+            agent_commands::ai_review_plan,
+            agent_commands::ai_get_evidence,
+            agent_commands::ai_execute_plan,
+            ai_history::ai_history_load,
+            ai_history::ai_history_sync,
+            ai_history::ai_history_preferences,
+            agent_commands::ai_save_settings,
+            agent_commands::ai_set_credential,
+            agent_commands::ai_list_models,
+            agent_commands::ai_test_provider,
+            agent_commands::ai_list_skills,
+            agent_commands::ai_create_session,
+            agent_commands::ai_set_mode,
+            agent_commands::ai_set_phase,
+            agent_commands::ai_stop,
+            agent_commands::ai_send_message,
             update_commands::check_app_update,
             update_commands::download_app_update,
             update_commands::install_app_update,
@@ -118,7 +147,6 @@ pub fn run() {
             stop_resource_watches,
             get_host_terminal_info,
             start_host_terminal,
-            start_ai_analysis,
             write_host_terminal,
             resize_host_terminal,
             ack_host_terminal,
@@ -135,6 +163,7 @@ pub fn run() {
             ack_node_exec,
             close_node_exec,
             start_pod_exec,
+            start_pod_attach,
             write_pod_exec,
             resize_pod_exec,
             ack_pod_exec,
@@ -143,10 +172,13 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                mutation_guard::cancel_owner(window.label());
+                window.state::<agent_commands::AgentManager>().stop_owner(window.label());
                 let extensions = window.state::<ExtensionManager>().inner().clone();
                 let manager = window.state::<InformerManager>().inner().clone();
                 let terminals = window.state::<PodTerminalManager>().inner().clone();
                 let hosts = window.state::<HostTerminalManager>().inner().clone();
+                let opencode = window.state::<opencode::OpenCodeManager>().inner().clone();
                 let nodes = window.state::<NodeDebugManager>().inner().clone();
                 let forwards = window.state::<PortForwardManager>().inner().clone();
                 let reads = window.state::<read_tasks::ReadTasks>().inner().clone();
@@ -158,6 +190,7 @@ pub fn run() {
                     terminals.stop_owner(&owner).await;
                     nodes.stop_owner(&owner).await;
                     hosts.stop_owner(&owner).await;
+                    opencode.stop_owner(&owner).await;
                     forwards.stop_owner(&owner).await;
                 });
             }

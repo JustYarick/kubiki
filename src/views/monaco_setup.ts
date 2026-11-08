@@ -8,13 +8,24 @@ import 'monaco-editor/features/clipboard/register.js';
 import 'monaco-editor/features/contextmenu/register.js';
 import 'monaco-editor/features/codicon/register.js';
 import 'monaco-editor/languages/definitions/yaml/register.js';
+import 'monaco-editor/languages/definitions/ini/register.js';
+import 'monaco-editor/languages/definitions/shell/register.js';
+import 'monaco-editor/languages/definitions/xml/register.js';
+import 'monaco-editor/languages/definitions/javascript/register.js';
+import 'monaco-editor/languages/definitions/markdown/register.js';
+import 'monaco-editor/languages/definitions/dockerfile/register.js';
+import { createTokenizationSupport } from 'monaco-editor/languages/features/json/tokenization.js';
+
+// Only the bundled tokenizer: JSON's full language service imports unrelated
+// editor contributions and services into our selectively registered Monaco.
+monaco.languages.register({ id: 'json', extensions: ['.json', '.jsonc'], aliases: ['JSON'] });
+monaco.languages.setTokensProvider('json', createTokenizationSupport(true));
 
 // Bundle workers locally — no CDN dependency (desktop/offline-safe).
 // Rolldown can't handle `?worker` on node_modules deep imports, so we point
 // at a local shim module that re-imports the official ESM worker source.
-const workerUrl = new URL('./editor_worker.ts', import.meta.url);
 (globalThis as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
-  getWorker: () => new Worker(workerUrl, { type: 'module' }),
+  getWorker: () => new Worker(new URL('./editor_worker.ts', import.meta.url), { type: 'module' }),
 };
 
 monaco.editor.defineTheme('kubiki-dark', {
@@ -25,6 +36,8 @@ monaco.editor.defineTheme('kubiki-dark', {
     { token: 'comment', foreground: '6f737a', fontStyle: 'italic' },
     { token: 'string.key.yaml', foreground: '82aaff' },
     { token: 'string.value.yaml', foreground: 'a8c986' },
+    { token: 'string.key.json', foreground: '82aaff' },
+    { token: 'string.value.json', foreground: 'a8c986' },
     { token: 'number', foreground: 'e5b742' },
     { token: 'keyword', foreground: 'c792ea' },
     { token: 'delimiter', foreground: '9da0a8' },

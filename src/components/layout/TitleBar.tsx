@@ -1,3 +1,4 @@
+import { activeWorkspaceArea, areaHasInspector } from '../../core/workspace_areas';
 import { RESOURCE_TYPES } from '../../core/resources/resource_types';
 import { syncResourceSnapshot } from '../../providers/snapshot_sync';
 import { shortcutLabel } from '../../core/shortcuts';
@@ -18,7 +19,6 @@ import { useClusterStore } from '../../state/cluster_store';
 import { useDockStore } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
-import { k8s } from '../../providers/k8s_provider';
 import { refreshResourceWatches } from '../../state/resource_watch';
 import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
 import { IconButton, Tooltip } from '../ui/Button';
@@ -41,13 +41,22 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
   } = useClusterStore();
 
   const {
-    sidebarCollapsed, toggleSidebar,
+    sidebarCollapsed,
     inspectorCollapsed, toggleInspector,
     setPaletteOpen, setSettingsOpen,
     density, setDensity, resetLayout,
   } = useUiStore();
 
   const { openResourceList, toggleSplit } = useWorkspaceStore();
+  const area = useWorkspaceStore(activeWorkspaceArea);
+  const explorerVisible = area === 'explorer' && !sidebarCollapsed;
+  const inspectorVisible = areaHasInspector(area) && !inspectorCollapsed;
+  const toggleSidebar = () => {
+    if (area !== 'explorer') {
+      useWorkspaceStore.getState().activateArea('explorer');
+      useUiStore.setState({ sidebarCollapsed: false });
+    } else useUiStore.getState().toggleSidebar();
+  };
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -101,7 +110,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
     { id: 'sep1', label: '', separator: true, onSelect: () => {} },
     {
       id: 'view-explorer',
-      label: sidebarCollapsed ? 'Show Tool Window: Explorer' : 'Hide Tool Window: Explorer',
+      label: explorerVisible ? 'Hide Tool Window: Explorer' : 'Show Tool Window: Explorer',
       kbd: '⌘B',
       onSelect: () => toggleSidebar(),
     },
@@ -113,6 +122,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
     },
     {
       id: 'view-inspector',
+      disabled: !areaHasInspector(area),
       label: inspectorCollapsed ? 'Show Tool Window: Inspector' : 'Hide Tool Window: Inspector',
       onSelect: () => toggleInspector(),
     },
@@ -178,7 +188,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
         <div className="app-titlebar-brand flex items-center gap-1.5 px-1">
           <img
             src="/brand/kubiki-logo-color-dark.svg"
-            alt="kubiki"
+            alt="Kubiki"
             width={360}
             height={128}
             draggable={false}
@@ -229,7 +239,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
 
         {/* Namespace Picker */}
         <NamespaceSelect value={selectedNamespace} onChange={selectNamespace} options={availableNamespaces}
-          allowCustom={k8s.supportsResourceWatch} className="app-titlebar-namespace max-w-[calc(170px*var(--ui-factor))] font-mono" />
+          className="app-titlebar-namespace max-w-[calc(170px*var(--ui-factor))] font-mono" />
       </div>
 
       {/* Center: JetBrains "Search Everywhere" Widget */}
@@ -273,12 +283,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
 
         {/* JetBrains Layout Switcher: Left, Bottom, Right Tool Windows */}
         <div className="app-titlebar-layout flex items-center bg-[var(--bg-primary)] p-0.5 rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)]">
-          <Tooltip label={sidebarCollapsed ? 'Show Explorer (⌘B)' : 'Hide Explorer (⌘B)'} delay={300}>
+          <Tooltip label={explorerVisible ? 'Hide Explorer (⌘B)' : 'Show Explorer (⌘B)'} delay={300}>
             <button
               onClick={toggleSidebar}
               className={cx(
                 'w-5 h-5 flex items-center justify-center rounded-[calc(3px*var(--ui-factor))] transition-colors',
-                !sidebarCollapsed ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                explorerVisible ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               )}
               aria-label="Toggle Explorer"
             >
@@ -302,9 +312,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
           <Tooltip label={inspectorCollapsed ? 'Show Details Panel' : 'Hide Details Panel'} delay={300}>
             <button
               onClick={toggleInspector}
+              disabled={!areaHasInspector(area)}
               className={cx(
-                'w-5 h-5 flex items-center justify-center rounded-[calc(3px*var(--ui-factor))] transition-colors',
-                !inspectorCollapsed ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                'w-5 h-5 flex items-center justify-center rounded-[calc(3px*var(--ui-factor))] transition-colors disabled:opacity-40',
+                inspectorVisible ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               )}
               aria-label="Toggle Details Panel"
             >

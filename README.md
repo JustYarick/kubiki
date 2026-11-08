@@ -24,6 +24,7 @@ Kubiki is a desktop application for inspecting and managing Kubernetes clusters.
   - [Logs and terminals](#logs-and-terminals)
   - [Port forwarding](#port-forwarding)
   - [Reviewing changes](#reviewing-changes)
+  - [AI agent](#ai-agent)
   - [AI analysis](#ai-analysis)
   - [Extensions](#extensions)
   - [Application updates](#application-updates)
@@ -58,6 +59,7 @@ The application supports switching between kubeconfig contexts and selecting one
 | Diagnostic sessions | Streaming container logs, interactive container shells, node debug shells, and local host terminals. |
 | Network access | TCP port forwarding to Pods and Services, with active sessions managed in the bottom panel. |
 | Cluster changes | YAML updates, scaling, rollout restarts, deletions, and other supported resource actions with confirmation and concurrency checks. |
+| AI agent | Integrated chat, resource investigation and YAML generation, cloud/local model discovery, detailed data/tool permissions and Read only / Ask / Accept modes. |
 | AI analysis | Diagnostic snapshots opened in a locally installed Codex, OpenCode or Claude Code CLI, with configurable starting instructions. |
 | Extensions | Local or public GitHub package installation, isolated panels, and manual extension updates and rollback. |
 | Application updates | Separate stable and dev update channels, signed package downloads and installation after confirmation. |
@@ -196,7 +198,7 @@ Flux and Argo CD overviews focus on reconciliation issues and recent controller 
 
 Use the release actions to install a chart, upgrade a release, roll back to a previous revision, or uninstall it. Repository management and chart search use the local Helm configuration. Operations affecting a cluster are pinned to the context selected in Kubiki.
 
-Helm changes are prepared for review before execution. Existing releases are checked again after confirmation so that a change in release state can invalidate an outdated review.
+Helm operations use a short confirmation showing the release, cluster, namespace, and operation. There is no manifest review or confirmation expiry. Uninstall confirms once and removes the named release without depending on the table's cached revision. Install and upgrade use a frozen chart archive and values; upgrades and rollbacks still check for actual release revision/state changes. Chart templates render during execution rather than being compared across repeated dry runs.
 
 ### Logs and terminals
 
@@ -212,13 +214,17 @@ Start port forwarding from a Pod or Service, select the remote TCP port, and spe
 
 The listener binds to `127.0.0.1`. Open the forwarded address locally and stop the session from the bottom panel when it is no longer needed. A Service forward resolves a matching running Pod and maps the Service port to its target port.
 
-### Reviewing changes
+### Confirming operations
 
-Resource changes pass through a backend preparation and confirmation flow. The dialog identifies the target and describes the proposed operation. Manual YAML edits include a complete review of the changes. Built-in actions show the operation, its parameters, every target, and relevant warnings. Secret and ConfigMap data edits list changed key names without exposing their values in the confirmation. Batch reviews retain every step; operations whose complete review exceeds the size limit are rejected rather than truncated.
+Resource changes use one short confirmation showing the operation, resource, cluster and namespace. Confirmations have no time limit: they remain open until confirmed, cancelled, or the window closes. Secret and ConfigMap data edits show the number of changed keys. Grouped operations use one confirmation for the whole group. Only applying YAML includes a detailed diff.
 
-For existing Kubernetes objects, mutation checks use the object identity, UID, and resource version to detect replacement or concurrent edits. If the target changes during review, refresh the resource and review the operation again. Grouped actions share a review and execute their steps sequentially; they are not Kubernetes transactions.
+For existing Kubernetes objects, mutation checks use the object identity, UID, and resource version to detect replacement or concurrent edits. If the target changes while confirmation is open, refresh the resource before trying again. Grouped actions execute their steps sequentially; they are not Kubernetes transactions.
 
 Interactive shell commands execute in their respective shell sessions. They are separate from the confirmation flow used for resource actions in the interface.
+
+### AI agent
+
+Open **AI Agent** from the activity bar for chat, **Investigate with AI** on a failing resource, or **Create with AI** from a resource list. Connect a cloud API or local model server in AI settings, load its available models, and configure resource/data permissions. Every conversation starts in **Read only**. **Ask** reviews each permitted change; **Accept** executes permitted changes automatically. Secret contents, ConfigMap contents, logs and all writes are excluded by default. See [Integrated AI agent](docs/AI_AGENT.md) for providers, access rules, execution limits and setup.
 
 ### AI analysis
 
@@ -280,7 +286,8 @@ flowchart TB
 | Provider layer | Resource access contracts, native command calls, watch subscriptions, and error normalization. | `src/providers/` |
 | Desktop shell | Application lifecycle, IPC dispatch, stream ownership, and mutation confirmation dialogs. | `src-tauri/` |
 | Kubernetes engine | Kubeconfig parsing, context-specific client pooling, API discovery, informers, metrics, resource mutations, logs, exec, and port forwarding. | `crates/kubiki-core/` |
-| Helm integration | Context-specific Helm reads and reviewed lifecycle operations through the local Helm executable. | `crates/kubiki-core/src/helm/` |
+| AI domain | Provider protocols, model discovery, sessions, typed tools and backend policy, with an integrated React workspace. | `crates/kubiki-ai/`, `src/domains/ai/` |
+| Helm integration | Context-specific Helm reads and confirmed lifecycle operations through the local Helm executable. | `crates/kubiki-core/src/helm/` |
 | Extension platform | SDK contracts, package tools, local Node controller/workers and isolated extension panels. | `packages/`, `src/extensions/`, `src-tauri/src/extension_commands.rs` |
 | Desktop updates | Update state machine, stable/dev channel isolation, signed downloads and guarded installation. | `src/core/app_updates.ts`, `src-tauri/src/update_commands.rs` |
 
@@ -359,6 +366,7 @@ Run these commands from the repository root:
 | `pnpm test:extensions` | Extension SDK/host/package integration tests; builds extension resources first. |
 | `node scripts/check-external-extension.mjs` | Builds the packaged SDK/tools template outside the application repository. |
 | `cargo test --manifest-path crates/kubiki-core/Cargo.toml` | Rust core unit and integration tests. |
+| `cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml` | Agent policy, streaming protocols and runtime cancellation tests with local HTTP fixtures. |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | Desktop Rust backend compilation. |
 | `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` | Native desktop unit tests, including update-channel policy and the update/mutation gate. |
 | `pnpm test:e2e` | Browser-driven interface tests run by Playwright. |
@@ -379,7 +387,10 @@ Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validatio
 - [Publishing desktop releases](docs/RELEASING.md)
 - [Application updates and signing](docs/APP_UPDATES.md)
 - [Project structure and architecture](docs/STRUCTURE.md)
+- [Master search, regex filters and node performance](docs/MASTER_SEARCH.md)
+- [Traffic observability research: Cilium, Istio, Calico and eBPF sources](docs/TRAFFIC_OBSERVABILITY.md)
 - [Workspace extensions](docs/EXTENSIONS.md) and [extension architecture](docs/EXTENSION_PLATFORM.md)
+- [Integrated AI agent](docs/AI_AGENT.md)
 - [Resource analysis](docs/AI_ANALYSIS.md)
 - [Desktop rendering investigation and platform validation](docs/DESKTOP_RENDERING.md)
 - [Shared tab metrics](docs/UI_TABS.md) and [resource icons](docs/ICONS.md)
@@ -397,7 +408,8 @@ kubiki/
 │   └── views/                  Overview, resources, YAML, topology, Helm
 ├── src-tauri/                  Tauri desktop application and Rust IPC commands
 ├── crates/
-│   └── kubiki-core/            Rust Kubernetes engine
+│   ├── kubiki-core/            Rust Kubernetes engine
+│   └── kubiki-ai/              Headless AI domain and provider protocols
 ├── packages/                   Extension SDK, author tools and local runtime controller
 ├── extensions/                 Bundled SDK Diagnostics extension
 ├── scripts/                    Extension builds, runtime preparation and release helpers

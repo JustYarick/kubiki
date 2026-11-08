@@ -581,16 +581,9 @@ async fn node_create_requires_consent_to_exact_privileged_manifest_and_rechecks_
                 move |review| {
                     let state = state.clone();
                     async move {
-                        assert!(
-                            review.contains("CREATE privileged")
-                                && review.contains("node-uid")
-                                && review.contains("ubuntu:24.04")
-                        );
-                        assert!(
-                            review.contains("\"privileged\": true")
-                                && review.contains("deleted automatically")
-                                && review.contains("kubiki-node-debug-node-uid")
-                        );
+                        assert!(review.contains("root shell") && review.contains("ubuntu:24.04"));
+                        assert!(review.contains("deleted automatically"));
+                        assert!(!review.contains("Manifest to create"));
                         assert_eq!(state.lock().await.created, 0);
                         if approve {
                             state.lock().await.wrong_node = true;
@@ -629,11 +622,8 @@ async fn orphan_delete_cancellation_and_concurrent_changes_never_delete() {
     f.state.lock().await.deny_delete = false;
     let result = manager
         .remove_other(f.client.clone(), resource.clone(), |review| async move {
-            assert!(
-                review.contains("DELETE debug Pod")
-                    && review.contains("debug-uid")
-                    && review.contains("Resource version: \"10\"")
-            );
+            assert!(review.starts_with("Delete debug Pod"));
+            assert!(!review.contains("resourceVersion"));
             Ok(false)
         })
         .await
@@ -674,7 +664,7 @@ async fn create_consent_covers_lifecycle_and_cleanup_never_prompts() {
                 let prompts = observed.clone();
                 async move {
                     prompts.fetch_add(1, Ordering::SeqCst);
-                    assert!(review.starts_with("CREATE privileged"));
+                    assert!(review.starts_with("Open a root shell"));
                     assert!(review.contains("deleted automatically"));
                     Ok(true)
                 }

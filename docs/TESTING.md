@@ -3,6 +3,9 @@
 | Command | Coverage |
 | --- | --- |
 | `pnpm test` | Pure logic, state, parsing, resource identity, adapters, permissions and cancellation contracts. |
+| `cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml` | Provider stream decoding, model metadata, conversation compaction and runtime tests using a local HTTP server. |
+| `cargo test --locked --manifest-path crates/kubiki-tools/Cargo.toml` | Policy, reviewed execution, accepted identities and receipt-bound verification against fake Kubernetes HTTP. |
+| `cargo test --locked --manifest-path crates/kubiki-mcp/Cargo.toml` | MCP protocol, scope and request cancellation isolation. |
 | `pnpm test:desktop` | Build provenance, updater manifests, publication gates, release channels and VirusTotal request pacing/report verification. No public files are uploaded by these tests. |
 | `pnpm test:extensions` | Extension package validation, capabilities, settings, cancellation and local host process/RPC lifecycles. |
 | `pnpm test:e2e` | Standard browser regression suite, including large inventories, stream cleanup, reviewed operations and representative responsive layouts. |
@@ -18,6 +21,62 @@ pnpm test:e2e
 ```
 
 ## Browser runtime and isolation
+
+`tests/e2e/ai_agent.spec.ts` uses mocked native IPC for dynamic model discovery,
+credentials, permission editing, streamed chat, resource entry points, proposals
+and Stop. OpenCode fixtures cover pending startup, Stop before font loading,
+known pre-start failures and ambiguous delivery without task replay.
+`terminal_rendering.spec.ts` checks the shared grid, modern emoji widths, DOM
+fallback, renderer context loss and fitting after resize/hidden-pane restoration.
+Transport tests explicitly disable WebGL to inspect DOM text; rendering tests use
+the available renderer and verify the public terminal buffer. The OpenCode fixture
+checks early terminal queries before startup acknowledgement and live font changes.
+Agent Rust tests do not call paid providers or a live cluster. Core
+`revocable_mutation_tests` verifies cancellation after commit's final read prevents
+an actual write. These fixtures do not establish real model quality or OS keyring
+behavior on every platform.
+
+`workspace_areas.test.ts` covers section selection, split restoration, scoped tab
+closing, persisted workspace migration and resource demand from hidden views.
+It also checks that closing a resource detail or YAML tab retains the search of
+an open table. `workspace_layers.spec.ts` measures full-width document panes with
+the inspector open/closed and resized, tests hit ordering over document-local
+z-indices, and checks dock/inspector boundaries at desktop, narrow and 200% scale.
+The exec scenario checks that Escape reaches the PTY when search is closed.
+`agent_domain.test.ts` isolates replaced sessions' events/completion while keeping
+dispatched operation receipts during Stop. Native manifest tests exercise both
+Secret volume schemas, including misleading unknown fields; runtime tests cover
+one plan reconciliation pass after fresh evidence and isolation across turns.
+`kubiki-tools/tests/data_permissions.rs` blocks generic Event/Metrics reads and
+lists before any HTTP call, including with broad content rules, and verifies
+that policy updates revoke evidence without reusing its IDs. MCP protocol tests
+cover direct phase-denied calls and late results after revocation. AI runtime
+tests reuse a session after policy changes without replaying old context; native
+tests verify session/scope retention and restrictive settings round trips.
+Browser AI scenarios change the external server phase without restarting its
+terminal and continue an integrated conversation after editing permissions.
+`sidebar_navigation.spec.ts` checks whole-workspace switching, tree filters,
+topology scope and AI drafts. AI browser scenarios also verify that section
+navigation preserves a running conversation without stopping it.
+
+`settings_layout.spec.ts` covers desktop, narrow and 200% scale settings:
+controls stay within the content area, checkbox labels toggle their inputs,
+streaming disables the polling interval, search exposes advanced log settings,
+and category changes reset scrolling. Topology shows the effective update
+interval in Performance mode while retaining the saved interval for other
+profiles. AI scenarios verify that rule-matching help changes with its selected
+semantics and that only discovered integrations show a detection label in Auto.
+
+`topology_readiness.test.ts` distinguishes unknown collections from empty
+snapshots, verifies context and namespace coverage, and covers failed,
+unsupported, stopped and demo collections. `topology_loading.spec.ts` delays
+individual Kubernetes reads and Helm inventory and counts actual ELK requests:
+the namespace chooser shows only names and does not request diagram collections
+before selection. The first diagram must have one layout after all required inputs settle,
+including a denied API and dependencies discovered on a later focused-graph
+pass. A failed dependency pass must not retry itself. Further scenarios check
+visible/total counters and retain the scene and camera during live structural
+updates, including replacement of shared Helm items by another reader.
 
 The suite uses two workers across independent files. Tests within one file stay
 sequential. On a small machine, use `pnpm test:e2e --workers=1`.
@@ -35,6 +94,29 @@ not prove live-cluster transport, installed native applications or macOS GPU FPS
 server startup. Some scenarios import `/src` modules, so the entire suite still
 requires Vite; production-preview runs must select compatible scenarios.
 
+## Native Kubernetes TLS regression
+
+`src-tauri/src/kubernetes_tls_tests.rs` constructs real HTTPS clients with the
+desktop's complete dependency feature graph. It checks Kubernetes-first and
+AI-first startup in isolated subprocesses: Rustls's process-global provider must
+not be initialized accidentally by another parallel test. A mocked Kubernetes
+service or a standalone core build cannot catch conflicts introduced by desktop
+dependencies. AI uses `rustls-no-provider` with the existing Ring backend, matching
+Kubernetes and the updater; enabling reqwest's `rustls` feature also adds AWS-LC
+and can make kube's automatic crypto-provider selection panic.
+
+The current-context probe is ignored in CI. To explicitly check connectivity using
+the actual native client before and after AI initialization, run:
+
+```sh
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib \
+  kubernetes_tls_tests::current_cluster_version_is_reachable_before_and_after_ai \
+  -- --exact --ignored --nocapture
+```
+
+This probe uses the current kubeconfig context and only requests `/version`.
+It does not change configuration or Kubernetes resources.
+
 ## Standard and full layout coverage
 
 The standard matrix has desktop, tablet and narrow/high-scale cases for details,
@@ -50,7 +132,8 @@ of test worker count. It does not skip required test jobs or change failure poli
 ## Reports and diagnostic images
 
 Every normal run writes **`test-results/report.json`** with per-scenario timings
-and results. CI retains it in `interface-test-results` even on success and writes
+and results. CI retains a report for each shard in `interface-test-results-1` and
+`interface-test-results-2` even on success and writes
 the ten slowest scenarios into the job summary. Generate that summary locally:
 
 ```sh

@@ -1,18 +1,14 @@
-//! Prepared Helm operations: immutable inputs, backend review and post-consent checks.
+//! Helm operations with frozen inputs and a concise backend confirmation.
 //! Helm CLI has no atomic compare-and-swap against external Helm clients. Never retry writes.
 use super::reader::HelmReader;
-use crate::core::{
-    api::{ApiError, ApiErrorCode, ResourceQuery, ResourceRef},
-    mutations::{MAX_REVIEW_CHARS, REVIEW_TTL},
-};
+use crate::core::api::{ApiError, ApiErrorCode, ResourceQuery, ResourceRef};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
     future::Future,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -53,7 +49,6 @@ pub enum HelmMutation {
         context: String,
         namespace: String,
         name: String,
-        expected_revision: u32,
         keep_history: bool,
         run_hooks: bool,
     },
@@ -72,6 +67,18 @@ pub enum HelmMutation {
 }
 
 impl HelmMutation {
+    pub fn operation(&self) -> &'static str {
+        match self {
+            Self::Install { .. } => "install",
+            Self::Upgrade { .. } => "upgrade",
+            Self::Rollback { .. } => "rollback",
+            Self::Uninstall { .. } => "uninstall",
+            Self::RepositorySet { .. } => "repository_set",
+            Self::RepositoryRemove { .. } => "repository_remove",
+            Self::RepositoryUpdate { .. } => "repository_update",
+        }
+    }
+
     pub fn resource(&self) -> ResourceRef {
         let (context, namespace, name, kind) = match self {
             Self::Install {
@@ -172,11 +179,8 @@ pub struct PreparedHelmMutation {
     request: HelmMutation,
     before: Option<Value>,
     target: Option<Value>,
-    preview: Option<Value>,
     command: Vec<String>,
-    preview_command: Option<Vec<String>>,
-    review: String,
-    prepared_at: Instant,
+    summary: String,
     files: Vec<(PathBuf, Vec<u8>)>,
     repo_config: Option<(PathBuf, Option<Vec<u8>>)>,
     _workspace: Workspace,
@@ -184,24 +188,13 @@ pub struct PreparedHelmMutation {
 
 impl PreparedHelmMutation {
     pub async fn prepare(reader: HelmReader, request: HelmMutation) -> Result<Self, ApiError> {
-        let resource = request.resource();
-        let context = resource
-            .query
-            .namespace
-            .as_ref()
-            .map(|_| resource.query.context.as_str());
         let workspace = Workspace::new()?;
         let mut files = Vec::new();
         let mut before = None;
         let mut target = None;
-        let mut preview = None;
-        let mut preview_command = None;
         let mut repo_config = None;
         let mut command: Vec<String>;
-        let mut review = format!(
-            "Context: {:?}\nNamespace: {:?}\nTarget: {:?}\n",
-            resource.query.context, resource.query.namespace, resource.name
-        );
+        let mut summary = String::new();
         match &request {
             HelmMutation::Install {
                 context,
@@ -240,7 +233,6 @@ impl PreparedHelmMutation {
                 } = &request
                 {
                     check_revision(before.as_ref(), *expected_revision, context)?;
-                    review.push_str(&format!("Current revision: {expected_revision}\n"));
                 }
                 if chart.is_empty()
                     || chart.len() > 2048
@@ -305,7 +297,8 @@ impl PreparedHelmMutation {
                 std::fs::write(&value_file, values)
                     .map_err(|_| error(500, "Cannot freeze values", Some(context)))?;
                 files.push((value_file.clone(), values.as_bytes().to_vec()));
-                let chart_meta = reader
+                // Validate the frozen archive once; rendering happens only in the approved operation.
+                reader
                     .run(
                         &[
                             "show".into(),
@@ -316,7 +309,15 @@ impl PreparedHelmMutation {
                         false,
                     )
                     .await?;
-                review.push_str(&format!("Operation: {}\nChart source: {:?}\nFrozen chart metadata:\n{}\nHooks enabled: {run_hooks}\nWait for readiness: {wait}\n",if install{"INSTALL"}else{"UPGRADE"},chart,chart_meta));
+                summary.push_str(&format!(
+                    "{} release {name} using chart {chart}{}.",
+                    if install { "Install" } else { "Upgrade" },
+                    chart_version
+                        .as_ref()
+                        .filter(|version| !version.is_empty())
+                        .map(|version| format!(" version {version}"))
+                        .unwrap_or_default()
+                ));
                 command = base;
                 command.extend([
                     if install {
@@ -345,37 +346,8 @@ impl PreparedHelmMutation {
                 } = &request
                 {
                     command.push("--create-namespace".into());
-                    review.push_str("Create namespace if absent: true\n");
+                    summary.push_str(" Create the namespace if it does not exist.");
                 }
-                let mut args = command.clone();
-                args.push("--dry-run=server".into());
-                let result = parse_preview(
-                    &reader
-                        .execute(&args, Some(context), false, None, Duration::from_secs(60))
-                        .await?,
-                    context,
-                )?;
-                let old = before.as_ref().unwrap_or(&Value::Null).clone();
-                review.push_str(&release_diff(&old, &result, namespace)?);
-                if install {
-                    let crds = reader
-                        .run(
-                            &[
-                                "show".into(),
-                                "crds".into(),
-                                artifact.to_string_lossy().into(),
-                            ],
-                            Some(context),
-                            false,
-                        )
-                        .await?;
-                    if !crds.trim().is_empty() {
-                        review.push_str("\nChart CRDs (created only if absent; Helm does not delete them on uninstall):\n");
-                        review.push_str(&manifest_diff("", &crds, namespace)?);
-                    }
-                }
-                preview = Some(result);
-                preview_command = Some(args);
             }
             HelmMutation::Rollback {
                 context,
@@ -399,12 +371,7 @@ impl PreparedHelmMutation {
                 let previous = reader
                     .snapshot(context, namespace, name, Some(*revision))
                     .await?;
-                review.push_str(&format!("Operation: ROLLBACK\nCurrent revision: {expected_revision}\nTarget revision: {revision}\nHooks enabled: {run_hooks}\nWait: {wait}\n"));
-                review.push_str(&release_diff(
-                    before.as_ref().unwrap(),
-                    &previous,
-                    namespace,
-                )?);
+                summary.push_str(&format!("Roll back release {name} to revision {revision}."));
                 target = Some(previous);
                 command = base;
                 command.extend([
@@ -424,19 +391,19 @@ impl PreparedHelmMutation {
                 context,
                 namespace,
                 name,
-                expected_revision,
                 keep_history,
                 run_hooks,
             } => {
                 command = HelmReader::release(context, namespace, name)?;
-                before = optional_snapshot(&reader, context, namespace, name).await?;
-                check_revision(before.as_ref(), *expected_revision, context)?;
-                review.push_str(&format!("Operation: UNINSTALL\nCurrent revision: {expected_revision}\nKeep release history: {keep_history}\nHooks enabled: {run_hooks}\nControllers/garbage collection may remove dependent objects. Objects with resource-policy=keep and chart CRDs are retained by Helm.\n"));
-                review.push_str(&release_diff(
-                    before.as_ref().unwrap(),
-                    &Value::Null,
-                    namespace,
-                )?);
+                summary.push_str(&format!(
+                    "Uninstall release {name} and remove its managed Kubernetes resources."
+                ));
+                if *keep_history {
+                    summary.push_str(" Keep the release history.");
+                }
+                if *run_hooks {
+                    summary.push_str(" Run chart hooks.");
+                }
                 command.extend(["uninstall".into(), name.clone(), "--timeout=300s".into()]);
                 if *keep_history {
                     command.push("--keep-history".into());
@@ -470,7 +437,7 @@ impl PreparedHelmMutation {
                         None,
                     ));
                 }
-                review.push_str(&format!("Operation: SET LOCAL REPOSITORY\nURL before: {:?}\nURL after: {:?}\nDownloads the chart index into the local Helm cache.\n",old,url));
+                summary.push_str(&format!("Configure repository {name} at {url}."));
                 command = vec!["repo".into(), "add".into(), name.clone(), url.clone()];
                 if old.is_some() {
                     command.push("--force-update".into());
@@ -490,7 +457,7 @@ impl PreparedHelmMutation {
                         None,
                     ));
                 }
-                review.push_str(&format!("Operation: REMOVE LOCAL REPOSITORY\nURL: {:?}\nRemoves repository configuration and cached index. Installed releases are unaffected.\n",expected_url));
+                summary.push_str(&format!("Remove local repository {name} ({expected_url})."));
                 command = vec!["repo".into(), "remove".into(), name.clone()];
             }
             HelmMutation::RepositoryUpdate { name } => {
@@ -506,9 +473,9 @@ impl PreparedHelmMutation {
                 if selected.is_empty() {
                     return Err(error(404, "No matching repositories configured", None));
                 }
-                review.push_str("Operation: UPDATE LOCAL REPOSITORY CACHE\nFetches and replaces cached chart indexes for:\n");
+                summary.push_str("Refresh the chart index for repositories: ");
                 for repo in selected {
-                    review.push_str(&format!("  {:?}: {:?}\n", repo.name, repo.url));
+                    summary.push_str(&format!("{} ", repo.name));
                 }
                 command = vec!["repo".into(), "update".into()];
                 if let Some(name) = name {
@@ -516,31 +483,20 @@ impl PreparedHelmMutation {
                 }
             }
         }
-        review.push_str("\nHelm templates, hooks and Kubernetes controllers can have effects beyond this preview. Helm CLI cannot atomically lock out other Helm clients. This backend checks the release and frozen inputs again after consent; concurrent external operations remain possible.\n\nApprove this operation? Cancel performs no release/repository change.");
-        if review.chars().count() > MAX_REVIEW_CHARS {
-            return Err(error(
-                422,
-                "Complete Helm review exceeds 24000 characters; reduce the change or use Helm CLI",
-                context,
-            ));
-        }
         Ok(Self {
             reader,
             request,
             before,
             target,
-            preview,
             command,
-            preview_command,
-            review,
-            prepared_at: Instant::now(),
+            summary,
             files,
             repo_config,
             _workspace: workspace,
         })
     }
-    pub fn review(&self) -> &str {
-        &self.review
+    pub fn summary(&self) -> &str {
+        &self.summary
     }
     pub async fn confirm_and_commit<F, Fut>(self, confirm: F) -> Result<Value, ApiError>
     where
@@ -553,7 +509,7 @@ impl PreparedHelmMutation {
             .namespace
             .as_ref()
             .map(|_| resource.query.context.as_str());
-        if !confirm(self.review.clone()).await? {
+        if !confirm(self.summary.clone()).await? {
             let mut e = ApiError::new(
                 ApiErrorCode::Cancelled,
                 "Helm operation cancelled; nothing changed",
@@ -564,14 +520,11 @@ impl PreparedHelmMutation {
             e.retryable = false;
             return Err(e);
         }
-        if self.prepared_at.elapsed() > REVIEW_TTL {
-            return Err(error(
-                409,
-                "Helm confirmation expired; review again",
-                context,
-            ));
-        }
-        if let Some(namespace) = resource.query.namespace.as_deref() {
+        // Uninstall follows Helm CLI semantics: remove the confirmed named release,
+        // even if its cached table revision or live resource statuses have changed.
+        if !matches!(self.request, HelmMutation::Uninstall { .. })
+            && let Some(namespace) = resource.query.namespace.as_deref()
+        {
             let current = optional_snapshot(
                 &self.reader,
                 &resource.query.context,
@@ -579,16 +532,17 @@ impl PreparedHelmMutation {
                 &resource.name,
             )
             .await?;
-            if current != self.before {
+            if release_identity(current.as_ref()) != release_identity(self.before.as_ref()) {
                 return Err(error(
                     409,
-                    "Release changed while confirmation was open; refresh and review again",
+                    "Release revision or state changed. Refresh the release before trying again.",
                     context,
                 ));
             }
             if let HelmMutation::Rollback { revision, .. } = self.request {
-                if Some(
-                    self.reader
+                if release_identity(Some(
+                    &self
+                        .reader
                         .snapshot(
                             &resource.query.context,
                             namespace,
@@ -596,7 +550,7 @@ impl PreparedHelmMutation {
                             Some(revision),
                         )
                         .await?,
-                ) != self.target
+                )) != release_identity(self.target.as_ref())
                 {
                     return Err(error(409, "Rollback target changed; refresh", context));
                 }
@@ -606,7 +560,7 @@ impl PreparedHelmMutation {
             if read_optional(path)? != *bytes {
                 return Err(error(
                     409,
-                    "Local repository configuration changed; refresh and review again",
+                    "Local repository configuration changed. Open the operation again.",
                     context,
                 ));
             }
@@ -615,51 +569,10 @@ impl PreparedHelmMutation {
             if read_bounded(path, 64 * 1024 * 1024)? != *bytes {
                 return Err(error(
                     409,
-                    "Prepared chart or values changed; review again",
+                    "Prepared chart or values changed. Open the operation again.",
                     context,
                 ));
             }
-        }
-        if let Some(args) = &self.preview_command {
-            let rendered = parse_preview(
-                &self
-                    .reader
-                    .execute(args, context, false, None, Duration::from_secs(60))
-                    .await?,
-                context.unwrap(),
-            )?;
-            if render_identity(&rendered) != render_identity(self.preview.as_ref().unwrap()) {
-                return Err(error(
-                    409,
-                    "Chart rendering changed since preview (lookup/random/time-dependent templates); review again",
-                    context,
-                ));
-            }
-        }
-        // The server dry-run can take time; narrow the external-client race again.
-        if let Some(namespace) = resource.query.namespace.as_deref() {
-            if optional_snapshot(
-                &self.reader,
-                &resource.query.context,
-                namespace,
-                &resource.name,
-            )
-            .await?
-                != self.before
-            {
-                return Err(error(
-                    409,
-                    "Release changed during the final preview; review again",
-                    context,
-                ));
-            }
-        }
-        if self.prepared_at.elapsed() > REVIEW_TTL {
-            return Err(error(
-                409,
-                "Helm confirmation expired before execution; review again",
-                context,
-            ));
         }
         let result = self
             .reader
@@ -765,109 +678,10 @@ async fn repository_config(reader: &HelmReader) -> Result<(PathBuf, Option<Vec<u
     let bytes = read_optional(&path)?;
     Ok((path, bytes))
 }
-fn parse_preview(text: &str, context: &str) -> Result<Value, ApiError> {
-    let value: Value = serde_json::from_str(text)
-        .map_err(|_| error(500, "Helm dry-run returned invalid JSON", Some(context)))?;
-    if !value["manifest"].is_string() {
-        return Err(error(
-            500,
-            "Helm dry-run returned no manifest",
-            Some(context),
-        ));
-    }
-    Ok(value)
-}
-fn render_identity(value: &Value) -> Value {
-    json!({"manifest":value["manifest"],"config":value["config"],"hooks":value["hooks"].as_array().map(|hooks|hooks.iter().map(|hook|json!({"manifest":hook["manifest"],"events":hook["events"],"delete_policies":hook["delete_policies"]})).collect::<Vec<_>>())})
-}
-fn release_diff(before: &Value, after: &Value, namespace: &str) -> Result<String, ApiError> {
-    let mut result = manifest_diff(
-        before["manifest"].as_str().unwrap_or(""),
-        after["manifest"].as_str().unwrap_or(""),
-        namespace,
-    )?;
-    result.push_str("\nValues changes:\n");
-    json_diff("values", &before["config"], &after["config"], &mut result);
-    for (label, value) in [("Previous hooks", before), ("Proposed hooks", after)] {
-        if let Some(hooks) = value["hooks"].as_array() {
-            for hook in hooks {
-                result.push_str(&format!(
-                    "\n{label}: name={} events={} delete_policies={}\n",
-                    hook["name"], hook["events"], hook["delete_policies"]
-                ));
-            }
-        }
-    }
-    Ok(result)
-}
-fn documents(text: &str, namespace: &str) -> Result<BTreeMap<String, Value>, ApiError> {
-    let mut result = BTreeMap::new();
-    for document in serde_yaml::Deserializer::from_str(text) {
-        let value = Value::deserialize(document)
-            .map_err(|_| error(422, "Rendered manifest is not valid YAML", None))?;
-        if value.is_null() {
-            continue;
-        }
-        let kind = value["kind"]
-            .as_str()
-            .ok_or_else(|| error(422, "Rendered object has no kind", None))?;
-        let name = value["metadata"]["name"]
-            .as_str()
-            .or(value["metadata"]["generateName"].as_str())
-            .ok_or_else(|| error(422, "Rendered object has no name", None))?;
-        let key = format!(
-            "{}/{}/{}/{}",
-            value["apiVersion"].as_str().unwrap_or(""),
-            kind,
-            value["metadata"]["namespace"].as_str().unwrap_or(namespace),
-            name
-        );
-        if result.insert(key, value).is_some() {
-            return Err(error(422, "Duplicate rendered object identity", None));
-        }
-    }
-    Ok(result)
-}
-fn manifest_diff(before: &str, after: &str, namespace: &str) -> Result<String, ApiError> {
-    let a = documents(before, namespace)?;
-    let b = documents(after, namespace)?;
-    let mut result = String::from("\nRendered object changes:\n");
-    for key in a.keys().chain(b.keys()).collect::<BTreeSet<_>>() {
-        let action = match (a.get(key), b.get(key)) {
-            (None, Some(_)) => "CREATE",
-            (Some(value), None)
-                if value["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep" =>
-            {
-                "KEEP (resource-policy=keep)"
-            }
-            (Some(_), None) => "DELETE",
-            (Some(old), Some(new)) if old != new => "UPDATE",
-            _ => continue,
-        };
-        result.push_str(&format!("{action} {key}\n"));
-    }
-    Ok(result)
-}
-fn json_diff(path: &str, before: &Value, after: &Value, out: &mut String) {
-    if before == after {
-        return;
-    }
-    if let (Some(a), Some(b)) = (before.as_object(), after.as_object()) {
-        for key in a.keys().chain(b.keys()).collect::<BTreeSet<_>>() {
-            let key = key.replace('~', "~0").replace('/', "~1");
-            json_diff(
-                &format!("{path}/{key}"),
-                a.get(&key.replace("~1", "/").replace("~0", "~"))
-                    .unwrap_or(&Value::Null),
-                b.get(&key.replace("~1", "/").replace("~0", "~"))
-                    .unwrap_or(&Value::Null),
-                out,
-            );
-        }
-    } else {
-        out.push_str(&format!(
-            "  {:?}: BEFORE {} → AFTER {}\n",
-            path, before, after
-        ));
-    }
+/// Ignore volatile status output; only a real release revision/state transition invalidates an upgrade.
+fn release_identity(value: Option<&Value>) -> Value {
+    value.map(|value| json!({
+        "name": value["name"], "namespace": value["namespace"], "version": value["version"],
+        "first_deployed": value["info"]["first_deployed"], "status": value["info"]["status"],
+    })).unwrap_or(Value::Null)
 }

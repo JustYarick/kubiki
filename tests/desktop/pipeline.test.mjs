@@ -24,11 +24,11 @@ test('manual CI publishes by default and invokes the same pipeline as tag releas
   assert.equal(release.on.workflow_dispatch.inputs.run_tests.default, false);
   assert.equal(release.on.workflow_call.inputs.run_tests.default, true);
   assert.equal(ci.jobs.pipeline.with.publish, "${{ github.event_name == 'workflow_dispatch' && inputs.trigger_release }}");
-  assert.deepEqual(new Set(release.jobs.publish.needs), new Set(['prepare', 'desktop']));
+  assert.deepEqual(new Set(release.jobs.publish.needs), new Set(['prepare', 'web_assets', 'frontend', 'interface', 'desktop']));
   assert.equal(release.on.workflow_dispatch.inputs.virustotal_scan.default, true);
   assert.equal(release.on.workflow_call.inputs.virustotal_scan.default, true);
   assert.deepEqual(new Set(release.jobs.desktop.strategy.matrix.include.map(t => t.target)), new Set(Object.keys(DESKTOP_TARGETS)));
-  assert.equal(release.jobs.desktop.needs.includes('interface'), true);
+  assert.deepEqual(release.jobs.desktop.needs, ['prepare', 'web_assets']);
 });
 
 // The workflow's conditions use the shared JS-compatible subset of GitHub
@@ -49,6 +49,7 @@ async function workflowJobs() {
 function jobResults(runTests, overrides = {}) {
   return {
     prepare: { result: 'success', outputs: { run_tests: String(runTests), publish: 'true', virustotal_scan: 'true' } },
+    web_assets: { result: 'success' },
     frontend: { result: runTests ? 'success' : 'skipped' },
     interface: { result: runTests ? 'success' : 'skipped' },
     desktop: { result: 'success' },
@@ -70,7 +71,7 @@ test('release-only mode skips every test suite and still runs installer builds a
   assert.equal(workflowIf(jobs.publish.if, { needs }), true);
 });
 
-test('full pipeline runs all test suites and requires successful frontend and browser tests', async () => {
+test('installer compilation overlaps tests while publication requires successful test suites', async () => {
   const jobs = await workflowJobs();
   const needs = jobResults(true);
   assert.equal(workflowIf(jobs.frontend.if, { needs }), true);
@@ -79,7 +80,10 @@ test('full pipeline runs all test suites and requires successful frontend and br
   assert.equal(workflowIf(jobs.desktop.if, { needs }), true);
   for (const suite of ['frontend', 'interface']) {
     for (const result of ['failure', 'cancelled', 'skipped']) {
-      assert.equal(workflowIf(jobs.desktop.if, { needs: jobResults(true, { [suite]: { result } }) }), false, `${suite}: ${result}`);
+      const failingNeeds = jobResults(true, { [suite]: { result } });
+      assert.equal(workflowIf(jobs.desktop.if, { needs: failingNeeds }), true, `${suite}: builds overlap tests`);
+      assert.equal(workflowIf(jobs.publish.if, { needs: failingNeeds }), false, `${suite}: ${result}`);
+      assert.equal(workflowIf(jobs.malware_scan.if, { needs: failingNeeds }), false, `${suite}: ${result}`);
     }
   }
 });
@@ -93,6 +97,9 @@ test('build failure, preparation failure, cancellation and disabled publication 
     for (const result of ['failure', 'cancelled', 'skipped']) {
       assert.equal(workflowIf(jobs.publish.if, { needs: jobResults(runTests, { desktop: { result } }) }), false);
       assert.equal(workflowIf(jobs.malware_scan.if, { needs: jobResults(runTests, { desktop: { result } }) }), false);
+      const failedWeb = jobResults(runTests, { web_assets: { result } });
+      assert.equal(workflowIf(jobs.desktop.if, { needs: failedWeb }), false);
+      assert.equal(workflowIf(jobs.publish.if, { needs: failedWeb }), false);
       const failedPrepare = jobResults(runTests, { prepare: { ...needs.prepare, result } });
       assert.equal(workflowIf(jobs.desktop.if, { needs: failedPrepare }), false);
       assert.equal(workflowIf(jobs.publish.if, { needs: failedPrepare }), false);
@@ -107,7 +114,7 @@ test('build failure, preparation failure, cancellation and disabled publication 
 
 test('the optional scanner runs serialized, never blocks publication and retains its report artifact', async () => {
   const jobs = await workflowJobs();
-  assert.deepEqual(new Set(jobs.malware_scan.needs), new Set(['prepare', 'desktop']));
+  assert.deepEqual(new Set(jobs.malware_scan.needs), new Set(['prepare', 'web_assets', 'frontend', 'interface', 'desktop']));
   assert.deepEqual(jobs.malware_scan.concurrency, { group: 'virustotal-public-api', 'cancel-in-progress': false });
   assert.equal(jobs.malware_scan.strategy, undefined);
   assert.equal(jobs.malware_scan['continue-on-error'], true);
@@ -116,7 +123,7 @@ test('the optional scanner runs serialized, never blocks publication and retains
   assert.equal(scan.env.VIRUSTOTAL_API_KEY, '${{ secrets.VIRUSTOTAL_API_KEY }}');
   const upload = jobs.malware_scan.steps.find(step => step.uses?.startsWith('actions/upload-artifact@'));
   assert.equal(upload.if, 'always()');
-  assert.deepEqual(new Set(jobs.publish.needs), new Set(['prepare', 'desktop']));
+  assert.deepEqual(new Set(jobs.publish.needs), new Set(['prepare', 'web_assets', 'frontend', 'interface', 'desktop']));
   assert.equal(jobs.publish.if.includes('malware_scan'), false);
   assert.equal(jobs.publish.steps.some(step => step.uses?.startsWith('actions/download-artifact@') && step.with.name === upload.with.name), false);
   // A failed or skipped scan cannot influence the run outcome or publication.
@@ -146,7 +153,7 @@ test('release tests require run_tests and tag pushes do not enable them implicit
 
 test('publication keeps the full layout matrix while ordinary CI uses the standard matrix', async () => {
   const jobs = await workflowJobs();
-  const step = jobs.interface.steps.find(step => step.run === 'pnpm test:e2e');
+  const step = jobs.interface.steps.find(step => step.run?.startsWith('pnpm test:e2e --shard='));
   for (const publish of ['true', 'false']) {
     const needs = { prepare: { outputs: { publish } } };
     assert.equal(workflowIf(step.env.E2E_FULL_LAYOUT, { needs }), publish === 'true' ? '1' : '0');

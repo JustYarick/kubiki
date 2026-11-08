@@ -1,5 +1,63 @@
 import { captureScreenshot } from './helpers/screenshots';
 import { test, expect, type Page } from '@playwright/test';
+import { selectDiagramNamespaces } from './helpers/topology';
+
+test('Explorer, topology and agent switch the whole workspace and preserve their documents', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/?demo=1');
+  const explorer = page.getByTestId('explorer-panel');
+  const tabs = page.getByRole('tablist', { name: 'Workspace tabs' });
+  const explorerButton = page.getByRole('button', { name: 'Cluster Explorer', exact: true });
+  const topologyButton = page.getByRole('button', { name: 'Cluster topology', exact: true });
+  const agentButton = page.getByRole('button', { name: 'AI Agent', exact: true });
+  await explorer.getByRole('button', { name: 'Expand All', exact: true }).click();
+  await explorer.locator('[data-resource-type="Pod"]').click();
+  await explorer.locator('[data-resource-type="Service"]').click();
+  await page.getByRole('button', { name: 'Split Editor', exact: true }).click();
+  await expect(page.getByTestId('workspace-tab-panel').filter({ visible: true })).toHaveCount(2);
+  await explorer.getByPlaceholder('Filter tree (e.g. pods, cm)…').fill('services');
+
+  await topologyButton.click();
+  await expect(explorer).not.toBeVisible();
+  await expect(topologyButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(explorerButton).toHaveAttribute('aria-pressed', 'false');
+  await expect(tabs.getByRole('tab')).toHaveCount(1);
+  await selectDiagramNamespaces(page, ['backend']);
+  await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', 'namespaces:backend');
+  await expect(page.locator('.react-flow__node').first()).toBeVisible();
+  await expect(page.getByText('Arranging topology…')).toHaveCount(0);
+  await captureScreenshot(page, { path: 'test-results/workspace-topology-section.png', animations: 'disabled' });
+
+  await agentButton.click();
+  await expect(explorer).not.toBeVisible();
+  await expect(agentButton).toHaveAttribute('aria-pressed', 'true');
+  const agent = page.getByRole('region', { name: 'AI Agent workspace', exact: true });
+  await agent.getByRole('textbox', { name: 'Message AI agent' }).fill('Keep this draft while switching sections');
+  await expect(tabs.getByRole('tab')).toHaveCount(1);
+  await expect(tabs.getByRole('tab')).toContainText('AI Agent');
+  expect(await agent.locator('.ai-transcript').evaluate(element => element.scrollTop)).toBe(0);
+  await captureScreenshot(page, { path: 'test-results/workspace-agent-section.png', animations: 'disabled' });
+
+  await explorerButton.click();
+  await expect(explorer).toBeVisible();
+  await expect(explorer.getByPlaceholder('Filter tree (e.g. pods, cm)…')).toHaveValue('services');
+  await expect(tabs.getByRole('tab', { selected: true })).toContainText('Services');
+  await expect(page.getByTestId('workspace-tab-panel').filter({ visible: true })).toHaveCount(2);
+  await topologyButton.click();
+  await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', 'namespaces:backend');
+  await agentButton.click();
+  await expect(agent.getByRole('textbox', { name: 'Message AI agent' })).toHaveValue('Keep this draft while switching sections');
+  await page.keyboard.press('Control+b');
+  await expect(explorer).toBeVisible();
+  await expect(explorerButton).toHaveAttribute('aria-pressed', 'true');
+  await agentButton.click();
+  await tabs.getByRole('tab').getByRole('button', { name: 'Close tab', exact: true }).click();
+  await expect(explorer).not.toBeVisible();
+  await expect(tabs.getByRole('tab')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open AI Agent', exact: true }).click();
+  await expect(agent.getByRole('textbox', { name: 'Message AI agent' })).toHaveValue('Keep this draft while switching sections');
+  expect(errors).toEqual([]);
+});
 
 async function customApi(page: Page) {
   await page.route('**/api/k8s/**', route => {

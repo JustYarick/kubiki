@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useTableViewStore } from '../../src/state/table_view_store';
+import { useTableViewStore, partializeTableViews } from '../../src/state/table_view_store';
 import { useUiStore } from '../../src/state/ui_store';
 
 describe('useTableViewStore', () => {
@@ -38,6 +38,20 @@ describe('useTableViewStore', () => {
 
     store.resetAll();
     expect(Object.keys(useTableViewStore.getState().views)).toHaveLength(0);
+  });
+
+  it('excludes ephemeral search queries from persisted state via partialize', () => {
+    const store = useTableViewStore.getState();
+    store.update('kind:Pod', {
+      searchQuery: 'ephemeral-query',
+      searchRegex: true,
+      sorts: [{ columnId: 'name', direction: 'asc' }],
+    });
+
+    const persisted = partializeTableViews(useTableViewStore.getState());
+    expect(persisted.views['kind:Pod'].searchQuery).toBe('');
+    expect(persisted.views['kind:Pod'].searchRegex).toBe(false);
+    expect(persisted.views['kind:Pod'].sorts).toEqual([{ columnId: 'name', direction: 'asc' }]);
   });
 });
 

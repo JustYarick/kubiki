@@ -31,77 +31,50 @@ pub struct HostTerminalRequest {
     pub shell: Option<String>,
     pub cols: u16,
     pub rows: u16,
-    #[serde(default)]
-    pub analysis: Option<AnalysisRequest>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AnalysisAgent {
-    Codex,
-    Opencode,
-    Claude,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AnalysisRequest {
-    pub agent: AnalysisAgent,
-    pub prompt: String,
-}
-
-/// The prompt is a single argv value; resource text never becomes shell code.
-pub fn analysis_command(request: &AnalysisRequest) -> Result<CommandBuilder, ApiError> {
-    if request.prompt.trim().is_empty()
-        || request.prompt.len() > 65536
-        || request.prompt.contains('\0')
-    {
-        return Err(error(
-            400,
-            "Analysis prompt must contain 1–65536 bytes without NUL characters",
-        ));
-    }
-    let mut command = match request.agent {
-        AnalysisAgent::Codex => {
-            let mut command = CommandBuilder::new("codex");
-            command.args(["--sandbox", "read-only", "--ask-for-approval", "never"]);
-            command.arg(&request.prompt);
-            command
-        }
-        AnalysisAgent::Opencode => {
-            let mut command = CommandBuilder::new("opencode");
-            command.arg("--prompt");
-            command.arg(&request.prompt);
-            command.env(
-                "OPENCODE_PERMISSION",
-                r#"{"*":"deny","bash":"deny","edit":"deny","task":"deny","webfetch":"deny"}"#,
-            );
-            command.env("OPENCODE_DISABLE_AUTOUPDATE", "true");
-            command
-        }
-        AnalysisAgent::Claude => {
-            let mut command = CommandBuilder::new("claude");
-            command.args([
-                "--permission-mode",
-                "plan",
-                "--tools",
-                "",
-                "--strict-mcp-config",
-                "--mcp-config",
-                r#"{"mcpServers":{}}"#,
-                "--",
-            ]);
-            command.arg(&request.prompt);
-            command
-        }
-    };
-    command.env("KUBIKI_ANALYSIS_ONLY", "1");
-    Ok(command)
+/// Trusted native process specification. Never accepted from terminal renderer IPC.
+#[derive(Clone, Debug)]
+pub struct HostProcess {
+    pub program: std::path::PathBuf,
+    pub args: Vec<String>,
+    pub cwd: std::path::PathBuf,
+    pub environment: Vec<(String, String)>,
 }
 fn error(status: u16, message: impl Into<String>) -> ApiError {
     ApiError::from_status(status, message, "host_terminal", None)
 }
 fn internal(message: impl Into<String>) -> ApiError {
     ApiError::new(ApiErrorCode::Internal, message, "host_terminal", None, None)
+}
+fn terminal_environment(command: &mut CommandBuilder) {
+    // The parent may be Ghostty/Kitty/tmux, but this PTY is rendered by xterm.js.
+    // Inherited capabilities and fixed dimensions mislead full-screen TUIs.
+    for key in [
+        "KITTY_WINDOW_ID",
+        "KITTY_PID",
+        "WEZTERM_PANE",
+        "WEZTERM_EXECUTABLE",
+        "GHOSTTY_RESOURCES_DIR",
+        "GHOSTTY_BIN_DIR",
+        "VTE_VERSION",
+        "ITERM_SESSION_ID",
+        "ITERM_PROFILE",
+        "WT_SESSION",
+        "WT_PROFILE_ID",
+        "TMUX",
+        "TMUX_PANE",
+        "STY",
+        "WINDOWID",
+        "COLUMNS",
+        "LINES",
+    ] {
+        command.env_remove(key);
+    }
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("TERM_PROGRAM", "kubiki");
+    command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
 }
 pub fn host_terminal_info() -> Result<HostTerminalInfo, ApiError> {
     let cwd = dirs::home_dir()
@@ -187,23 +160,55 @@ impl HostTerminalManager {
         id: &str,
         request: HostTerminalRequest,
     ) -> Result<ExecSubscription, ApiError> {
-        size(request.cols, request.rows)?;
-        if let Some(analysis) = &request.analysis {
-            analysis_command(analysis)?;
+        self.start_inner(owner, id, request, None).await
+    }
+    pub async fn start_process(
+        &self,
+        owner: &str,
+        id: &str,
+        request: HostTerminalRequest,
+        process: HostProcess,
+    ) -> Result<ExecSubscription, ApiError> {
+        if !process.program.is_absolute()
+            || !process.program.is_file()
+            || !process.cwd.is_absolute()
+            || !process.cwd.is_dir()
+        {
+            return Err(error(
+                400,
+                "Agent executable and working directory must exist",
+            ));
         }
+        self.start_inner(owner, id, request, Some(process)).await
+    }
+    async fn start_inner(
+        &self,
+        owner: &str,
+        id: &str,
+        request: HostTerminalRequest,
+        process: Option<HostProcess>,
+    ) -> Result<ExecSubscription, ApiError> {
+        size(request.cols, request.rows)?;
         if id.is_empty()
             || id.len() > 128
             || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
         {
             return Err(error(400, "Invalid host terminal session ID"));
         }
-        let info = host_terminal_info()?;
+        let mut info = host_terminal_info()?;
+        if let Some(p) = &process {
+            info.cwd = p.cwd.to_string_lossy().into();
+        }
         let shell = request
             .shell
             .as_ref()
             .unwrap_or(&info.default_shell)
             .clone();
-        if !info.shells.contains(&shell) {
+        let shell = process
+            .as_ref()
+            .map(|p| p.program.to_string_lossy().into_owned())
+            .unwrap_or(shell);
+        if process.is_none() && !info.shells.contains(&shell) {
             return Err(error(400, "Choose one of the available local shells"));
         }
         let mut sessions = self.inner.sessions.lock().await;
@@ -225,6 +230,7 @@ impl HostTerminalManager {
                 &request,
                 &info,
                 &shell,
+                process,
                 controls,
                 &output,
                 sequence.clone(),
@@ -422,6 +428,7 @@ fn run(
     request: &HostTerminalRequest,
     info: &HostTerminalInfo,
     shell: &str,
+    process: Option<HostProcess>,
     mut controls: mpsc::Receiver<Control>,
     output: &mpsc::Sender<ExecMessage>,
     sequence: Arc<AtomicU64>,
@@ -451,17 +458,17 @@ fn run(
             return Err(internal(std::io::Error::last_os_error().to_string()));
         }
     }
-    let mut command = if let Some(analysis) = &request.analysis {
-        analysis_command(analysis)?
-    } else {
-        CommandBuilder::new(shell)
-    };
+    let mut command = CommandBuilder::new(shell);
     command.cwd(&info.cwd);
-    command.env("TERM", "xterm-256color");
-    command.env("COLORTERM", "truecolor");
-    #[cfg(unix)]
-    {
-        if request.analysis.is_none() {
+    terminal_environment(&mut command);
+    if let Some(process) = process {
+        command.args(process.args);
+        for (key, value) in process.environment {
+            command.env(key, value);
+        }
+    } else {
+        #[cfg(unix)]
+        {
             command.arg("-l");
             command.arg("-i");
         }
@@ -718,5 +725,55 @@ mod tests {
             reaped: false,
             workers: vec![worker],
         });
+    }
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::*;
+    #[test]
+    fn embedded_pty_does_not_claim_parent_terminal_capabilities_or_dimensions() {
+        let mut command = CommandBuilder::new("shell");
+        for key in [
+            "KITTY_WINDOW_ID",
+            "WEZTERM_PANE",
+            "GHOSTTY_RESOURCES_DIR",
+            "TMUX",
+            "VTE_VERSION",
+            "COLUMNS",
+            "LINES",
+        ] {
+            command.env(key, "parent-value");
+        }
+        command.env("TERM_PROGRAM", "ghostty");
+        command.env("USER_SHELL_SETTING", "keep-me");
+        terminal_environment(&mut command);
+        for key in [
+            "KITTY_WINDOW_ID",
+            "WEZTERM_PANE",
+            "GHOSTTY_RESOURCES_DIR",
+            "TMUX",
+            "VTE_VERSION",
+            "COLUMNS",
+            "LINES",
+        ] {
+            assert!(command.get_env(key).is_none(), "{key}");
+        }
+        assert_eq!(
+            command.get_env("TERM_PROGRAM"),
+            Some(std::ffi::OsStr::new("kubiki"))
+        );
+        assert_eq!(
+            command.get_env("TERM"),
+            Some(std::ffi::OsStr::new("xterm-256color"))
+        );
+        assert_eq!(
+            command.get_env("COLORTERM"),
+            Some(std::ffi::OsStr::new("truecolor"))
+        );
+        assert_eq!(
+            command.get_env("USER_SHELL_SETTING"),
+            Some(std::ffi::OsStr::new("keep-me"))
+        );
     }
 }

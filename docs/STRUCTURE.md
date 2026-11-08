@@ -8,6 +8,7 @@ Kubiki is a desktop Kubernetes workspace built with React 19, TypeScript, Tauri 
 - [Frontend](#frontend)
 - [Desktop shell](#desktop-shell)
 - [Kubernetes engine](#kubernetes-engine)
+- [AI domain](#ai-domain)
 - [Resource synchronization](#resource-synchronization)
 - [Resource mutations](#resource-mutations)
 - [Diagnostic sessions](#diagnostic-sessions)
@@ -23,7 +24,10 @@ kubiki/
 ├── src/                        React interface, providers, state, resource logic
 ├── src-tauri/                  Tauri desktop shell and Rust IPC handlers
 ├── crates/
-│   └── kubiki-core/            Rust Kubernetes engine
+│   ├── kubiki-core/            Rust Kubernetes engine
+│   ├── kubiki-ai/              Provider loop, conversation memory and installed skills
+│   ├── kubiki-tools/           Cluster tools, scope/policy, receipts and verification
+│   └── kubiki-mcp/             Shared MCP dispatcher, standalone CLI and attach bridge
 ├── packages/                   Extension SDK, author tools and Node controller/workers
 ├── extensions/                 Bundled SDK Diagnostics package
 ├── scripts/                    Builds, runtime preparation and release validation
@@ -37,7 +41,9 @@ kubiki/
 
 ## Frontend
 
-The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Monaco provides the YAML editor, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
+The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Monaco provides code editors and document viewers, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
+
+`src/components/ui/CodeEditor.tsx` is the shared embedded editor for Helm documents and values, Secret and ConfigMap values, new resource manifests, nested YAML fields, and annotation source. It includes search, replacement in editable fields, line numbers, wrapping, and explicit YAML/JSON formatting. `core/code_language.ts` detects syntax from data key filenames or valid JSON objects/arrays. Models belong to individual mounted fields and are disposed on unmount; hidden Secret values do not mount an editor. `views/monaco_setup.ts` shares the theme, bundled workers, and language registration with the full resource YAML editor, which retains its resource draft/apply workflow.
 
 ### Views and navigation
 
@@ -50,11 +56,21 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 | `src/views/TopologyCanvas.tsx` | Interactive graph presentation. |
 | `src/views/HelmView.tsx` | Release and repository navigation, release inspection, and action entry points. |
 | `src/views/ExtensionsView.tsx` | Package installation, enable/disable, manual updates, rollback and logs. |
-| `src/views/AnalysisView.tsx` | Diagnostic message preview and local analysis agent launch. |
 | `src/components/updates/AppUpdates.tsx` | Startup update offer, download/install actions and About settings. |
 | `src/navigation/CommandPalette.tsx` | Search and navigation across commands and resource types. |
 
 `src/components/layout/` contains the explorer, workspace, tabs, inspector, and bottom panel. `src/components/k8s/details/` contains resource-specific detail views and reusable field blocks. Dialogs and diagnostic panes live under `src/components/dialogs/` and `src/components/k8s/`.
+
+Every workspace document (tables, dedicated details, YAML, terminals and registered
+panels) occupies the same full-width background layer. `WorkspaceArea` isolates
+its stacking context so document-local headers and controls cannot cover tool
+windows. The inspector is positioned absolutely inside the central workbench, next
+to `main` and below the tab/breadcrumb header; opening or resizing it does not
+resize document panes.
+The bottom dock shares the foreground and ends at the inspector's left edge.
+There are no per-document margins reserving inspector space.
+
+Resource table column geometry lives in `src/components/k8s/table/useColumnLayout.ts`. Actual table width is the sum of its columns, so the browser does not redistribute saved widths. Automatic fitting observes the scroll viewport and does not rerun just because the order changed. Resizing anchors its guide to the rendered header and accounts for UI scale and scrolling. `useColumnReorder.ts` uses pointer gestures with a movement threshold, before/after drop indicators and horizontal edge scrolling; resize handles and menu buttons do not initiate reordering. Escape, pointer cancellation, lost capture and unmount release the gesture without saving unfinished changes. Header menus and keyboard resizing remain available as drag alternatives.
 
 ### Application state
 
@@ -65,9 +81,10 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/cluster_store.ts` | Available contexts, active context, namespace scope, and discovered resource availability. |
 | `src/state/resource_store.ts` | Resource cache and synchronization state consumed by views. |
 | `src/state/resource_watch.ts` | Starting, stopping, refreshing, and rescoping resource watch sessions. |
-| `src/state/workspace_store.ts` | Workspace tabs, split panes, and resource navigation. |
+| `src/state/workspace_store.ts` | Workspace sections, remembered documents/splits per section, and resource navigation. |
 | `src/state/dock_store.ts` | Bottom-panel sessions and selection. |
-| `src/state/ui_store.ts` | Appearance, layout, developer mode, selected AI agent and starting instructions. |
+| `src/state/ui_store.ts` | Appearance, layout, and developer mode. |
+| `src/domains/ai/store.ts` | AI agent settings, conversations, models, generation options, and starting instructions. |
 | `src/state/yaml_draft_store.ts` | In-memory editor drafts keyed by context and resource identity. |
 | `src/state/mutation_confirm_store.ts` | Pending native mutation confirmation requests. |
 | `src/state/pf_store.ts` | Port-forward session state. |
@@ -77,6 +94,10 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 ### Providers and resource logic
 
 `src/providers/contract.ts` defines the common resource access interface. `k8s_provider.ts` selects the transport, and the desktop application calls native commands through Tauri. Dedicated transports handle watches, logs, exec sessions, and forwarding.
+
+Master search uses a private on-demand inventory in `search_inventory.ts`, rather than replacing active watch snapshots. `use_resource_search.ts` runs metadata filtering and regex in a disposable worker with a time bound. Search-created detail tabs pin their namespace through `WorkspaceTab.namespacePinned`; normal list scope remains independent. See [master search and resource performance](MASTER_SEARCH.md) for query syntax and coverage.
+
+The shared metrics subscription owns aggregate and per-node observation histories. Node performance uses the cluster-scoped read and the selected node's own samples; it shares transport polling with Overview and never derives host usage by summing only currently loaded Pods. `use_pod_metrics.ts` shares namespace reads and retains bounded history only for viewed Pods through `pod_metrics_history.ts`, isolating context, namespace and UID. The shared `HistoryChart` measures its viewport to keep markers circular and pointer selection accurate at every pane width. First-sample horizontal chart previews do not add synthetic samples to history.
 
 `resource_watch_session.ts` manages frontend subscription state. `multi_namespace_watch.ts` bounds actual initial namespace snapshots before releasing their long-lived watches. `tauri_watch.ts` creates Tauri channels, checks subscription identity, and requests native cleanup when a watch closes. `read_queue.ts` bounds ordinary reads, and `read_transport.ts` forwards cancellation to native read tasks or the HTTP bridge. `errors.ts` normalizes backend failures for the interface.
 
@@ -117,13 +138,60 @@ The desktop shell owns transport and application lifecycle concerns. Kubernetes 
 | `src/crd/` | API and custom resource discovery and dynamic resource access. |
 | `src/metrics/` | Metrics API requests and overview aggregation. |
 | `src/pod_ops/` | Logs, Pod exec, node debug sessions, host terminals, and port forwarding. |
-| `src/helm/` | Helm models, bounded reads, and reviewed lifecycle operations. |
+| `src/helm/` | Helm models, bounded reads, and lifecycle operations with concise confirmation. |
 
 `src/cluster/kubeconfig.rs` reads the default kubeconfig or the files listed in `KUBECONFIG`. `src/cluster/client.rs` provides context-specific clients so requests can remain tied to the selected context.
 
-`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation, including reviewed mutations. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`.
+`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`. Helm confirmation has no expiry; uninstall operates on the confirmed context, namespace and release name, while upgrades and rollbacks check the release revision/state.
 
 The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reuses the library. The desktop application does not depend on that executable.
+
+## AI domain
+
+`crates/kubiki-ai/` owns provider protocols, generation options, conversation turns,
+compaction, installed skills and the bounded agent loop. `ConversationState` is
+separate from the portable execution session. `crates/kubiki-tools/` owns cluster
+tools, policy/projection, reviewed execution, evidence, accepted operation identities
+and verification. It reuses `kubiki-core` without Tauri. The native AI runtime executes
+tools directly in-process via `ToolExecutor` / `ToolCatalog` (`kubiki-tools`), while
+`crates/kubiki-mcp/` provides the Model Context Protocol (MCP) server, stdio CLI
+(`kubiki-mcp serve`), and attached client bridges for external agent runtimes like OpenCode.
+`src/domains/ai/` owns the chat and settings interface, conversation presentation, and
+modular components: `ActionApprovalCard` (mutation review & consent), `QuestionCard`
+(interactive clarification prompts), `ThinkingBlock` (animated collapsible model thought
+streaming), `CompactToolMessage` (compact badge-style execution history), `SkillComposer`,
+and `OpenCodePane`.
+
+Settings share row layout and responsive rules in
+`src/components/settings/settings.css`. Labels and controls use separate columns
+when space permits; narrow content stacks larger controls while keeping
+checkboxes beside their labels. AI settings use dedicated card-based sections
+(`.ai-settings-card`, `.ai-form-line`) tailored for complex multi-provider, MCP access,
+and permission configuration, while adhering to the global settings dialog lifecycle.
+The dialog uses a compact category selector when its width relative to the text size
+cannot fit the sidebar. Log history and scrolling controls are collapsed
+until opened or found through search. Switching categories resets the content
+scroll position. AI settings use the same labels for connection and data-access
+levels in Kubiki and OpenCode modes. Rule-matching help follows the selected
+policy semantics. Integration detection labels describe discovered Argo CD and
+Flux APIs; Helm has no detection label without a corresponding check.
+
+`src-tauri/src/agent_commands.rs` composes window ownership, keyring credentials,
+native settings and session lifecycle. `agent_tools.rs` supplies native consent,
+provider/skill adapters and the bridge back to conversation state. Cluster execution
+uses the shared tools/core implementation. `PreparedMutation::commit_guarded`
+rechecks revocable authorization after the final live reads, immediately before
+writing. Mode changes invalidate pending authorization; dispatched requests still
+return operation receipts. Accepted UID/generation are retained per connection,
+so verification cannot silently switch to a replacement resource.
+
+`src-tauri/src/opencode.rs` launches installed OpenCode in a PTY and owns its attached
+MCP lifecycle. OpenCode owns its conversation and permissions; the MCP exposure
+profile still limits scope, data and operations. Pending startup can be stopped
+before the process is scheduled. Runtime selection lives in AI settings.
+
+See [Integrated AI agent](AI_AGENT.md) for defaults, protocols, scope boundaries,
+storage and limitations.
 
 ## Resource synchronization
 
@@ -137,11 +205,13 @@ Custom resources use the discovery and dynamic access modules. Resource types an
 
 ## Resource mutations
 
-Resource actions enter the native backend through the mutation command module. `ResourceAction` commands construct common actions against live objects in core; only manual YAML edits use the arbitrary manifest path. Structured review DTOs carry all targets, action summaries and warnings to the interface, while YAML edits additionally carry a complete diff. Review strings are not parsed as a protocol. Supported operations are represented as structured requests rather than arbitrary shell commands.
+`src/providers/mutations.ts` emits one operation receipt after the write IPC resolves, through `mutation_feedback.ts`. This covers all resource actions, YAML create/update, deletions, Secret data, Helm operations, batches and node debug preparation independently of which screen initiated them. Messages contain resource identity and the pinned context, never resource values. Partial/stopped batches and re-added finalizers produce warning/error receipts rather than success. Deletion/eviction acceptance and controller requests are distinguished from completed cleanup or rollout. Screens retain local validation/errors and demo feedback, without duplicating real-operation success receipts.
 
-The core mutation implementation prepares the requested change against live resource state. For existing objects, it records identity and concurrency information and produces a review. The desktop guard emits a confirmation request to the frontend and waits for the user's decision.
+Resource actions enter the native backend through the mutation command module. `ResourceAction` commands construct common actions against live objects in core; only manual YAML edits use the arbitrary manifest path. Actions and groups produce a concise confirmation with a target and operation summary. Only YAML applications send a detailed diff to the interface. Supported operations are represented as structured requests rather than arbitrary shell commands.
 
-After approval, the backend commits the prepared operation with the applicable identity and resource-version checks. Kubernetes remains responsible for authorization, admission, and API validation. Grouped actions are prepared for a shared review and committed sequentially; a group is not an atomic cluster transaction.
+The core mutation implementation prepares the requested change against live resource state. For existing objects, it records identity and concurrency information. The desktop guard emits one confirmation request and waits for the user's decision without an expiry. Closing the window cancels its pending confirmation.
+
+After approval, the backend commits the prepared operation with the applicable identity and resource-version checks. Kubernetes remains responsible for authorization, admission, and API validation. Grouped actions are confirmed once and committed sequentially; a group is not an atomic cluster transaction.
 
 Helm operations have a separate preparation implementation. They invoke the local Helm executable with the selected context, and changes to an existing release are checked against the state used during preparation.
 
@@ -150,6 +220,13 @@ Helm operations have a separate preparation implementation. They invoke the loca
 Logs and terminals use dedicated managers and streaming command interfaces. Input, resize events, stream acknowledgements, and close operations have explicit commands rather than sharing the resource watch channel.
 
 Pod terminals and logs communicate through the Kubernetes API. Node shells prepare debug Pods and then attach an exec session. Host terminals allocate local pseudo-terminals through `portable-pty`.
+
+`src/core/terminal_view.ts` supplies the shared xterm.js setup for OpenCode, local,
+Pod, Node and demo terminals: Unicode 11 cell widths, WebGL rendering with DOM
+fallback, font readiness and fitting inside an unpadded host. Renderer failure
+preserves the buffer and connection. `useTerminalAppearance.ts` applies typography
+and scrollback changes without reconnecting. Log panes use the same typography
+preferences and remeasure virtual rows when it changes. See [Terminal rendering](TERMINAL.md).
 
 Port forwarding opens a loopback TCP listener and connects it to the selected Pod through the Kubernetes API. Service forwarding resolves a matching running Pod and translates the selected Service port to its target port.
 
@@ -204,6 +281,14 @@ visibility and an optional resolved Kubernetes resource. External panels receive
 the public SDK contract in an opaque-origin iframe. Unknown or removed
 registrations show an unavailable-panel state instead of a resource table.
 
+`src/core/workspace_areas.ts` assigns documents to top-level sections: Explorer,
+Topology and each registered panel. Switching sections hides the Explorer tree
+outside Explorer and restores each section's selected document and split. Tab
+closing actions stay within their section. Visited AI and topology panels remain
+mounted to retain conversation/scope state; hidden topology suspends its graph
+worker and data requirements. AI hides the resource inspector. Explorer tree
+filter state survives section changes.
+
 `src/extensions/registry.tsx` maps enabled extension contributions to those adapters;
 `ExtensionPanel.tsx` owns iframe CSP and the validated message bridge. Developer
 mode controls visibility of the bundled SDK Diagnostics package. The Rust broker
@@ -213,6 +298,21 @@ contains the independent author template, development server and package builder
 Node backends are trusted local code, while iframe isolation restricts panel code.
 
 Topology relationship construction runs in `topology_graph_worker.ts`; ELK layout runs in a separate worker. The graph bridge strips lazy YAML getters from worker input, retains at most one current build and one latest pending snapshot, and rejects responses from superseded scopes.
+
+`topology_readiness.ts` gates the first graph on snapshots matching its context
+and namespace coverage. Unsupported APIs are excluded; failed reads settle with
+an incomplete-data warning. Event delivery does not block layout. Helm inventory
+must finish and be projected into the resource store before publication. Focused
+diagrams may discover more required resource kinds in successive internal graph
+passes; the view publishes only after those requirements and their graph result
+agree. A failed pass preserves its discovered requirements to avoid a retry loop.
+
+The namespace chooser lists namespace names without inventory reads or resource
+counts. Graph and namespace-frame counters distinguish visible resources from
+totals when types are hidden. Live structural changes retain the
+previous scene during layout and preserve the camera. Initial layout, explicit
+Arrange, direction and grouping changes fit the viewport; changing context,
+scope, focus or depth starts a new diagram.
 
 See [Workspace extensions](EXTENSIONS.md) for installation and the registration
 contract, and [extension architecture](EXTENSION_PLATFORM.md) for the runtime

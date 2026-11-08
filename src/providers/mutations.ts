@@ -4,6 +4,7 @@ import type { HelmMutation } from './helm_types';
 import type { NodeDebugRequest } from './node_debug';
 import type { SecretDataRequest } from './secret_data';
 import { normalizeK8sError, requestError } from './errors';
+import { notifyMutationCompleted } from './mutation_feedback';
 
 export interface ManifestTarget { resource: ResourceRef; resource_version: string }
 export type BatchStep =
@@ -49,7 +50,11 @@ async function gateway<T>(command: 'mutate_resource' | 'delete_resource', reques
     throw requestError('forbidden', 'Changes require the desktop application and backend system confirmation. Browser access is read-only.', { operation: 'mutation' }, 403);
   }
   const { invoke } = await import('@tauri-apps/api/core');
-  try { return await invoke<T>(command, { request }); }
+  try {
+    const result = await invoke<T>(command, { request });
+    notifyMutationCompleted(command, request, result);
+    return result;
+  }
   catch (error) { throw normalizeK8sError(error, { operation: 'mutation' }); }
 }
 export function changeResource<T = Record<string, any>>(request: ChangeRequest): Promise<T> { return gateway('mutate_resource', request); }

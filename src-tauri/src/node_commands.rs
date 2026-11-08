@@ -141,7 +141,10 @@ pub async fn prepare_node_debug(
             move |review| {
                 let window = dialog_window.clone();
                 let resource = review_resource.clone();
-                async move { crate::mutation_guard::confirm(window, &resource, review).await }
+                async move {
+                    crate::mutation_guard::confirm_action(window, &resource, review, "node_shell")
+                        .await
+                }
             },
         )
         .await

@@ -1,5 +1,6 @@
 import { changeResource, deleteObject } from './mutations';
 import type { ResourceRef } from '../core/resources/resource_types';
+import { toast } from '../state/notifications_store';
 import { normalizeK8sError, requestError, type K8sErrorPayload } from './errors';
 export interface NodeDebugRequest { resource: ResourceRef; namespace: string; image: string }
 export interface NodeDebugResult { session_id: string; pod: ResourceRef; reused: boolean }
@@ -30,7 +31,10 @@ export async function prepareNodeDebug(request: NodeDebugRequest, signal: AbortS
   } catch (error) { pending.delete(key);signal.removeEventListener('abort', abort);throw error; }
 }
 /** Explicitly end the managed session: stop all shells and delete the helper Pod. */
-export async function stopNodeDebug(sessionId: string): Promise<void> { await native('stop_node_debug', { sessionId }); }
+export async function stopNodeDebug(sessionId: string): Promise<void> {
+  await native('stop_node_debug', { sessionId });
+  toast.success('Node debug session stopped', 'Debug Pod cleanup was requested.');
+}
 export function nodeDebugStatus(sessionId: string): Promise<NodeDebugState | null> { return native('node_debug_status', { sessionId }); }
 export function otherDebugPods(context: string, namespace: string): Promise<DebugPod[]> { return native('list_other_debug_pods', { context, namespace }); }
 export function removeOtherDebugPod(resource: ResourceRef): Promise<void> { return deleteObject({ operation: 'debug_pod', resource }).then(() => {}); }

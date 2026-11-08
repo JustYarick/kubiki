@@ -54,8 +54,9 @@ test('cluster and focused topology automatically lay out and open resource detai
   await node.click(); await expect(page.getByTestId('resource-details')).toBeVisible();
   await captureScreenshot(page, { path: 'test-results/topology.png', fullPage: true });
   await page.getByTestId('resource-details').getByRole('button', { name: 'Topology', exact: true }).click();
-  await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', 'resource');
-  await expect(page.locator('.react-flow__node').first()).toBeVisible();
+  const focused = page.locator('.topology-view:visible');
+  await expect(focused).toHaveAttribute('data-scope', 'resource');
+  await expect(focused.locator('.react-flow__node').first()).toBeVisible();
   await expect(page.getByText('Arranging topology…')).toHaveCount(0);
   await captureScreenshot(page, { path: 'test-results/resource-topology.png', fullPage: true });
   expect(errors).toEqual([]);

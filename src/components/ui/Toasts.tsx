@@ -19,6 +19,9 @@ export function Toasts() {
       {toasts.map((t) => (
         <div
           key={t.id}
+          role={t.type === 'error' ? 'alert' : 'status'}
+          aria-atomic="true"
+          data-toast-type={t.type}
           className={cx(
             'pointer-events-auto flex items-start gap-2.5 rounded-[calc(6px*var(--ui-factor))] border bg-[var(--bg-overlay)] px-3 py-2.5 shadow-[var(--shadow-popup)] kub-toast',
             t.type === 'error' ? 'border-[var(--status-danger)]/50' : 'border-[var(--border-default)]'

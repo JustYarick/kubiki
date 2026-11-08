@@ -16,7 +16,7 @@ export function MetricsGaugeBar({ item }: MetricsGaugeBarProps) {
   const namespace = item.namespace ?? null;
 
   // Poll metrics for context and namespace, capturing error and loading states
-  const { data, loading, error } = useOverviewMetrics(context, namespace, () => undefined);
+  const { data, loading, error } = useOverviewMetrics(context, namespace);
 
   // Extract requests & limits using domain podBudget calculator for consistent budgets
   const { cpuReq, cpuLim, memReq, memLim } = useMemo(() => {

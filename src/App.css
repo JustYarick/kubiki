@@ -288,6 +288,11 @@ details[open] > summary::before { transform: rotate(90deg); }
   border-right: none;
 }
 
+.datagrip-th[data-column-drop="before"] { box-shadow: inset 2px 0 var(--accent); }
+.datagrip-th[data-column-drop="after"] { box-shadow: inset -2px 0 var(--accent); }
+body.column-layout-resizing, body.column-layout-resizing * { cursor: col-resize !important; user-select: none !important; }
+body.column-layout-reordering, body.column-layout-reordering * { cursor: grabbing !important; user-select: none !important; }
+
 .datagrip-cell {
   border-bottom: 1px solid var(--border-grid);
   border-right: 1px solid var(--border-grid);
@@ -441,13 +446,3 @@ select.ide-select {
 
 /* Toolbars of the covered view keep their actions reachable next to the overlay. */
 .workspace-toolbar-safe { padding-right: calc(var(--inspector-overlay, 0px) + calc(12px * var(--ui-factor))); }
-
-/*
- * The resource table keeps its full width and scrolls under the floating
- * details panel. Every other view is pushed to the left of the panel so no
- * control ever ends up hidden behind it.
- */
-.workspace-overlay-inset {
-  margin-right: var(--inspector-width, 0px);
-  --inspector-overlay: 0px;
-}

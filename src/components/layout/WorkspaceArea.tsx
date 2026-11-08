@@ -1,5 +1,6 @@
-import { RegisteredPanel } from '../../core/workspace_panels';
+import { RegisteredPanel, openWorkspacePanel, usePanelRegistry } from '../../core/workspace_panels';
 import { useCustomResources } from '../../providers/use_custom_resources';
+import { useRetainedOverviewMetrics } from '../../providers/use_overview_metrics';
 import { customResourceType, resourceBucket } from '../../core/resources/custom_resource_types';
 import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { MainTabBar } from './MainTabBar';
@@ -17,11 +18,9 @@ import { parse } from 'yaml';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
 import { FullManifest } from '../../views/FullManifest';
 import { k8s } from '../../providers/k8s_provider';
-import { AnalysisView } from '../../views/AnalysisView';
 import { IconButton } from '../ui/Button';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Resizer } from './Resizer';
-import { cx } from '../../core/utils/cx';
 import { toast } from '../../state/notifications_store';
 import { FileCode, Loader2, LayoutDashboard, Boxes, Layers, Network, X } from 'lucide-react';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
@@ -30,6 +29,7 @@ import { refreshResourceWatches } from '../../state/resource_watch';
 import { ResourceLoading } from '../ui/ResourceLoading';
 import { RESOURCE_TYPES, namespaceIsOutsideScope } from '../../core/resources/resource_types';
 import { matchesResourceRef } from '../../core/resources/identity';
+import { activeWorkspaceArea, workspaceArea } from '../../core/workspace_areas';
 
 const YamlEditor = lazy(() => import('../../views/YamlEditor').then((m) => ({ default: m.YamlEditor })));
 const HelmView = lazy(() => import('../../views/HelmView').then(m => ({ default: m.HelmView })));
@@ -41,6 +41,11 @@ export const WorkspaceArea: React.FC<{
   onHeaderHeight?: (height: number) => void;
 }> = ({ onSelectContext, onHeaderHeight }) => {
   const { tabs, activeTabId, splitTabId } = useWorkspaceStore();
+  const area = useWorkspaceStore(activeWorkspaceArea);
+  const panel = usePanelRegistry(state => state.panels.find(panel => panel.id === area));
+  const context = useClusterStore(state => state.currentContext);
+  const namespace = useClusterStore(state => state.selectedNamespace);
+  useRetainedOverviewMetrics(context, namespace === 'all' ? null : namespace, tabs.some(tab => tab.type === 'overview'));
   const [splitRatio, setSplitRatio] = useState(0.5); // 50% split by default
   const uiScale = useUiStore((state) => state.uiScale);
   const factor = uiFactor(uiScale);
@@ -56,8 +61,8 @@ export const WorkspaceArea: React.FC<{
     return () => observer.disconnect();
   }, [factor, onHeaderHeight]);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
-  const splitTab = splitTabId && splitTabId !== activeTab?.id ? tabs.find((t) => t.id === splitTabId) : null;
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  const splitTab = splitTabId && splitTabId !== activeTab?.id ? tabs.find((t) => t.id === splitTabId && workspaceArea(t) === area) : null;
 
   const [visited, setVisited] = useState<Set<string>>(new Set());
   useEffect(() => { setVisited((previous) => {
@@ -66,22 +71,23 @@ export const WorkspaceArea: React.FC<{
     if (next.size === previous.size && [...next].every((id) => previous.has(id))) return previous;
     return next;
   }); }, [tabs, activeTab?.id, splitTab?.id]);
-  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'analysis' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension')));
-  return <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
+  const mounted = tabs.filter((tab) => tab.id === activeTab?.id || tab.id === splitTab?.id || (visited.has(tab.id) && (tab.type === 'terminal' || tab.type === 'terminal-session' || tab.type === 'logs' || tab.type === 'yaml-editor' || tab.type === 'extension' || tab.type === 'topology')));
+  return <div data-testid="workspace-area" className="relative isolate z-0 flex-1 flex flex-col min-w-0 min-h-0 bg-[var(--bg-canvas)] overflow-hidden">
     <div ref={headerRef} className="shrink-0 flex flex-col">
       <MainTabBar /><BreadcrumbBar onSelectContext={onSelectContext} />
     </div>
     <div className="flex-1 min-h-0 min-w-0 relative grid overflow-hidden" style={{ gridTemplateColumns: splitTab ? `minmax(0, ${splitRatio}fr) auto minmax(0, ${1 - splitRatio}fr)` : 'minmax(0, 1fr)', gridTemplateRows: 'minmax(0, 1fr)' }}>
-      {!activeTab && <TabContent />}
+      {!activeTab && (area === 'explorer' ? <TabContent /> : <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-[var(--text-secondary)]">
+        <h2 className="text-sm font-semibold text-[var(--text-primary)]">{panel?.title ?? 'Workspace'}</h2>
+        <p className="text-xs">{panel?.context === 'cluster' && !context ? 'Choose a cluster in the top bar to open this section.' : 'No open tabs in this section.'}</p>
+        {panel && <button type="button" disabled={panel.context === 'cluster' && !context} className="px-3 py-1.5 rounded border border-[var(--border-default)] text-xs hover:bg-[var(--bg-hover)] disabled:opacity-40" onClick={() => openWorkspacePanel(panel)}>Open {panel.title}</button>}
+      </div>)}
       {mounted.map((tab) => {
         const split = tab.id === splitTab?.id;
         const visible = tab.id === activeTab?.id || split;
-        // The resource table keeps its full width and scrolls under the floating
-        // details panel; every other view is pushed to the left of the panel so
-        // no control ends up hidden behind it.
-        const underOverlay = tab.type === 'resource-list';
-        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className={cx('min-h-0 min-w-0 flex-col overflow-hidden', !underOverlay && 'workspace-overlay-inset')} style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
-          {split && <div className="h-7 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center gap-2 text-xs text-[var(--text-muted)]"><span className="truncate flex-1">{tab.title}</span><span className="shrink-0">Split View</span><IconButton icon={X} size="sm" aria-label="Close split view" tooltip="Close split view" onClick={() => { useWorkspaceStore.getState().setSplit(null); document.getElementById(`workspace-tab-${encodeURIComponent(activeTab.id)}`)?.focus(); }} /></div>}
+        // Every document uses the same background layer beneath tool windows.
+        return <div key={tab.id} role="tabpanel" id={`workspace-panel-${encodeURIComponent(tab.id)}`} aria-labelledby={`workspace-tab-${encodeURIComponent(tab.id)}`} hidden={!visible} data-testid="workspace-tab-panel" className="min-h-0 min-w-0 flex-col overflow-hidden" style={{ display: visible ? 'flex' : 'none', gridRow: 1, gridColumn: split ? 3 : 1 }}>
+          {split && <div className="h-7 shrink-0 px-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] flex items-center gap-2 text-xs text-[var(--text-muted)]"><span className="truncate flex-1">{tab.title}</span><span className="shrink-0">Split View</span><IconButton icon={X} size="sm" aria-label="Close split view" tooltip="Close split view" onClick={() => { useWorkspaceStore.getState().setSplit(null); document.getElementById(`workspace-tab-${encodeURIComponent(activeTab?.id ?? '')}`)?.focus(); }} /></div>}
           <ErrorBoundary key={tab.id}><TabContent tab={tab} visible={visible} /></ErrorBoundary>
         </div>;
       })}
@@ -104,13 +110,12 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none bg-[var(--bg-canvas)]">
         <img
-          src="/brand/kubiki-mark-gray-dark.svg"
-          alt=""
-          aria-hidden="true"
-          width={96}
-          height={96}
+          src="/brand/kubiki-logo-gray-dark.svg"
+          alt="Kubiki"
+          width={360}
+          height={128}
           draggable={false}
-          className="w-12 h-12 mb-3 shrink-0"
+          className="h-14 w-auto max-w-full mb-3 shrink-0"
         />
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">No Open Tabs</h2>
         <p className="text-xs text-[var(--text-muted)] mt-1 max-w-sm">
@@ -164,21 +169,20 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     return <RegisteredPanel tab={tab} visible={visible} />;
   }
   if (tab.type === 'overview') return <OverviewView />;
-  if (tab.type === 'terminal-session' || tab.type === 'analysis') {
-    if (!tab.session) return <div className="p-4 text-sm text-[var(--text-secondary)]">This terminal session has ended. Open a new terminal or analyze the resource again.</div>;
-    if (tab.session.analysis) return <AnalysisView session={tab.session} visible={visible} />;
+  if (tab.type === 'terminal-session') {
+    if (!tab.session) return <div className="p-4 text-sm text-[var(--text-secondary)]">This terminal session has ended.</div>;
     if (tab.session.targetType !== 'local' && tab.session.context && tab.session.context !== context) return <p className="p-4 text-sm text-[var(--text-secondary)]">This terminal belongs to context {tab.session.context}. Switch back to that context to reconnect.</p>;
     return <TerminalSessionPane session={tab.session} visible={visible} onContainerChange={name => useWorkspaceStore.setState(state => ({ tabs: state.tabs.map(entry => entry.id === tab.id ? { ...entry, session: { ...entry.session!, container: name } } : entry) }))} />;
   }
-  if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') return <Suspense fallback={<ResourceLoading label="Loading dashboard…" />}><GitOpsDashboard family={tab.type === 'flux-dashboard' ? 'flux' : 'argocd'} /></Suspense>;
-  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Loading Helm…" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
+  if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') return <Suspense fallback={<ResourceLoading label="Opening dashboard…" description="" />}><GitOpsDashboard family={tab.type === 'flux-dashboard' ? 'flux' : 'argocd'} /></Suspense>;
+  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Opening Helm…" description="" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
 
   if (tab.type !== 'resource-list' && tab.context !== context) {
     return <div className="p-6 text-[var(--text-secondary)]">This tab belongs to context {tab.context || 'unknown'}. Switch back to that context to use it.</div>;
   }
   if (tab.kind && !tab.kind.startsWith('custom:') && !tab.apiVersion?.includes('/') && !RESOURCE_TYPES.some(type => type.kind === tab.kind) && tab.kind !== 'HelmRelease') return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
   if (tab.type === 'resource-list' && tab.kind && !tab.kind.startsWith('custom:') && !RESOURCE_TYPES.some(type => type.kind === tab.kind)) return <div role="status" className="p-4 text-xs text-[var(--text-secondary)]">This resource type is no longer part of the resource catalog. Choose a resource from the explorer.</div>;
-  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><RegisteredPanel tab={tab} visible={visible} /></Suspense>;
+  if (tab.type === 'topology' && !tab.uid) return <Suspense fallback={<ResourceLoading label="Opening topology…" description="" />}><RegisteredPanel tab={tab} visible={visible} /></Suspense>;
 
   if (tab.type !== 'resource-list') {
     // A pinned UID must never silently bind to a recreated object with the same name.
@@ -190,7 +194,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     // must not unmount the pane and close its connection during a new snapshot.
     const item = loaded ?? (tab.item?.kind === 'HelmRelease' ? tab.item : tab.kind === 'HelmRelease' && tab.name && tab.namespace ? { kind: 'HelmRelease' as const, apiVersion: tab.apiVersion ?? 'helm.sh/v1', name: tab.name, namespace: tab.namespace, uid: tab.uid ?? tab.id, raw: { context: tab.context } } : undefined) ?? ((tab.type === 'terminal' || tab.type === 'logs') ? tab.item : undefined);
 
-    if (!item && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
+    if (!item && !tab.namespacePinned && namespaceIsOutsideScope(tab.namespace, selectedNamespace, syncMode)) {
       return <div className="p-6"><h2 className="text-sm font-medium mb-3">Resource outside namespace scope</h2><NamespaceScopeNotice namespace={tab.namespace} /></div>;
     }
     if (!item && custom.loading) return <ResourceLoading label="Loading custom resource…" />;
@@ -201,7 +205,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     if (!item && !customDefinition && syncMode !== 'watch' && (loadingKinds[kind] ?? clusterLoading)) return <ResourceLoading label={`Loading ${kind}…`} />;
     if (!item && !customDefinition && syncMode === 'watch' && (watchStates[kind] || clusterLoading) && watchStates[kind]?.phase !== 'live') {
       const error = loadErrors[kind];
-      return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <ResourceLoading label={`Loading ${kind}…`} description={`Waiting for a complete ${kind} snapshot…`} />}</div>;
+      return <div className="p-6">{error ? <RequestErrorNotice error={error} onRetry={() => { void refreshResourceWatches(kind).catch(() => {}); }} /> : <ResourceLoading label={`Loading ${kind}…`} description="Waiting for Kubernetes to respond." />}</div>;
     }
     if (!item) {
       return (
@@ -223,7 +227,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
         <ResourceDetails key={item.uid} item={item} onClose={() => useWorkspaceStore.getState().closeTab(tab.id)} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />
       </div>
     );
-    if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Loading topology…" />}><RegisteredPanel tab={tab} item={item} visible={visible} /></Suspense>;
+    if (tab.type === 'topology') return <Suspense fallback={<ResourceLoading label="Opening topology…" description="" />}><RegisteredPanel tab={tab} item={item} visible={visible} /></Suspense>;
     if (tab.type === 'logs' || tab.type === 'terminal') {
       const session = { context: tab.context, uid: item.uid, id: tab.id, type: tab.type, title: tab.title, resourceName: item.name, namespace: item.namespace,
         container: tab.container, allContainers: item.containers?.map((c) => c.name), targetType: item.kind === 'Node' ? 'node' as const : 'pod' as const };
@@ -252,11 +256,9 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
                 } else {
                   const currentContext = useClusterStore.getState().currentContext;
                   if (!currentContext) {
-                    toast.error('No active cluster context');
-                    return;
+                    throw new Error('No active cluster context');
                   }
-                  const output = await k8s.applyManifest(currentContext, yaml, item);
-                  toast.success(output || 'Manifest applied', `${item.kind}/${item.name}`);
+                  await k8s.applyManifest(currentContext, yaml, item);
                 }
               } catch (err: any) {
                 if (err?.code === 'cancelled') {

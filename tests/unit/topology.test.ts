@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildResourceGraph, relatedResourceScope } from '../../src/core/resources/relationships';
+import { buildRelatedGraph, buildResourceGraph, relatedResourceScope } from '../../src/core/resources/relationships';
 import { resourceKey } from '../../src/core/resources/identity';
 import { buildTopology, EMPTY_GRAPH } from '../../src/core/resources/topology';
 import { useResourceStore } from '../../src/state/resource_store';
@@ -12,6 +12,33 @@ function emptyResources(): Resources {
 function pod(index: number, namespace = 'busy'): ResourceItem {
   return { uid: `pod-${namespace}-${index}`, name: `pod-${index}`, namespace, kind: 'Pod', apiVersion: 'v1', labels: { app: `app-${index}` }, node: 'worker', raw: { metadata: { name: `pod-${index}`, namespace }, spec: { nodeName: 'worker' } } };
 }
+
+describe('Related controller ancestry', () => {
+  it('follows exact owner identities to the deployment without adding sibling Pods', () => {
+    const resources = emptyResources();
+    const deployment: ResourceItem = { uid: 'deployment', kind: 'Deployment', apiVersion: 'apps/v1', namespace: 'busy', name: 'web' };
+    const replica: ResourceItem = { uid: 'replica', kind: 'ReplicaSet', apiVersion: 'apps/v1', namespace: 'busy', name: 'web-rs', raw: { metadata: { ownerReferences: [{ apiVersion: 'apps/v1', kind: 'Deployment', name: 'web', uid: 'deployment' }] } } };
+    const focus = pod(0); focus.raw!.metadata.ownerReferences = [{ apiVersion: 'apps/v1', kind: 'ReplicaSet', name: 'web-rs', uid: 'replica' }];
+    const sibling = { ...pod(1), raw: { metadata: focus.raw!.metadata } };
+    resources.Pod.set(focus.uid, focus); resources.Pod.set(sibling.uid, sibling);
+    resources.ReplicaSet.set(replica.uid, replica); resources.Deployment.set(deployment.uid, deployment);
+    const graph = buildRelatedGraph(resources, focus);
+    expect([...graph.items.values()].map(item => item.uid)).toContain('deployment');
+    expect([...graph.items.values()].map(item => item.uid)).not.toContain(sibling.uid);
+    expect(graph.relations.filter(edge => edge.type === 'owns')).toHaveLength(2);
+  });
+
+  it('does not resolve a replaced owner or an owner from another API group by name', () => {
+    const resources = emptyResources(); const focus = pod(0);
+    focus.raw!.metadata.ownerReferences = [{ apiVersion: 'example.org/v1', kind: 'Deployment', name: 'web', uid: 'old-owner' }];
+    resources.Pod.set(focus.uid, focus);
+    resources.Deployment.set('native', { uid: 'native', name: 'web', namespace: 'busy', apiVersion: 'apps/v1', kind: 'Deployment' });
+    resources['custom:example.org/Deployment'] = new Map([['replacement', { uid: 'replacement', name: 'web', namespace: 'busy', apiVersion: 'example.org/v1', kind: 'Deployment' }]]);
+    const graph = buildRelatedGraph(resources, focus);
+    expect([...graph.items.values()].map(item => item.uid)).toEqual([focus.uid]);
+    expect(graph.relations.find(edge => edge.type === 'owns')?.missing?.apiVersion).toBe('example.org/v1');
+  });
+});
 
 describe('Bounded topology construction', () => {
   it('builds all namespaces and cluster resources without charging Events to the budget', () => {

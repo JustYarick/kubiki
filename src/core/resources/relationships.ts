@@ -1,3 +1,4 @@
+import podReferenceRules from '../../../shared/pod-reference-rules.json';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { matchesResourceRef, resourceKey } from './identity';
 import { RESOURCE_TYPES, apiVersionFor, parseApiVersion } from './resource_types';
@@ -62,12 +63,38 @@ export function relatedResourceScope(resources: Record<ResourceKind, Map<string,
     if (!cached) { cached = new Map(); namespaceCache.set(map, cached); }
     let scoped = cached.get(namespace);
     if (!scoped) {
-      scoped = new Map([...map].filter(([, item]) => !item.namespace || item.namespace === namespace));
+      scoped = new Map([...map].filter(([, item]) => !item.namespace || item.namespace === namespace || item.kind === 'HelmRelease' || !!gitOpsFamily(item)));
       if (cached.size >= 8) cached.delete(cached.keys().next().value!);
       cached.set(namespace, scoped);
     }
     return [kind, scoped];
   })) as typeof resources;
+}
+
+/** Direct neighbours plus exact controller/delivery ancestors, without sibling fan-out. */
+export function buildRelatedGraph(resources: Record<ResourceKind, Map<string, ResourceItem>>, focus: ResourceItem, depth = 3): ResourceGraph {
+  const key = resourceKey(focus);
+  const graph = buildResourceGraph(resources, { adjacentTo: new Set([key]) });
+  const relations = new Map(graph.relations.map(edge => [edge.id, edge]));
+  const visited = new Set([key]);
+  let frontier = new Set([key]);
+  let adjacent = graph;
+  for (let hop = 0; hop < depth && frontier.size; hop++) {
+    if (hop) adjacent = buildResourceGraph(resources, { adjacentTo: frontier, includeContains: false });
+    const next = new Set<string>();
+    for (const edge of adjacent.relations) {
+      if (!frontier.has(edge.target) || !['owns', 'manages'].includes(edge.type)) continue;
+      relations.set(edge.id, edge);
+      if (edge.missing || visited.has(edge.source)) continue;
+      const ancestor = adjacent.items.get(edge.source);
+      if (!ancestor) continue;
+      graph.items.set(edge.source, ancestor);
+      visited.add(edge.source);
+      next.add(edge.source);
+    }
+    frontier = next;
+  }
+  return { items: graph.items, relations: [...relations.values()] };
 }
 
 /** Resolve API references, never infer ownership from a resource's name. */
@@ -248,34 +275,14 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     }
     const podSpec = native && item.kind === 'Pod' ? spec : template;
     if (podSpec) {
-      reference(item, 'ServiceAccount', podSpec.serviceAccountName || 'default');
-      reference(item, 'PriorityClass', podSpec.priorityClassName, null);
-      reference(item, 'RuntimeClass', podSpec.runtimeClassName, null);
-      for (const claim of podSpec.resourceClaims ?? []) {
-        reference(item, 'ResourceClaim', claim.resourceClaimName);
-        reference(item, 'ResourceClaimTemplate', claim.resourceClaimTemplateName);
+      // The same explicit PodSpec dependency rules drive the MCP resolver.
+      for (const rule of podReferenceRules) {
+        let values: any[] = [podSpec];
+        for (const part of rule.path.split('.')) values = values.flatMap(value => part === '*' ? Array.isArray(value) ? value : [] : value?.[part] === undefined ? [] : [value[part]]);
+        for (const name of values) if (typeof name === 'string') reference(item, rule.kind, name, rule.cluster ? null : item.namespace, 'uses', false, undefined, rule.apiVersion);
       }
+      if (!podSpec.serviceAccountName) reference(item, 'ServiceAccount', 'default');
       for (const claim of raw.status?.resourceClaimStatuses ?? []) reference(item, 'ResourceClaim', claim.resourceClaimName);
-      for (const secret of podSpec.imagePullSecrets ?? []) reference(item, 'Secret', secret.name);
-      for (const volume of podSpec.volumes ?? []) {
-        reference(item, 'PersistentVolumeClaim', volume.persistentVolumeClaim?.claimName);
-        reference(item, 'ConfigMap', volume.configMap?.name);
-        reference(item, 'Secret', volume.secret?.secretName);
-        for (const source of volume.projected?.sources ?? []) {
-          reference(item, 'ConfigMap', source.configMap?.name);
-          reference(item, 'Secret', source.secret?.name);
-        }
-      }
-      for (const container of [...(podSpec.containers ?? []), ...(podSpec.initContainers ?? []), ...(podSpec.ephemeralContainers ?? [])]) {
-        for (const env of container.env ?? []) {
-          reference(item, 'ConfigMap', env.valueFrom?.configMapKeyRef?.name);
-          reference(item, 'Secret', env.valueFrom?.secretKeyRef?.name);
-        }
-        for (const env of container.envFrom ?? []) {
-          reference(item, 'ConfigMap', env.configMapRef?.name);
-          reference(item, 'Secret', env.secretRef?.name);
-        }
-      }
     }
     const selectsPods = native && (item.kind === 'Service' && spec.selector && Object.keys(spec.selector).length || ['PodDisruptionBudget', 'NetworkPolicy'].includes(item.kind) && (spec.selector != null || spec.podSelector != null));
     if (selectsPods) {

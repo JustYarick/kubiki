@@ -181,7 +181,7 @@ export function NodePodsBlock({ item, onNavigate }: NodePodsBlockProps) {
                         {pod.name}
                       </button>
                       <span className="text-[10px] text-[var(--text-muted)] truncate">
-                        {pod.namespace || 'default'} · {pod.ready || '1/1'} ready
+                        {pod.namespace || 'default'} · {pod.ready || '—'} ready
                         {pod.restarts ? ` · ${pod.restarts} restarts` : ''}
                       </span>
                     </div>

@@ -16,7 +16,7 @@ import { layoutNodeId, namespaceGroupId, topologyLayout, topologyStructureKey } 
 import { topologyRendering } from '../core/resources/topology_rendering';
 
 type ResourceNode = Node<{ item: ResourceItem; direction: 'RIGHT' | 'DOWN' }, 'resource'>;
-type NamespaceNode = Node<{ name: string; item?: ResourceItem; count: number; direction: 'RIGHT' | 'DOWN' }, 'namespace'>;
+type NamespaceNode = Node<{ name: string; item?: ResourceItem; count: number; visibleCount?: number; direction: 'RIGHT' | 'DOWN' }, 'namespace'>;
 type GraphNode = ResourceNode | NamespaceNode;
 const CompactNodes = createContext(false);
 const ResourceGraphNode = memo(function ResourceGraphNode({ data }: NodeProps<ResourceNode>) {
@@ -31,7 +31,7 @@ const ResourceGraphNode = memo(function ResourceGraphNode({ data }: NodeProps<Re
 }, (previous, next) => previous.data === next.data);
 const NamespaceGraphNode = memo(function NamespaceGraphNode({ data }: NodeProps<NamespaceNode>) {
   return <div className="topology-namespace" data-namespace-group={data.name}>
-    <div className="flex items-center gap-2 px-3 py-2 h-10"><ResourceKindBadge kind="Namespace" /><span className="font-mono text-xs truncate">{data.name}</span><span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] ml-auto">{data.count} resources</span></div>
+    <div className="flex items-center gap-2 px-3 py-2 h-10"><ResourceKindBadge kind="Namespace" /><span className="font-mono text-xs truncate">{data.name}</span><span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] ml-auto">{data.visibleCount != null && data.visibleCount !== data.count ? `${data.visibleCount}/${data.count}` : data.count} resources</span></div>
     <Handle type="target" position={data.direction === 'RIGHT' ? Position.Left : Position.Top} isConnectable={false} className="!opacity-0" />
     <Handle type="source" position={data.direction === 'RIGHT' ? Position.Right : Position.Bottom} isConnectable={false} className="!opacity-0" />
   </div>;
@@ -74,9 +74,13 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
   const [edges, setEdges, onEdgesChange] = useEdgesState<DiagramEdge>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const visibleNodes = useMemo(() => nodes.map(node => node.type === 'namespace'
-    ? { ...node, style: { ...node.style, opacity: hiddenKinds.has('Namespace') ? 0 : 1, pointerEvents: hiddenKinds.has('Namespace') ? 'none' as const : 'auto' as const } }
-    : { ...node, hidden: hiddenKinds.has(node.data.item.kind) }), [nodes, hiddenKinds]);
+  const visibleNodes = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const node of nodes) if (node.type === 'resource' && node.parentId && !hiddenKinds.has(node.data.item.kind)) counts.set(node.parentId, (counts.get(node.parentId) ?? 0) + 1);
+    return nodes.map(node => node.type === 'namespace'
+      ? { ...node, data: {...node.data, visibleCount: counts.get(node.id) ?? 0}, style: { ...node.style, opacity: hiddenKinds.has('Namespace') ? 0 : 1, pointerEvents: hiddenKinds.has('Namespace') ? 'none' as const : 'auto' as const } }
+      : { ...node, hidden: hiddenKinds.has(node.data.item.kind) });
+  }, [nodes, hiddenKinds]);
   const visibleEdges = useMemo(() => {
     const hidden = new Set(visibleNodes.filter(node => node.type === 'namespace' ? hiddenKinds.has('Namespace') : node.hidden).map(node => node.id));
     return edges.map(edge => ({ ...edge, type: rendering.edgeType, animated: rendering.animations,
@@ -90,6 +94,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
   latestGraph.current = graph;
   const workerRef = useRef<{ worker: Worker; elk: InstanceType<typeof ELK> } | null>(null);
   const layoutRunRef = useRef(0);
+  const lastFit = useRef<{ direction: string; grouping: string; revision: number } | undefined>(undefined);
   const terminateWorker = useCallback(() => {
     workerRef.current?.worker.terminate();
     workerRef.current = null;
@@ -107,9 +112,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
     const graph = latestGraph.current;
     const runId = ++layoutRunRef.current;
     setError('');
-    setNodes([]);
-    setEdges([]);
-    if (!graph.items.size) { setBusy(false); return; }
+    if (!graph.items.size) { setNodes([]); setEdges([]); setBusy(false); return; }
     let cancelled = false;
     let settled = false;
     if (!workerRef.current) {
@@ -127,7 +130,9 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
       setError('Automatic layout failed: layout took longer than 10 seconds and was cancelled. Reduce the scope or relationship depth.');
     }, 10000);
     const layout = topologyLayout(graph, direction, grouping);
-    void elk.layout(layout.root).then((result) => {
+    // Coalesce effect cleanup/restart (including StrictMode) before expensive work.
+    void Promise.resolve().then(() => cancelled || runId !== layoutRunRef.current ? undefined : elk.layout(layout.root)).then((result) => {
+      if (!result) return;
       settled = true;
       clearTimeout(timeout);
       if (cancelled || runId !== layoutRunRef.current) return;
@@ -155,7 +160,9 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
         labelStyle: { fill: '#b5bac4', fontSize: 10 }, labelBgStyle: { fill: '#25272a' },
       })));
       setBusy(false);
-      requestAnimationFrame(() => { void flow.current?.fitView({ padding: 0.2, duration: 0 }); });
+      const refit = !lastFit.current || lastFit.current.direction !== direction || lastFit.current.grouping !== grouping || lastFit.current.revision !== revision;
+      lastFit.current = {direction, grouping, revision};
+      if (refit) requestAnimationFrame(() => { if (runId === layoutRunRef.current) void flow.current?.fitView({ padding: 0.2, duration: 0 }); });
     }).catch((error) => {
       settled = true;
       clearTimeout(timeout);
@@ -195,7 +202,7 @@ export const TopologyCanvas = memo(function TopologyCanvas({ graph, direction, r
   return <div className="topology-canvas relative h-full w-full min-w-0 min-h-0 overflow-hidden" data-rendering-profile={preferences.topologyPerformanceMode}>
     <CompactNodes.Provider value={rendering.compactNodes}>
     <ReactFlow<GraphNode, DiagramEdge> nodes={visibleNodes} edges={visibleEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} edgeTypes={diagramEdgeTypes} nodeTypes={nodeTypes} onInit={onInit}
-      colorMode="dark" fitView onlyRenderVisibleElements minZoom={0.1} maxZoom={2} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null}
+      colorMode="dark" onlyRenderVisibleElements minZoom={0.1} maxZoom={2} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null}
       onNodeClick={inspectNode} onNodeDoubleClick={focusNode}>
       {rendering.showBackground && <Background gap={20} size={1} />}<Controls showInteractive={false} />{rendering.showMinimap && <MiniMap pannable zoomable nodeColor={nodeColor} />}
     </ReactFlow>

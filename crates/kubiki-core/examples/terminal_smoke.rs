@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shell: "/bin/sh".into(),
         cols: 80,
         rows: 24,
+        mode: kubiki_core::pod_ops::terminal::TerminalMode::Exec,
     };
     let manager = PodTerminalManager::default();
     let mut output = manager
@@ -55,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .write(
                             "smoke",
                             "shell",
-                            "printf 'KUBIKI_EXEC_SMOKE_OK\\n'; stty size; exit\r".into(),
+                            "printf 'KUBIKI_EXEC_SMOKE_OK\\n'; printf 'KUBIKI_TERM:%s:%s:%s\\n' \"$TERM\" \"$COLORTERM\" \"$TERM_PROGRAM\"; stty size; exit\r".into(),
                         )
                         .await
                         .map_err(|e| e.message)?;
@@ -65,6 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let text = String::from_utf8_lossy(&bytes);
                     if code != 0 || !text.contains("\nKUBIKI_EXEC_SMOKE_OK\r\n") {
                         return Err(format!("Smoke marker/exit check failed (exit {code})"));
+                    }
+                    if !text.contains("\nKUBIKI_TERM:xterm-256color:truecolor:kubiki\r\n") {
+                        return Err("Remote shell did not advertise the embedded terminal capabilities".into());
                     }
                     return Ok((code, text.contains("40 100")));
                 }
@@ -79,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     manager.stop_owner("smoke").await;
     let (code, resized) = result??;
     println!(
-        "PASS: live Pod exec, stdin/stdout marker, exit={code}, resized_tty={resized}, active_sessions={}",
+        "PASS: live Pod exec, stdin/stdout marker, exit={code}, terminal_environment=true, resized_tty={resized}, active_sessions={}",
         manager.active_count().await
     );
     Ok(())

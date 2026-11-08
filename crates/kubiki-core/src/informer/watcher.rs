@@ -90,6 +90,26 @@ impl InformerManager {
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
     {
         validate_query(&query)?;
+        self.start_resolved_watch(owner, id, query, async move {
+            client.await.map(|client| (client, None))
+        })
+        .await
+    }
+
+    /// The resolver must validate the requested GVK/scope against a live CRD.
+    /// Reserve before resolution so cancellation also aborts discovery/auth.
+    pub async fn start_resolved_watch<F>(
+        &self,
+        owner: &str,
+        id: &str,
+        query: ResourceQuery,
+        client: F,
+    ) -> Result<mpsc::Receiver<WatchMessage>, ApiError>
+    where
+        F: Future<Output = Result<(Client, Option<(ApiResource, bool)>), ApiError>>
+            + Send
+            + 'static,
+    {
         if id.is_empty()
             || id.len() > 128
             || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
@@ -235,7 +255,9 @@ fn prune_managed_fields(obj: &mut DynamicObject, kind: &str) {
                 .fields_v1
                 .as_ref()
                 .and_then(|fields| serde_json::to_string(fields).ok())
-                .is_some_and(|text| text.contains("\"f:data\"") || text.contains("\"f:binaryData\""))
+                .is_some_and(|text| {
+                    text.contains("\"f:data\"") || text.contains("\"f:binaryData\"")
+                })
         })
         .map(|mut entry| {
             entry.fields_v1 = None;
@@ -266,7 +288,7 @@ async fn run_watch<F>(
     client: F,
     tx: mpsc::Sender<WatchMessage>,
 ) where
-    F: Future<Output = Result<Client, ApiError>>,
+    F: Future<Output = Result<(Client, Option<(ApiResource, bool)>), ApiError>>,
 {
     let mut sequence = 0;
     if !status(&tx, &mut sequence, WatchPhase::Connecting, None).await {
@@ -276,7 +298,7 @@ async fn run_watch<F>(
         _ = tx.closed() => return,
         result = tokio::time::timeout(Duration::from_secs(15), client) => result,
     };
-    let client = match initialized {
+    let (client, resolved) = match initialized {
         Ok(Ok(client)) => client,
         result => {
             let error = match result {
@@ -318,7 +340,22 @@ async fn run_watch<F>(
         }
     });
     let client = Client::new(observed, namespace);
-    let api = match resource_api(client, &scope.query) {
+    let namespaced = resolved
+        .as_ref()
+        .map(|(_, namespaced)| *namespaced)
+        .unwrap_or_else(|| {
+            crate::core::api::resource_type(&scope.query.kind).is_some_and(|r| r.namespaced)
+        });
+    let api_result = if let Some((resource, _)) = resolved {
+        Ok(if let Some(namespace) = &scope.query.namespace {
+            Api::namespaced_with(client, namespace, &resource)
+        } else {
+            Api::all_with(client, &resource)
+        })
+    } else {
+        resource_api(client, &scope.query)
+    };
+    let api = match api_result {
         Ok(api) => api,
         Err(error) => {
             status(&tx, &mut sequence, WatchPhase::Failed, Some(error)).await;
@@ -327,12 +364,11 @@ async fn run_watch<F>(
     };
     let stream = watcher::watcher(
         api,
-        watcher::Config::default()
-            .timeout(WATCH_TIMEOUT_SECONDS),
+        watcher::Config::default().timeout(WATCH_TIMEOUT_SECONDS),
     )
     .default_backoff();
     tokio::pin!(stream);
-    let mut reconcile = Reconciler::new(scope.query.clone());
+    let mut reconcile = Reconciler::with_scope(scope.query.clone(), namespaced);
     let mut phase = WatchPhase::Connecting;
     loop {
         let event = tokio::select! {

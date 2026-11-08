@@ -9,11 +9,18 @@ pub struct Reconciler {
     query: ResourceQuery,
     pending: Option<HashMap<String, Value>>,
     initialized: bool,
+    namespaced: bool,
 }
 
 impl Reconciler {
     pub fn new(query: ResourceQuery) -> Self {
+        let namespaced =
+            resource_type(&query.kind).is_some_and(|r| r.group == query.group && r.namespaced);
+        Self::with_scope(query, namespaced)
+    }
+    pub fn with_scope(query: ResourceQuery, namespaced: bool) -> Self {
         Self {
+            namespaced,
             query,
             pending: None,
             initialized: false,
@@ -43,7 +50,7 @@ impl Reconciler {
                 return Err(self.invalid("Watch object is missing its name or UID"));
             }
         }
-        let namespaced = resource_type(&self.query.kind).is_some_and(|r| r.namespaced);
+        let namespaced = self.namespaced;
         let namespace = value["metadata"]["namespace"].as_str();
         if namespaced && namespace.is_none_or(str::is_empty)
             || self

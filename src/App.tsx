@@ -8,12 +8,12 @@ import { closePortForwards, resetPortForwards, listPortForwards } from './provid
 import { useEffect, useCallback, useRef, useState, type CSSProperties } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { ActivityBar } from './components/layout/ActivityBar';
-import { Sidebar } from './components/layout/Sidebar';
+import { PrimarySideBar } from './components/layout/PrimarySideBar';
+import { SecondarySideBar } from './components/layout/SecondarySideBar';
+import { RightActivityBar } from './components/layout/RightActivityBar';
 import { WorkspaceArea } from './components/layout/WorkspaceArea';
-import { InspectorPanel } from './components/layout/InspectorPanel';
-import { BottomDock } from './components/layout/BottomDock';
+import { BottomDockSlot } from './components/layout/BottomDockSlot';
 import { StatusBar } from './components/layout/StatusBar';
-import { Resizer } from './components/layout/Resizer';
 import { CommandPalette } from './navigation/CommandPalette';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import { AppUpdatePrompt } from './components/updates/AppUpdates';
@@ -23,6 +23,8 @@ import { useClusterStore } from './state/cluster_store';
 import { useResourceStore } from './state/resource_store';
 import { useUiStore } from './state/ui_store';
 import { useWorkspaceStore } from './state/workspace_store';
+import { activeWorkspaceArea, areaHasInspector } from './core/workspace_areas';
+import { usePanelRegistry, hasBottomPanel } from './core/workspace_panels';
 import { usePfStore } from './state/pf_store';
 import { useDockStore } from './state/dock_store';
 import { k8s } from './providers/k8s_provider';
@@ -69,7 +71,7 @@ export default function App() {
   } = useUiStore();
 
   const {
-    dockHeight, dockCollapsed, setDockHeight, toggleDock,
+    toggleDock,
   } = useDockStore();
 
   const setContexts = useClusterStore((s) => s.setContexts);
@@ -236,10 +238,17 @@ export default function App() {
         useUiStore.getState().setPaletteOpen(!useUiStore.getState().paletteOpen);
       } else if (key === 'b') {
         e.preventDefault();
-        useUiStore.getState().toggleSidebar();
+        const workspace = useWorkspaceStore.getState();
+        if (activeWorkspaceArea(workspace) !== 'explorer') {
+          workspace.activateArea('explorer');
+          useUiStore.setState({ sidebarCollapsed: false });
+        } else useUiStore.getState().toggleSidebar();
       } else if (key === 'j') {
         e.preventDefault();
-        toggleDock();
+        const activeArea = activeWorkspaceArea(useWorkspaceStore.getState());
+        if (hasBottomPanel(activeArea, usePanelRegistry.getState().panels)) {
+          toggleDock();
+        }
       } else if (key === 'w') {
         const activeTabId = useWorkspaceStore.getState().activeTabId;
         if (activeTabId) {
@@ -253,13 +262,13 @@ export default function App() {
   }, [toggleDock]);
 
   const activeTabType = useWorkspaceStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.type);
-  const showInspector = !inspectorCollapsed;
+  const area = useWorkspaceStore(activeWorkspaceArea);
+  const showInspector = areaHasInspector(area) && !inspectorCollapsed;
   useEffect(() => {
     if (activeTabType === 'overview' && !inspectorPinned) useUiStore.setState({ inspectorCollapsed: true });
   }, [activeTabType, inspectorPinned]);
   const factor = uiFactor(uiScale);
   const logicalViewportWidth = viewportWidth / factor;
-  const showSidebar = !sidebarCollapsed;
   const compact = logicalViewportWidth < 760;
   const overlaySidebar = compact && showInspector;
   useEffect(() => {
@@ -275,7 +284,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px', '--inspector-width': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
+    <div className="h-screen w-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden font-sans" style={{ '--inspector-overlay': showInspector ? uiPixels(detailWidth) : '0px' } as CSSProperties}>
       {/* JetBrains New UI Top TitleBar */}
       <TitleBar onSelectContext={onSelectContext} compact={compact} narrow={logicalViewportWidth < 500} />
       <AppUpdatePrompt />
@@ -286,41 +295,50 @@ export default function App() {
       }} />
 
       {/* Main IDE Frame: Left Rails + Tool Windows + Workspaces + Right Tool Windows */}
-      <div className="flex-1 flex min-h-0 min-w-0 relative">
+      <div
+        className="flex-1 flex min-h-0 min-w-0 relative"
+        {...(area === 'ai-agent' ? { role: 'region', 'aria-label': 'AI Agent workspace' } : {})}
+      >
         <ActivityBar />
 
-        {/* Left Tool Window (Cluster Explorer) */}
-        {showSidebar && (
-          <>
-            <div data-testid="explorer-panel" style={{ width: uiPixels(Math.min(sidebarWidth, logicalViewportWidth - 56)) }} className={`shrink-0 min-h-0 ${overlaySidebar ? "absolute left-[calc(40px*var(--ui-factor))] top-0 bottom-0 z-30 shadow-xl border-r border-[var(--border-default)]" : ""}`}>
-              <Sidebar />
-            </div>
-            {!overlaySidebar && <Resizer orientation="vertical" onDelta={(d) => setSidebarWidth(sidebarWidth + d / factor)} />}
-          </>
-        )}
+        {/* Primary Side Bar: Explorer, AI Agent history, Topology controls, etc. */}
+        <PrimarySideBar
+          area={area}
+          sidebarWidth={sidebarWidth}
+          sidebarCollapsed={sidebarCollapsed}
+          overlaySidebar={overlaySidebar}
+          logicalViewportWidth={logicalViewportWidth}
+          factor={factor}
+          onResize={setSidebarWidth}
+        />
 
         {/* Central Workspace: Tabs + Breadcrumbs + DataGrid/Editor + Bottom Dock */}
-        <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
-          <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
+        <div data-testid="central-workbench" className="relative flex-1 min-w-0 min-h-0 flex">
+          <main className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--bg-canvas)]">
+            <WorkspaceArea onSelectContext={onSelectContext} onHeaderHeight={setHeaderHeight} />
 
-          {/* Bottom Dock drawer — shares the foreground layer with InspectorPanel, adapting its width */}
-          <div
-            data-testid="bottom-dock-wrapper"
-            style={{ marginRight: showInspector ? uiPixels(detailWidth) : '0px' }}
-            className="flex flex-col min-w-0 shrink-0 z-20"
-          >
-            {!dockCollapsed && <Resizer orientation="horizontal" onDelta={(d) => setDockHeight(Math.min(dockHeight - d / factor, (window.innerHeight - 170) / factor))} />}
-            <BottomDock />
-          </div>
-        </main>
+            {/* Bottom Dock drawer — template slot (full in explorer, local in topology, hidden in ai-agent) */}
+            <BottomDockSlot
+              area={area}
+              factor={factor}
+              showInspector={showInspector}
+              detailWidth={detailWidth}
+            />
+          </main>
+          {/* Tool windows share the foreground above every workspace document. */}
+          <SecondarySideBar
+            area={area}
+            inspectorWidth={inspectorWidth}
+            inspectorCollapsed={inspectorCollapsed}
+            headerHeight={headerHeight}
+            factor={factor}
+            logicalViewportWidth={logicalViewportWidth}
+            onResize={setInspectorWidth}
+          />
+        </div>
 
-        {/* Right Tool Window (Inspector / Details) — floats above the workspace, the table keeps its size */}
-        {showInspector && (
-          <div data-testid="inspector-panel" data-layout="overlay" style={{ width: uiPixels(detailWidth), top: uiPixels(headerHeight) }} className="absolute right-0 bottom-0 z-40 min-h-0 border-l border-[var(--border-default)] shadow-xl">
-            <Resizer orientation="vertical" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, zIndex: 10 }} onDelta={(d) => setInspectorWidth(inspectorWidth - d / factor)} />
-            <InspectorPanel />
-          </div>
-        )}
+        {/* Right Activity Bar: Slot for future right-rail tool icons */}
+        <RightActivityBar />
       </div>
 
       {/* Bottom Global Status Bar */}

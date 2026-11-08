@@ -64,6 +64,12 @@ export class K8sProvider implements KubernetesProvider {
     return watchNamespaceSelection({ watchResources: watchTauriResources }, query, onBatch, signal);
   }
 
+  async watchCustomResources(query: ResourceQuery, definition: {name: string; uid: string}, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
+    if (!this.supportsResourceWatch) throw requestError('unsupported', 'Custom resource watch requires the desktop app', {operation:'watch', context:query.context, resource:query});
+    const { watchTauriResources } = await import('./tauri_watch');
+    return watchNamespaceSelection({watchResources:(scoped, receive, abort) => watchTauriResources(scoped, receive, abort, definition)}, query, onBatch, signal);
+  }
+
   private isTauriEnv(): boolean {
     return this.transport.native;
   }

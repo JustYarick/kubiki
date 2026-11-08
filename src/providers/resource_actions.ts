@@ -8,6 +8,7 @@ export type ResourceAction =
   | { type: 'suspend'; suspend: boolean }
   | { type: 'argo_sync' }
   | { type: 'argo_refresh'; hard: boolean }
+  | { type: 'flux_retry' }
   | { type: 'run_cron_job'; name: string }
   | { type: 'rollback'; revision: ResourceRef; resource_version: string }
   | { type: 'config_map_data'; data: Record<string, string> };

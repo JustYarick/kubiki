@@ -13,7 +13,7 @@ export const TopologyEvents = memo(function TopologyEvents({ scope, graph }: { s
   const { entries, total, warnings } = useMemo(() => topologyEvents(events.values(), scope, graph, useResourceStore.getState().resources), [events, scope, graph]);
   return <FloatingIsland label="Topology events" testId="topology-events" className="topology-events" icon={Clock3} defaultExpanded title={<span className="flex items-center gap-2"><span className="flex-1 truncate">Recent events ({total})</span>{warnings > 0 && <span className="text-[var(--status-warn)] flex items-center gap-1"><TriangleAlert size="calc(11px * var(--ui-factor))" />{warnings}</span>}</span>}>
       {error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--status-warn)]">Events unavailable: {error.message}</p>}
-      {!entries.length && !error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No events in the loaded snapshot for this scope.</p>}
+      {!entries.length && !error && <p className="p-3 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">No events in the current data.</p>}
       {!!entries.length && <ol className="topology-events-list">{entries.map((entry) => <li key={entry.event.uid} className="px-3 py-2 border-b last:border-0 border-[var(--border-subtle)] text-[length:calc(11px*var(--ui-factor))]">
         <div className="flex items-center gap-1.5">
           {entry.warning ? <TriangleAlert size="calc(12px * var(--ui-factor))" className="text-[var(--status-warn)] shrink-0" aria-label="Warning" /> : <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-ok)] shrink-0" />}
@@ -27,6 +27,6 @@ export const TopologyEvents = memo(function TopologyEvents({ scope, graph }: { s
         <p className="mt-0.5 text-[var(--text-secondary)] line-clamp-2 break-words" title={entry.message}>{entry.message}</p>
       </li>)}</ol>}
       {total > entries.length && <p className="px-3 py-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">Latest {entries.length} of {total} events</p>}
-      <p className="px-3 py-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">Loaded snapshot · click a resource for its events</p>
+      <p className="px-3 py-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">Click a resource to view its events.</p>
   </FloatingIsland>;
 });

@@ -1,0 +1,140 @@
+[
+  {
+    "path": "serviceAccountName",
+    "kind": "ServiceAccount",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "priorityClassName",
+    "kind": "PriorityClass",
+    "apiVersion": "scheduling.k8s.io/v1",
+    "cluster": true
+  },
+  {
+    "path": "runtimeClassName",
+    "kind": "RuntimeClass",
+    "apiVersion": "node.k8s.io/v1",
+    "cluster": true
+  },
+  {
+    "path": "resourceClaims.*.resourceClaimName",
+    "kind": "ResourceClaim",
+    "apiVersion": "resource.k8s.io/v1",
+    "cluster": false
+  },
+  {
+    "path": "resourceClaims.*.resourceClaimTemplateName",
+    "kind": "ResourceClaimTemplate",
+    "apiVersion": "resource.k8s.io/v1",
+    "cluster": false
+  },
+  {
+    "path": "imagePullSecrets.*.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "volumes.*.persistentVolumeClaim.claimName",
+    "kind": "PersistentVolumeClaim",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "volumes.*.configMap.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "volumes.*.secret.secretName",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "volumes.*.projected.sources.*.configMap.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "volumes.*.projected.sources.*.secret.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "containers.*.env.*.valueFrom.configMapKeyRef.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "containers.*.env.*.valueFrom.secretKeyRef.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "containers.*.envFrom.*.configMapRef.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "containers.*.envFrom.*.secretRef.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "initContainers.*.env.*.valueFrom.configMapKeyRef.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "initContainers.*.env.*.valueFrom.secretKeyRef.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "initContainers.*.envFrom.*.configMapRef.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "initContainers.*.envFrom.*.secretRef.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "ephemeralContainers.*.env.*.valueFrom.configMapKeyRef.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "ephemeralContainers.*.env.*.valueFrom.secretKeyRef.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "ephemeralContainers.*.envFrom.*.configMapRef.name",
+    "kind": "ConfigMap",
+    "apiVersion": "v1",
+    "cluster": false
+  },
+  {
+    "path": "ephemeralContainers.*.envFrom.*.secretRef.name",
+    "kind": "Secret",
+    "apiVersion": "v1",
+    "cluster": false
+  }
+]

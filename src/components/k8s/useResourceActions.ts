@@ -8,6 +8,10 @@ import { toast } from '../../state/notifications_store';
 
 /** UI orchestration for common actions; mutation payloads belong to the provider/core. */
 export function useResourceActions(currentContext: string | null, refresh: () => Promise<void>) {
+  const refreshAfterWrite = async () => {
+    try { await refresh(); }
+    catch { toast.warn('Change saved; view refresh failed', 'Refresh the resource list to load the current state.'); }
+  };
   const updateItem = useResourceStore(s => s.updateItem);
   const deleteItem = useResourceStore(s => s.deleteItem);
   const doDelete = async (item: ResourceItem) => {
@@ -27,8 +31,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
           item.apiVersion
         );
         deleteItem(item.kind, item.uid);
-        toast.success('Resource deleted', `${item.kind}/${item.name}`);
-        await refresh();
+        await refreshAfterWrite();
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') {
@@ -45,8 +48,8 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
       await k8s.scaleWorkload(currentContext, item.kind, item.name, item.namespace || 'default', replicas, item.uid, item.raw?.metadata?.resourceVersion ?? '');
       if (useClusterStore.getState().currentContext !== currentContext) return;
       if (k8s.demo) updateItem(item.kind, item.uid, { replicas });
-      else await refresh();
-      toast.success(`Desired replicas updated to ${replicas}`, `${item.kind}/${item.name}`);
+      else await refreshAfterWrite();
+      if (k8s.demo) toast.success(`Desired replicas updated to ${replicas} (demo)`, `${item.kind}/${item.name}`);
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && error.code === 'cancelled') toast.info('Scale cancelled');
       else toast.error('Scale failed', String(error));
@@ -66,8 +69,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
         toast.success(`Rollout restart triggered for ${item.kind}/${item.name} (demo)`);
       } else {
         await performResourceAction(currentContext!, item, { type: 'restart' });
-        await refresh();
-        toast.success(`Rollout restart triggered for ${item.kind}/${item.name}`);
+        await refreshAfterWrite();
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') {
@@ -96,8 +98,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
         return 'success';
       } else {
         await performResourceAction(currentContext!, node, { type: 'cordon', unschedulable: nextUnschedulable });
-        await refresh();
-        toast.success(`Node ${node.name} ${nextUnschedulable ? 'cordoned' : 'uncordoned'}`);
+        await refreshAfterWrite();
         return 'success';
       }
     } catch (err: any) {
@@ -134,23 +135,13 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
     }
     try {
       const primary = resourceRef(currentContext!, node);
-      const result = await k8s.applyBatch(primary, [{
+      await k8s.applyBatch(primary, [{
         operation: 'drain',
         resource: primary,
         resource_version: node.raw?.metadata?.resourceVersion ?? '',
         critical: true,
       }]);
-      if (result.stopped) {
-        toast.error(`Drain stopped for ${node.name}`, `${result.steps.filter(step => step.action === 'EVICT' && step.ok).length} Pod(s) evicted. ${result.steps.find(step => !step.ok)?.message ?? 'Source resource changed or a critical step failed.'}`);
-        await refresh();
-        return;
-      }
-      const evicted = result.steps.filter((step) => step.action === 'EVICT' && step.ok).length;
-      const failed = result.steps.filter((step) => step.action === 'EVICT' && !step.ok).length;
-      const summary = `Drained node ${node.name}: ${evicted} pod(s) evicted${failed > 0 ? `, ${failed} failed` : ''}`;
-      if (failed > 0) toast.warn('Drain completed with eviction failures', summary);
-      else toast.success('Drain complete', summary);
-      await refresh();
+      await refreshAfterWrite();
     } catch (err: any) {
       if (err?.code === 'cancelled') {
         toast.info('Drain cancelled');
@@ -171,8 +162,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
         toast.success(`Pod ${pod.name} evicted (demo)`);
       } else {
         await k8s.evictPod(currentContext!, pod.name, pod.namespace ?? 'default', pod.uid, pod.raw?.metadata?.resourceVersion ?? '');
-        await refresh();
-        toast.success(`Pod ${pod.name} evicted`);
+        await refreshAfterWrite();
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Evict cancelled');
@@ -197,8 +187,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
         toast.success(`CronJob ${cronJob.name} ${nextSuspended ? 'suspended' : 'resumed'} (demo)`);
       } else {
         await performResourceAction(currentContext!, cronJob, { type: 'suspend', suspend: nextSuspended });
-        await refresh();
-        toast.success(`CronJob ${cronJob.name} ${nextSuspended ? 'suspended' : 'resumed'}`);
+        await refreshAfterWrite();
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Suspend/resume cancelled');
@@ -217,8 +206,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
         toast.success(`Job ${manualJobName} triggered from CronJob (demo)`);
       } else {
         await performResourceAction(currentContext!, cronJob, { type: 'run_cron_job', name: manualJobName });
-        await refresh();
-        toast.success(`Spawned Job ${manualJobName}`);
+        await refreshAfterWrite();
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Run Now cancelled');
@@ -243,8 +231,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
         toast.success(`Sync requested for Argo CD app ${app.name} (demo)`);
       } else {
         await performResourceAction(currentContext!, app, { type: 'argo_sync' });
-        await refresh();
-        toast.success(`Sync requested for Argo CD app ${app.name}`);
+        await refreshAfterWrite();
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Sync cancelled');
@@ -267,8 +254,7 @@ export function useResourceActions(currentContext: string | null, refresh: () =>
         toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${app.name} (demo)`);
       } else {
         await performResourceAction(currentContext!, app, { type: 'argo_refresh', hard });
-        await refresh();
-        toast.success(`${hard ? 'Hard refresh' : 'Refresh'} requested for ${app.name}`);
+        await refreshAfterWrite();
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Refresh cancelled');

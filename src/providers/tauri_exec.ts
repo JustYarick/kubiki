@@ -1,13 +1,11 @@
 import type { ResourceRef } from '../core/resources/resource_types';
 import { normalizeK8sError, requestError, type K8sErrorPayload } from './errors';
 import { useUiStore } from '../state/ui_store';
-import type { AnalysisRequest } from '../core/ai_analysis';
 
 export interface NodeExecRequest { resource: ResourceRef; debug_session_id: string; shell: string; cols: number; rows: number }
 export interface HostTerminalInfo { shells: string[]; default_shell: string; cwd: string }
 export interface HostTerminalRequest { shell: string; cols: number; rows: number }
-export interface AnalysisTerminalRequest extends AnalysisRequest { cols: number; rows: number }
-export interface ExecRequest { resource: ResourceRef; container: string; shell: string; cols: number; rows: number }
+export interface ExecRequest { resource: ResourceRef; container: string; shell: string; cols: number; rows: number; mode?: 'exec' | 'attach' }
 export type ExecEvent = { type: 'Started' } | { type: 'Output'; payload: { data: number[] } } | { type: 'Exited'; payload: { code: number } } | { type: 'Failed'; payload: { error: K8sErrorPayload } };
 export interface ExecBatch { session_id: string; messages: Array<{ sequence: number; event: ExecEvent }> }
 export interface ExecConnection { write(data: string): void; resize(cols: number, rows: number): void; close(): void }
@@ -20,34 +18,33 @@ export async function resetExecSessions(): Promise<void> {
 
 /** No automatic reconnect: resending input to a new shell could repeat a destructive command. */
 export async function connectPodExec(request: ExecRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
-  return connectTerminal(request, receive, signal, 'pod_exec');
+  return connectTerminal({ ...request, mode: 'exec' }, receive, signal, 'pod_exec');
+}
+export async function connectPodAttach(request: Omit<ExecRequest, 'shell'> & { shell?: string }, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
+  return connectTerminal({ ...request, shell: request.shell ?? '', mode: 'attach' }, receive, signal, 'pod_exec', 'start_pod_attach');
 }
 export async function connectHostTerminal(request: HostTerminalRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
   return connectTerminal(request, receive, signal, 'host_terminal');
 }
-/** A distinct IPC command prevents old native builds from silently opening a shell. */
-export async function connectAiAnalysis(request: AnalysisTerminalRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
-  try {
-    return await connectTerminal(request, receive, signal, 'host_terminal', 'start_ai_analysis');
-  } catch (error) {
-    const failure = normalizeK8sError(error, { operation: 'ai_analysis' });
-    if (/start_ai_analysis/i.test(failure.message) && /not found|unknown|unrecognized|does not exist/i.test(failure.message)) {
-      throw requestError('unsupported', 'This desktop backend does not support Analyze. Rebuild and restart Kubiki to load the updated native backend.', { operation: 'ai_analysis' });
-    }
-    throw failure;
-  }
-}
 export async function connectNodeExec(request: NodeExecRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
   return connectTerminal(request, receive, signal, 'node_exec');
+}
+export class OpenCodeNotStartedError extends Error {
+  constructor(message: string) { super(message); this.name = 'OpenCodeNotStartedError'; }
+}
+export interface OpenCodeRequest { scope: import('../domains/ai/types').AgentScope; cols: number; rows: number; prompt: string | null }
+export async function connectOpenCode(request: OpenCodeRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal): Promise<ExecConnection> {
+  return connectTerminal(request,receive,signal,'host_terminal','start_opencode');
 }
 export async function getHostTerminalInfo(): Promise<HostTerminalInfo> {
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Local shell is available in the desktop app. Start Kubiki with pnpm tauri dev.', { operation: 'host_terminal' });
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<HostTerminalInfo>('get_host_terminal_info');
 }
-async function connectTerminal(request: ExecRequest | HostTerminalRequest | NodeExecRequest | AnalysisTerminalRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal, target: 'pod_exec' | 'host_terminal' | 'node_exec', startCommand = `start_${target}`): Promise<ExecConnection> {
+async function connectTerminal(request: ExecRequest | HostTerminalRequest | NodeExecRequest | OpenCodeRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal, target: 'pod_exec' | 'host_terminal' | 'node_exec', startCommand = `start_${target}`): Promise<ExecConnection> {
   const node = target === 'node_exec';
-  const info = 'resource' in request ? (node ? { operation: 'node_debug', context: request.resource.context } : { operation: 'exec', context: request.resource.context, resource: request.resource }) : { operation: 'host_terminal' };
+  const isAttach = 'mode' in request && request.mode === 'attach';
+  const info = 'resource' in request ? (node ? { operation: 'node_debug', context: request.resource.context } : { operation: isAttach ? 'attach' : 'exec', context: request.resource.context, resource: request.resource }) : { operation: 'host_terminal' };
   const routing = 'debug_session_id' in request ? { debugSessionId: request.debug_session_id } : {};
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Interactive shell is available in the desktop app. Start Kubiki with pnpm tauri dev.', info);
   const { Channel, invoke } = await import('@tauri-apps/api/core');
@@ -96,5 +93,14 @@ async function connectTerminal(request: ExecRequest | HostTerminalRequest | Node
     await invoke(startCommand, { sessionId: id, request, onEvent: channel, ackTimeoutSecs: useUiStore.getState().terminalAckTimeoutSecs });
     if (closed) stop();
     return connection;
-  } catch (error) { close(); throw normalizeK8sError(error, info); }
+  } catch (error) {
+    close();
+    if (startCommand === 'start_opencode' && error && typeof error === 'object'
+      && 'code' in error && error.code === 'opencode_start_failed'
+      && 'processStarted' in error && error.processStarted === false
+      && 'message' in error && typeof error.message === 'string') {
+      throw new OpenCodeNotStartedError(error.message);
+    }
+    throw normalizeK8sError(error, info);
+  }
 }

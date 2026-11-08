@@ -4,10 +4,18 @@ use kubiki_core::{InformerManager, WatchBatch};
 use std::time::Duration;
 use tauri::ipc::Channel;
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomWatchDefinition {
+    name: String,
+    uid: String,
+}
+
 #[tauri::command]
 pub async fn watch_resources(
     query: ResourceQuery,
     subscription_id: String,
+    custom_resource: Option<CustomWatchDefinition>,
     on_event: Channel<WatchBatch>,
     window: tauri::WebviewWindow,
     pool: tauri::State<'_, ClusterClientPool>,
@@ -17,13 +25,47 @@ pub async fn watch_resources(
     let context = query.context.clone();
     let owner = window.label().to_owned();
     let manager = manager.inner().clone();
-    let mut rx = manager
-        .start_watch(&owner, &subscription_id, query.clone(), async move {
-            pool.get_client(&context)
-                .await
-                .map_err(|error| ApiError::from_core(error, "watch", Some(&context)))
-        })
-        .await?;
+    let mut rx = if let Some(definition) = custom_resource {
+        let expected = query.clone();
+        manager
+            .start_resolved_watch(&owner, &subscription_id, query.clone(), async move {
+                let client = pool
+                    .get_client(&context)
+                    .await
+                    .map_err(|error| ApiError::from_core(error, "watch", Some(&context)))?;
+                let (resolved, resource, namespaced) =
+                    kubiki_core::core::reads::resolve_custom_resource(
+                        client.clone(),
+                        context.clone(),
+                        definition.name,
+                        definition.uid,
+                        expected.namespace.clone(),
+                    )
+                    .await?;
+                if resolved.group != expected.group
+                    || resolved.version != expected.version
+                    || resolved.kind != expected.kind
+                    || resolved.namespace != expected.namespace
+                {
+                    return Err(ApiError::from_status(
+                        409,
+                        "CRD identity or served version changed; refresh the definition",
+                        "watch",
+                        Some(&context),
+                    ));
+                }
+                Ok((client, Some((resource, namespaced))))
+            })
+            .await?
+    } else {
+        manager
+            .start_watch(&owner, &subscription_id, query.clone(), async move {
+                pool.get_client(&context)
+                    .await
+                    .map_err(|error| ApiError::from_core(error, "watch", Some(&context)))
+            })
+            .await?
+    };
     tauri::async_runtime::spawn(async move {
         let mut messages = Vec::with_capacity(128);
         let mut timer = tokio::time::interval(Duration::from_millis(50));

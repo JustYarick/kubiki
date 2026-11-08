@@ -1,5 +1,11 @@
 import type { LogTimestampZone } from '../core/utils/log_timestamp';
-import { DEFAULT_TERMINAL_FONT, normalizeTerminalFont, normalizeTerminalLineHeight } from '../core/terminal_appearance';
+import {
+  DEFAULT_TERMINAL_FONT,
+  DEFAULT_TERMINAL_BACKGROUND,
+  normalizeTerminalFont,
+  normalizeTerminalLineHeight,
+  normalizeTerminalBackground,
+} from '../core/terminal_appearance';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useDockStore } from './dock_store';
@@ -8,7 +14,6 @@ import { DEFAULT_APPEARANCE, appearanceValue, normalizeAppearance } from '../cor
 import type { ResourceKind } from '../types/k8s';
 import { DEFAULT_TOPOLOGY_HIDDEN_KINDS } from '../core/resources/topology_visibility';
 import { DEFAULT_TOPOLOGY_RENDERING, normalizeTopologyRendering, type TopologyRenderingPreferences } from '../core/resources/topology_rendering';
-import { ANALYSIS_INSTRUCTIONS, normalizeAnalysisPrompt, normalizeAiAgent, type AiAgent } from '../core/ai_analysis';
 
 export type Density = 'compact' | 'comfortable';
 export type RightTab = 'overview' | 'yaml' | 'related' | 'events' | 'env';
@@ -17,10 +22,6 @@ export type LogMode = 'poll' | 'watch';
 interface UIState extends TopologyRenderingPreferences {
   developerMode: boolean;
   setDeveloperMode: (enabled: boolean) => void;
-  aiAnalysisPrompt: string;
-  setAiAnalysisPrompt: (prompt: string) => void;
-  aiAgent: AiAgent;
-  setAiAgent: (agent: AiAgent) => void;
   /* appearance */
   density: Density;
   uiScale: number;
@@ -28,6 +29,7 @@ interface UIState extends TopologyRenderingPreferences {
   terminalFontSize: number;
   terminalFontFamily: string;
   terminalLineHeight: number;
+  terminalBackground: string;
   /* editor behavior */
   yamlCleanView: boolean;
   /* details panel default tab for freshly opened resources */
@@ -85,6 +87,7 @@ interface UIState extends TopologyRenderingPreferences {
   setTerminalFontSize: (value: number) => void;
   setTerminalFontFamily: (value: string) => void;
   setTerminalLineHeight: (value: number) => void;
+  setTerminalBackground: (value: string) => void;
   setYamlCleanView: (value: boolean) => void;
   setYamlHideManagedFields: (value: boolean) => void;
   setDefaultRightTab: (value: 'overview' | 'yaml') => void;
@@ -167,14 +170,11 @@ export const useUiStore = create<UIState>()(
     (set) => ({
       developerMode: false,
       setDeveloperMode: (enabled) => set({ developerMode: enabled }),
-      aiAnalysisPrompt: ANALYSIS_INSTRUCTIONS,
-      setAiAnalysisPrompt: (prompt) => set({ aiAnalysisPrompt: normalizeAnalysisPrompt(prompt) }),
-      aiAgent: 'codex',
-      setAiAgent: (agent) => set({ aiAgent: normalizeAiAgent(agent) }),
       density: 'compact',
       ...DEFAULT_APPEARANCE,
       terminalFontFamily: DEFAULT_TERMINAL_FONT,
       terminalLineHeight: 1.2,
+      terminalBackground: DEFAULT_TERMINAL_BACKGROUND,
       yamlCleanView: true,
       yamlHideManagedFields: true,
       defaultRightTab: 'overview' as const,
@@ -218,6 +218,7 @@ export const useUiStore = create<UIState>()(
       setTerminalFontSize: (value) => set({ terminalFontSize: appearanceValue('terminalFontSize', value) }),
       setTerminalFontFamily: (value) => set({ terminalFontFamily: normalizeTerminalFont(value) }),
       setTerminalLineHeight: (value) => set({ terminalLineHeight: normalizeTerminalLineHeight(value) }),
+      setTerminalBackground: (value) => set({ terminalBackground: normalizeTerminalBackground(value) }),
       setYamlCleanView: (yamlCleanView) => set({ yamlCleanView }),
       setYamlHideManagedFields: (yamlHideManagedFields) => set({ yamlHideManagedFields }),
       setDefaultRightTab: (defaultRightTab) => set({ defaultRightTab }),
@@ -251,6 +252,7 @@ export const useUiStore = create<UIState>()(
           ...DEFAULT_APPEARANCE,
           terminalFontFamily: DEFAULT_TERMINAL_FONT,
           terminalLineHeight: 1.2,
+          terminalBackground: DEFAULT_TERMINAL_BACKGROUND,
         }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, 200, 420), sidebarCollapsed: false }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -316,15 +318,14 @@ export const useUiStore = create<UIState>()(
         return {
           ...current,
           ...stored as Partial<UIState>,
-          aiAgent: normalizeAiAgent(stored?.aiAgent),
           developerMode: normalizeBool(stored?.developerMode, false),
-          aiAnalysisPrompt: normalizeAnalysisPrompt(stored?.aiAnalysisPrompt),
           inspectorWidth: clamp(stored?.inspectorWidth ?? current.inspectorWidth, 320, 1000),
           sidebarGroups: stored?.sidebarTreeVersion === 2 ? stored.sidebarGroups ?? {} : {},
           sidebarTreeVersion: 2,
           ...normalizeAppearance(stored),
           terminalFontFamily: normalizeTerminalFont(stored?.terminalFontFamily),
           terminalLineHeight: normalizeTerminalLineHeight(stored?.terminalLineHeight),
+          terminalBackground: normalizeTerminalBackground(stored?.terminalBackground),
           yamlCleanView: normalizeBool(stored?.yamlCleanView, true),
           defaultRightTab: stored?.defaultRightTab === 'yaml' ? ('yaml' as const) : ('overview' as const),
           terminalScrollback: normalizeNumber(stored?.terminalScrollback, SCROLLBACK_LIMITS.min, SCROLLBACK_LIMITS.max, DEFAULT_SCROLLBACK),
@@ -350,15 +351,14 @@ export const useUiStore = create<UIState>()(
         };
       },
       partialize: (s) => ({
-        aiAgent: s.aiAgent,
         developerMode: s.developerMode,
-        aiAnalysisPrompt: s.aiAnalysisPrompt,
         density: s.density,
         uiScale: s.uiScale,
         editorFontSize: s.editorFontSize,
         terminalFontSize: s.terminalFontSize,
         terminalFontFamily: s.terminalFontFamily,
         terminalLineHeight: s.terminalLineHeight,
+        terminalBackground: s.terminalBackground,
         yamlCleanView: s.yamlCleanView,
         defaultRightTab: s.defaultRightTab,
         terminalScrollback: s.terminalScrollback,

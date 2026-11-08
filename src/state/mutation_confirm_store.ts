@@ -7,6 +7,7 @@ export interface MutationConfirmRequest {
   resource: ResourceRef;
   review: string;
   details?: MutationReview;
+  simple?: { title: string; confirm_label: string; destructive: boolean };
 }
 
 interface MutationConfirmState {

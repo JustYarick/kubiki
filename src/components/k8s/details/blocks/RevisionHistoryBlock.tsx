@@ -71,7 +71,6 @@ export function RevisionHistoryBlock({ workload, item }: RevisionHistoryBlockPro
         toast.success(`Rolled back ${targetWorkload.name} to revision #${rev} (demo)`);
       } else {
         await performResourceAction(currentContext!, targetWorkload, { type: 'rollback', revision: resourceRef(currentContext!, rs), resource_version: rs.raw?.metadata?.resourceVersion ?? '' });
-        toast.success(`Rollback to revision #${rev} applied for ${targetWorkload.name}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') {
@@ -83,15 +82,16 @@ export function RevisionHistoryBlock({ workload, item }: RevisionHistoryBlockPro
   };
 
   return (
-    <section aria-label="Revision history" className="details-section">
+    <section aria-label="Deployment rollout history" className="details-section">
       <div className="details-section-heading text-[length:calc(11px*var(--ui-factor))] font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-[var(--text-primary)]">
           <History size="calc(12px * var(--ui-factor))" className="text-[var(--accent)]" />
-          Revision History ({revisions.length} revisions)
+          Deployment rollout history ({revisions.length} revisions)
         </span>
       </div>
 
       <div className="p-2 space-y-1.5 bg-[var(--bg-canvas)]">
+        <p className="details-caption mb-2">Kubernetes stores Pod template revisions in this Deployment's ReplicaSets. Changing images or other Pod template settings creates a rollout revision; scaling alone does not. Rollback restores a previous Pod template.</p>
         {revisions.map((rs, index) => {
           const revNum = rs.raw?.metadata?.annotations?.['deployment.kubernetes.io/revision'] ?? (revisions.length - index);
           const isCurrent = index === 0;

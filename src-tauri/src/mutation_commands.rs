@@ -355,6 +355,7 @@ pub async fn mutate_resource(
             });
     }
     if let ChangeRequest::Helm { request } = request {
+        let operation = request.operation();
         let reader = if resource.query.namespace.is_some() {
             crate::helm_commands::cluster_reader(&pool).await?
         } else {
@@ -362,7 +363,9 @@ pub async fn mutate_resource(
         };
         return PreparedHelmMutation::prepare(reader, request)
             .await?
-            .confirm_and_commit(|review| crate::mutation_guard::confirm(window, &resource, review))
+            .confirm_and_commit(|summary| {
+                crate::mutation_guard::confirm_action(window, &resource, summary, operation)
+            })
             .await;
     }
     let intent = match request {
@@ -458,7 +461,14 @@ pub async fn delete_resource(
                 .remove_other(
                     client(&pool, &resource).await?,
                     resource.clone(),
-                    |review| crate::mutation_guard::confirm(window, &resource, review),
+                    |review| {
+                        crate::mutation_guard::confirm_action(
+                            window,
+                            &resource,
+                            review,
+                            "delete_debug_pod",
+                        )
+                    },
                 )
                 .await?;
             Ok(json!({"deleted": true}))

@@ -25,9 +25,14 @@ semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 # Core K8s engine
 kubiki-core = { path = "../crates/kubiki-core" }
+kubiki-mcp = { path = "../crates/kubiki-mcp" }
+kubiki-tools = { path = "../crates/kubiki-tools" }
+kubiki-ai = { path = "../crates/kubiki-ai" }
+async-trait = "0.1"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -46,6 +51,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 keyring = "4"
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [patch.crates-io]
 # GTK3 requires glib 0.18. Backport the upstream VariantStrIter safety fix.
@@ -53,6 +59,11 @@ glib = { path = "../vendor/glib" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 glib = "0.18.5"
+
+[dev-dependencies]
+http = "1"
+tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1", features = ["test-util"] }
 
 # Exercise the backported out-pointer fix with optimizer assumptions enabled.
 [profile.test.package.glib]

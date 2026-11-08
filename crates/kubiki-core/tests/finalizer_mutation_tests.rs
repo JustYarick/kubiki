@@ -1,9 +1,7 @@
 //! Finalizer removal is a targeted merge patch, not a whole-object replace.
 //! Read/write HTTP fixtures only: these tests never use kubeconfig or a live cluster.
 use kube::{Client, client::Body};
-use kubiki_core::core::{
-    mutations::{MutationIntent, PreparedMutation},
-};
+use kubiki_core::core::mutations::{MutationIntent, PreparedMutation};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -113,11 +111,10 @@ async fn review_pins_the_live_object_and_commit_is_a_single_rv_pinned_patch() {
     let requests = f.requests.clone();
     let updated = plan
         .confirm_and_commit(|review| async move {
-            assert!(review.contains("Remove finalizer"));
-            assert!(review.contains("metadata.finalizers"));
-            assert!(review.contains("example.com/a") && review.contains("example.com/b"));
-            assert!(review.contains("original"));
-            assert!(review.contains("re-add") || review.contains("Re-add"));
+            assert_eq!(
+                review,
+                "Remove finalizer \"example.com/b\" from this object."
+            );
             assert!(
                 !requests
                     .lock()
@@ -139,7 +136,10 @@ async fn review_pins_the_live_object_and_commit_is_a_single_rv_pinned_patch() {
     );
     assert_eq!(writes[0].2["metadata"]["uid"], "original");
     assert_eq!(writes[0].2["metadata"]["resourceVersion"], "10");
-    assert_eq!(writes[0].2["metadata"]["finalizers"], json!(["example.com/a"]));
+    assert_eq!(
+        writes[0].2["metadata"]["finalizers"],
+        json!(["example.com/a"])
+    );
     // The response still carries the live finalizer list for re-add detection.
     assert_eq!(updated["metadata"]["finalizers"], json!(["example.com/a"]));
 }
@@ -150,7 +150,10 @@ async fn controller_readd_is_reported_in_the_followup_object() {
     let plan = PreparedMutation::prepare(f.client.clone(), intent("example.com/b"))
         .await
         .unwrap();
-    let updated = plan.confirm_and_commit(|_| async { Ok(true) }).await.unwrap();
+    let updated = plan
+        .confirm_and_commit(|_| async { Ok(true) })
+        .await
+        .unwrap();
     // One patch still happened; the verdict object shows the incoming finalizer.
     assert_eq!(writes(&f).len(), 1);
     assert_eq!(

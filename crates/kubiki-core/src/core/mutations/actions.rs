@@ -18,6 +18,7 @@ pub enum ResourceAction {
     ArgoRefresh {
         hard: bool,
     },
+    FluxRetry,
     RunCronJob {
         name: String,
     },
@@ -67,23 +68,11 @@ impl PreparedMutation {
                     .cloned()
                     .unwrap_or_default();
                 let keys: BTreeSet<_> = old.keys().chain(new.as_object().unwrap().keys()).collect();
-                let summary = keys
+                let changed = keys
                     .into_iter()
                     .filter(|key| old.get(*key) != new.get(*key))
-                    .map(|key| {
-                        format!(
-                            "{key:?}: {}",
-                            if !old.contains_key(key) {
-                                "added"
-                            } else if new.get(key).is_none() {
-                                "removed"
-                            } else {
-                                "updated"
-                            }
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                    .count();
+                let summary = format!("Update ConfigMap data ({changed} changed keys).");
                 after["data"] = new;
                 ("UPDATE_CONFIG_MAP", summary, vec![])
             }
@@ -158,6 +147,53 @@ impl PreparedMutation {
                         "Request {} Argo CD refresh.",
                         if hard { "hard" } else { "normal" }
                     ),
+                    vec![],
+                )
+            }
+            ResourceAction::FluxRetry
+                if resource.query.group == "helm.toolkit.fluxcd.io"
+                    && resource.query.kind == "HelmRelease" =>
+            {
+                if before.data.pointer("/spec/suspend") == Some(&json!(true)) {
+                    return Err(error(
+                        &resource,
+                        422,
+                        "Resume the HelmRelease before retrying",
+                    ));
+                }
+                if before.metadata.deletion_timestamp.is_some() {
+                    return Err(error(&resource, 409, "The HelmRelease is being deleted"));
+                }
+                let exhausted = before
+                    .data
+                    .pointer("/status/conditions")
+                    .and_then(Value::as_array)
+                    .is_some_and(|conditions| {
+                        conditions.iter().any(|condition| {
+                            condition["reason"] == "RetriesExceeded"
+                                && ((condition["type"] == "Stalled"
+                                    && condition["status"] == "True")
+                                    || (condition["type"] == "Ready"
+                                        && condition["status"] == "False"))
+                                && condition["observedGeneration"]
+                                    .as_i64()
+                                    .zip(before.metadata.generation)
+                                    .is_none_or(|(observed, generation)| observed >= generation)
+                        })
+                    });
+                if !exhausted {
+                    return Err(error(
+                        &resource,
+                        409,
+                        "The HelmRelease no longer reports RetriesExceeded; refresh its status",
+                    ));
+                }
+                let token = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+                after["metadata"]["annotations"]["reconcile.fluxcd.io/requestedAt"] = json!(token);
+                after["metadata"]["annotations"]["reconcile.fluxcd.io/resetAt"] = json!(token);
+                (
+                    "FLUX_RETRY",
+                    "Reset exhausted Flux HelmRelease failure counters and request reconciliation. Completion is reported by the Flux controller.".into(),
                     vec![],
                 )
             }
@@ -285,10 +321,7 @@ impl PreparedMutation {
             None,
             warnings,
         );
-        prepared.review = format!(
-            "{}\n\n{operation}: {summary}\n\nConfirm this operation? Cancel leaves the cluster unchanged.",
-            identity_summary(&prepared.resource, &prepared.version)
-        );
+        prepared.review = summary;
         prepared.preconditions = sources;
         Ok(prepared)
     }

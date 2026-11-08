@@ -16,7 +16,7 @@ There is no cloud synchronization. Clearing application/web storage removes them
 | Logs, terminal, YAML editor | Their default preferences. Log contents, terminal output/processes and unsaved YAML text stay in memory and are lost when the app exits. |
 | Table search, filters and sorts | Persisted per resource kind (search query, regex toggle, column sorting, and column filters). Row selection is session-only. Reset controls via **Settings → Appearance → Reset table columns & filters**. |
 | Port forwards | Default port range/browser preference persists; active tunnels close on exit or cluster change. |
-| AI and updates | Selected analysis agent, starting prompt and update preferences persist locally. |
+| AI and updates | Conversation transcripts and full-text search index persist in SQLite (`ai/history.sqlite3`). UI preferences, active model selection, and discovered model metadata persist in localStorage. Provider API credentials persist in the native OS keyring. Active streams, session tokens, and pending approvals are session-only. Update preferences persist locally. |
 
 Cluster resource data is loaded again on connection. Context persistence stores
 only the context name, not kubeconfig credentials or an API client. Selecting a
@@ -51,3 +51,19 @@ For a Mac with slow panning, start with **Performance** and try **Flat** groupin
 for large graphs. These controls reduce frontend work; they do not replace the
 native WebView engine. Native macOS GPU/frame pacing still requires testing on
 the actual machine; Linux/Chromium tests cannot establish its resulting FPS.
+
+## AI conversation storage and credential security
+
+AI conversation history and configuration are partitioned across three tiers:
+
+- **OS Keyring / Credential Store**: Provider API keys are stored exclusively in the
+  native OS credential manager (`keyring`), isolated per provider endpoint and
+  never saved in localStorage, config files, or SQLite transcripts.
+- **SQLite Database (`ai/history.sqlite3`)**: Sanitized conversation turns, titles,
+  cluster/namespace metadata, timestamps, and an SQLite FTS5 search index are
+  persisted in the app data directory. SQLite `secure_delete` is enabled. Tool bodies,
+  raw secret manifests, and PlanArtifact payloads are filtered out prior to persistence.
+- **Local Storage**: Non-sensitive UI selections (e.g. last chosen provider/model,
+  generation temperature/max tokens, panel visibility, and pinned status) reside in
+  WebView localStorage. Running agent streams, in-memory tool execution state, and
+  single-use approval tokens are never written to disk.

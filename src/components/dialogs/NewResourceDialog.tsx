@@ -6,6 +6,7 @@ import { k8s } from '../../providers/k8s_provider';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input, Label } from '../ui/Input';
+import { CodeEditor } from '../ui/CodeEditor';
 
 export function NewResourceDialog({ open, type, context, defaultNs, onClose, onCreate }: {
   open: boolean; type: NewResourceType; context: string | null; defaultNs: string;
@@ -48,7 +49,7 @@ export function NewResourceDialog({ open, type, context, defaultNs, onClose, onC
       }
     } finally { submitting.current = false; setBusy(false); }
   };
-  return <Modal open={open} onClose={() => { if (!busy) onClose(); }} width={720} title={`New ${type.kind}`} footer={<>
+  return <Modal open={open && !busy} onClose={() => { if (!busy) onClose(); }} width={720} title={`New ${type.kind}`} footer={<>
     <Button disabled={busy} onClick={onClose}>Cancel</Button>
     <Button variant="primary" disabled={busy || !validation.object || !context} onClick={() => void submit()}>
       {busy && <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />}
@@ -62,7 +63,7 @@ export function NewResourceDialog({ open, type, context, defaultNs, onClose, onC
         {type.namespaced && <div className="flex flex-col gap-1.5"><Label htmlFor={`${id}-namespace`}>Namespace</Label><Input id={`${id}-namespace`} value={typeof metadata?.namespace === 'string' ? metadata.namespace : ''} disabled={busy || !metadata} onChange={event => changeIdentity('namespace', event.target.value)} placeholder="Set metadata.namespace in the manifest" /></div>}
       </div>
       <div className="flex flex-col gap-1.5"><Label htmlFor={`${id}-manifest`}>Manifest · YAML</Label>
-        <textarea id={`${id}-manifest`} aria-describedby={`${id}-help${validation.message ? ` ${id}-validation` : ''}`} aria-invalid={!!validation.message} value={manifest} onChange={event => { setManifest(event.target.value);setError(''); }} disabled={busy} spellCheck={false} className="min-h-[min(38vh,360px)] resize-y bg-[var(--bg-canvas)] border border-[var(--border-default)] rounded p-3 font-mono text-xs text-[var(--text-primary)] focus:outline-2 focus:outline-[var(--accent)] kubiki-scrollbar" />
+        <CodeEditor id={`${id}-manifest`} ariaLabel="Manifest · YAML" aria-describedby={`${id}-help${validation.message ? ` ${id}-validation` : ''}`} aria-invalid={!!validation.message} value={manifest} onChange={value => { setManifest(value); setError(''); }} readOnly={busy} language="yaml" height="min(38vh, 360px)" />
         {validation.message && <p id={`${id}-validation`} role="status" className="text-xs text-[var(--status-warn)] whitespace-pre-wrap break-words">{validation.message}</p>}
       </div>
       {error && <p ref={errorRef} role="alert" tabIndex={-1} className="text-xs text-[var(--status-danger)] break-words">{error}</p>}

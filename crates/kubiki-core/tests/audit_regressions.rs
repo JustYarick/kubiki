@@ -112,7 +112,7 @@ async fn drain_reads_only_its_node_and_rechecks_the_source_after_confirmation() 
     );
 }
 #[tokio::test]
-async fn large_batch_reviews_keep_every_target_without_generated_diffs() {
+async fn large_batches_keep_all_targets_and_use_a_concise_confirmation() {
     let f = fixture();
     let targets: Vec<_> = (0..200)
         .map(|n| format!("pod-{n}-{}", "x".repeat(180)))
@@ -140,9 +140,10 @@ async fn large_batch_reviews_keep_every_target_without_generated_diffs() {
     for (step, name) in details.steps.iter().zip(&targets) {
         assert_eq!(&step.resource.name, name);
         assert!(step.diff.is_none());
-        assert!(batch.review().contains(name));
+        assert!(!batch.review().contains(name));
     }
-    assert!(!batch.review().contains("truncated"));
+    assert!(batch.review().contains("200 operations"));
+    assert!(batch.review().len() < 200);
     assert!(
         f.requests
             .lock()

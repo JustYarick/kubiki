@@ -1,3 +1,4 @@
+import { terminalFontStack } from '../../core/terminal_appearance';
 import { logTimestampFormatter, systemTimeZone } from '../../core/utils/log_timestamp';
 import { Select } from '../ui/Select';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -38,6 +39,9 @@ export function LogsSessionPane(props: { session: DockSession; visible?: boolean
 
 function LogsSessionContent({ session, visible = true, onContainerChange }: { session: DockSession; visible?: boolean; onContainerChange?: (name: string) => void }) {
   const [error, setError] = useState('');
+  const fontFamily = useUiStore(s => s.terminalFontFamily);
+  const fontSize = useUiStore(s => s.terminalFontSize);
+  const lineHeight = useUiStore(s => s.terminalLineHeight);
   const { containers, container: activeContainer, context, recreated, uid } = useSessionContainers(session);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
@@ -198,6 +202,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
     getItemKey: (index) => shown[index]?.seq ?? index,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
+  useEffect(() => { rowVirtualizer.measure(); }, [fontFamily, fontSize, lineHeight, wrap]);
 
   useEffect(() => {
     const output = outputRef.current;
@@ -240,7 +245,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
             No logs matching filter “{filter}” for {session.resourceName}
           </div>
         ) : (
-          <div className={cx('font-mono text-[length:calc(11px*var(--ui-factor))] leading-[1.6]', !wrap && 'w-max min-w-full')}>
+          <div style={{ fontFamily: terminalFontStack(fontFamily), fontSize, lineHeight }} className={cx(!wrap && 'w-max min-w-full')}>
             {virtualRows.length > 0 && virtualRows[0].start > 0 && (
               <div aria-hidden="true" data-virtual-spacer style={{ height: `${virtualRows[0].start}px` }} />
             )}
@@ -295,7 +300,7 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                   )}
                 >
                   {showTimestamps && (
-                    <time data-testid="log-timestamp" dateTime={l.t || undefined} title={l.t ? `Original: ${l.t}` : undefined} className="text-[var(--text-muted)] pr-2 font-mono text-[10px]">
+                    <time data-testid="log-timestamp" dateTime={l.t || undefined} title={l.t ? `Original: ${l.t}` : undefined} className="text-[var(--text-muted)] pr-2 text-[0.85em]">
                       {formatTimestamp(l.t)}
                     </time>
                   )}
@@ -318,11 +323,11 @@ function LogsSessionContent({ session, visible = true, onContainerChange }: { se
                         return (
                           <span
                             key={idx}
-                            className="inline-flex items-center text-[10px] px-1.5 py-0.2 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] transition-colors select-text"
+                            className="inline-flex items-center text-[0.85em] px-1.5 py-0.2 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] transition-colors select-text"
                             title={`${k}: ${v}`}
                           >
                             <span className="text-[var(--text-muted)] font-normal mr-1 select-none">{k}:</span>
-                            <span className={cx('font-mono break-all', valColor)}>{v}</span>
+                            <span className={cx('break-all', valColor)}>{v}</span>
                           </span>
                         );
                       })}

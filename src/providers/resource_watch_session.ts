@@ -1,6 +1,8 @@
 import { inNamespaceScope } from '../core/resources/namespace_scope';
 import type { ResourceItem, ResourceKind } from '../types/k8s';
 import { apiVersionFor, resourceQuery, resourceType, SCOPE_INDEPENDENT_KINDS, namespaceFallback, type ResourceQuery } from '../core/resources/resource_types';
+import { parseCustomResources } from './custom_resources';
+import type { ResourceType } from '../core/resources/resource_types';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { normalizeK8sError, requestError, type K8sRequestError } from './errors';
 import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchPhase } from './watch_types';
@@ -24,7 +26,16 @@ export class ResourceWatchSession {
   /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
   private scopedFallback = new Set<ResourceKind>();
   private kindScopes: ReadonlyMap<ResourceKind, string> = new Map();
-  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery) => ResourceItem[] | undefined) {}
+  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery) => ResourceItem[] | undefined, private customType?: ResourceType) {}
+
+  private query(kind: ResourceKind, scope: string): ResourceQuery {
+    if (!this.customType) return resourceQuery(this.context, kind, scope);
+    const {group, version, kind: actualKind, namespaced} = this.customType;
+    return {context:this.context, group, version, kind:actualKind, namespace:namespaced && scope !== 'all' ? scope : null};
+  }
+  private map(raw: Record<string, any>, kind: ResourceKind): ResourceItem {
+    return this.customType ? parseCustomResources({items:[raw]})[0] : mapK8sResource(raw, kind);
+  }
 
   async start(kinds: ResourceKind[]): Promise<PromiseSettledResult<void>[]> { return Promise.allSettled(kinds.map((kind) => this.refresh(kind))); }
 
@@ -45,7 +56,7 @@ export class ResourceWatchSession {
     }
     return Promise.allSettled([...wanted].filter(kind => {
       const previous = this.subscriptions.get(kind);
-      return !previous || !sameQuery(previous.query, resourceQuery(this.context, kind, this.scope(kind)));
+      return !previous || !sameQuery(previous.query, this.query(kind, this.scope(kind)));
     }).map(kind => this.refresh(kind)));
   }
 
@@ -59,7 +70,7 @@ export class ResourceWatchSession {
     const previous = this.subscriptions.get(kind);
     if (previous) this.closeSubscription(previous);
     const scope = forcedScope ?? this.scope(kind);
-    const query = resourceQuery(this.context, kind, scope);
+    const query = this.query(kind, scope);
     const sameScope = previous && sameQuery(previous.query, query);
     const cached = !sameScope ? this.cachedSnapshot?.(query) : undefined;
     let resolve!: () => void; let reject!: (error: K8sRequestError) => void;
@@ -135,7 +146,7 @@ export class ResourceWatchSession {
   }
 
   private validateObject(raw: Record<string, any>, query: ResourceQuery): void {
-    const type = resourceType(query.kind as ResourceKind);
+    const type = this.customType ?? resourceType(query.kind as ResourceKind);
     const namespaced = type.namespaced;
     if (!raw || type.watch !== false && (typeof raw.metadata?.uid !== 'string' || !raw.metadata.uid) || typeof raw.metadata?.name !== 'string' || !raw.metadata.name
       || namespaced && (typeof raw.metadata.namespace !== 'string' || !raw.metadata.namespace)
@@ -148,11 +159,11 @@ export class ResourceWatchSession {
     subscription.flushTimer = undefined;
     if (!this.current(kind, subscription)) return;
     try {
-      const snapshot = subscription.snapshot?.map((raw) => mapK8sResource(raw, kind));
+      const snapshot = subscription.snapshot?.map((raw) => this.map(raw, kind));
       if (snapshot) subscription.hasSnapshot = true;
       if (subscription.phase === 'live' && !subscription.hasSnapshot) throw new Error('Resource watch reported live without a complete snapshot');
       const changes: WatchCommit['changes'] = [...subscription.changes.values()].map((delta) => delta.type === 'Applied'
-        ? { type: 'apply', item: mapK8sResource(delta.payload.data, kind) } : { type: 'delete', uid: (delta as Extract<WatchDelta, { type: 'Deleted' }>).payload.uid });
+        ? { type: 'apply', item: this.map(delta.payload.data, kind) } : { type: 'delete', uid: (delta as Extract<WatchDelta, { type: 'Deleted' }>).payload.uid });
       if ((subscription.phase === 'failed' || subscription.phase === 'stopped') && !subscription.error) subscription.error = requestError('unavailable', 'Resource watch stopped', { operation: 'watch', context: this.context, resource: subscription.query });
       this.commit(kind, { snapshot, changes, state: { query: subscription.query, phase: subscription.phase, hasSnapshot: subscription.hasSnapshot, updatedAt: Date.now() }, error: subscription.error });
       subscription.snapshot = undefined; subscription.changes.clear();
@@ -180,7 +191,7 @@ export class ResourceWatchSession {
     this.namespace = namespace;
     // Scope-independent kinds keep their cluster-wide watch — unless RBAC denied it,
     // in which case they follow the selected namespace like every other namespaced kind.
-    const scoped = [...this.subscriptions].filter(([kind, subscription]) => !sameQuery(subscription.query, resourceQuery(this.context, kind, this.scope(kind)))).map(([kind]) => kind);
+    const scoped = [...this.subscriptions].filter(([kind, subscription]) => !sameQuery(subscription.query, this.query(kind, this.scope(kind)))).map(([kind]) => kind);
     return Promise.allSettled(scoped.map((kind) => this.refresh(kind)));
   }
 

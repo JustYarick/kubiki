@@ -93,3 +93,10 @@ it('keeps custom references explicit instead of fetching the catalog for an unfa
   expect(relatedResourceKinds(application)).toEqual(['Namespace', 'Deployment']);
   expect(relatedResourceKinds({ ...application, kind: 'Namespace', apiVersion: 'example.io/v1', raw: {} })).toEqual(['Namespace']);
 });
+
+it('keeps a master-search detail tab pinned outside the global namespace without changing table scope', () => {
+  const detail: WorkspaceTab = { id: 'search-detail', type: 'resource-detail', title: 'config', kind: 'ConfigMap', namespace: 'beta', namespacePinned: true, context: 'test' };
+  const result = resourceDemand({ context: 'test', tabs: [detail, { ...tab('pods', 'Pod') }], activeTabId: detail.id, splitTabId: 'pods', selectedNamespace: 'alpha', selectedItem: null, inspectorCollapsed: true, rightTab: 'overview' });
+  expect(result.scopes.get('ConfigMap')).toBe('beta');
+  expect(result.scopes.get('Pod')).toBe('["alpha","beta"]');
+});

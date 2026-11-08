@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useClusterStore } from '../state/cluster_store';
 import { useResourceStore } from '../state/resource_store';
 import { customResourceType, resourceBucket, type CustomResourceType } from '../core/resources/custom_resource_types';
+import { inNamespaceScope } from '../core/resources/namespace_scope';
 import { gitOpsFamily } from '../core/resources/gitops';
 import type { ResourceItem } from '../types/k8s';
+import { isCustomResourceWatched } from './use_custom_resources';
 import { k8s } from './k8s_provider';
 import { normalizeK8sError, type K8sRequestError } from './errors';
 import { ReadSubscriptions, type ReadSnapshot } from './read_subscriptions';
@@ -49,7 +51,14 @@ export function useGitOpsDashboard(family: 'flux' | 'argocd') {
     return subscriptions.subscribe(key, snapshot => {
       if (snapshot.data && last !== snapshot.data) {
         last = snapshot.data;
-        for (const entry of snapshot.data.entries) if (entry.items && !entry.error) useResourceStore.getState().setResourcesForKind(entry.type.key, entry.items);
+        for (const entry of snapshot.data.entries) if (entry.items && !entry.error) {
+          const store = useResourceStore.getState();
+          // A background dashboard snapshot must not overwrite newer live CRD deltas.
+          if (isCustomResourceWatched(context, entry.type.key)) continue;
+          const retained = entry.type.namespaced && scope !== 'all'
+            ? [...(store.resources[entry.type.key]?.values() ?? [])].filter(item => !inNamespaceScope(scope, item.namespace)) : [];
+          store.setResourcesForKind(entry.type.key, [...retained, ...entry.items]);
+        }
       }
       setState({ ...snapshot, key });
     });

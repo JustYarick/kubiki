@@ -1,8 +1,8 @@
 # Desktop builds and releases
 
 CI and Release share the [desktop pipeline](../.github/workflows/release.yml)
-and offer two entry points: CI runs tests before building; a manual Release
-builds and publishes without tests by default. Both build all four desktop
+and offer two entry points: CI runs tests alongside installer builds; a manual
+Release builds and publishes without tests by default. Both build all four desktop
 targets and validate the release artifacts before publishing.
 
 ## Run from GitHub Actions
@@ -43,6 +43,18 @@ For **build and publish without tests**, open **Actions → Release → Run work
 | Manual Release (`run_tests=false`, default) | Skipped | Yes | Yes, unless `publish=false` |
 | Manual Release (`run_tests=true`) | All | Yes | Yes, unless `publish=false` |
 | Push a `v*` tag | Skipped | Yes | Yes |
+
+The frontend and bundled extensions are compiled once, with the selected release
+version, and shared by all four installer jobs. Each platform prepares and caches
+its own verified Node runtime. Native test suites share a Cargo target directory
+to reuse compiled dependencies. Browser tests run as two shards with two workers
+each, retaining separate timing summaries, failure screenshots and traces.
+
+Installer compilation overlaps frontend and browser tests. When tests are enabled,
+publication and the optional scan wait for all required suites and all installer
+jobs to succeed. A failed test blocks publication, but installers may still finish
+and remain available as workflow artifacts. This shortens the critical path;
+failed runs can use more runner minutes because compilation has already started.
 
 Skipping tests does not require a previous successful CI run. Frontend/extension
 compilation, type checking needed by the build, signing and artifact validation

@@ -1,4 +1,4 @@
-import { usePanelRegistry, openWorkspacePanel } from '../../core/workspace_panels';
+import { usePanelRegistry, openWorkspacePanel, hasBottomPanel } from '../../core/workspace_panels';
 import React from 'react';
 import {
   FolderOpen,
@@ -11,15 +11,18 @@ import { useDockStore } from '../../state/dock_store';
 import { useUiStore } from '../../state/ui_store';
 import { Tooltip } from '../ui/Button';
 import { cx } from '../../core/utils/cx';
+import { activeWorkspaceArea, areaHasInspector } from '../../core/workspace_areas';
+import { useWorkspaceStore } from '../../state/workspace_store';
 
 export const ActivityBar: React.FC = () => {
   const panels = usePanelRegistry(s => s.panels);
+  const area = useWorkspaceStore(activeWorkspaceArea);
   const { dockCollapsed, toggleDock } = useDockStore();
+  const canDock = hasBottomPanel(area, panels);
   const {
-    sidebarCollapsed,
-    toggleSidebar,
     toggleInspector,
     inspectorCollapsed,
+    toggleSidebar,
     setPaletteOpen,
     setSettingsOpen,
   } = useUiStore();
@@ -28,14 +31,22 @@ export const ActivityBar: React.FC = () => {
     <aside className="w-10 bg-[var(--bg-secondary)] border-r border-[var(--border-default)] flex flex-col items-center py-2 shrink-0 select-none z-20">
       {/* Top tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full">
-        <Tooltip label={sidebarCollapsed ? 'Cluster Explorer (⌘B)' : 'Hide Explorer (⌘B)'} side="bottom" delay={300}>
+        <Tooltip label="Cluster Explorer (⌘B)" side="bottom" delay={300}>
           <button
-            onClick={toggleSidebar}
+            onClick={() => {
+              if (area === 'explorer') {
+                toggleSidebar();
+              } else {
+                useWorkspaceStore.getState().activateArea('explorer');
+                useUiStore.setState({ sidebarCollapsed: false });
+              }
+            }}
             aria-label="Cluster Explorer"
-            className={cxRail(!sidebarCollapsed)}
+            aria-pressed={area === 'explorer'}
+            className={cxRail(area === 'explorer')}
           >
             <FolderOpen size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
-            {!sidebarCollapsed && (
+            {area === 'explorer' && (
               <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
             )}
           </button>
@@ -52,17 +63,43 @@ export const ActivityBar: React.FC = () => {
         </Tooltip>
       </div>
 
-      {panels.map(panel => <Tooltip key={panel.id} label={panel.title} side="bottom" delay={300}><button className={cxRail(false)} aria-label={panel.title} onClick={() => openWorkspacePanel(panel)}><panel.icon size="calc(16px * var(--ui-factor))" /></button></Tooltip>)}
+      {panels.map((panel) => (
+        <Tooltip key={panel.id} label={panel.title} side="bottom" delay={300}>
+          <button
+            className={cxRail(area === panel.id)}
+            aria-label={panel.title}
+            aria-pressed={area === panel.id}
+            onClick={() => {
+              if (area === panel.id) {
+                if (panel.sidebarComponent || panel.id === 'ai-agent') {
+                  toggleSidebar();
+                }
+              } else {
+                openWorkspacePanel(panel);
+                useUiStore.setState({ sidebarCollapsed: false });
+              }
+            }}
+          >
+            <panel.icon size="calc(16px * var(--ui-factor))" />
+            {area === panel.id && (
+              <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
+            )}
+          </button>
+        </Tooltip>
+      ))}
       {/* Bottom tool window buttons */}
       <div className="flex flex-col items-center gap-1 w-full mt-auto">
-        <Tooltip label={dockCollapsed ? 'Bottom Panel (⌘J)' : 'Hide Bottom Panel (⌘J)'} side="top" delay={300}>
+        <Tooltip label={!canDock ? 'Bottom Panel unavailable in this view' : dockCollapsed ? 'Bottom Panel (⌘J)' : 'Hide Bottom Panel (⌘J)'} side="top" delay={300}>
           <button
-            onClick={toggleDock}
+            onClick={() => {
+              if (canDock) toggleDock();
+            }}
+            disabled={!canDock}
             aria-label="Toggle Bottom Panel"
-            className={cxRail(!dockCollapsed)}
+            className={cx(cxRail(canDock && !dockCollapsed), 'disabled:opacity-40')}
           >
             <Terminal size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
-            {!dockCollapsed && (
+            {canDock && !dockCollapsed && (
               <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
             )}
           </button>
@@ -71,11 +108,12 @@ export const ActivityBar: React.FC = () => {
         <Tooltip label={inspectorCollapsed ? 'Show Details Inspector' : 'Hide Details Inspector'} side="top" delay={300}>
           <button
             onClick={toggleInspector}
+            disabled={!areaHasInspector(area)}
             aria-label="Toggle Inspector"
-            className={cxRail(!inspectorCollapsed)}
+            className={cx(cxRail(areaHasInspector(area) && !inspectorCollapsed), 'disabled:opacity-40')}
           >
             <PanelRight size="calc(16px * var(--ui-factor))" strokeWidth={1.75} />
-            {!inspectorCollapsed && (
+            {areaHasInspector(area) && !inspectorCollapsed && (
               <span className="absolute left-0 top-1 bottom-1 w-[calc(2px*var(--ui-factor))] bg-[var(--accent)] rounded-r" />
             )}
           </button>

@@ -6,20 +6,32 @@ import { relatedResourceScope, type ResourceGraph } from '../core/resources/rela
 import { graphResource, type TopologyGraphResponse, type TopologyGraphRequest } from './topology_graph';
 
 /** One worker per view. At most one build and one latest pending snapshot are retained. */
-export function useTopologyGraph(resources: Record<ResourceKind, Map<string, ResourceItem>>, scope: string, focus?: ResourceItem, depth = 2, enabled = true, updateIntervalMs = 1000) {
-  const [state, setState] = useState<{ graph: ResourceGraph; notice: string; loading: boolean }>({ graph: EMPTY_GRAPH, notice: '', loading: false });
+export function useTopologyGraph(resources: Record<ResourceKind, Map<string, ResourceItem>>, scope: string, focus?: ResourceItem, depth = 2, enabled = true, updateIntervalMs = 1000, preparation?: { context: string | null; ready: (graph: ResourceGraph) => boolean; requirements?: (graph: ResourceGraph) => string }) {
+  const [state, setState] = useState<{ key: string; requirements: string; graph: ResourceGraph; notice: string; loading: boolean }>({ key: '', requirements: '', graph: EMPTY_GRAPH, notice: '', loading: false });
   const worker = useRef<Worker | undefined>(undefined);
   const sequence = useRef(0);
   const generation = useRef(0);
   const completedGeneration = useRef(0);
   const focusKey = focus ? JSON.stringify([resourceKey(focus), focus.uid]) : undefined;
-  const pending = useRef<{ id: number; resources: typeof resources; scope: string; focus?: ResourceItem; depth: number; generation: number } | undefined>(undefined);
-  const current = useRef<{ id: number; originals: Map<string, ResourceItem>; generation: number } | undefined>(undefined);
+  const key = JSON.stringify([preparation?.context, scope, focusKey, depth]);
+  const graph = state.key === key ? state.graph : EMPTY_GRAPH;
+  const prepared = preparation?.ready(graph) ?? true;
+  const requirements = preparation?.requirements?.(graph) ?? '';
+  const active = useRef({key, prepared}); active.current = {key, prepared};
+  const pending = useRef<{ id: number; key: string; requirements: string; resources: typeof resources; scope: string; focus?: ResourceItem; depth: number; generation: number } | undefined>(undefined);
+  const current = useRef<{ id: number; key: string; requirements: string; originals: Map<string, ResourceItem>; generation: number } | undefined>(undefined);
   const lastLaunch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const publishError = (build: {key: string; requirements: string}, notice: string) => setState(previous => ({
+    key: build.key, requirements: build.requirements,
+    // Keep dependency discovery after a failed later pass; clearing it would
+    // shrink requirements and immediately retry the same failed build.
+    graph: previous.key === build.key ? previous.graph : EMPTY_GRAPH,
+    notice, loading: false,
+  }));
   const launch = useRef<() => void>(() => {});
   launch.current = () => {
-    if (!worker.current || current.current || !pending.current) return;
+    if (!worker.current || current.current || !pending.current || !active.current.prepared) return;
     const delay = pending.current.generation === completedGeneration.current
       ? Math.max(0, lastLaunch.current + updateIntervalMs - performance.now()) : 0;
     clearTimeout(timer.current);
@@ -50,7 +62,7 @@ export function useTopologyGraph(resources: Record<ResourceKind, Map<string, Res
       return [kind, filtered];
     }));
     const request: TopologyGraphRequest = { id: build.id, resources: input as TopologyGraphRequest['resources'], scope: build.scope, focus: build.focus ? graphResource(build.focus) : undefined, depth: build.depth };
-    current.current = { id: request.id, originals, generation: build.generation };
+    current.current = { id: request.id, key: build.key, requirements: build.requirements, originals, generation: build.generation };
     lastLaunch.current = performance.now();
     worker.current.postMessage(request);
   };
@@ -62,19 +74,19 @@ export function useTopologyGraph(resources: Record<ResourceKind, Map<string, Res
       const build = current.current;
       if (!build || build.id !== data.id) return;
       current.current = undefined;
-      if (build.generation === generation.current) {
+      if (build.generation === generation.current && build.key === active.current.key && active.current.prepared) {
         completedGeneration.current = build.generation;
-        if ('error' in data) setState({ graph: EMPTY_GRAPH, notice: data.error, loading: false });
-        else setState({ graph: { items: new Map(data.keys.flatMap(key => { const item = build.originals.get(key); return item ? [[key, item] as const] : []; })), relations: data.relations }, notice: '', loading: false });
+        if ('error' in data) publishError(build, data.error);
+        else setState({ key: build.key, requirements: build.requirements, graph: { items: new Map(data.keys.flatMap(key => { const item = build.originals.get(key); return item ? [[key, item] as const] : []; })), relations: data.relations }, notice: '', loading: false });
       }
       launch.current();
     };
     instance.onerror = event => {
       const build = current.current;
       current.current = undefined;
-      if (build?.generation === generation.current) {
+      if (build?.generation === generation.current && build.key === active.current.key && active.current.prepared) {
         completedGeneration.current = build.generation;
-        setState({ graph: EMPTY_GRAPH, notice: `Topology build failed: ${event.message}`, loading: false });
+        publishError(build, `Topology build failed: ${event.message}`);
       }
       launch.current();
     };
@@ -82,14 +94,15 @@ export function useTopologyGraph(resources: Record<ResourceKind, Map<string, Res
     return () => { clearTimeout(timer.current); timer.current = undefined; worker.current = undefined; current.current = undefined; instance.terminate(); };
   }, [enabled]);
   // Live snapshots may finish behind the stream; only a change of diagram invalidates them.
-  useEffect(() => { generation.current++; }, [scope, focusKey, depth, enabled]);
+  useEffect(() => { generation.current++; }, [scope, focusKey, depth, enabled, preparation?.context]);
   useEffect(() => {
     const id = ++sequence.current;
-    if (!enabled || !scope || scope === 'overview') { clearTimeout(timer.current); timer.current = undefined; pending.current = undefined; setState({ graph: EMPTY_GRAPH, notice: '', loading: false }); return; }
-    pending.current = { id, resources, scope, focus, depth, generation: generation.current };
+    if (!enabled || !scope || scope === 'overview') { clearTimeout(timer.current); timer.current = undefined; pending.current = undefined; setState({ key, requirements, graph: EMPTY_GRAPH, notice: '', loading: false }); return; }
+    if (!prepared) { clearTimeout(timer.current); timer.current = undefined; pending.current = undefined; setState(previous => ({...previous, loading: true})); return; }
+    pending.current = { id, key, requirements, resources, scope, focus, depth, generation: generation.current };
     // Keep background watch updates quiet after the first result for this diagram.
     setState(previous => ({ ...previous, loading: completedGeneration.current !== generation.current, notice: '' }));
     launch.current();
-  }, [resources, scope, focus, depth, enabled, updateIntervalMs]);
-  return state;
+  }, [resources, scope, focus, depth, enabled, updateIntervalMs, key, prepared, requirements]);
+  return { graph, key, notice: state.key === key ? state.notice : '', loading: enabled && (!prepared || state.key !== key || state.requirements !== requirements || state.loading), prepared };
 }

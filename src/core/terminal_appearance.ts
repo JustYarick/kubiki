@@ -1,10 +1,32 @@
 /** Font families are names/CSS family lists, never font URLs or executable CSS. */
 export const DEFAULT_TERMINAL_FONT = "'JetBrains Mono Variable'";
+export const DEFAULT_TERMINAL_BACKGROUND = '#1e1f22';
+
 export const TERMINAL_FONT_PRESETS = [
   { label: 'JetBrains Mono + Nerd symbols (bundled)', value: DEFAULT_TERMINAL_FONT },
   { label: 'System monospace', value: 'monospace' },
   ...['MesloLGS NF', 'JetBrainsMono Nerd Font Mono', 'FiraCode Nerd Font Mono', 'Hack Nerd Font Mono', 'CaskaydiaCove Nerd Font Mono', 'Consolas', 'Menlo'].map(value => ({ label: value, value: `'${value}'` })),
 ];
+
+export const TERMINAL_BACKGROUND_PRESETS = [
+  { label: 'Default Dark (#1e1f22)', value: '#1e1f22' },
+  { label: 'Pure Black (#000000)', value: '#000000' },
+  { label: 'Slate Dark (#0f172a)', value: '#0f172a' },
+  { label: 'Zinc (#18181b)', value: '#18181b' },
+  { label: 'Deep Blue (#0b0f19)', value: '#0b0f19' },
+  { label: 'Tokyo Night (#1a1b26)', value: '#1a1b26' },
+  { label: 'Dracula (#282a36)', value: '#282a36' },
+] as const;
+
+export function normalizeTerminalBackground(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_TERMINAL_BACKGROUND;
+  const trimmed = value.trim();
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  return DEFAULT_TERMINAL_BACKGROUND;
+}
+
 export function normalizeTerminalFont(value: unknown): string {
   if (typeof value !== 'string' || value.length > 512 || /[{};\\\n\r]/.test(value)) return DEFAULT_TERMINAL_FONT;
   const family = value.trim();

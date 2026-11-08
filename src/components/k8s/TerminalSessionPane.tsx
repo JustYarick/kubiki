@@ -1,9 +1,8 @@
 import { toast } from '../../state/notifications_store';
 import { Popover } from '../ui/Dropdown';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Terminal as XTerm } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import '@xterm/xterm/css/xterm.css';
+import type { Terminal as XTerm } from '@xterm/xterm';
+import { createTerminalView, type TerminalView } from '../../core/terminal_view';
 import { RotateCw, Eraser, Laptop, Server, Box, ChevronDown, Check } from 'lucide-react';
 import { SessionContainerChoice } from './LogsSessionPane';
 import { NodeShellPane } from './NodeShellPane';
@@ -11,7 +10,6 @@ import { LiveTerminalPane } from './LiveTerminalPane';
 import { ContainerSelect } from './ContainerSelect';
 import { useSessionContainers } from './useSessionContainers';
 import { useTerminalAppearance } from './useTerminalAppearance';
-import { terminalFontStack } from '../../core/terminal_appearance';
 import { useResourceStore } from '../../state/resource_store';
 import { useUiStore } from '../../state/ui_store';
 import { useDockStore, type DockSession } from '../../state/dock_store';
@@ -33,7 +31,7 @@ export function TerminalSessionPane({ session, visible = true, onContainerChange
 function DemoTerminalSessionPane({ session, visible, onContainerChange }: { session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
+  const fitRef = useRef<TerminalView | null>(null);
   const lineRef = useRef('');
 
   const podMap = useResourceStore((s) => s.resources['Pod']);
@@ -51,47 +49,14 @@ function DemoTerminalSessionPane({ session, visible, onContainerChange }: { sess
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const term = new XTerm({
-      fontFamily: terminalFontStack(useUiStore.getState().terminalFontFamily),
-      fontSize: useUiStore.getState().terminalFontSize,
-      lineHeight: useUiStore.getState().terminalLineHeight,
-      theme: {
-        background: '#1e1f22',
-        foreground: '#dfe1e5',
-        cursor: '#3574f0',
-        selectionBackground: 'rgba(53, 116, 240, 0.35)',
-        black: '#1e1f22',
-        red: '#e05555',
-        green: '#59a869',
-        yellow: '#e5b742',
-        blue: '#3574f0',
-        magenta: '#b392f0',
-        cyan: '#39c5bb',
-        white: '#dfe1e5',
-      },
-      cursorBlink: true,
-      allowProposedApi: true,
-    });
-
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(containerRef.current);
-    try { fit.fit(); } catch { /* Wait for visible dimensions. */ }
-    termRef.current = term;
-    fitRef.current = fit;
-    term.focus();
-
-    const ro = new ResizeObserver(() => { if (containerRef.current?.offsetHeight) fit.fit(); });
-    ro.observe(containerRef.current);
-
-    return () => {
-      ro.disconnect();
-      term.dispose();
-      termRef.current = null;
-    };
+    const view = createTerminalView(containerRef.current, useUiStore.getState());
+    const term = view.terminal; term.options.disableStdin = false;
+    termRef.current = term; fitRef.current = view;
+    void view.ready.then(() => { if (termRef.current === term) term.focus(); });
+    return () => { view.dispose(); termRef.current = null; fitRef.current = null; };
   }, []);
 
-  useTerminalAppearance(termRef, () => { if (containerRef.current?.offsetHeight) fitRef.current?.fit(); }, visible);
+  useTerminalAppearance(fitRef, () => { if (containerRef.current?.offsetHeight) fitRef.current?.fit(); }, visible);
 
   useEffect(() => { if (visible && containerRef.current?.offsetHeight) { fitRef.current?.fit(); termRef.current?.focus(); } }, [visible]);
 
@@ -110,11 +75,14 @@ function DemoTerminalSessionPane({ session, visible, onContainerChange }: { sess
     const term = termRef.current;
     if (!term) return;
 
+    const isAttach = session.terminalMode === 'attach';
     let intro = '';
     if (isLocal) {
       intro = `\r\n\x1b[1;36mKubiki Local Terminal (Host PC)\x1b[0m — simulated shell session using \x1b[33m${shellBinary}\x1b[0m.\r\nWorkstation: \x1b[1;32mdemo@localhost\x1b[0m (demo workstation)\r\nType \`help\`, \`kubectl get pods\`, \`whoami\`, \`pwd\`, or any command.\r\n`;
     } else if (isNode) {
       intro = `\r\n\x1b[1;33mKubiki Node Shell\x1b[0m — simulated shell for node \x1b[1m${session.resourceName}\x1b[0m.\r\nDemo only. No debug container is created.\r\nType \`help\` or any node inspection command.\r\n`;
+    } else if (isAttach) {
+      intro = `\r\n\x1b[1;36mDemo Attach to\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m).\r\nConnected to PID 1 container entrypoint stream (demo mode).\r\nType any command to simulate entrypoint input.\r\n`;
     } else {
       intro = `\r\n\x1b[1;32mDemo Pod shell for\x1b[0m \x1b[1m${session.resourceName}\x1b[0m (\x1b[36mcontainer: ${activeContainer}\x1b[0m, \x1b[35mns: ${session.namespace}\x1b[0m) using \x1b[33m${shellBinary}\x1b[0m.\r\nType \`help\` or any container command.\r\n`;
     }
@@ -266,7 +234,7 @@ function DemoTerminalSessionPane({ session, visible, onContainerChange }: { sess
       </div>
 
       {/* Xterm Shell Output */}
-      <div ref={containerRef} className="flex-1 min-h-0 pl-2 pt-1" />
+      <div className="terminal-frame"><div ref={containerRef} className="terminal-surface" /></div>
     </div>
   );
 }

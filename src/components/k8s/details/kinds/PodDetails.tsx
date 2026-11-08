@@ -1,11 +1,9 @@
-import { Layers, HardDrive, ShieldCheck, Box } from 'lucide-react';
+import { HardDrive, ShieldCheck } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
-import { podContainers } from '../../../../core/resources/containers';
 import { ownerMatches } from '../../../../core/resources/owner_references';
 import { useResourceStore } from '../../../../state/resource_store';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
-import { MetricsGaugeBar } from '../blocks/MetricsGaugeBar';
-import { ContainerCard } from '../blocks/ContainerCard';
+import { PodRuntimeBlock } from '../blocks/PodRuntimeBlock';
 import { ConditionsTable } from '../blocks/ConditionsTable';
 import { MetadataBlock } from '../blocks/MetadataBlock';
 import { DetailsSection } from '../DetailsSection';
@@ -22,11 +20,6 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
   const raw = item.raw ?? {};
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};
-
-  const containers = podContainers(item);
-  const appContainers = containers.filter((c) => c.role === 'application' || c.role === 'sidecar');
-  const initContainers = containers.filter((c) => c.role === 'init');
-  const ephemeralContainers = containers.filter((c) => c.role === 'ephemeral');
 
   const volumes: any[] = spec.volumes ?? [];
   const tolerations: any[] = spec.tolerations ?? [];
@@ -147,96 +140,7 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
         </dl>
       </DetailsSection>
 
-      {/* 3. CPU & Memory Gauge */}
-      <MetricsGaugeBar item={item} />
-
-      {/* 3. Containers */}
-      <section aria-label="Containers" className="details-section">
-        <div className="details-section-heading bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Box size="calc(13px * var(--ui-factor))" className="text-[var(--accent)]" />
-            <span className="text-xs font-semibold text-[var(--text-primary)]">
-              Containers ({appContainers.length})
-            </span>
-          </div>
-        </div>
-        <div className="p-2 space-y-2.5">
-          {appContainers.map((c) => {
-            const containerSpec = (spec.containers ?? []).find((s: any) => s.name === c.name) ?? {};
-            const containerStatus = (status.containerStatuses ?? []).find((s: any) => s.name === c.name) ?? {};
-            return (
-              <ContainerCard
-                key={c.name}
-                container={c}
-                spec={containerSpec}
-                status={containerStatus}
-                onLogs={() => onLogs(c.name)}
-                onShell={() => onShell(c.name)}
-              />
-            );
-          })}
-        </div>
-      </section>
-
-      {/* 4. Init Containers (if present) */}
-      {initContainers.length > 0 && (
-        <section aria-label="Init Containers" className="details-section">
-          <div className="details-section-heading bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Layers size="calc(13px * var(--ui-factor))" className="text-amber-400" />
-              <span className="text-xs font-semibold text-[var(--text-primary)]">
-                Init Containers ({initContainers.length})
-              </span>
-            </div>
-          </div>
-          <div className="p-2 space-y-2.5">
-            {initContainers.map((c) => {
-              const containerSpec = (spec.initContainers ?? []).find((s: any) => s.name === c.name) ?? {};
-              const containerStatus = (status.initContainerStatuses ?? []).find((s: any) => s.name === c.name) ?? {};
-              return (
-                <ContainerCard
-                  key={c.name}
-                  container={c}
-                  spec={containerSpec}
-                  status={containerStatus}
-                  onLogs={() => onLogs(c.name)}
-                  onShell={() => onShell(c.name)}
-                />
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* 5. Ephemeral Containers (if present) */}
-      {ephemeralContainers.length > 0 && (
-        <section aria-label="Ephemeral Containers" className="details-section">
-          <div className="details-section-heading bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Layers size="calc(13px * var(--ui-factor))" className="text-purple-400" />
-              <span className="text-xs font-semibold text-[var(--text-primary)]">
-                Ephemeral Containers ({ephemeralContainers.length})
-              </span>
-            </div>
-          </div>
-          <div className="p-2 space-y-2.5">
-            {ephemeralContainers.map((c) => {
-              const containerSpec = (spec.ephemeralContainers ?? []).find((s: any) => s.name === c.name) ?? {};
-              const containerStatus = (status.ephemeralContainerStatuses ?? []).find((s: any) => s.name === c.name) ?? {};
-              return (
-                <ContainerCard
-                  key={c.name}
-                  container={c}
-                  spec={containerSpec}
-                  status={containerStatus}
-                  onLogs={() => onLogs(c.name)}
-                  onShell={() => onShell(c.name)}
-                />
-              );
-            })}
-          </div>
-        </section>
-      )}
+      <PodRuntimeBlock key={item.uid} item={item} onLogs={onLogs} onShell={onShell} />
 
       {/* 6. Volumes & Storage */}
       {volumes.length > 0 && (

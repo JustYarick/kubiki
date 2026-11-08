@@ -36,7 +36,6 @@ pub struct PreparedBatch {
     primary: ResourceRef,
     steps: Vec<PreparedBatchStep>,
     review: String,
-    prepared_at: Instant,
     preconditions: Vec<ResourcePrecondition>,
 }
 
@@ -75,7 +74,6 @@ impl PreparedBatch {
             primary,
             steps,
             review,
-            prepared_at: Instant::now(),
             preconditions: Vec::new(),
         })
     }
@@ -84,47 +82,11 @@ impl PreparedBatch {
         primary: &ResourceRef,
         steps: &[PreparedBatchStep],
     ) -> Result<String, ApiError> {
-        let step_count = steps.len();
-        let mut review = format!(
-            "Batch operation in context {:?}: {step_count} {}. All steps are confirmed together.\n",
-            primary.query.context,
-            if step_count == 1 { "step" } else { "steps" }
-        );
-        if steps.iter().any(|step| step.action == "EVICT") {
-            review.push_str("Evictions use policy/v1 and respect PodDisruptionBudgets. ");
-        }
-        if steps.iter().any(|step| step.action == "DELETE") {
-            review.push_str("Controllers or garbage collection may also remove dependents. ");
-        }
-        review.push_str("Failures are reported per step.\n\n");
-        for (index, step) in steps.iter().enumerate() {
-            let detail = &step.mutation.details.steps[0];
-            let resource = &detail.resource;
-            review.push_str(&format!(
-                "{}. {} {} {:?} (namespace: {:?})\n    {}\n",
-                index + 1,
-                detail.operation,
-                resource.query.kind,
-                resource.name,
-                resource.query.namespace,
-                detail.summary
-            ));
-            if let Some(diff) = &detail.diff {
-                review.push_str(diff);
-                review.push('\n');
-            }
-        }
-        review.push_str(&format!(
-            "\nConfirm all {step_count} steps? Cancel leaves the cluster unchanged."
-        ));
-        if review.len() > 2 * 1024 * 1024 {
-            return Err(error(
-                primary,
-                422,
-                "Complete batch review exceeds 2 MiB; split the operation",
-            ));
-        }
-        Ok(review)
+        Ok(format!(
+            "Perform {} operations on the selected resources in cluster {:?}.",
+            steps.len(),
+            primary.query.context
+        ))
     }
 
     pub fn with_preconditions(mut self, preconditions: Vec<ResourcePrecondition>) -> Self {
@@ -166,22 +128,8 @@ impl PreparedBatch {
                 "Batch cancelled. Nothing was changed",
             ));
         }
-        if self.prepared_at.elapsed() > REVIEW_TTL {
-            return Err(error(
-                &self.primary,
-                409,
-                "Confirmation expired. Refresh and review again",
-            ));
-        }
         for condition in &self.preconditions {
             condition.check(true).await?;
-        }
-        if self.prepared_at.elapsed() > REVIEW_TTL {
-            return Err(error(
-                &self.primary,
-                409,
-                "Confirmation expired during the source checks; review again",
-            ));
         }
         let mut results = Vec::with_capacity(self.steps.len());
         let mut succeeded: u64 = 0;
@@ -203,7 +151,7 @@ impl PreparedBatch {
             let source_changed = source_failure.is_some();
             let outcome = match source_failure {
                 Some(error) => Err(error),
-                None => step.mutation.commit_after_shared_consent().await,
+                None => step.mutation.commit().await,
             };
             match outcome {
                 Ok(_) => {

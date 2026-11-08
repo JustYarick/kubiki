@@ -3,7 +3,7 @@ use super::api::{ApiError, ResourceQuery, resource_types, validate_query};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
     Api, Client,
-    api::{ApiResource, DynamicObject, ListParams},
+    api::{ApiResource, ListParams},
     discovery::{Discovery, Scope},
 };
 use serde::Serialize;
@@ -74,50 +74,21 @@ pub async fn discover(
     Ok(result)
 }
 
-fn api_for(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Api<DynamicObject> {
-    match &query.namespace {
-        Some(ns) => Api::namespaced_with(client, ns, ar),
-        None => Api::all_with(client, ar),
-    }
-}
-
-fn build_api(
-    client: Client,
-    query: &ResourceQuery,
-) -> Result<(Api<DynamicObject>, ApiResource), ApiError> {
-    let known = validate_query(query)?;
-    let ar = ApiResource {
-        group: query.group.clone(),
-        version: query.version.clone(),
-        api_version: if query.group.is_empty() {
-            query.version.clone()
-        } else {
-            format!("{}/{}", query.group, query.version)
-        },
-        kind: query.kind.clone(),
-        plural: known.plural.clone(),
-    };
-    let api = api_for(client, query, &ar);
-    Ok((api, ar))
-}
-
 async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result<Value, ApiError> {
-    let api = api_for(client, query, ar);
+    let access = super::access::ResourceAccess::from_resource(client, query, ar.clone());
     let mut params = ListParams::default().limit(500);
     let mut items = Vec::new();
     loop {
-        let page = bounded(&query.context, "resources", api.list(&params))
+        let page = bounded(&query.context, "resources", access.page(&params, false))
             .await
             .map_err(|e| e.with_resource(query))?;
         items.extend(page.items.into_iter().map(|mut item| {
-            item.metadata.managed_fields = None;
-            item.types = Some(kube::core::TypeMeta {
-                api_version: ar.api_version.clone(),
-                kind: ar.kind.clone(),
-            });
+            if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
+                metadata.remove("managedFields");
+            }
             item
         }));
-        match page.metadata.continue_.filter(|s| !s.is_empty()) {
+        match page.continuation {
             Some(token) => params = params.continue_token(&token),
             None => break,
         }
@@ -125,12 +96,22 @@ async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result
     Ok(json!({"items": items}))
 }
 pub async fn resources(client: Client, query: ResourceQuery) -> Result<Value, ApiError> {
-    let (_, ar) = build_api(client.clone(), &query)?;
+    validate_query(&query)?;
+    let (_, _, ar) = super::access::resolve_api(client.clone(), &query, true)
+        .await
+        .map_err(|message| {
+            ApiError::from_status(400, message, "resources", Some(&query.context))
+        })?;
     list(client, &query, &ar).await
 }
 
 pub async fn resource_count(client: Client, query: ResourceQuery) -> Result<usize, ApiError> {
-    let (api, _) = build_api(client, &query)?;
+    validate_query(&query)?;
+    let (api, _, _) = super::access::resolve_api(client, &query, true)
+        .await
+        .map_err(|message| {
+            ApiError::from_status(400, message, "resource-counts", Some(&query.context))
+        })?;
     let params = ListParams::default().limit(1);
     let page = bounded(
         &query.context,
@@ -190,6 +171,15 @@ pub async fn custom_resources(
     uid: String,
     namespace: Option<String>,
 ) -> Result<Value, ApiError> {
+    let (query, ar, _) = resolve_custom_resource(client.clone(), context, name, uid, namespace).await?;
+    list(client, &query, &ar).await
+}
+
+/// Resolve a CRD against the live definition, including its UID and served version.
+/// Shared by one-shot lists and watches; renderer-provided plural/scope are never trusted.
+pub async fn resolve_custom_resource(
+    client: Client, context: String, name: String, uid: String, namespace: Option<String>,
+) -> Result<(ResourceQuery, ApiResource, bool), ApiError> {
     let invalid = |message| ApiError::from_status(400, message, "custom-resources", Some(&context));
     let valid = |s: &str| {
         !s.is_empty()
@@ -245,7 +235,7 @@ pub async fn custom_resources(
             None
         },
     };
-    list(client, &query, &ar).await
+    Ok((query, ar, crd.spec.scope == "Namespaced"))
 }
 
 #[cfg(test)]

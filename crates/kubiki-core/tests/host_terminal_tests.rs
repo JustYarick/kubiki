@@ -19,50 +19,11 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
-#[test]
-fn analysis_launch_passes_untrusted_prompt_as_one_argument_and_enforces_limits() {
-    use kubiki_core::pod_ops::host_terminal::{AnalysisAgent, AnalysisRequest, analysis_command};
-    let prompt = "analyze 'quotes' $(touch /tmp/never-run)\n; kubectl delete pods";
-    for agent in [
-        AnalysisAgent::Codex,
-        AnalysisAgent::Opencode,
-        AnalysisAgent::Claude,
-    ] {
-        let command = analysis_command(&AnalysisRequest {
-            agent,
-            prompt: prompt.into(),
-        })
-        .unwrap();
-        assert_eq!(command.get_argv().last().unwrap(), prompt);
-        assert!(!command.get_argv().iter().any(|argument| argument == "-c"));
-    }
-    let codex = analysis_command(&AnalysisRequest {
-        agent: AnalysisAgent::Codex,
-        prompt: prompt.into(),
-    })
-    .unwrap();
-    assert!(
-        codex
-            .get_argv()
-            .iter()
-            .any(|argument| argument == "read-only")
-    );
-    for prompt in [String::new(), "x".repeat(65537), "x\0y".into()] {
-        assert!(
-            analysis_command(&AnalysisRequest {
-                agent: AnalysisAgent::Codex,
-                prompt
-            })
-            .is_err()
-        );
-    }
-}
 fn request() -> HostTerminalRequest {
     HostTerminalRequest {
         shell: Some("/bin/sh".into()),
         cols: 80,
         rows: 24,
-        analysis: None,
     }
 }
 #[tokio::test]
@@ -308,4 +269,30 @@ async fn cancellation_is_bounded_with_a_full_output_queue_and_invalid_requests_d
         .await
         .unwrap();
     assert_eq!(manager.session_count().await, 0);
+}
+
+#[tokio::test]
+async fn trusted_executable_uses_exact_arguments_and_cwd_without_login_shell_flags() {
+    use kubiki_core::pod_ops::host_terminal::HostProcess;
+    let manager=HostTerminalManager::default();
+    let cwd=std::env::temp_dir();
+    let mut sub=manager.start_process("agent","argv",request(),HostProcess {
+        program:"/bin/sh".into(),cwd:cwd.clone(),
+        args:vec!["-c".into(),"test -t 0 && printf '\\nARG:%s\\nCWD:%s\\nENV:%s\\n' \"$1\" \"$PWD\" \"$KUBIKI_PROCESS_TEST\"".into(),"test".into(),"literal ; $(echo BAD)".into()],
+        environment:vec![("KUBIKI_PROCESS_TEST".into(),"kept".into())],
+    }).await.unwrap();
+    let mut output=vec![];
+    tokio::time::timeout(Duration::from_secs(5),async {
+        while let Some(message)=sub.output.recv().await {match message.event {
+            ExecEvent::Output{data}=>output.extend(data),
+            ExecEvent::Exited{code}=>{assert_eq!(code,0);break;},
+            ExecEvent::Failed{error}=>panic!("{}",error.message),_=>{},
+        }}
+    }).await.unwrap();
+    let text=String::from_utf8_lossy(&output);
+    assert!(text.contains("ARG:literal ; $(echo BAD)"));
+    assert!(text.contains(&format!("CWD:{}",cwd.display())));
+    assert!(text.contains("ENV:kept"));
+    manager.stop_owner("agent").await;
+    assert_eq!(manager.session_count().await,0);
 }

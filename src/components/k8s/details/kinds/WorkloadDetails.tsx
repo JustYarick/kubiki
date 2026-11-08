@@ -68,7 +68,6 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
           return;
         }
         await k8s.scaleWorkload(currentContext, item.kind, item.name, item.namespace!, targetReplicas, item.uid, item.raw?.metadata?.resourceVersion ?? '');
-        toast.success(`Scale requested for ${item.name} (${targetReplicas} replicas)`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') {
@@ -96,7 +95,6 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
         toast.success(`Rollout restart triggered for ${item.kind}/${item.name} (demo)`);
       } else {
         await performResourceAction(currentContext!, item, { type: 'restart' });
-        toast.success(`Rollout restart triggered for ${item.kind}/${item.name}`);
       }
     } catch (err: any) {
       if (err?.code === 'cancelled') toast.info('Restart cancelled');

@@ -7,6 +7,7 @@ export interface Toast {
   type: ToastType;
   title: string;
   description?: string;
+  persistent?: boolean;
 }
 
 interface NotificationsState {
@@ -22,7 +23,7 @@ export const useNotifications = create<NotificationsState>((set) => ({
   push: (t) => {
     const id = seq++;
     set((s) => ({ toasts: [...s.toasts, { ...t, id }].slice(-5) }));
-    if (t.type !== 'error') {
+    if (t.type !== 'error' && !t.persistent) {
       setTimeout(() => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })), 4200);
     }
   },

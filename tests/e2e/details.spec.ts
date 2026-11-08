@@ -155,7 +155,7 @@ test('annotations render readable fields, a last-applied summary and expandable 
   await expect(lastApplied.locator('dd').filter({ hasText: /^0$/ }).first()).toBeVisible();
   await expect(lastApplied.getByText('spec.template.spec.containers[0].image', { exact: true })).toBeHidden();
   await lastApplied.getByText('Original value', { exact: true }).click();
-  await expect(lastApplied.locator('pre')).toHaveText(JSON.stringify(applied));
+  await expect(lastApplied.getByRole('group', { name: 'Original annotation kubectl.kubernetes.io/last-applied-configuration editor', exact: true }).locator('.view-lines')).toHaveText(JSON.stringify(applied));
   await lastApplied.getByText('Original value', { exact: true }).click();
   await lastApplied.getByText(/^Manifest fields/).click();
   await expect(lastApplied.getByText('spec.replicas', { exact: true })).toBeVisible();
@@ -215,13 +215,17 @@ test('Namespace Related shows members with kind badges, filtering and a bounded 
   const inspector = page.getByTestId('resource-details');
   await inspector.getByRole('tab', { name: /^Related/ }).click();
   await expect(inspector.getByText('121 matching · 121 relationships')).toBeVisible();
-  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(50);
+  const pods = inspector.getByRole('button', { name: /Pods.*120.*expand/ });
+  await expect(pods).toHaveAttribute('aria-expanded', 'false');
+  await pods.click();
+  // One kind badge in the group header plus the first 50 resource rows.
+  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(51);
   await inspector.getByPlaceholder('Filter related resources…').fill('Service');
   await expect(inspector.locator('[data-resource-kind="Service"]')).toHaveCount(1);
   await expect(inspector.getByText('backend-service', { exact: true })).toBeVisible();
   await inspector.getByPlaceholder('Filter related resources…').fill('');
   await inspector.getByRole('button', { name: 'Show next 50', exact: true }).click();
-  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(100);
+  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(101);
 });
 
 test('a large cluster retains all objects and renders offscreen nodes when panned into view', async ({ page }) => {
@@ -234,7 +238,7 @@ test('a large cluster retains all objects and renders offscreen nodes when panne
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await page.getByTestId('explorer-panel').getByRole('button', { name: /^Pods(?: \d+)?$/ }).click();
   await page.getByRole('button', { name: 'Cluster topology', exact: true }).click();
   await expect(page.locator('.topology-view')).toHaveAttribute('data-scope', '');
-  await expect(page.getByText('Choose a diagram scope', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose namespaces', exact: true })).toBeVisible();
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
   expect(layoutWorkers).toEqual([]);
   await page.getByRole('button', { name: 'All Namespaces', exact: true }).click();
