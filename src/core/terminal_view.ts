@@ -71,7 +71,7 @@ export function createTerminalView(host: HTMLElement, appearance: Appearance, on
     preferredLineHeight = next.terminalLineHeight;
     const nextBg = next.terminalBackground || '#1e1f22';
     terminal.options = {
-      ...terminal.options,
+      // Only mutable appearance options: cols/rows are constructor-only in xterm.
       fontFamily: terminalFontStack(next.terminalFontFamily),
       fontSize: next.terminalFontSize,
       scrollback: next.terminalScrollback,

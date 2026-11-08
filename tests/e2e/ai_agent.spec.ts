@@ -168,7 +168,7 @@ test('integrated chat discovers models, streams safe Markdown, changes modes and
 
 test('provider credentials stay out of rendered settings and access rules persist through the native boundary', async ({ page }) => {
   const errors = await setup(page); const agent = await openAgent(page);
-  await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
+  await agent.getByTestId('ai-conversations-panel').getByRole('button', { name: 'AI settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
   await dialog.getByRole('button', { name: 'Data access', exact: true }).click();
   await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toHaveValue('none');
@@ -197,6 +197,7 @@ test('provider credentials stay out of rendered settings and access rules persis
   await dialog.getByRole('combobox', { name: 'Rule 1 read access', exact: true }).selectOption('content');
   await dialog.getByRole('textbox', { name: 'Excluded AI field paths', exact: true }).fill('/data/private.conf');
   await dialog.getByRole('button', { name: 'Confirmations', exact: true }).click();
+  await dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true }).uncheck();
   await dialog.getByText('Always ask', { exact: true }).click();
   await dialog.getByRole('checkbox', { name: 'Delete resource', exact: true }).check();
@@ -208,7 +209,7 @@ test('provider credentials stay out of rendered settings and access rules persis
   expect(policy.secrets).toBe('metadata'); expect(policy.logs).toBe(true); expect(policy.writes).toEqual(['create']);
   expect(policy.deniedPaths).toEqual(['/data/private.conf']); expect(policy.rules[0].read).toBe('content');
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-  await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
+  await agent.getByTestId('ai-conversations-panel').getByRole('button', { name: 'AI settings', exact: true }).click();
   await dialog.getByRole('button', { name: 'Scope & rules', exact: true }).click();
   await expect(dialog.getByRole('textbox', { name: 'Rule 1 name', exact: true })).toHaveValue('nexus-credentials');
   await captureScreenshot(page, { path: 'test-results/ai-agent-settings.png', animations: 'disabled' });
@@ -366,12 +367,14 @@ test('agent selection is in settings and OpenCode only exposes effective setting
   await expect(dialog.getByRole('button',{name:'Skills',exact:true})).toHaveCount(0);
   await dialog.getByRole('button',{name:'Check installation',exact:true}).click();
   await expect(dialog.getByRole('status')).toContainText('opencode v2.0.27');
-  await dialog.getByRole('button',{name:'Cluster tools & data',exact:true}).click();
-  await expect(dialog.getByRole('checkbox',{name:'Logs',exact:true})).not.toBeChecked();
+  await dialog.getByRole('button',{name:'Cluster tools (MCP)',exact:true}).click();
+  await expect(dialog.getByRole('checkbox',{name:'Logs',exact:true})).toBeChecked();
+  await dialog.getByRole('checkbox',{name:'Logs',exact:true}).uncheck();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(false);
   await dialog.getByRole('checkbox',{name:'Logs',exact:true}).check();
   await dialog.getByRole('button',{name:'Save cluster access',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.settings().mcpPolicy?.logs)).toBe(true);
-  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(false);
+  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(true);
   await captureScreenshot(page,{path:'test-results/opencode-cluster-settings.png'});
   await page.setViewportSize({width:375,height:812});
   expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
@@ -382,7 +385,7 @@ test('agent selection is in settings and OpenCode only exposes effective setting
   await expect(page.getByTestId('opencode-pane')).toHaveCount(0);
   await dialog.getByRole('button',{name:'Connections & models',exact:true}).click();
   await expect(dialog.getByRole('combobox',{name:'Saved AI connection',exact:true})).toHaveValue('local');
-  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(false);
+  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(true);
   expect(errors).toEqual([]);
 });
 
@@ -414,14 +417,14 @@ test('AI settings sections fit desktop and narrow dialogs without horizontal ove
   const errors=await setup(page); const agent=await openAgent(page);
   await agent.getByRole('button',{name:'AI settings',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
-  for(const section of ['Connections & models','Confirmations','Data access','Scope & rules','Integrations','Skills','Instructions','History']) {
+  for(const section of ['Connections & models','Confirmations','Data access','Scope & rules','Integrations','Environment','Instructions','History']) {
     await dialog.getByRole('navigation',{name:'AI settings sections'}).getByRole('button',{name:section,exact:true}).click();
     expect(await dialog.locator('.ai-settings-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
   }
-  await dialog.getByRole('button',{name:'Skills',exact:true}).click();
+  await dialog.getByRole('button',{name:'Environment',exact:true}).click();
   await captureScreenshot(page,{path:'test-results/ai-settings-desktop.png'});
   await page.setViewportSize({width:375,height:812}); await page.emulateMedia({reducedMotion:'reduce'});
-  for(const section of ['Confirmations','Data access','Scope & rules','Integrations','Skills']) {
+  for(const section of ['Confirmations','Data access','Scope & rules','Integrations','Environment']) {
     await dialog.getByRole('navigation',{name:'AI settings sections'}).getByRole('button',{name:section,exact:true}).click();
     expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
     expect(await dialog.locator('.ai-settings-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
@@ -536,7 +539,7 @@ for (const removeOld of [true, false]) {
     await page.evaluate(() => { (window as any).__aiHarness.failedProviders = ['local']; });
     const agent = await openAgent(page);
     await expect(agent).toContainText('HTTP 401');
-    await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
+    await agent.getByTestId('ai-conversations-panel').getByRole('button', { name: 'AI settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
     await dialog.getByRole('button', { name: 'Connections & models', exact: true }).click();
     if (removeOld) await dialog.getByRole('button', { name: 'Remove connection', exact: true }).click();

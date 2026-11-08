@@ -158,13 +158,13 @@ function KubernetesResourceDetails({
   const setTab = inspector ? useUiStore.getState().setRightTab : setLocalTab;
   const resources = useResourceStore((s) => s.resources);
   const [relatedQuery, setRelatedQuery] = useState('');
-  const [relatedLimit, setRelatedLimit] = useState(50);
+  const [relatedLimits, setRelatedLimits] = useState<Record<string, number>>({});
 
   const [expandedKinds, setExpandedKinds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setRelatedQuery('');
-    setRelatedLimit(50);
+    setRelatedLimits({});
     setExpandedKinds(new Set());
   }, [item?.uid]);
 
@@ -190,27 +190,6 @@ function KubernetesResourceDetails({
       return retainResourceKinds(currentContext, relatedResourceKinds(item), item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? selectedNamespace);
     }
   }, [inspector, item, currentContext, rightTab, selectedNamespace]);
-
-  if (!item) {
-    return (
-      <div className="h-full flex flex-col bg-[var(--bg-canvas)]">
-        <div className="h-10 flex items-center px-3 gap-2 border-b border-[var(--border-default)]">
-          <Boxes size="calc(14px * var(--ui-factor))" />
-          <span className="flex-1 font-medium text-xs">Resource details</span>
-          {onClose && <IconButton icon={X} size="sm" onClick={onClose} aria-label="Close details" />}
-        </div>
-        <div className="flex-1 flex items-center justify-center p-8 text-center text-[var(--text-secondary)]">
-          <div>
-            <Boxes size="calc(30px * var(--ui-factor))" className="mx-auto mb-3 opacity-50" />
-            <p className="text-sm font-medium">Select a resource to inspect</p>
-            <p className="mt-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
-              Click a table row or a topology node. Details and related resources appear here.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const resolvedRelated = useMemo(() => {
     if (!item) return [];
@@ -488,6 +467,27 @@ function KubernetesResourceDetails({
     return groups.sort((a, b) => a.rank - b.rank || a.kind.localeCompare(b.kind));
   }, [filteredRelated]);
 
+  if (!item) {
+    return (
+      <div className="h-full flex flex-col bg-[var(--bg-canvas)]">
+        <div className="h-10 flex items-center px-3 gap-2 border-b border-[var(--border-default)]">
+          <Boxes size="calc(14px * var(--ui-factor))" />
+          <span className="flex-1 font-medium text-xs">Resource details</span>
+          {onClose && <IconButton icon={X} size="sm" onClick={onClose} aria-label="Close details" />}
+        </div>
+        <div className="flex-1 flex items-center justify-center p-8 text-center text-[var(--text-secondary)]">
+          <div>
+            <Boxes size="calc(30px * var(--ui-factor))" className="mx-auto mb-3 opacity-50" />
+            <p className="text-sm font-medium">Select a resource to inspect</p>
+            <p className="mt-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
+              Click a table row or a topology node. Details and related resources appear here.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const activePod = item.kind === 'Pod' ? item : preferredWorkloadPod(childPods);
   const containers = podContainers(activePod ?? item).map((c) => c.name);
 
@@ -717,7 +717,7 @@ function KubernetesResourceDetails({
                 value={relatedQuery}
                 onChange={(value) => {
                   setRelatedQuery(value);
-                  setRelatedLimit(50);
+                  setRelatedLimits({});
                 }}
                 placeholder="Filter related resources…"
                 className="mb-2 w-full"
@@ -728,7 +728,8 @@ function KubernetesResourceDetails({
               {(helm.loading || relatedLoading) && !resolvedRelated.length && <ResourceLoading label="Loading resource relationships…" />}
               {relatedError && <p role="alert" className="text-xs text-[var(--status-danger)]">{relatedError}</p>}
               {!helm.loading && !relatedLoading && !relatedError && !resolvedRelated.length && <p className="text-[var(--text-secondary)] text-xs">No relationships found in loaded resources.</p>}
-              {groupedRelated.slice(0, relatedLimit).map((group) => {
+              {groupedRelated.map((group) => {
+                const relatedLimit = relatedLimits[group.kind] ?? 50;
                 if (group.items.length === 1) {
                   return (
                     <RelatedRow
@@ -766,7 +767,7 @@ function KubernetesResourceDetails({
                       </span>
                     </button>
                     {isExpanded &&
-                      group.items.map((entry) => (
+                      group.items.slice(0, relatedLimit).map((entry) => (
                         <RelatedRow
                           key={entry.id}
                           entry={entry}
@@ -774,14 +775,14 @@ function KubernetesResourceDetails({
                           nested
                         />
                       ))}
+                    {isExpanded && group.items.length > relatedLimit && (
+                      <Button size="sm" className="my-2 ml-6" onClick={() => setRelatedLimits(limits => ({ ...limits, [group.kind]: relatedLimit + 50 }))}>
+                        Show next 50
+                      </Button>
+                    )}
                   </React.Fragment>
                 );
               })}
-              {groupedRelated.length > relatedLimit && (
-                <Button size="sm" className="mt-3" onClick={() => setRelatedLimit((limit) => limit + 50)}>
-                  Show next 50
-                </Button>
-              )}
               {!!resolvedRelated.length && !filteredRelated.length && (
                 <p className="text-xs text-[var(--text-muted)]">No related resources match this filter.</p>
               )}

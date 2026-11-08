@@ -193,7 +193,7 @@ test('Pod shell carries real adapter input, resize, UTF-8 and exit; container sw
   await setup(page); await page.getByTestId('resource-details').getByRole('button', { name: 'Shell', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Open shell for app', exact: true }).click();
   const pane = page.getByTestId('live-terminal'); const terminal = pane.locator('.xterm');
   await expect(pane.getByRole('status')).toHaveText('Connected');
-  expect(await page.evaluate(() => (window as any).__execHarness.starts[0])).toMatchObject({ resource: { context: 'test', namespace: 'backend', name, uid: 'pod-uid' }, container: 'app', shell: '/bin/sh' });
+  expect(await page.evaluate(() => (window as any).__execHarness.starts[0])).toMatchObject({ resource: { context: 'test', namespace: 'backend', name, uid: 'pod-uid' }, container: 'app', shell: '/bin/bash' });
   await terminal.getByRole('textbox', { name: 'Terminal input' }).focus(); await page.keyboard.type('echo test'); await page.keyboard.press('Enter'); await page.keyboard.press('Control+c'); await page.keyboard.press('Control+w');
   await expect(terminal.locator('.xterm-rows')).toContainText('remote-command-output');
   expect((await page.evaluate(() => (window as any).__execHarness.input.join('')))).toContain('\u0003');

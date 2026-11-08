@@ -215,13 +215,17 @@ test('Namespace Related shows members with kind badges, filtering and a bounded 
   const inspector = page.getByTestId('resource-details');
   await inspector.getByRole('tab', { name: /^Related/ }).click();
   await expect(inspector.getByText('121 matching · 121 relationships')).toBeVisible();
-  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(50);
+  const pods = inspector.getByRole('button', { name: /Pods.*120.*expand/ });
+  await expect(pods).toHaveAttribute('aria-expanded', 'false');
+  await pods.click();
+  // One kind badge in the group header plus the first 50 resource rows.
+  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(51);
   await inspector.getByPlaceholder('Filter related resources…').fill('Service');
   await expect(inspector.locator('[data-resource-kind="Service"]')).toHaveCount(1);
   await expect(inspector.getByText('backend-service', { exact: true })).toBeVisible();
   await inspector.getByPlaceholder('Filter related resources…').fill('');
   await inspector.getByRole('button', { name: 'Show next 50', exact: true }).click();
-  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(100);
+  await expect(inspector.locator('[data-resource-kind="Pod"]')).toHaveCount(101);
 });
 
 test('a large cluster retains all objects and renders offscreen nodes when panned into view', async ({ page }) => {
