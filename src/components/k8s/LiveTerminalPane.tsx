@@ -133,8 +133,8 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
       <span role="status" className="text-xs text-[var(--text-secondary)]">{phase}</span>
       <div className="flex gap-1 ml-auto">
         <IconButton icon={Search} size="sm" aria-label="Find in terminal (Ctrl+F)" tooltip="Find in terminal (Ctrl+F)" onClick={() => setShowSearch((s) => !s)} />
-        <IconButton icon={RotateCw} size="sm" aria-label="Reconnect" tooltip="Reconnect" onClick={() => setAttempt((n) => n + 1)} />
-        <IconButton icon={Unplug} size="sm" aria-label="Disconnect" tooltip="Disconnect" onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} />
+        <IconButton icon={RotateCw} size="sm" aria-label={isAttach ? "Reconnect attach" : "Reconnect shell"} tooltip={isAttach ? "Reconnect attach" : "Reconnect shell"} onClick={() => setAttempt((n) => n + 1)} />
+        <IconButton icon={Unplug} size="sm" aria-label={isAttach ? "Disconnect attach" : "Disconnect shell"} tooltip={isAttach ? "Disconnect attach" : "Disconnect shell"} onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} />
         <IconButton icon={Eraser} size="sm" aria-label="Clear terminal" tooltip="Clear terminal" onClick={() => terminal.current?.clear()} />
       </div>
     </div>
