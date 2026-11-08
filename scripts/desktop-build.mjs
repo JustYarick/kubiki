@@ -7,6 +7,7 @@ import { installerBundleConfig, rpmBundleConfig, stageDesktopArtifacts } from '.
 const { values } = parseArgs({ options: {
   target: { type: 'string' }, config: { type: 'string' },
   stage: { type: 'boolean' }, signed: { type: 'boolean' },
+  'prebuilt-frontend': { type: 'boolean' },
 } });
 if (values.stage && (!values.target || !process.env.RELEASE_TAG || !process.env.SOURCE_SHA)) throw new Error('Staging requires --target, RELEASE_TAG and SOURCE_SHA');
 const env = { ...process.env, ...(values.target ? { KUBIKI_BUILD_TARGET: values.target } : {}) };
@@ -22,6 +23,14 @@ const { version } = JSON.parse(await readFile('src-tauri/tauri.conf.json', 'utf8
 await mkdir('.kubiki-build', { recursive: true });
 await writeFile('.kubiki-build/installer.conf.json', JSON.stringify(installerBundleConfig(version), null, 2) + '\n');
 const configArgs = ['--config', '.kubiki-build/installer.conf.json', ...(values.config ? ['--config', values.config] : [])];
+if (values['prebuilt-frontend']) {
+  // CI downloads these from the same run/commit, with the release version
+  // already embedded. Keep the Node runtime preparation specific to this target.
+  for (const file of ['dist/index.html', '.kubiki-build/extension-host.cjs', '.kubiki-build/extensions/sdk-test.kubiki-extension', '.kubiki-build/runtime/HOST-LICENSES.txt']) {
+    await readFile(file);
+  }
+  configArgs.push('--config', JSON.stringify({ build: { beforeBuildCommand: 'pnpm desktop:prepare' } }));
+}
 const targetArgs = values.target ? ['--target', values.target] : [];
 const linux = (values.target || '').includes('linux') || (!values.target && process.platform === 'linux');
 if (values.stage) {

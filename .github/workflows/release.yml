@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       run_tests:
-        description: 'Run frontend, browser, extension and Rust tests before building'
+        description: 'Require frontend, browser, extension and Rust tests before publication'
         type: boolean
         default: false
       publish:
@@ -136,6 +136,42 @@ jobs:
               ])
               .write();
 
+  web_assets:
+    name: Build shared desktop frontend
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The About page embeds package.json.version at build time.
+      - name: Set the frontend release version
+        run: node scripts/desktop-release.mjs "$RELEASE_TAG" --unsigned
+      - run: pnpm build
+      # A tar preserves paths/permissions and keeps hidden resource directories.
+      # The bundled Node executable is target-specific and prepared on each OS.
+      - name: Package shared frontend and extension resources
+        run: >-
+          tar -czf desktop-web-assets.tar.gz dist
+          .kubiki-build/extension-host.cjs .kubiki-build/extensions
+          .kubiki-build/runtime/HOST-LICENSES.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-web-assets
+          path: desktop-web-assets.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   frontend:
     name: Frontend, extensions and pipeline tests
     needs: prepare
@@ -153,7 +189,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit
-      - run: pnpm build
+      - run: pnpm extensions:build
       - run: pnpm test
       - run: pnpm test:desktop
       - run: pnpm desktop:prepare
@@ -161,11 +197,15 @@ jobs:
       - run: node scripts/check-external-extension.mjs
 
   interface:
-    name: Browser interface tests
+    name: Browser interface tests (${{ matrix.shard }}/2)
     needs: prepare
     if: needs.prepare.outputs.run_tests == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -178,8 +218,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm extensions:build
-      - run: pnpm test:e2e
+      - run: pnpm test:e2e --shard=${{ matrix.shard }}/2
         env:
+          PLAYWRIGHT_WORKERS: '2'
           E2E_FULL_LAYOUT: ${{ needs.prepare.outputs.publish == 'true' && '1' || '0' }}
       - name: Summarize browser test timings
         if: always()
@@ -189,21 +230,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: interface-test-results
+          name: interface-test-results-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
 
   desktop:
     name: Build installers (${{ matrix.target }})
-    needs: [prepare, frontend, interface]
-    # An explicit status function lets builds run after intentionally skipped
-    # test jobs. Failed/cancelled required tests still block the build.
-    if: >-
-      ${{ !cancelled() && needs.prepare.result == 'success' &&
-          ((needs.prepare.outputs.run_tests == 'false' &&
-            needs.frontend.result == 'skipped' && needs.interface.result == 'skipped') ||
-           (needs.prepare.outputs.run_tests == 'true' &&
-            needs.frontend.result == 'success' && needs.interface.result == 'success')) }}
+    needs: [prepare, web_assets]
+    # Compilation runs alongside tests; publication below joins both branches.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.web_assets.result == 'success' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -245,19 +280,30 @@ jobs:
           key: ${{ matrix.target }}
           workspaces: |
             crates/kubiki-core
-            crates/kubiki-ai
             src-tauri
       - run: pnpm install --frozen-lockfile
-      - name: Prepare target runtime and extension resources
-        run: |
-          pnpm extensions:build
-          pnpm desktop:prepare
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-web-assets
+      - name: Restore shared frontend and extension resources
+        run: tar -xzf desktop-web-assets.tar.gz
+      - name: Cache verified target Node runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            .kubiki-build/runtime/node
+            .kubiki-build/runtime/node.exe
+            .kubiki-build/runtime/runtime.json
+            .kubiki-build/runtime/LICENSE
+          key: node-runtime-${{ matrix.target }}-${{ hashFiles('scripts/prepare-extension-runtime.mjs', 'scripts/extension-runtime-target.mjs') }}
+      - run: pnpm desktop:prepare
+      # Share dependency artifacts across the three native test suites.
       - name: Test core and desktop on the target OS
         if: needs.prepare.outputs.run_tests == 'true'
         run: |
-          cargo test --locked --manifest-path crates/kubiki-core/Cargo.toml
-          cargo test --locked --manifest-path crates/kubiki-ai/Cargo.toml
-          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+          cargo test --locked --target-dir src-tauri/target --manifest-path crates/kubiki-core/Cargo.toml
+          cargo test --locked --target-dir src-tauri/target --manifest-path crates/kubiki-ai/Cargo.toml
+          cargo test --locked --target-dir src-tauri/target --manifest-path src-tauri/Cargo.toml --lib
       - name: Set build version and updater configuration
         shell: bash
         env:
@@ -280,7 +326,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ needs.prepare.outputs.publish == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
-          args=(--target "$KUBIKI_BUILD_TARGET" --config .kubiki-build/updater.conf.json --stage)
+          args=(--target "$KUBIKI_BUILD_TARGET" --config .kubiki-build/updater.conf.json --stage --prebuilt-frontend)
           if [ "$PUBLISH" = true ]; then args+=(--signed); fi
           pnpm desktop:build "${args[@]}"
       - name: Upload verified installers, CLI and checksums
@@ -293,10 +339,15 @@ jobs:
 
   malware_scan:
     name: Scan release files with VirusTotal
-    needs: [prepare, desktop]
+    needs: [prepare, web_assets, frontend, interface, desktop]
     if: >-
       ${{ !cancelled() && needs.prepare.result == 'success' &&
-          needs.desktop.result == 'success' && needs.prepare.outputs.publish == 'true' &&
+          needs.web_assets.result == 'success' && needs.desktop.result == 'success' &&
+          ((needs.prepare.outputs.run_tests == 'false' &&
+            needs.frontend.result == 'skipped' && needs.interface.result == 'skipped') ||
+           (needs.prepare.outputs.run_tests == 'true' &&
+            needs.frontend.result == 'success' && needs.interface.result == 'success')) &&
+          needs.prepare.outputs.publish == 'true' &&
           needs.prepare.outputs.virustotal_scan == 'true' }}
     # Advisory report only; its outcome never blocks or fails the release.
     continue-on-error: true
@@ -335,10 +386,15 @@ jobs:
 
   publish:
     name: Publish verified release
-    needs: [prepare, desktop]
+    needs: [prepare, web_assets, frontend, interface, desktop]
     if: >-
       ${{ !cancelled() && needs.prepare.result == 'success' &&
-          needs.desktop.result == 'success' && needs.prepare.outputs.publish == 'true' }}
+          needs.web_assets.result == 'success' && needs.desktop.result == 'success' &&
+          ((needs.prepare.outputs.run_tests == 'false' &&
+            needs.frontend.result == 'skipped' && needs.interface.result == 'skipped') ||
+           (needs.prepare.outputs.run_tests == 'true' &&
+            needs.frontend.result == 'success' && needs.interface.result == 'success')) &&
+          needs.prepare.outputs.publish == 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:

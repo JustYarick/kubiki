@@ -115,7 +115,8 @@ of test worker count. It does not skip required test jobs or change failure poli
 ## Reports and diagnostic images
 
 Every normal run writes **`test-results/report.json`** with per-scenario timings
-and results. CI retains it in `interface-test-results` even on success and writes
+and results. CI retains a report for each shard in `interface-test-results-1` and
+`interface-test-results-2` even on success and writes
 the ten slowest scenarios into the job summary. Generate that summary locally:
 
 ```sh
