@@ -319,6 +319,11 @@ jobs:
       - name: Build standalone CLI
         shell: bash
         run: cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "$KUBIKI_BUILD_TARGET"
+      - name: Disable Spotlight indexing on macOS
+        if: runner.os == 'macOS'
+        run: |
+          sudo mdutil -a -i off || true
+          sudo mdutil -d / || true
       - name: Build and verify all installers
         shell: bash
         env:
