@@ -23,7 +23,7 @@ import {
   TERMINAL_SCROLLBACK_PRESETS,
   useUiStore,
 } from '../../state/ui_store';
-import { DEFAULT_TERMINAL_FONT } from '../../core/terminal_appearance';
+import { DEFAULT_TERMINAL_FONT, DEFAULT_TERMINAL_BACKGROUND, TERMINAL_BACKGROUND_PRESETS } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
 import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_rendering';
 import { cx } from '../../core/utils/cx';
@@ -315,6 +315,8 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
 function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
   const terminalFontSize = useUiStore((s) => s.terminalFontSize);
   const setTerminalFontSize = useUiStore((s) => s.setTerminalFontSize);
+  const terminalBackground = useUiStore((s) => s.terminalBackground);
+  const setTerminalBackground = useUiStore((s) => s.setTerminalBackground);
   const terminalScrollback = useUiStore((s) => s.terminalScrollback);
   const setTerminalScrollback = useUiStore((s) => s.setTerminalScrollback);
   const terminalAckTimeoutSecs = useUiStore((s) => s.terminalAckTimeoutSecs);
@@ -322,11 +324,58 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
   const scrollbackOptions = TERMINAL_SCROLLBACK_PRESETS.includes(terminalScrollback)
     ? TERMINAL_SCROLLBACK_PRESETS
     : [...TERMINAL_SCROLLBACK_PRESETS, terminalScrollback].sort((a, b) => a - b);
+  const isPresetBg = TERMINAL_BACKGROUND_PRESETS.some(
+    (p) => p.value.toLowerCase() === terminalBackground.toLowerCase()
+  );
   return (
     <div>
       <SectionTitle>{sectionTitle}</SectionTitle>
       <Row entry={findEntry('terminal.font-size')}>
         <NumberField label="Terminal font size" value={terminalFontSize} min={10} max={24} onCommit={setTerminalFontSize} />
+      </Row>
+      <Row entry={findEntry('terminal.background')}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            aria-label="Terminal background preset"
+            className="ide-select w-44"
+            value={isPresetBg ? terminalBackground.toLowerCase() : 'custom'}
+            onChange={(event) => {
+              if (event.target.value !== 'custom') {
+                setTerminalBackground(event.target.value);
+              }
+            }}
+          >
+            {TERMINAL_BACKGROUND_PRESETS.map((preset) => (
+              <option key={preset.value} value={preset.value}>
+                {preset.label}
+              </option>
+            ))}
+            <option value="custom">Custom color…</option>
+          </Select>
+          <div className="flex items-center gap-1.5 border border-[var(--border-default)] rounded px-2 py-1 bg-[var(--bg-canvas)]">
+            <input
+              type="color"
+              aria-label="Pick terminal background color"
+              className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
+              value={
+                terminalBackground.startsWith('#') &&
+                (terminalBackground.length === 7 || terminalBackground.length === 4)
+                  ? terminalBackground
+                  : DEFAULT_TERMINAL_BACKGROUND
+              }
+              onChange={(event) => setTerminalBackground(event.target.value)}
+            />
+            <input
+              type="text"
+              aria-label="Hex color value"
+              className="w-20 text-xs font-mono bg-transparent outline-none text-[var(--text-primary)]"
+              value={terminalBackground}
+              onChange={(event) => setTerminalBackground(event.target.value)}
+              placeholder="#1e1f22"
+              spellCheck={false}
+            />
+          </div>
+        </div>
       </Row>
       <Row entry={findEntry('terminal.typeface')} wide>
         <TerminalFontSettings />
@@ -669,6 +718,7 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     const ui = useUiStore.getState();
     ui.setTerminalFontSize(DEFAULT_APPEARANCE.terminalFontSize);
     ui.setTerminalFontFamily(DEFAULT_TERMINAL_FONT);
+    ui.setTerminalBackground(DEFAULT_TERMINAL_BACKGROUND);
     ui.setTerminalLineHeight(1.2);
     ui.setTerminalScrollback(DEFAULT_SCROLLBACK);
     ui.setTerminalAckTimeoutSecs(0);

@@ -23,14 +23,24 @@ pub struct ExecRequest {
     pub rows: u16,
 }
 /// Set terminal capabilities using shell builtins, even in minimal images without env(1).
-/// The selected, validated shell is passed as $0 rather than interpolated into code.
+/// When bash is requested, attempts to run bash with transparent fallback to ash or sh
+/// if bash is not installed in the container image.
 pub(crate) fn interactive_shell_command(shell: &str) -> Vec<String> {
-    vec![
-        shell.into(),
-        "-c".into(),
-        "export TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=kubiki; exec \"$0\" -i".into(),
-        shell.into(),
-    ]
+    if shell == "/bin/bash" {
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "export TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=kubiki; if [ -x /bin/bash ]; then exec /bin/bash -i; elif [ -x /usr/bin/bash ]; then exec /usr/bin/bash -i; elif [ -x /bin/ash ]; then exec /bin/ash -i; else exec /bin/sh -i; fi".into(),
+            "/bin/sh".into(),
+        ]
+    } else {
+        vec![
+            shell.into(),
+            "-c".into(),
+            "export TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=kubiki; exec \"$0\" -i".into(),
+            shell.into(),
+        ]
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]

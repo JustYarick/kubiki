@@ -87,6 +87,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     resetLabel: 'Reset terminal defaults',
     entries: [
       { id: 'terminal.font-size', label: 'Terminal font size', description: 'Independent of the interface scale; applies to OpenCode, shells and logs.', keywords: 'size text' },
+      { id: 'terminal.background', label: 'Terminal background', description: 'Background color for terminals and live container shells.', keywords: 'background theme color black dark canvas' },
       { id: 'terminal.typeface', label: 'Font and spacing', description: 'Choose a font and preview it below.', keywords: 'family nerd powerline monospace line height preview custom' },
       { id: 'terminal.scrollback', label: 'Scrollback lines', description: 'Lines kept above the visible terminal output.', keywords: 'history buffer lines memory' },
       { id: 'terminal.output-timeout', label: 'Output processing timeout', description: 'Stops a session if Kubiki cannot process its output in time.', details: 'Sessions still stop when the app window is hidden or covered. Lower timeout values apply to new sessions.', keywords: 'timeout stop disconnect keep alive stall backpressure reconnect 504' },

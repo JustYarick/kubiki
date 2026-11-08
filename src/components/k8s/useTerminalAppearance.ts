@@ -9,6 +9,7 @@ export function useTerminalAppearance(terminal: RefObject<TerminalView | null>, 
   const family = useUiStore(state => state.terminalFontFamily);
   const lineHeight = useUiStore(state => state.terminalLineHeight);
   const scrollback = useUiStore(state => state.terminalScrollback);
+  const background = useUiStore(state => state.terminalBackground);
   useEffect(() => {
     let cancelled = false;
     const view = terminal.current;
@@ -16,7 +17,13 @@ export function useTerminalAppearance(terminal: RefObject<TerminalView | null>, 
     const term = view.terminal;
     const apply = () => {
       if (cancelled || terminal.current !== view) return;
-      view.applyAppearance({ terminalFontFamily: family, terminalFontSize: size, terminalLineHeight: lineHeight, terminalScrollback: scrollback });
+      view.applyAppearance({
+        terminalFontFamily: family,
+        terminalFontSize: size,
+        terminalLineHeight: lineHeight,
+        terminalScrollback: scrollback,
+        terminalBackground: background,
+      });
       if (visible) refit();
       term.refresh(0, Math.max(0, term.rows - 1));
     };
@@ -24,5 +31,5 @@ export function useTerminalAppearance(terminal: RefObject<TerminalView | null>, 
     return () => { cancelled = true; };
     // refit reads current refs, not transport configuration. Fonts never restart transport.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminal, size, family, lineHeight, scrollback, visible, generation]);
+  }, [terminal, size, family, lineHeight, scrollback, background, visible, generation]);
 }

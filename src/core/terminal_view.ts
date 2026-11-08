@@ -2,23 +2,31 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { SearchAddon } from '@xterm/addon-search';
 import { loadTerminalFonts, terminalFontStack } from './terminal_appearance';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 
 export type TerminalView = ReturnType<typeof createTerminalView>;
-type Appearance = { terminalFontFamily: string; terminalFontSize: number; terminalLineHeight: number; terminalScrollback: number };
+type Appearance = {
+  terminalFontFamily: string;
+  terminalFontSize: number;
+  terminalLineHeight: number;
+  terminalScrollback: number;
+  terminalBackground?: string;
+};
 
 /** Every PTY uses the same cell geometry, Unicode widths and renderer lifecycle. */
 export function createTerminalView(host: HTMLElement, appearance: Appearance, onResize?: (cols: number, rows: number) => void) {
+  const bg = appearance.terminalBackground || '#1e1f22';
   const terminal = new Terminal({
     fontFamily: terminalFontStack(appearance.terminalFontFamily), fontSize: appearance.terminalFontSize,
     lineHeight: appearance.terminalLineHeight, scrollback: appearance.terminalScrollback,
     cursorBlink: true, disableStdin: true, allowProposedApi: true,
     customGlyphs: true, rescaleOverlappingGlyphs: true,
     theme: {
-      background: '#1e1f22', foreground: '#dfe1e5', cursor: '#82aaff', selectionBackground: '#3574f055',
-      black: '#1e1f22', red: '#e05555', green: '#59a869', yellow: '#e5b742', blue: '#3574f0',
+      background: bg, foreground: '#dfe1e5', cursor: '#82aaff', selectionBackground: '#3574f055',
+      black: bg, red: '#e05555', green: '#59a869', yellow: '#e5b742', blue: '#3574f0',
       magenta: '#b392f0', cyan: '#39c5bb', white: '#dfe1e5',
       brightBlack: '#6f737a', brightRed: '#ff8585', brightGreen: '#8acb91', brightYellow: '#f5d78e',
       brightBlue: '#82aaff', brightMagenta: '#d1b1ff', brightCyan: '#75ded5', brightWhite: '#ffffff',
@@ -27,6 +35,17 @@ export function createTerminalView(host: HTMLElement, appearance: Appearance, on
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = '11';
   const addon = new FitAddon(); terminal.loadAddon(addon);
+  const search = new SearchAddon(); terminal.loadAddon(search);
+
+  terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+    if (event.key === 'Tab' && event.type === 'keydown') {
+      // Keep focus inside xterm for terminal completion without webview tab traversal
+      event.stopPropagation();
+      return true;
+    }
+    return true;
+  });
+
   host.dataset.terminalRenderer = 'dom';
   let preferredLineHeight = appearance.terminalLineHeight;
   let disposed = false;
@@ -50,7 +69,18 @@ export function createTerminalView(host: HTMLElement, appearance: Appearance, on
   terminal.buffer.onBufferChange(updateLineHeight);
   const applyAppearance = (next: Appearance) => {
     preferredLineHeight = next.terminalLineHeight;
-    terminal.options = { fontFamily: terminalFontStack(next.terminalFontFamily), fontSize: next.terminalFontSize, scrollback: next.terminalScrollback };
+    const nextBg = next.terminalBackground || '#1e1f22';
+    terminal.options = {
+      ...terminal.options,
+      fontFamily: terminalFontStack(next.terminalFontFamily),
+      fontSize: next.terminalFontSize,
+      scrollback: next.terminalScrollback,
+      theme: {
+        ...terminal.options.theme,
+        background: nextBg,
+        black: nextBg,
+      },
+    };
     updateLineHeight(); terminal.clearTextureAtlas();
   };
   const scheduleFit = () => {
@@ -81,7 +111,7 @@ export function createTerminalView(host: HTMLElement, appearance: Appearance, on
       }
       fit(); scheduleFit();
     });
-  return { terminal, fit, ready, applyAppearance, dispose() {
+  return { terminal, fit, ready, search, applyAppearance, dispose() {
     if (disposed) return;
     disposed = true; observer.disconnect(); window.removeEventListener('resize', scheduleFit);
     cancelAnimationFrame(frame); terminal.dispose();

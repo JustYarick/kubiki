@@ -8,6 +8,7 @@ export function TerminalFontSettings() {
   const family = useUiStore(state => state.terminalFontFamily);
   const lineHeight = useUiStore(state => state.terminalLineHeight);
   const size = useUiStore(state => state.terminalFontSize);
+  const background = useUiStore(state => state.terminalBackground);
   const [customMode, setCustomMode] = useState(!TERMINAL_FONT_PRESETS.some(font => font.value === family));
   const [draft, setDraft] = useState(family);
   const [loadError, setLoadError] = useState(false);
@@ -39,7 +40,7 @@ export function TerminalFontSettings() {
       <input aria-label="Terminal line height" type="number" min={1} max={2} step={0.05} value={lineHeight} onChange={event => { if (event.target.value) useUiStore.getState().setTerminalLineHeight(Number(event.target.value)); }} className="ide-select w-20" />
     </label>
     <p className="text-xs text-[var(--text-secondary)]">Full-screen apps use compact line spacing.</p>
-    <pre aria-label="Terminal font preview" className="resource-data-value kubiki-scrollbar rounded border border-[var(--border-default)] bg-[var(--bg-canvas)] p-3 whitespace-pre" style={{ fontFamily: terminalFontStack(family), fontSize: size, lineHeight }}>
+    <pre aria-label="Terminal font preview" className="resource-data-value kubiki-scrollbar rounded border border-[var(--border-default)] p-3 whitespace-pre" style={{ backgroundColor: background, fontFamily: terminalFontStack(family), fontSize: size, lineHeight }}>
       {'user@host ~/project   dev \n        󰐊  →  ✓  ┌─┐\n0123456789  Il1 O0  Hello'}
     </pre>
     {loadError && <p role="status" className="text-xs text-[var(--status-warn)]">A font could not be loaded; the terminal uses available fallback fonts.</p>}
