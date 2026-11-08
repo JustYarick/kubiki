@@ -523,7 +523,7 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     assert!(plan_tool_names.contains(&"get_workload_diagnostics".to_string()));
     assert!(plan_tool_names.contains(&"get_service_diagnostics".to_string()));
     assert!(plan_tool_names.contains(&"get_pvc_diagnostics".to_string()));
-    assert!(plan_tool_names.contains(&"propose_plan".to_string()));
+    assert!(!plan_tool_names.contains(&"propose_plan".to_string()));
     assert!(plan_tool_names.contains(&"get_events_timeline".to_string()));
     assert!(!plan_tool_names.contains(&"apply_manifest".to_string()));
 
@@ -540,7 +540,7 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     assert!(action_tool_names.contains(&"get_workload_diagnostics".to_string()));
     assert!(action_tool_names.contains(&"get_service_diagnostics".to_string()));
     assert!(action_tool_names.contains(&"get_pvc_diagnostics".to_string()));
-    assert!(action_tool_names.contains(&"propose_plan".to_string()));
+    assert!(!action_tool_names.contains(&"propose_plan".to_string()));
     assert!(action_tool_names.contains(&"get_events_timeline".to_string()));
     assert!(!action_tool_names.contains(&"apply_manifest".to_string()));
 }

@@ -32,10 +32,21 @@ INVESTIGATION METHOD
 - Follow ownerReferences by exact GVK/name and UID; never guess Deployment from a Pod name. Read dependencies before querying their targets.
 
 PHASES & ACTIONS
-- Plan phase: read-only investigation, diagnosis, and answering questions directly. Use read tools to gather evidence. When findings require changes or follow-up checks, formulate a clear, ordered remediation plan in Markdown (diagnosis, uncertainty, concrete ordered fix steps, risk, and verification). You may also call propose_plan if a structured UI card is desired, but never withhold the plan. Ask the user for feedback or confirmation before applying changes.
-- Plan adjustments: when the user provides feedback or asks to modify the plan, refine the plan directly in your response.
-- Action phase: only backend-authorized writes. When the user approves the plan or instructs to execute (e.g. "делай", "apply"), execute the steps using the offered mutation tools (apply_manifest, scale_workload, restart_workload, delete_resource); in Ask mode, this opens interactive review. Use propose_manifests for drafts and previews.
-- After a write receipt, verify fresh controller status via verify_workload or get_resource; API acceptance is not completion. Stop on failed, declined, or uncertain changes. Never retry an ambiguous write without verification.
+- Plan phase: read-only investigation, diagnosis, and planning directly in the conversation. Use read tools to gather evidence. Do not execute or attempt write operations or cluster changes in Plan phase.
+  * When findings require changes or follow-up checks, formulate a clear, structured remediation plan directly in Markdown in your response:
+    ### Diagnosis
+    (Root cause proven by collected evidence)
+    ### Uncertainty
+    (Any gaps or unverified assumptions)
+    ### Remediation Plan
+    (Ordered numbered steps: exact resource GVK/namespace/name, action, risk, and verification)
+  * Present the plan directly to the user in your conversational response. Do not use a separate tool for declaring plans.
+  * Discuss the plan with the user directly. When the user asks for corrections or adjustments, refine the Markdown plan directly in your response.
+  * If the user instructs to execute while in Plan phase (e.g. "делай", "apply"), remind them to switch to Action phase.
+- Action phase: executing authorized changes. You have access to offered mutation tools (apply_manifest, scale_workload, restart_workload, delete_resource).
+  * When the user approves the plan or instructs to execute (e.g. "делай", "apply"), execute the steps sequentially using the offered mutation tools.
+  * In Ask mode, calling a mutation tool automatically presents an interactive review card to the user for approval.
+  * After each mutation receipt, immediately verify controller status using verify_workload or get_resource. Stop on failed, declined, or uncertain changes.
 - Use Helm/GitOps tools when relevant and offered; inspection does not authorize reconciliation writes."#;
 
 fn attach_evidence(session: &Session, revision: u64, call: &ToolCall, result: &mut Value) {
@@ -92,6 +103,8 @@ fn unoffered_tool_error(name: &str, phase: impl std::fmt::Debug, mode: impl std:
     let writes = ["apply_manifest", "scale_workload", "restart_workload", "delete_resource"];
     if writes.contains(&name) {
         format!("{name} is not available (phase {phase:?}, mode {mode:?}): the current phase or the user's permissions do not allow this operation. Nothing was executed. Tell the user which permission is required, or offer an allowed alternative; do not claim the change was made.")
+    } else if name == "propose_plan" || name == "get_plan" {
+        "A separate tool for plans is not offered. Formulate your diagnosis, uncertainty, and remediation plan directly in Markdown in your conversational response.".into()
     } else {
         format!("{name} is not an offered tool in this conversation. Nothing was executed. Use only the offered tools.")
     }
@@ -263,7 +276,7 @@ pub async fn run(
             history.push(Turn::Assistant(completion));
             // A tool outside this phase/policy is never dispatched. Report it to the model
             // instead of aborting, so it can explain the missing permission or switch approach.
-            let (calls, unoffered): (Vec<_>, Vec<_>) = calls.into_iter().partition(|call| definitions.iter().any(|tool| tool.name == call.name));
+            let (calls, unoffered): (Vec<_>, Vec<_>) = calls.into_iter().partition(|call| definitions.iter().any(|tool| tool.name == call.name) || call.name == "propose_plan" || call.name == "get_plan");
             for call in unoffered {
                 count += 1;
                 let result = json!({"executed":false,"error":unoffered_tool_error(&call.name, state.phase, state.mode)});

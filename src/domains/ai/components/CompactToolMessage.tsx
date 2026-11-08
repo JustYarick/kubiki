@@ -116,7 +116,11 @@ export function CompactToolMessage({
               )}
             </Button>
           </div>
-          {m.call?.name === 'run_command' && result && !result.payloadOmitted ? <div>
+          {result?.yaml ? (
+            <div>
+              <pre className="ai-tool-result kubiki-scrollbar" aria-label="YAML content">{String(result.yaml)}</pre>
+            </div>
+          ) : m.call?.name === 'run_command' && result && !result.payloadOmitted ? <div>
             <pre className="ai-tool-result kubiki-scrollbar" aria-label="Command output">{String(result.stdout ?? '')}{result.stderr ? `\n${result.stderr}` : ''}</pre>
             <details><summary>Raw result</summary><pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre></details>
           </div> : <pre className="ai-tool-result kubiki-scrollbar">{rawJson}</pre>}

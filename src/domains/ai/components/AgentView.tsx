@@ -7,7 +7,6 @@ import {
   ChevronDown,
   Copy,
   Cpu,
-  FileCode,
   Plus,
   RefreshCw,
   Server,
@@ -33,8 +32,7 @@ import { useAiStore } from '../store';
 import { downloadMarkdown, transcriptMarkdown } from '../chat_artifacts';
 import { desktopAiAvailable } from '../transport';
 import { MODE_LABELS, PHASE_LABELS, isToolActiveInPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type ChatMessage, type Conversation } from '../types';
-import { isPlanArtifact } from '../plan_contract';
-import { PlanArtifactCard } from './PlanArtifactCard';
+import { isPlanMessage } from '../tool_intents';
 import { highlightSkillChildren } from './SkillReferenceText';
 import { SkillComposer } from './SkillComposer';
 import { OpenCodePane } from './OpenCodePane';
@@ -1239,65 +1237,12 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
     if (m.call?.name === 'ask_user' && typeof m.call?.arguments?.question === 'string') {
       return <QuestionCard message={m} conversation={c} />;
     }
-    if (m.call?.name === 'propose_plan' && isPlanArtifact(m.result?.planArtifact || m.planArtifact)) {
-      const artifact = (m.result?.planArtifact || m.planArtifact) as import('../types').PlanArtifact;
-      return <PlanArtifactCard artifact={artifact} conversation={c} />;
-    }
 
     const result = m.result;
-    const proposal = result?.proposal === true && typeof result.yaml === 'string';
     const activePendingToolId = c.messages.find(msg => msg.role === 'tool' && !msg.result)?.id;
     const isAwaitingApproval = !result && m.id === activePendingToolId && c.status === 'awaiting_approval' && !!mutationPending;
     if (isAwaitingApproval && mutationPending) {
       return <ActionApprovalCard request={mutationPending} onResolve={approved => void resolveMutation(approved)} />;
-    }
-
-    if (proposal) {
-      return (
-        <article className="ai-tool" aria-label={`AI tool ${m.call?.name}`}>
-          <div className="ai-tool-header">
-            <div className="flex items-center gap-2 font-mono">
-              <FileCode size={12} className="text-cyan-400" aria-hidden="true" />
-              <span className="ai-tooling-badge">ACTION</span>
-              <span className="ai-tool-intent-badge is-emerald">PROPOSAL</span>
-              <span className="font-semibold">{String(result.title ?? m.call?.name)}</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="ai-tool-status font-medium">Proposal · not executed</span>
-            </div>
-          </div>
-
-          <div className="ai-tool-content">
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <h4 className="text-xs font-semibold text-[var(--text-primary)]">{String(result.title ?? 'Proposed Kubernetes Manifest')}</h4>
-                <span className="text-[10px] text-[var(--text-muted)] font-mono">YAML</span>
-              </div>
-              <div className="rounded border border-[var(--border-default)] overflow-hidden">
-                <CodeEditor
-                  ariaLabel={`Proposed manifest: ${result.title ?? 'YAML'}`}
-                  value={String(result.yaml)}
-                  language="yaml"
-                  readOnly={true}
-                  height="min(45vh, 340px)"
-                  copyable={true}
-                  variant="field"
-                />
-              </div>
-              {c.phase !== 'plan' && !c.busy && (
-                <div className="mt-2.5">
-                  <Button size="sm" variant="primary" onClick={() => {
-                    useAiStore.getState().update(c.id, { draft: `Apply the following YAML proposal using apply_manifest:\n\`\`\`yaml\n${String(result.yaml)}\n\`\`\`` });
-                    void useAiStore.getState().send(c.id);
-                  }}>
-                    Ask agent to apply proposal
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        </article>
-      );
     }
 
     return <CompactToolMessage message={m} conversation={c} />;
@@ -1306,6 +1251,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
   const isUser = m.role === 'user';
   const isStreaming = c.busy && c.messages[c.messages.length - 1]?.id === m.id;
   const { thinking, isThinkingActive, content } = !isUser ? parseThinking(m.text, isStreaming) : { isThinkingActive: false, content: m.text };
+  const isPlan = !isUser && isPlanMessage(content);
   const [copied, setCopied] = useState(false);
 
   if (!isUser && !content.trim() && !thinking && !isThinkingActive && !isStreaming) {
@@ -1321,7 +1267,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
 
   return (
     <article
-      className={`ai-message is-${m.role}`}
+      className={`ai-message is-${m.role} ${isPlan ? 'is-plan' : ''}`}
       aria-label={isUser ? 'Your message' : 'Agent response'}
     >
       <div className="ai-message-heading">
@@ -1332,6 +1278,11 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
             <>
               <Bot size={13} className="text-indigo-400" aria-hidden="true" />
               <strong>Agent</strong>
+              {isPlan ? (
+                <span className="ai-tool-intent-badge is-emerald" title="Structured remediation plan">
+                  Plan
+                </span>
+              ) : null}
               {(m.phase === 'tooling' || m.phase === 'action') ? (
                 <span className="ai-tooling-badge" title="Action execution phase">
                   Action
@@ -1374,6 +1325,24 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
           {thinking || isThinkingActive ? content : m.text}
         </Markdown>
       </div>
+
+      {isPlan && c.phase === 'plan' && !c.busy && (
+        <div className="mt-3 pt-2.5 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-xs text-[var(--text-muted)]">
+            Review the plan above. Ready to apply?
+          </span>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              void useAiStore.getState().setPhase(c.id, 'tooling');
+              useAiStore.getState().update(c.id, { draft: 'делай' });
+            }}
+          >
+            Switch to Action to execute
+          </Button>
+        </div>
+      )}
 
       <div className="flex gap-2"><Button size="sm" variant="ghost" disabled={c.busy} onClick={()=>useAiStore.getState().branch(c.id,m.id)}>Branch here</Button>{isUser&&<Button size="sm" variant="ghost" disabled={c.busy} onClick={()=>useAiStore.getState().branch(c.id,m.id,true)}>Edit and retry in new branch</Button>}</div>
       {!isUser && (
