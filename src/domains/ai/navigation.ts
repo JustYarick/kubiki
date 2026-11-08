@@ -15,14 +15,14 @@ export function openAiChat(options: { resource?: ResourceItem; create?: boolean;
   // Attach identity only. Live object data must pass through native policy,
   // including when invoked from a Secret/ConfigMap inspector.
   const draft = resource
-    ? `Analyze ${resource.kind} ${resource.namespace ? `${resource.namespace}/` : ''}${resource.name} (${resource.apiVersion}, UID ${resource.uid}). Investigate the problem using permitted evidence. Then deliver the diagnosis, uncertainty and, when remediation or follow-up checks are needed, a structured remediation plan via propose_plan (kind=remediation), with concrete ordered fix steps, risk and verification. If the cause remains unknown, propose precise next checks instead of guessing a fix. Do not treat missing or filtered data as proof that there is no problem.`
+    ? `Analyze ${resource.kind} ${resource.namespace ? `${resource.namespace}/` : ''}${resource.name} (${resource.apiVersion}, UID ${resource.uid}). Investigate the problem using permitted evidence. Then deliver the diagnosis, uncertainty and, when remediation or follow-up checks are needed, a structured remediation plan, with concrete ordered fix steps, risk and verification. If the cause remains unknown, propose precise next checks instead of guessing a fix. Do not treat missing or filtered data as proof that there is no problem.`
     : options.create ? `Create ${options.kind && options.kind !== 'Pod' ? `a ${options.kind}` : 'an application'} in Kubernetes${options.namespace ? ` in namespace ${options.namespace}` : ''}. ` : '';
   const scope = currentAgentScope(resource?.namespace ?? options.namespace);
   const create = () => {
     const settings = useAiStore.getState().settings;
     if((settings.runtime ?? 'kubiki')!=='kubiki') {
       const id=crypto.randomUUID();
-      useAiStore.setState({openCodeRequest:{id,scope,prompt:draft.replace('a structured remediation plan via propose_plan (kind=remediation)', 'a remediation plan') + (resource ? ' Use the connected Kubiki cluster tools, starting with diagnose_resource for this exact identity. Follow ownerReferences and UID, never infer Deployment from a Pod name. If cluster tools are unavailable, report that blocker and stop; do not inspect host configs, credentials or sockets.' : '')}});
+      useAiStore.setState({openCodeRequest:{id,scope,prompt:draft + (resource ? ' Use the connected Kubiki cluster tools, starting with diagnose_resource for this exact identity. Follow ownerReferences and UID, never infer Deployment from a Pod name. If cluster tools are unavailable, report that blocker and stop; do not inspect host configs, credentials or sockets.' : '')}});
       return id;
     }
     const providerId = settings.defaultProvider ?? settings.providers[0]?.id ?? '';

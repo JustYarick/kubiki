@@ -131,7 +131,7 @@ fn sink() -> EventSink {
 #[tokio::test]
 async fn model_cannot_invoke_unoffered_writes_in_read_only() {
     let conversation = ConversationState::default();
-    let (client, _, task) = provider(vec![call("scale_workload")]).await;
+    let (client, requests, task) = provider(vec![call("scale_workload"), final_text()]).await;
     let dispatched = Arc::new(AtomicUsize::new(0));
     let outcome = run(
         session(),
@@ -146,9 +146,11 @@ async fn model_cannot_invoke_unoffered_writes_in_read_only() {
         sink(),
     )
     .await;
-    assert!(outcome.unwrap_err().contains("not offered"));
+    assert!(outcome.is_ok(), "{outcome:?}");
     assert_eq!(dispatched.load(Ordering::SeqCst), 0);
     task.await.unwrap();
+    let requests = requests.lock().unwrap();
+    assert!(requests.last().unwrap().to_string().contains("scale_workload is not available"));
 }
 
 #[tokio::test]
@@ -966,6 +968,8 @@ async fn investigate_allows_tools_without_forcing_propose_plan() {
     task.await.unwrap();
     assert_eq!(requests.lock().unwrap().len(), 2);
 }
+
+
 
 struct EnvironmentHost;
 #[async_trait]

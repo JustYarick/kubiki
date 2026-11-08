@@ -468,7 +468,7 @@ it('resource investigations explicitly request a remediation artifact and retain
   useClusterStore.setState({ currentContext:'prod',selectedNamespace:'apps' });
   openAiChat({resource:{apiVersion:'apps/v1',kind:'Deployment',name:'api',namespace:'apps',uid:'d1'} as any});
   const c=useAiStore.getState().conversations.at(-1)!;
-  expect(c.intent).toBe('investigate');expect(c.draft).toContain('structured remediation plan via propose_plan');expect(c.draft).toContain('verification');
+  expect(c.intent).toBe('investigate');expect(c.draft).toContain('structured remediation plan');expect(c.draft).toContain('verification');
 });
 it('changing a live provider/model creates a fresh read-only context without sending old evidence',async()=>{
   const id=useAiStore.getState().create(scope,'Question');await useAiStore.getState().send(id);

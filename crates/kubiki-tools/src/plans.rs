@@ -96,16 +96,15 @@ impl PlanStore {
         for id in &input.evidence_ids {
             evidence.get(id)?;
         }
-        let (id, version) = if let Some(id) = input.plan_id {
-            let previous = self
-                .versions
-                .iter()
-                .rev()
-                .find(|p| p.id == id)
-                .ok_or("Plan does not belong to this session or was evicted")?;
-            (id, previous.version + 1)
-        } else {
-            (format!("plan-{}", NEXT.fetch_add(1, Ordering::Relaxed)), 1)
+        // An unknown planId (hallucinated, or evicted from this session) never revises
+        // another session's plan; it starts a fresh plan instead of losing the proposal.
+        let previous = input
+            .plan_id
+            .as_ref()
+            .and_then(|id| self.versions.iter().rev().find(|p| &p.id == id));
+        let (id, version) = match previous {
+            Some(previous) => (previous.id.clone(), previous.version + 1),
+            None => (format!("plan-{}", NEXT.fetch_add(1, Ordering::Relaxed)), 1),
         };
         // Actual scope comes from the backend; targetScope is only a proposal label.
         let artifact = PlanArtifact {
@@ -242,11 +241,12 @@ mod tests {
         );
         let mut foreign = proposal();
         foreign.plan_id = Some("another-session-plan".into());
-        assert!(
-            store
-                .propose(foreign, "owner", &scope, 43, &mut evidence)
-                .is_err()
-        );
+        let fresh = store
+            .propose(foreign, "owner", &scope, 43, &mut evidence)
+            .unwrap();
+        assert_ne!(fresh.id, "another-session-plan");
+        assert_ne!(fresh.id, p.id);
+        assert_eq!(fresh.version, 1);
         store.stale();
         assert!(store.versions.iter().all(|p| p.status == PlanStatus::Stale));
     }

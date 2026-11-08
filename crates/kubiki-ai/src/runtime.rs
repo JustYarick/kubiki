@@ -32,8 +32,9 @@ INVESTIGATION METHOD
 - Follow ownerReferences by exact GVK/name and UID; never guess Deployment from a Pod name. Read dependencies before querying their targets.
 
 PHASES & ACTIONS
-- Plan phase: read-only investigation, diagnosis, and answering questions directly. You do not need to call propose_plan unless the user explicitly requests a structured remediation plan or deployment plan.
-- Action phase: only backend-authorized writes. When asked to change something, invoke the appropriate mutation tool (apply_manifest, scale_workload, restart_workload, delete_resource); in Ask mode, this opens interactive review. Use propose_manifests for drafts and previews.
+- Plan phase: read-only investigation, diagnosis, and answering questions directly. Use read tools to gather evidence. When findings require changes or follow-up checks, formulate a clear, ordered remediation plan in Markdown (diagnosis, uncertainty, concrete ordered fix steps, risk, and verification). You may also call propose_plan if a structured UI card is desired, but never withhold the plan. Ask the user for feedback or confirmation before applying changes.
+- Plan adjustments: when the user provides feedback or asks to modify the plan, refine the plan directly in your response.
+- Action phase: only backend-authorized writes. When the user approves the plan or instructs to execute (e.g. "делай", "apply"), execute the steps using the offered mutation tools (apply_manifest, scale_workload, restart_workload, delete_resource); in Ask mode, this opens interactive review. Use propose_manifests for drafts and previews.
 - After a write receipt, verify fresh controller status via verify_workload or get_resource; API acceptance is not completion. Stop on failed, declined, or uncertain changes. Never retry an ambiguous write without verification.
 - Use Helm/GitOps tools when relevant and offered; inspection does not authorize reconciliation writes."#;
 
@@ -84,6 +85,15 @@ impl PlanFreshness {
             "Fresh permitted evidence was collected after plan {} was proposed in this turn. Reconcile the plan with that evidence before finishing: if the diagnosis or steps changed, call propose_plan with this planId to create an updated version; otherwise explicitly explain why the existing plan remains valid. This is the single plan reconciliation pass and does not authorize any writes.",
             self.plan_id.as_deref()?
         ))
+    }
+}
+
+fn unoffered_tool_error(name: &str, phase: impl std::fmt::Debug, mode: impl std::fmt::Debug) -> String {
+    let writes = ["apply_manifest", "scale_workload", "restart_workload", "delete_resource"];
+    if writes.contains(&name) {
+        format!("{name} is not available (phase {phase:?}, mode {mode:?}): the current phase or the user's permissions do not allow this operation. Nothing was executed. Tell the user which permission is required, or offer an allowed alternative; do not claim the change was made.")
+    } else {
+        format!("{name} is not an offered tool in this conversation. Nothing was executed. Use only the offered tools.")
     }
 }
 async fn execute_read_batch(
@@ -249,11 +259,21 @@ pub async fn run(
             emit(AgentEvent::Usage { input_tokens: completion.input_tokens, output_tokens: completion.output_tokens });
             let calls = completion.calls.clone();
             let blocked: std::collections::HashMap<_,_> = calls.iter().filter_map(|call| crate::read_progress::repeated_failure(&history, call).map(|result| (call.id.clone(),result))).collect();
-            if calls.iter().any(|call| !definitions.iter().any(|tool| tool.name == call.name)) {
-                return Err("The model requested a tool that was not offered to this conversation".into());
-            }
             if count + calls.len() > 20 {return Err("AI run reached its 20-tool budget before dispatch".into());}
             history.push(Turn::Assistant(completion));
+            // A tool outside this phase/policy is never dispatched. Report it to the model
+            // instead of aborting, so it can explain the missing permission or switch approach.
+            let (calls, unoffered): (Vec<_>, Vec<_>) = calls.into_iter().partition(|call| definitions.iter().any(|tool| tool.name == call.name));
+            for call in unoffered {
+                count += 1;
+                let result = json!({"executed":false,"error":unoffered_tool_error(&call.name, state.phase, state.mode)});
+                emit(AgentEvent::ToolStarted { call: call.clone() });
+                emit(AgentEvent::ToolCompleted { id: call.id.clone(), result: result.clone() });
+                history.push(Turn::Tool { call, result });
+            }
+            if calls.is_empty() && history.last().is_some_and(|turn| matches!(turn, Turn::Tool { .. })) {
+                continue;
+            }
             if calls.is_empty() {
                 if let Some(correction) = plan_freshness.correction() {
                     history.push(Turn::User(correction));
