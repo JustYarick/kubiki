@@ -62,7 +62,13 @@ pub async fn start(server: crate::ClusterServer) -> Result<AttachedEndpoint, Str
                 .await
                 {
                     let cancel = service.cancellation_token();
-                    tokio::select! {_=stop.changed()=>{server.session.stop();cancel.cancel();},_=service.waiting()=>{server.session.stop();}}
+                    tokio::select! {
+                        _ = stop.changed() => {
+                            server.session.stop();
+                            cancel.cancel();
+                        }
+                        _ = service.waiting() => {}
+                    }
                 }
             });
         }

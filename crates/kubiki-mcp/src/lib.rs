@@ -3,7 +3,7 @@ use kubiki_tools::*;
 use rmcp::{
     ErrorData, RoleClient, RoleServer, ServerHandler, ServiceExt,
     model::*,
-    service::{RequestContext, RunningService},
+    service::{NotificationContext, RequestContext, RunningService, SubscriptionContext, SubscriptionSink},
 };
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -18,6 +18,8 @@ pub struct ClusterServer {
     gate: Arc<tokio::sync::Mutex<()>>,
     inflight: Arc<RequestLifecycle>,
     sinks: Arc<std::sync::Mutex<std::collections::HashMap<String, EventSink>>>,
+    peers: Arc<std::sync::Mutex<Vec<rmcp::service::Peer<RoleServer>>>>,
+    subscriptions: Arc<std::sync::Mutex<Vec<SubscriptionSink>>>,
 }
 impl ClusterServer {
     pub fn new(
@@ -34,7 +36,58 @@ impl ClusterServer {
             gate: Arc::default(),
             inflight: Arc::default(),
             sinks: Arc::default(),
+            peers: Arc::default(),
+            subscriptions: Arc::default(),
         }
+    }
+    fn register_peer(&self, peer: &rmcp::service::Peer<RoleServer>) {
+        if let Ok(mut peers) = self.peers.lock() {
+            peers.retain(|p| !p.is_transport_closed());
+            let already_registered = peers.iter().any(|existing| {
+                match (existing.peer_info(), peer.peer_info()) {
+                    (Some(a), Some(b)) => Arc::ptr_eq(&a, &b),
+                    (None, None) => true,
+                    _ => false,
+                }
+            });
+            if !already_registered {
+                if peers.len() >= 16 {
+                    peers.remove(0);
+                }
+                peers.push(peer.clone());
+            }
+        }
+    }
+    pub fn update_policy(&self, policy: AgentPolicy) -> Result<(), String> {
+        self.session.set_policy(policy)?;
+        let peers = self
+            .peers
+            .lock()
+            .map(|mut list| {
+                list.retain(|p| !p.is_transport_closed());
+                if list.len() > 16 {
+                    let drain = list.len() - 16;
+                    list.drain(0..drain);
+                }
+                list.clone()
+            })
+            .unwrap_or_default();
+        for peer in peers {
+            tokio::spawn(async move {
+                let _ = peer.notify_tool_list_changed().await;
+            });
+        }
+        let subscriptions = self
+            .subscriptions
+            .lock()
+            .map(|list| list.clone())
+            .unwrap_or_default();
+        for sink in subscriptions {
+            tokio::spawn(async move {
+                let _ = sink.notify_tool_list_changed().await;
+            });
+        }
+        Ok(())
     }
     /// Revoke undispatched work and retain receipts before the owning runtime exits.
     pub async fn shutdown(&self) {
@@ -135,16 +188,48 @@ impl ServerHandler for ClusterServer {
     fn get_info(&self) -> ServerConfig {
         {
             let mut config = ServerConfig::default();
-            config.capabilities = ServerCapabilities::builder().enable_tools().build();
+            config.capabilities = ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build();
             config.instructions = Some(INVESTIGATION_GUIDANCE.into());
             config
         }
     }
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        context.peer.set_peer_info(request.clone());
+        self.register_peer(&context.peer);
+        self.negotiate_initialize(&request)
+    }
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        self.register_peer(&context.peer);
+    }
+    fn accepted_subscription_filter(
+        &self,
+        requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        Some(requested.clone())
+    }
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
+        if let Ok(mut subs) = self.subscriptions.lock() {
+            if subs.len() >= 16 {
+                subs.remove(0);
+            }
+            subs.push(context.sink().clone());
+        }
+        context.cancelled().await;
+        Ok(())
+    }
     async fn list_tools(
         &self,
         _: Option<PaginatedRequestParams>,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        self.register_peer(&context.peer);
         let tools = self
             .definitions()
             .map_err(|e| ErrorData::internal_error(e, None))?

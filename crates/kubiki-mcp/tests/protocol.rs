@@ -218,3 +218,91 @@ async fn shutdown_retains_an_already_dispatched_change_until_its_result_is_recor
     let _ = client.cancel().await;
     let _ = service.cancel().await;
 }
+
+#[tokio::test]
+async fn live_policy_update_toggles_read_only_and_individual_tools_without_restart() {
+    let base = session();
+    let initial_policy = AgentPolicy {
+        logs: true,
+        writes: vec![WriteOperation::Create, WriteOperation::Scale],
+        ..Default::default()
+    };
+    let session = Session::new(
+        base.id.clone(),
+        base.owner.clone(),
+        base.scope.clone(),
+        initial_policy.clone(),
+        ClusterCapabilities::default(),
+    );
+    session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
+    let fake = Arc::new(Fake::default());
+    let server = ClusterServer::new(session, fake.clone(), Arc::new(|_| {}), true);
+    let (c, s) = tokio::io::duplex(65536);
+    let (client, service) = tokio::join!(().serve(c), server.clone().serve(s));
+    let client = client.unwrap();
+    let service = service.unwrap();
+
+    // Initially, write tools (apply_manifest, scale_workload) and get_logs are available.
+    let tools = client.peer().list_all_tools().await.unwrap();
+    assert!(tools.iter().any(|t| t.name == "apply_manifest"));
+    assert!(tools.iter().any(|t| t.name == "scale_workload"));
+    assert!(tools.iter().any(|t| t.name == "get_logs"));
+
+    // Toggle read_only = true and disable get_logs live without restarting the MCP connection.
+    server
+        .update_policy(AgentPolicy {
+            read_only: true,
+            disabled_tools: vec!["get_logs".into()],
+            ..initial_policy.clone()
+        })
+        .unwrap();
+
+    let tools_after = client.peer().list_all_tools().await.unwrap();
+    assert!(!tools_after.iter().any(|t| t.name == "apply_manifest"));
+    assert!(!tools_after.iter().any(|t| t.name == "scale_workload"));
+    assert!(!tools_after.iter().any(|t| t.name == "get_logs"));
+    assert!(tools_after.iter().any(|t| t.name == "get_resource"));
+
+    // Calling a disabled or read-only-blocked tool on the live connection fails immediately.
+    let blocked_write = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("scale_workload"))
+        .await
+        .unwrap();
+    assert_eq!(blocked_write.is_error, Some(true));
+
+    let blocked_log = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("get_logs"))
+        .await
+        .unwrap();
+    assert_eq!(blocked_log.is_error, Some(true));
+
+    // Re-enabling write mode and get_logs live restores them immediately.
+    server.update_policy(initial_policy.clone()).unwrap();
+    let tools_restored = client.peer().list_all_tools().await.unwrap();
+    assert!(tools_restored.iter().any(|t| t.name == "apply_manifest"));
+    assert!(tools_restored.iter().any(|t| t.name == "get_logs"));
+
+    let allowed_log = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("get_logs"))
+        .await
+        .unwrap();
+    assert_ne!(allowed_log.is_error, Some(true));
+
+    // Test action_disabled_tools: disabling scale_workload in action phase hides it
+    server
+        .update_policy(AgentPolicy {
+            action_disabled_tools: vec!["scale_workload".into()],
+            ..initial_policy.clone()
+        })
+        .unwrap();
+    let tools_action_filtered = client.peer().list_all_tools().await.unwrap();
+    assert!(!tools_action_filtered.iter().any(|t| t.name == "scale_workload"));
+    assert!(tools_action_filtered.iter().any(|t| t.name == "apply_manifest"));
+
+    let _ = client.cancel().await;
+    let _ = service.cancel().await;
+}

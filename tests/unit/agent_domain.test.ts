@@ -498,3 +498,87 @@ it('formats tool intents and summaries for diagnostic bundles, neighborhoods and
   );
   expect(logsSummary).toBe('Filtered 4 error/warning line(s) from 120 total');
 });
+
+it('correctly calculates live active MCP tools and synchronizes read-only mode and categories', async () => {
+  const {
+    defaultMcpPolicy,
+    normalizeMcpPolicy,
+    isToolActiveInPolicy,
+    toggleReadOnlyMcpPolicy,
+    patchToolInPolicy,
+    MCP_TOOL_CATALOG,
+  } = await import('../../src/domains/ai/types');
+
+  const base = defaultMcpPolicy();
+  const activeAll = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, base));
+  expect(activeAll.length).toBe(31);
+
+  // Toggling to readOnly blocks all 4 write tools, leaving exactly 27 active read tools
+  const readOnlyPolicy = toggleReadOnlyMcpPolicy(true, base);
+  const activeReadOnly = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, readOnlyPolicy));
+  expect(activeReadOnly.length).toBe(27);
+  expect(isToolActiveInPolicy('apply_manifest', readOnlyPolicy)).toBe(false);
+  expect(isToolActiveInPolicy('scale_workload', readOnlyPolicy)).toBe(false);
+  expect(isToolActiveInPolicy('restart_workload', readOnlyPolicy)).toBe(false);
+  expect(isToolActiveInPolicy('delete_resource', readOnlyPolicy)).toBe(false);
+  expect(isToolActiveInPolicy('diagnose_resource', readOnlyPolicy)).toBe(true);
+  expect(isToolActiveInPolicy('get_logs', readOnlyPolicy)).toBe(true);
+
+  // Legacy or unpopulated policy with writes: [] correctly normalized when readOnly: false
+  const legacyPolicy = normalizeMcpPolicy({ ...defaultPolicy(), readOnly: false, writes: [] });
+  expect(legacyPolicy.writes.length).toBe(5);
+  expect(legacyPolicy.logs).toBe(true);
+  expect(legacyPolicy.clusterResources).toBe(true);
+  const activeLegacy = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, legacyPolicy));
+  expect(activeLegacy.length).toBe(31);
+
+  // Enabling a tool like get_logs when logs: false enables policy.logs
+  const noLogs = { ...base, logs: false };
+  expect(isToolActiveInPolicy('get_logs', noLogs)).toBe(false);
+  const patchedLogs = patchToolInPolicy('get_logs', true, noLogs);
+  expect(patchedLogs.logs).toBe(true);
+  expect(isToolActiveInPolicy('get_logs', patchedLogs)).toBe(true);
+
+  // Enabling apply_manifest when in readOnly mode switches to write mode and adds write operations
+  const patchedWrite = patchToolInPolicy('apply_manifest', true, readOnlyPolicy);
+  expect(patchedWrite.readOnly).toBe(false);
+  expect(patchedWrite.writes).toContain('create');
+  expect(patchedWrite.writes).toContain('update');
+  expect(isToolActiveInPolicy('apply_manifest', patchedWrite)).toBe(true);
+
+  // Plan phase specifically blocks mutation tools even if policy allows writes
+  expect(isToolActiveInPolicy('apply_manifest', base, 'plan')).toBe(false);
+  expect(isToolActiveInPolicy('scale_workload', base, 'plan')).toBe(false);
+  expect(isToolActiveInPolicy('diagnose_resource', base, 'plan')).toBe(true);
+
+  // Phase-specific disabling via planDisabledTools / actionDisabledTools
+  const planDisabledPolicy = patchToolInPolicy('get_logs', false, base, 'plan');
+  expect(planDisabledPolicy.planDisabledTools).toContain('get_logs');
+  expect(isToolActiveInPolicy('get_logs', planDisabledPolicy, 'plan')).toBe(false);
+  expect(isToolActiveInPolicy('get_logs', planDisabledPolicy, 'action')).toBe(true);
+
+  const actionDisabledPolicy = patchToolInPolicy('scale_workload', false, base, 'action');
+  expect(actionDisabledPolicy.actionDisabledTools).toContain('scale_workload');
+  expect(isToolActiveInPolicy('scale_workload', actionDisabledPolicy, 'action')).toBe(false);
+  expect(isToolActiveInPolicy('apply_manifest', actionDisabledPolicy, 'action')).toBe(true);
+
+  // Explicit empty writes (e.g. unchecking all 5 write ops) is preserved when already configured
+  const configuredNoWrites = normalizeMcpPolicy({ ...base, readOnly: false, writes: [] });
+  expect(configuredNoWrites.writes).toEqual([]);
+  expect(isToolActiveInPolicy('apply_manifest', configuredNoWrites)).toBe(false);
+  expect(isToolActiveInPolicy('scale_workload', configuredNoWrites)).toBe(false);
+  expect(MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, configuredNoWrites)).length).toBe(27);
+
+  // Enabling a tool on the Global tab (phase === undefined) clears phase-specific disable lists for that tool
+  const reenabledGlobal = patchToolInPolicy('scale_workload', true, actionDisabledPolicy);
+  expect(reenabledGlobal.actionDisabledTools).not.toContain('scale_workload');
+  expect(isToolActiveInPolicy('scale_workload', reenabledGlobal, 'action')).toBe(true);
+
+  // syncSharedPolicyFields synchronizes MCP access fields while preserving alwaysAsk
+  const { syncSharedPolicyFields } = await import('../../src/domains/ai/types');
+  const nativeTarget = { ...defaultPolicy(), alwaysAsk: ['delete_resource'] };
+  const synced = syncSharedPolicyFields(readOnlyPolicy, nativeTarget);
+  expect(synced.readOnly).toBe(true);
+  expect(synced.logs).toBe(true);
+  expect(synced.alwaysAsk).toEqual(['delete_resource']);
+});

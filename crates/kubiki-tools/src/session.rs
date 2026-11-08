@@ -114,6 +114,15 @@ impl Session {
         self.cancel.send_replace(true);
         Ok(())
     }
+    pub fn set_policy(&self, policy: AgentPolicy) -> Result<(), String> {
+        policy.validate()?;
+        let mut state = self.control.lock().map_err(|_| "AI session lock failed")?;
+        state.policy = policy;
+        state.policy_revision = POLICY_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        state.revision += 1;
+        self.cancel.send_replace(true);
+        Ok(())
+    }
     /// Per-tool cancellation has its own signal; global control and scope stay shared.
     pub fn request_scope(&self) -> Self {
         let (cancel, _) = watch::channel(*self.cancel.borrow());

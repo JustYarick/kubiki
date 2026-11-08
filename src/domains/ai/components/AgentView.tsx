@@ -16,6 +16,7 @@ import {
   Sparkles,
   Square,
   WandSparkles,
+  Wrench,
   Zap,
 } from 'lucide-react';
 import Markdown, { type Components } from 'react-markdown';
@@ -31,7 +32,7 @@ import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
 import { downloadMarkdown, transcriptMarkdown } from '../chat_artifacts';
 import { desktopAiAvailable } from '../transport';
-import { MODE_LABELS, PHASE_LABELS, type AgentMode, type AgentPhase, type AgentScope, type ChatMessage, type Conversation } from '../types';
+import { MODE_LABELS, PHASE_LABELS, normalizeMcpPolicy, isToolActiveInPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type ChatMessage, type Conversation } from '../types';
 import { isPlanArtifact } from '../plan_contract';
 import { PlanArtifactCard } from './PlanArtifactCard';
 import { highlightSkillChildren } from './SkillReferenceText';
@@ -61,17 +62,38 @@ const statusLabels: Record<string, string> = {
 };
 
 export function AgentView({visible=true}:{visible?:boolean}) {
-  const runtime=useAiStore(s=>s.settings.runtime);const settingsOpen=useAiStore(s=>s.settingsOpen);
-  useEffect(()=>{void useAiStore.getState().load();},[]);
-  if((runtime ?? 'kubiki')==='kubiki')return <KubikiAgentView visible={visible}/>;
-  return <><OpenCodePane visible={visible}/><Modal title="AI Agent settings" width={900} footer={<Button size="sm" onClick={()=>useAiStore.getState().setSettingsOpen(false)}>Done</Button>} open={settingsOpen} onClose={()=>useAiStore.getState().setSettingsOpen(false)}><AgentSettings/></Modal></>;
+  const runtime = useAiStore(s => s.settings.runtime);
+  const settingsOpen = useAiStore(s => s.settingsOpen);
+  const settingsPage = useAiStore(s => s.settingsPage);
+  const setSettingsOpen = useAiStore(s => s.setSettingsOpen);
+  useEffect(() => { void useAiStore.getState().load(); }, []);
+  if ((runtime ?? 'kubiki') === 'kubiki') return <KubikiAgentView visible={visible} />;
+  return (
+    <>
+      <OpenCodePane visible={visible} />
+      <Modal
+        title="AI Agent settings"
+        width={840}
+        footer={<Button size="sm" onClick={() => setSettingsOpen(false)}>Done</Button>}
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      >
+        <AgentSettings
+          page={settingsPage}
+          onPageChange={page => useAiStore.setState({ settingsPage: page })}
+        />
+      </Modal>
+    </>
+  );
 }
 
 function KubikiAgentView({ visible = true }: { visible?: boolean }) {
   const state = useAiStore();
   const conversation = state.conversations.find(c => c.id === state.activeId);
   const settingsOpen = state.settingsOpen;
+  const settingsPage = state.settingsPage;
   const setSettingsOpen = state.setSettingsOpen;
+  const openSettings = state.openSettings;
   const [settingsStatus, setSettingsStatus] = useState<{ message?: string; error?: string; saving?: boolean }>({});
 
   useEffect(() => { void useAiStore.getState().load(); }, []);
@@ -97,17 +119,25 @@ function KubikiAgentView({ visible = true }: { visible?: boolean }) {
           <option value="">+ New conversation</option>{state.conversations.map(c => <option key={c.id} value={c.id}>{c.scope.context ? `[${c.scope.context}] ` : ''}{c.title}</option>)}
         </Select></label>
         <Button size="sm" onClick={() => useAiStore.setState({ activeId: null })}><Plus size={12} aria-hidden="true" />New</Button>
-        <Button size="sm" onClick={() => setSettingsOpen(true)}><Settings size={12} aria-hidden="true" />Settings</Button>
+        <Button size="sm" onClick={() => openSettings('agent')}><Settings size={12} aria-hidden="true" />Settings</Button>
       </div>
       {!desktopAiAvailable() && <p className="ai-notice">AI connections and cluster tools run in the desktop app. You can explore the interface here; no data is sent.</p>}
       {state.error && <p role="alert" className="ai-error">{state.error}</p>}
-      {conversation ? <Chat conversation={conversation} visible={visible} onSettings={() => setSettingsOpen(true)} /> : <AgentHome onSettings={() => setSettingsOpen(true)} />}
+      {conversation ? (
+        <Chat
+          conversation={conversation}
+          visible={visible}
+          onSettings={(page?: AgentSettingsPage) => openSettings(page ?? 'agent')}
+        />
+      ) : (
+        <AgentHome onSettings={(page?: AgentSettingsPage) => openSettings(page ?? 'agent')} />
+      )}
     </div>
     <Modal
       open={settingsOpen}
       onClose={() => setSettingsOpen(false)}
       title="AI Agent settings"
-      width={780}
+      width={840}
       footer={<div className="flex items-center justify-between w-full">
         <span className={`text-xs truncate max-w-[420px] ${settingsStatus.error ? 'text-[var(--status-danger)]' : 'text-emerald-400'}`} role="status">
           {settingsStatus.message || settingsStatus.error}
@@ -117,7 +147,11 @@ function KubikiAgentView({ visible = true }: { visible?: boolean }) {
         </div>
       </div>}
     >
-      <AgentSettings onStatusChange={setSettingsStatus} />
+      <AgentSettings
+        page={settingsPage}
+        onPageChange={page => useAiStore.setState({ settingsPage: page })}
+        onStatusChange={setSettingsStatus}
+      />
     </Modal>
   </section>;
 }
@@ -277,7 +311,7 @@ function ProviderModelCapsule({
   );
 }
 
-function AgentHome({ onSettings }: { onSettings: () => void }) {
+function AgentHome({ onSettings }: { onSettings?: (page?: AgentSettingsPage) => void }) {
   const currentContext = useClusterStore(s => s.currentContext);
   const contexts = useClusterStore(s => s.contexts);
   const [selectedCluster, setSelectedCluster] = useState<string>(currentContext || '*');
@@ -293,6 +327,10 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   const setDraft = useAiStore(s => s.setHomeDraft);
   const [sending, setSending] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
+
+  const mcpPolicy = normalizeMcpPolicy(settings.mcpPolicy ?? settings.policy);
+  const activeToolCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, mcpPolicy, phase)).length;
+  const totalTools = phase === 'plan' ? MCP_TOOL_CATALOG.filter(t => t.group !== 'write').length : MCP_TOOL_CATALOG.length;
 
   // Inherit status from main selector until user explicitly changes it:
   useEffect(() => {
@@ -477,17 +515,26 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
 
         {/* Bottom bar with permissions button and circular send button */}
         <div className="ai-composer-card-bottom">
-          <div className="ai-composer-card-meta">
+          <div className="ai-composer-card-meta flex items-center gap-1.5">
             <Button
               size="sm"
               variant="ghost"
               className="ai-composer-permissions-btn"
-              onClick={onSettings}
-              title="AI agent permissions and settings"
-              aria-label="AI permissions"
+              onClick={() => onSettings?.('mcp')}
+              title="Configure MCP cluster tools and mode permissions"
+              aria-label="MCP tools and permissions"
+            >
+              <Wrench size={13} aria-hidden="true" />
+              <span>MCP Tools ({activeToolCount}/{totalTools})</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onSettings?.('agent')}
+              title="AI settings"
+              aria-label="AI settings"
             >
               <Settings size={13} aria-hidden="true" />
-              <span>Permissions</span>
             </Button>
           </div>
 
@@ -509,7 +556,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
 
       {modelsError && <p role="alert" className="ai-error mt-2">{modelsError}</p>}
       {selectedModel?.tools === false && <p className="ai-notice mt-2">This model does not support tools. Choose another model to work with the cluster.</p>}
-      {!settings.providers.length && <p className="ai-help mt-2">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
+      {!settings.providers.length && <p className="ai-help mt-2">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={() => onSettings?.('providers')}>AI settings</button> to begin.</p>}
 
       <div className="ai-home-suggestions" aria-label="Suggested prompts">
         <button
@@ -550,7 +597,7 @@ function AgentHome({ onSettings }: { onSettings: () => void }) {
   );
 }
 
-function Chat({ conversation: c, visible, onSettings }: { conversation: Conversation; visible: boolean; onSettings: () => void }) {
+function Chat({ conversation: c, visible, onSettings }: { conversation: Conversation; visible: boolean; onSettings: (page?: AgentSettingsPage) => void }) {
   const contexts = useClusterStore(s => s.contexts);
   const settings = useAiStore(s => s.settings);
   const models = useAiStore(s => s.models[c.providerId]);
@@ -758,6 +805,10 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     : 0;
   useEffect(() => { if (selectedModel && c.model) void useAiStore.getState().inspectModel(c.providerId, c.model); }, [c.providerId, c.model, selectedModel]);
 
+  const mcpPolicy = normalizeMcpPolicy(settings.mcpPolicy ?? settings.policy);
+  const activeToolCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, mcpPolicy, c.phase)).length;
+  const totalTools = c.phase === 'plan' ? MCP_TOOL_CATALOG.filter(t => t.group !== 'write').length : MCP_TOOL_CATALOG.length;
+
   return <>
     <header className="ai-chat-header">
       <div className="ai-scope">
@@ -771,8 +822,17 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         </span>
       </div>
       <span className="ai-grow" />
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => onSettings('mcp')}
+        title="Live MCP cluster tools and permissions"
+      >
+        <Wrench size={13} aria-hidden="true" />
+        <span>MCP Tools ({activeToolCount}/{totalTools})</span>
+      </Button>
       <Button size="sm" variant="ghost" onClick={()=>{try {downloadMarkdown(c.title,transcriptMarkdown(c));} catch(e) {toast.error(String(e));}}}>Export chat</Button>
-      <Button size="sm" variant="ghost" onClick={onSettings}><Settings size={13} aria-hidden="true" />Permissions</Button>
+      <Button size="sm" variant="ghost" onClick={() => onSettings('agent')} title="AI settings"><Settings size={13} aria-hidden="true" /></Button>
     </header>
 
     {c.contextReset&&<p className="ai-notice">The agent cannot see earlier messages in this session. Use "Branch here" on a message to include the conversation up to that point.</p>}
@@ -837,7 +897,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         {modelError && <p role="alert" className="ai-error">{modelError}</p>}
         {selectedModel?.tools === false && <p className="ai-notice">This model does not support tools. Choose another model to work with the cluster.</p>}
         {c.error && !c.invalidated && <p role="alert" className="ai-error">{c.error}</p>}
-        {!settings.providers.length && <p className="ai-help">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={onSettings}>AI settings</button> to begin.</p>}
+        {!settings.providers.length && <p className="ai-help">Add a cloud or local connection in <button className="ai-text-button" type="button" onClick={() => onSettings('providers')}>AI settings</button> to begin.</p>}
       </div>
 
       {c.invalidated ? (

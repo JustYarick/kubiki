@@ -7,7 +7,22 @@ import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { useResourceStore } from '../../../state/resource_store';
 import { invalidateAiConversations, useAiStore } from '../store';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
-import { PROVIDER_PRESETS, WRITE_OPERATIONS, type AgentPolicy, type AiSettings, type DataAccess, type ModelInfo, type OptionalToolMode, type ProviderProfile, type ProviderProtocol, type WriteOperation } from '../types';
+import {
+  AI_SETTINGS_PAGES,
+  PROVIDER_PRESETS,
+  WRITE_OPERATIONS,
+  normalizeMcpPolicy,
+  syncSharedPolicyFields,
+  type AgentSettingsPage,
+  type AgentPolicy,
+  type AiSettings,
+  type DataAccess,
+  type ModelInfo,
+  type OptionalToolMode,
+  type ProviderProfile,
+  type ProviderProtocol,
+  type WriteOperation,
+} from '../types';
 import { PERMISSION_PROFILES, permissionProfile } from '../permission_profiles';
 import { HistorySettings, PolicyPreview } from './PreferencePanels';
 import { AgentEnvironmentSettings } from './AgentEnvironmentSettings';
@@ -20,22 +35,12 @@ const protocolNames: Record<ProviderProtocol, string> = {
 };
 const EMPTY_MODELS: ModelInfo[] = [];
 
-export const AI_SETTINGS_PAGES = [
-  { id: 'agent', label: 'Agent' },
-  { id: 'mcp', label: 'Cluster tools & data' },
-  { id: 'providers', label: 'Connections & models' },
-  { id: 'confirmations', label: 'Confirmations' },
-  { id: 'access', label: 'Data access' },
-  { id: 'scope', label: 'Scope & rules' },
-  { id: 'integrations', label: 'Integrations' },
-  { id: 'environment', label: 'Skills' },
-  { id: 'instructions', label: 'Instructions' },
-  { id: 'history', label: 'History' },
-] as const;
-export type AgentSettingsPage = typeof AI_SETTINGS_PAGES[number]['id'];
+export { AI_SETTINGS_PAGES, type AgentSettingsPage };
 
 export function availableAiSettingsPages(settings: Pick<AiSettings, 'runtime'>) {
-  return AI_SETTINGS_PAGES.filter(item => (settings.runtime ?? 'kubiki') !== 'kubiki' ? item.id === 'agent' || item.id === 'mcp' : item.id !== 'mcp');
+  return (settings.runtime ?? 'kubiki') !== 'kubiki'
+    ? AI_SETTINGS_PAGES.filter(item => item.id === 'agent' || item.id === 'mcp')
+    : AI_SETTINGS_PAGES;
 }
 
 export interface AgentSettingsHandle {
@@ -45,19 +50,31 @@ export interface AgentSettingsHandle {
 export interface AgentSettingsProps {
   section?: 'providers' | 'permissions' | 'all';
   page?: AgentSettingsPage;
+  onPageChange?: (page: AgentSettingsPage) => void;
   hideNavigation?: boolean;
   onStatusChange?: (status: { message?: string; error?: string; saving?: boolean }) => void;
 }
 
 export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>(function AgentSettings(
-  { section = 'all', page: controlledPage, hideNavigation = false, onStatusChange },
+  { section = 'all', page: controlledPage, onPageChange, hideNavigation = false, onStatusChange },
   ref,
 ) {
-  const [selectedPage, setSelectedPage] = useState<AgentSettingsPage>(section === 'permissions' ? 'access' : 'agent');
-  const settings = useAiStore(s=>s.settings);
+  const settings = useAiStore(s => s.settings);
   const pages = availableAiSettingsPages(settings);
-  const requestedPage = controlledPage ?? selectedPage;
-  const page = pages.some(item=>item.id===requestedPage) ? requestedPage : 'agent';
+  const defaultInitial: AgentSettingsPage = section === 'permissions' ? 'mcp' : (controlledPage ?? 'agent');
+  const [selectedPage, setSelectedPage] = useState<AgentSettingsPage>(defaultInitial);
+
+  useEffect(() => {
+    if (controlledPage) {
+      setSelectedPage(controlledPage);
+    }
+  }, [controlledPage]);
+
+  const activePageId = hideNavigation
+    ? (controlledPage && pages.some(item => item.id === controlledPage) ? controlledPage : 'agent')
+    : (pages.some(item => item.id === selectedPage) ? selectedPage : 'agent');
+
+  const page = activePageId;
   const policyPage = page !== 'providers' && page !== 'history' && page !== 'environment' && page !== 'agent' && page !== 'mcp';
   const loaded = useAiStore(s => s.loaded);
   const loading = useAiStore(s => s.loading);
@@ -76,13 +93,27 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
     },
   }), []);
 
+  function handleSelectPage(nextPage: AgentSettingsPage) {
+    setSelectedPage(nextPage);
+    onPageChange?.(nextPage);
+  }
+
   return <div className="ai-settings">
     {!desktopAiAvailable() && <p className="ai-notice">AI connections and cluster tools require the desktop app. This preview sends no cluster data and stores no API keys.</p>}
     {loading && <p role="status">Loading AI settings…</p>}
     {error && <div role="alert" className="ai-error">{error} <Button size="sm" onClick={() => void load()}>Reload settings</Button></div>}
     {loaded && <div className={hideNavigation ? undefined : "ai-settings-layout"}>
       {!hideNavigation && <nav className="ai-settings-navigation" aria-label="AI settings sections">
-        {pages.map(item => <button type="button" key={item.id} aria-current={page === item.id ? 'page' : undefined} onClick={() => setSelectedPage(item.id)}>{item.label}</button>)}
+        {pages.map(item => (
+          <button
+            type="button"
+            key={item.id}
+            aria-current={page === item.id ? 'page' : undefined}
+            onClick={() => handleSelectPage(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
       </nav>}
       <div className="ai-settings-content">
       {page==='agent' && <AgentRuntimeSettings />}
@@ -228,14 +259,58 @@ function ProviderSettings() {
   </section>;
 }
 
-export function DataSelect({ label, value, onChange }: { label: string; value: DataAccess; onChange: (value: DataAccess) => void }) {
-  return <label className="ai-field">{label}<Select aria-label={label} className="ide-select" value={value} onChange={e => onChange(e.target.value as DataAccess)}>
-    <option value="none">No access</option><option value="metadata">Metadata only</option><option value="content">Contents</option>
-  </Select></label>;
+export function DataSelect({
+  label,
+  value,
+  onChange,
+  title,
+}: {
+  label: string;
+  value: DataAccess;
+  onChange: (value: DataAccess) => void;
+  title?: string;
+}) {
+  return (
+    <label className="ai-field" title={title}>
+      {label}
+      <Select aria-label={label} className="ide-select" value={value} onChange={e => onChange(e.target.value as DataAccess)}>
+        <option value="none" title="No access: hidden from agent">No access</option>
+        <option value="metadata" title="Metadata only: names, labels and annotations, no values">Metadata only</option>
+        <option value="content" title="Full content: configuration and payload readable">Contents</option>
+      </Select>
+    </label>
+  );
 }
 
-export function Writes({ value, onChange, label = 'Allowed AI changes' }: { value: WriteOperation[]; onChange: (value: WriteOperation[]) => void; label?: string }) {
-  return <div role="group" aria-label={label} className="ai-permission-checks">{WRITE_OPERATIONS.map(op => <CheckboxRow key={op} label={op[0].toUpperCase() + op.slice(1)} checked={value.includes(op)} onChange={e => onChange(e.target.checked ? [...value, op] : value.filter(v => v !== op))} />)}</div>;
+export function Writes({
+  value,
+  onChange,
+  label = 'Allowed AI changes',
+}: {
+  value: WriteOperation[];
+  onChange: (value: WriteOperation[]) => void;
+  label?: string;
+}) {
+  const tooltips: Record<WriteOperation, string> = {
+    create: 'Allow creating new resources (via apply_manifest)',
+    update: 'Allow modifying existing resources (via apply_manifest)',
+    scale: 'Allow scaling workload replicas (via scale_workload)',
+    restart: 'Allow rolling restarts of controllers (via restart_workload)',
+    delete: 'Allow deleting resources (via delete_resource)',
+  };
+  return (
+    <div role="group" aria-label={label} className="ai-permission-checks">
+      {WRITE_OPERATIONS.map(op => (
+        <CheckboxRow
+          key={op}
+          label={op[0].toUpperCase() + op.slice(1)}
+          title={tooltips[op]}
+          checked={value.includes(op)}
+          onChange={e => onChange(e.target.checked ? [...value, op] : value.filter(v => v !== op))}
+        />
+      ))}
+    </div>
+  );
 }
 
 const tokens = (text: string) => text.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
@@ -284,7 +359,19 @@ function PolicySettings({
     setMessage('');
     onStatusChange?.({ saving: true, message: '', error: '' });
     try {
-      await save({ ...useAiStore.getState().settings, policy: draft.policy, instructions: draft.instructions });
+      const current = useAiStore.getState().settings;
+      const syncedMcp = {
+        ...syncSharedPolicyFields(draft.policy, normalizeMcpPolicy(current.mcpPolicy)),
+        alwaysAsk: [],
+        confirmReads: false,
+        rules: [],
+      };
+      await save({
+        ...current,
+        policy: draft.policy,
+        mcpPolicy: syncedMcp,
+        instructions: draft.instructions,
+      });
       const msg = 'Permissions saved successfully.';
       setMessage(msg);
       onStatusChange?.({ saving: false, message: msg, error: '' });

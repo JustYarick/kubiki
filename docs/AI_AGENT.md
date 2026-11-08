@@ -565,22 +565,76 @@ scheduled. Delivered tasks and ambiguous startup failures are never replayed.
 Normal TUI commands and model/provider choices belong to OpenCode. Its shell runs
 under its own permissions and is outside MCP filtering.
 
-### Standalone CLI
+### MCP Architecture & Standalone Roadmap (`kubiki-mcp`)
+
+The MCP layer is completely decoupled into `crates/kubiki-mcp` and `crates/kubiki-tools`. It has zero dependencies on Tauri, Webview, or frontend state, communicating purely via standard MCP primitives (`rmcp`) and generic Kubernetes session traits.
+
+* **Current Architecture (Embedded & Attached Bridge)**:
+  Desktop Kubiki manages Kubernetes cluster authentication and runs `kubiki-mcp` in attached socket/stdio bridge mode, exposing tools to external CLIs (OpenCode, Codex, Claude Code) and the internal AI assistant with synchronized live policy controls.
+* **Roadmap / Future Concept (Standalone Daemon & Independent CLI)**:
+  As an upcoming milestone, `kubiki-mcp` can be built and distributed as an independent standalone daemon without requiring the Kubiki desktop GUI to be installed or running:
+  - Declarative configuration files (`kubiki-mcp.json`)
+  - Standalone cluster discovery and connection pool
+  - Live reload commands (`kubiki-mcp reload`) over local IPC/SIGHUP
+  - Detailed design: see [ADR-009](decisions/009-standalone-mcp-server-and-unified-tool-permissions.md)
 
 ```sh
-cargo build --release --manifest-path crates/kubiki-mcp/Cargo.toml
-kubiki-mcp serve --context my-cluster --namespace my-namespace
+# Future standalone CLI interface (Roadmap):
+kubiki-mcp init                                # Generate template configuration file
+kubiki-mcp validate --config kubiki-mcp.json    # Validate config and cluster connectivity
+kubiki-mcp serve --config kubiki-mcp.json       # Run standalone MCP server over stdio
+kubiki-mcp reload                              # Reload policy live without disconnecting clients
 ```
 
-The MCP host launches this command over stdio. `--all-namespaces` is an explicit
-alternative to named namespaces; `--kubeconfig PATH` pins a configuration file.
-`--profile PATH` accepts a JSON exposure policy (AgentPolicy schema) when additional
-data or mutation capabilities are needed. Host-owned connections ignore
-`confirmReads`/`alwaysAsk`; host permissions decide whether each call may proceed.
-Logs go to stderr and mutation receipts to a process-specific journal; stdout is
-reserved for MCP. Connection loss never switches attached mode to standalone.
+#### Declarative Configuration (`kubiki-mcp.json`)
 
-OpenCode V2 example (replace the executable path and scope):
+The server discovers configuration from `--config PATH`, `./kubiki-mcp.json`, or `~/.config/kubiki/mcp.json`:
+
+```json
+{
+  "$schema": "https://kubiki.dev/schemas/mcp-v1.json",
+  "version": 1,
+  "cluster": {
+    "context": "my-cluster",
+    "kubeconfig": null,
+    "namespaces": ["default", "production"],
+    "allNamespaces": false
+  },
+  "policy": {
+    "readOnly": false,
+    "writes": ["create", "update", "scale", "restart", "delete"],
+    "maxReplicas": 10,
+    "data": {
+      "resources": true,
+      "events": true,
+      "logs": true,
+      "metrics": true,
+      "clusterResources": true,
+      "secrets": "none",
+      "configMaps": "metadata",
+      "customResources": "metadata"
+    },
+    "integrations": {
+      "helm": "auto",
+      "argocd": "auto",
+      "flux": "auto"
+    },
+    "phases": {
+      "plan": { "disabledTools": [] },
+      "action": { "disabledTools": [] }
+    },
+    "disabledTools": [],
+    "deniedPaths": []
+  },
+  "server": {
+    "transport": "stdio"
+  }
+}
+```
+
+The MCP host launches `kubiki-mcp serve` over stdio. CLI flags `--context`, `--namespace`, `--all-namespaces`, and `--read-only` can override configuration values. Host-owned connections ignore `confirmReads`/`alwaysAsk`; host permissions decide whether each call may proceed. Logs go to stderr and mutation receipts to a process-specific journal; stdout is reserved for MCP JSON-RPC.
+
+OpenCode V2 configuration example:
 
 ```json
 {
@@ -588,7 +642,7 @@ OpenCode V2 example (replace the executable path and scope):
     "servers": {
       "kubiki": {
         "type": "local",
-        "command": ["/absolute/path/kubiki-mcp", "serve", "--context", "my-cluster", "--namespace", "my-namespace"],
+        "command": ["/absolute/path/kubiki-mcp", "serve", "--config", "/absolute/path/kubiki-mcp.json"],
         "codemode": false
       }
     }
@@ -599,4 +653,5 @@ OpenCode V2 example (replace the executable path and scope):
 Transport coverage is tested on Linux. The Windows named-pipe implementation needs
 native Windows validation. Live provider/cluster evaluation and infrastructure
 repositories remain separate work. Architecture and migration rationale:
-[ADR-007](decisions/007-portable-cluster-tools-and-opencode.md).
+[ADR-007](decisions/007-portable-cluster-tools-and-opencode.md) and
+[ADR-009](decisions/009-standalone-mcp-server-and-unified-tool-permissions.md).

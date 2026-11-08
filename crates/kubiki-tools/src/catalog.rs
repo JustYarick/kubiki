@@ -131,7 +131,7 @@ pub fn tool_definitions(
         tools.push(tool("list_flux_resources", "List Flux GitOps delivery resources (Kustomizations, HelmReleases, GitRepositories) with ready conditions, suspend status, and revisions.", json!({"namespace":{"type":["string","null"]},"kind":{"type":["string","null"]}}), &[]));
         tools.push(tool("get_flux_resource", "Inspect a Flux Kustomization or HelmRelease: status conditions, failure reasons, last applied revision, and inventory.", json!({"kind":{"type":"string"},"namespace":{"type":"string"},"name":{"type":"string"}}), &["kind","namespace","name"]));
     }
-    if phase == AgentPhase::Action && mode != AgentMode::ReadOnly {
+    if phase == AgentPhase::Action && mode != AgentMode::ReadOnly && !policy.read_only {
         // Rules can grant writes even when the defaults are empty; dispatcher
         // still checks every exact target and operation.
         let allowed =
@@ -156,6 +156,16 @@ pub fn tool_definitions(
         if allowed(WriteOperation::Delete) {
             tools.push(tool("delete_resource", "Delete one permitted resource with UID/resourceVersion concurrency checks. No force deletion.", target, &["group","version","kind","namespace","name"]));
         }
+    }
+    let phase_disabled = match phase {
+        AgentPhase::Plan => &policy.plan_disabled_tools,
+        AgentPhase::Action => &policy.action_disabled_tools,
+    };
+    if !policy.disabled_tools.is_empty() || !phase_disabled.is_empty() {
+        tools.retain(|t| {
+            !policy.disabled_tools.iter().any(|d| d == &t.name)
+                && !phase_disabled.iter().any(|d| d == &t.name)
+        });
     }
     tools
 }

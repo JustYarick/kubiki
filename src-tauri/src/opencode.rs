@@ -74,6 +74,7 @@ struct Active {
     id: String,
     owner: String,
     terminals: HostTerminalManager,
+    server: kubiki_mcp::ClusterServer,
     _endpoint: kubiki_mcp::attached::AttachedEndpoint,
 }
 #[derive(Clone, Default)]
@@ -220,6 +221,45 @@ impl OpenCodeManager {
             entry.terminals.stop(owner, &entry.id).await;
         }
     }
+    pub async fn update_policy(&self, policy: &AgentPolicy) {
+        let sanitized = sanitize_mcp_policy(policy);
+        let servers = self
+            .0
+            .lock()
+            .await
+            .values()
+            .map(|entry| entry.server.clone())
+            .collect::<Vec<_>>();
+        for server in servers {
+            let _ = server.update_policy(sanitized.clone());
+        }
+    }
+}
+
+pub fn sanitize_mcp_policy(policy: &AgentPolicy) -> AgentPolicy {
+    let mut sanitized = policy.clone();
+    let is_legacy_unconfigured = !sanitized.read_only
+        && sanitized.writes.is_empty()
+        && !sanitized.logs
+        && !sanitized.cluster_resources
+        && sanitized.disabled_tools.is_empty()
+        && sanitized.plan_disabled_tools.is_empty()
+        && sanitized.action_disabled_tools.is_empty();
+    if is_legacy_unconfigured {
+        sanitized.logs = true;
+        sanitized.cluster_resources = true;
+        sanitized.writes = vec![
+            WriteOperation::Create,
+            WriteOperation::Update,
+            WriteOperation::Delete,
+            WriteOperation::Scale,
+            WriteOperation::Restart,
+        ];
+    }
+    sanitized.confirm_reads = false;
+    sanitized.always_ask.clear();
+    sanitized.rules.clear();
+    sanitized
 }
 fn executable_for(runtime: AgentRuntime, value: &str) -> Result<PathBuf, String> {
     let default = format!(
@@ -375,10 +415,7 @@ async fn start_opencode_inner(
     pending.launch.check()?;
     let pool = window.state::<ClusterClientPool>().inner().clone();
     let external_settings = settings.runtime.settings(&settings).clone();
-    let mut policy = settings.mcp_policy.clone();
-    policy.confirm_reads = false;
-    policy.always_ask.clear();
-    policy.rules.clear();
+    let policy = sanitize_mcp_policy(&settings.mcp_policy);
     policy.validate()?;
     use std::hash::{Hash, Hasher};
     let mut key = std::collections::hash_map::DefaultHasher::new();
@@ -394,7 +431,7 @@ async fn start_opencode_inner(
         format!("opencode-{session_id}"),
         window.label().into(),
         request.scope,
-        policy,
+        policy.clone(),
         ClusterCapabilities {
             helm: true,
             argocd: true,
@@ -416,13 +453,8 @@ async fn start_opencode_inner(
         generation: std::sync::Mutex::new(None),
         permits: Arc::new(tokio::sync::Semaphore::new(2)),
     });
-    let endpoint = kubiki_mcp::attached::start(kubiki_mcp::ClusterServer::new(
-        session,
-        executor,
-        Arc::new(|_| {}),
-        true,
-    ))
-    .await?;
+    let server = kubiki_mcp::ClusterServer::new(session, executor, Arc::new(|_| {}), true);
+    let endpoint = kubiki_mcp::attached::start(server.clone()).await?;
     let root = if external_settings.working_directory.is_empty() {
         data.join(format!("{}/workspaces", settings.runtime.binary()))
     } else {
@@ -440,7 +472,7 @@ async fn start_opencode_inner(
         ];
         // OpenCode's Plan permissions also remove these tools from its model catalog.
         for tool in tool_definitions(
-            &settings.mcp_policy,
+            &policy,
             AgentMode::Accept,
             AgentPhase::Action,
             &ClusterCapabilities::all(),
@@ -546,6 +578,7 @@ async fn start_opencode_inner(
             id: session_id.clone(),
             owner: owner.clone(),
             terminals: terminals.clone(),
+            server,
             _endpoint: endpoint,
         },
     );
@@ -580,8 +613,19 @@ fn external_arguments(
     let args = serde_json::json!(["--kubiki-mcp-attach", bootstrap]);
     let mut result = match runtime {
         AgentRuntime::OpenCode => vec!["--standalone".into()],
-        AgentRuntime::Codex => vec!["-c".into(), format!("mcp_servers.kubiki={{command={},args={args},enabled=true}}", serde_json::json!(command))],
-        AgentRuntime::Claude => vec!["--mcp-config".into(), serde_json::json!({"mcpServers":{"kubiki":{"type":"stdio","command":command,"args":args}}}).to_string()],
+        AgentRuntime::Codex => vec![
+            "-c".into(),
+            format!(
+                "mcp_servers.kubiki={{command={},args={args},enabled=true}}",
+                serde_json::json!(command)
+            ),
+            "-c".into(),
+            "features.mcp_tool_list_changed=true".into(),
+        ],
+        AgentRuntime::Claude => vec![
+            "--mcp-config".into(),
+            serde_json::json!({"mcpServers":{"kubiki":{"type":"stdio","command":command,"args":args}}}).to_string(),
+        ],
         AgentRuntime::Kubiki => return Err("Not an external agent".into()),
     };
     if let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) {
@@ -667,6 +711,46 @@ mod tests {
             serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
         assert!(restored.runtime == AgentRuntime::OpenCode);
         assert!(restored.policy.logs);
+    }
+    #[test]
+    fn codex_external_arguments_enable_mcp_tool_list_changed_and_kubiki_server() {
+        let path = Path::new("/usr/bin/kubiki");
+        let bootstrap = Path::new("/tmp/bootstrap.json");
+        let args = external_arguments(AgentRuntime::Codex, path, bootstrap, None).unwrap();
+        assert_eq!(args[0], "-c");
+        assert!(args[1].starts_with("mcp_servers.kubiki={command="));
+        assert_eq!(args[2], "-c");
+        assert_eq!(args[3], "features.mcp_tool_list_changed=true");
+    }
+    #[test]
+    fn sanitize_mcp_policy_normalizes_legacy_defaults_and_preserves_explicit_empty_writes() {
+        let legacy = AgentPolicy::default();
+        let normalized = sanitize_mcp_policy(&legacy);
+        assert!(normalized.logs);
+        assert!(normalized.cluster_resources);
+        assert_eq!(normalized.writes.len(), 5);
+        let count_external = |p: &AgentPolicy| {
+            tool_definitions(
+                p,
+                AgentMode::Accept,
+                AgentPhase::Action,
+                &ClusterCapabilities::all(),
+            )
+            .into_iter()
+            .filter(|t| !matches!(t.name.as_str(), "ask_user" | "get_plan" | "propose_plan"))
+            .count()
+        };
+        assert_eq!(count_external(&normalized), 31);
+
+        let mut read_only = normalized.clone();
+        read_only.read_only = true;
+        assert_eq!(count_external(&sanitize_mcp_policy(&read_only)), 27);
+
+        let mut explicit_no_writes = normalized.clone();
+        explicit_no_writes.writes.clear();
+        let preserved = sanitize_mcp_policy(&explicit_no_writes);
+        assert!(preserved.writes.is_empty());
+        assert_eq!(count_external(&preserved), 27);
     }
     #[test]
     fn installation_requires_an_executable_path_not_a_shell_command() {

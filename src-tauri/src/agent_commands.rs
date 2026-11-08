@@ -306,12 +306,17 @@ pub async fn ai_save_settings(
         || before.opencode != settings.opencode
         || before.codex != settings.codex
         || before.claude != settings.claude
-        || serde_json::to_value(&before.mcp_policy).ok()
-            != serde_json::to_value(&settings.mcp_policy).ok()
     {
         window
             .state::<crate::opencode::OpenCodeManager>()
             .stop_all()
+            .await;
+    } else if serde_json::to_value((&before.mcp_policy, &before.policy)).ok()
+        != serde_json::to_value((&settings.mcp_policy, &settings.policy)).ok()
+    {
+        window
+            .state::<crate::opencode::OpenCodeManager>()
+            .update_policy(&settings.mcp_policy)
             .await;
     }
     Ok(())

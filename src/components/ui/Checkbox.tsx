@@ -7,10 +7,22 @@ export function Checkbox({ className, ...props }: Omit<InputHTMLAttributes<HTMLI
 }
 
 /** The control and trailing value keep their space; only the label may truncate. */
-export function CheckboxRow({ label, trailing, className, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'className'> & { label: string; trailing?: ReactNode; className?: string }) {
-  return <label className={cx('ui-checkbox-row', className)}>
-    <Checkbox {...props} />
-    <span className="ui-checkbox-label" title={label}>{label}</span>
+export function CheckboxRow({
+  label,
+  trailing,
+  className,
+  title,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'className'> & {
+  label: string;
+  trailing?: ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  const tooltip = title ?? label;
+  return <label className={cx('ui-checkbox-row cursor-pointer', className)} title={tooltip}>
+    <Checkbox {...props} title={tooltip} />
+    <span className="ui-checkbox-label" title={tooltip}>{label}</span>
     {trailing != null && <span className="ui-checkbox-trailing">{trailing}</span>}
   </label>;
 }

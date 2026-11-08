@@ -738,7 +738,21 @@
 .ai-settings .ai-form-line h4 { margin-bottom: 0; }
 .ai-settings .ui-checkbox-row { align-items: center; }
 .ai-settings input, .ai-settings select { max-width: 100%; }
-.ai-settings summary { cursor: pointer; padding: 4px 0; }
+.ai-settings summary {
+  cursor: pointer;
+  padding: calc(6px * var(--ui-factor)) 0;
+  padding-inline-start: 1.6em;
+  font-weight: 500;
+  color: var(--text-primary);
+  user-select: none;
+  transition: color 120ms ease;
+}
+.ai-settings summary:hover {
+  color: var(--text-heading, #fff);
+}
+.ai-settings details[open] > summary {
+  margin-bottom: calc(8px * var(--ui-factor));
+}
 .ai-settings summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 .ai-mcp-tools { max-height: 240px; overflow-y: auto; margin-top: 8px; }
 .ai-mcp-tools li { padding: 6px 0; border-top: 1px solid var(--border-subtle); }

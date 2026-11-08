@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { deferredAiHistoryStorage, deleteAiHistory, flushAiHistory } from './history_storage';
 import { agentError, agentTransport, desktopAiAvailable } from './transport';
-import { defaultSettings, type AgentEvent, type AgentMode, type AgentPhase, type AgentScope, type AiSettings, type ChatMessage, type Conversation, type ModelInfo } from './types';
+import { defaultSettings, type AgentEvent, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type AiSettings, type ChatMessage, type Conversation, type ModelInfo } from './types';
 import { useResourceStore } from '../../state/resource_store';
 
 interface AiState {
@@ -17,7 +17,9 @@ interface AiState {
   homeDraft: string;
   setHomeDraft: (draft: string) => void;
   settingsOpen: boolean;
-  setSettingsOpen: (open: boolean) => void;
+  settingsPage: AgentSettingsPage;
+  setSettingsOpen: (open: boolean, page?: AgentSettingsPage) => void;
+  openSettings: (page?: AgentSettingsPage) => void;
   load: () => Promise<void>; save: (settings: AiSettings) => Promise<void>;
   saveDefaults: (defaultProvider?: string | null, defaultModel?: string | null) => Promise<void>;
   refreshModels: (providerId: string) => Promise<void>;
@@ -117,7 +119,15 @@ export const useAiStore = create<AiState>()(
       homeDraft: '',
       setHomeDraft: (draft) => set({ homeDraft: draft }),
       settingsOpen: false,
-      setSettingsOpen: (open) => set({ settingsOpen: open }),
+      settingsPage: 'agent',
+      setSettingsOpen: (open, page) => set(state => ({
+        settingsOpen: open,
+        settingsPage: page ?? (open ? state.settingsPage : 'agent'),
+      })),
+      openSettings: (page = 'agent') => set({
+        settingsOpen: true,
+        settingsPage: page,
+      }),
       async load() {
         if (loadTask) return loadTask;
         if (!desktopAiAvailable()) { set({ loaded: true }); return; }

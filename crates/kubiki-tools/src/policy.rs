@@ -143,6 +143,12 @@ pub struct AgentPolicy {
     /// Tools that require consent even in Auto accept.
     pub always_ask: Vec<String>,
     pub confirm_reads: bool,
+    pub read_only: bool,
+    pub disabled_tools: Vec<String>,
+    #[serde(default)]
+    pub plan_disabled_tools: Vec<String>,
+    #[serde(default)]
+    pub action_disabled_tools: Vec<String>,
     pub schema_version: u32,
     pub rule_resolution: RuleResolution,
     pub allowed_fields: Vec<String>,
@@ -210,6 +216,10 @@ impl Default for AgentPolicy {
         Self {
             always_ask: vec![],
             confirm_reads: true,
+            read_only: false,
+            disabled_tools: vec![],
+            plan_disabled_tools: vec![],
+            action_disabled_tools: vec![],
             schema_version: 1,
             rule_resolution: RuleResolution::FirstMatch,
             allowed_fields: vec![],
@@ -232,6 +242,24 @@ impl Default for AgentPolicy {
             max_replicas: 10,
             rules: vec![],
             denied_paths: vec![],
+        }
+    }
+}
+
+impl AgentPolicy {
+    pub fn default_mcp() -> Self {
+        Self {
+            confirm_reads: false,
+            logs: true,
+            cluster_resources: true,
+            writes: vec![
+                WriteOperation::Create,
+                WriteOperation::Update,
+                WriteOperation::Delete,
+                WriteOperation::Scale,
+                WriteOperation::Restart,
+            ],
+            ..Self::default()
         }
     }
 }
@@ -282,6 +310,24 @@ impl AgentPolicy {
 
         if self.always_ask.len() > 64
             || self.always_ask.iter().any(|name| {
+                name.is_empty()
+                    || name.len() > 64
+                    || !name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+            })
+            || self.disabled_tools.len() > 64
+            || self.disabled_tools.iter().any(|name| {
+                name.is_empty()
+                    || name.len() > 64
+                    || !name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+            })
+            || self.plan_disabled_tools.len() > 64
+            || self.plan_disabled_tools.iter().any(|name| {
+                name.is_empty()
+                    || name.len() > 64
+                    || !name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+            })
+            || self.action_disabled_tools.len() > 64
+            || self.action_disabled_tools.iter().any(|name| {
                 name.is_empty()
                     || name.len() > 64
                     || !name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
@@ -397,7 +443,7 @@ impl AgentPolicy {
         op: WriteOperation,
     ) -> Result<(), String> {
         self.check_scope(scope, target)?;
-        if mode == AgentMode::ReadOnly {
+        if mode == AgentMode::ReadOnly || self.read_only {
             return Err("Read only mode forbids changes".into());
         }
         let allowed = self.rule(target).map(|r| &r.writes).unwrap_or(&self.writes);

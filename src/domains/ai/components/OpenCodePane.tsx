@@ -2,17 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { createTerminalView, type TerminalView } from '../../../core/terminal_view';
 import { Button } from '../../../components/ui/Button';
+import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { connectOpenCode, OpenCodeNotStartedError, type ExecConnection } from '../../../providers/tauri_exec';
 import { useTerminalAppearance } from '../../../components/k8s/useTerminalAppearance';
 import { useUiStore } from '../../../state/ui_store';
 import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
-import { externalAgentName } from '../types';
-import { agentError } from '../transport';
+import { normalizeMcpPolicy, syncSharedPolicyFields, isToolActiveInPolicy, toggleReadOnlyMcpPolicy, externalAgentName, MCP_TOOL_CATALOG, type AgentPolicy } from '../types';
+import { agentError, desktopAiAvailable } from '../transport';
 
 export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const runtime = useAiStore(s => s.settings.runtime);
+  const mcpPolicy = normalizeMcpPolicy(useAiStore(s => s.settings.mcpPolicy));
   const name = externalAgentName(runtime);
   const request = useAiStore(s => s.openCodeRequest);
   const context = useClusterStore(s => s.currentContext);
@@ -26,6 +28,32 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const fit = useRef<TerminalView | null>(null);
   const startup = useRef<AbortController | null>(null);
   const pinnedContext = useRef<string | null>(context);
+
+  const readOnly = Boolean(mcpPolicy.readOnly);
+  const activeToolCount = MCP_TOOL_CATALOG.filter(tool => isToolActiveInPolicy(tool.id, mcpPolicy, 'action')).length;
+
+  async function updateMcpPolicyLive(patch: Partial<AgentPolicy>) {
+    if (!desktopAiAvailable()) return;
+    setError('');
+    const current = useAiStore.getState().settings;
+    const base = normalizeMcpPolicy(current.mcpPolicy);
+    const nextMcp: AgentPolicy = {
+      ...base,
+      ...patch,
+      alwaysAsk: [],
+      confirmReads: false,
+      rules: [],
+    };
+    try {
+      await useAiStore.getState().save({
+        ...current,
+        mcpPolicy: nextMcp,
+        policy: syncSharedPolicyFields(nextMcp, current.policy),
+      });
+    } catch (e) {
+      setError(agentError(e));
+    }
+  }
 
   function stop() {
     startup.current?.abort();
@@ -119,9 +147,22 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   return <div className="ai-workspace" data-testid="opencode-pane"><div className="ai-chat">
     <div className="ai-form-line px-3 py-2 border-b border-[var(--border-default)]">
       <strong>{name}</strong><span className="ai-help ai-grow">{scopeLabel} · {status}</span>
+      <CheckboxRow
+        label="Read-only MCP"
+        checked={readOnly}
+        onChange={e => void updateMcpPolicyLive(toggleReadOnlyMcpPolicy(e.target.checked, mcpPolicy))}
+      />
+      <Button
+        size="sm"
+        variant="secondary"
+        aria-label="Live MCP tools"
+        onClick={() => useAiStore.getState().openSettings('mcp')}
+      >
+        MCP Tools ({activeToolCount}/{MCP_TOOL_CATALOG.length})
+      </Button>
       <Button size="sm" onClick={stop}>Stop</Button>
       <Button size="sm" onClick={() => setAttempt(v => v + 1)}>Restart</Button>
-      <Button size="sm" onClick={() => useAiStore.getState().setSettingsOpen(true)}>Settings</Button>
+      <Button size="sm" onClick={() => useAiStore.getState().openSettings('agent')}>Settings</Button>
     </div>
     {error && <div role="alert" className="ai-error px-3 py-2">{error}</div>}
     <div className="terminal-frame"><div ref={box} className="terminal-surface" /></div>
