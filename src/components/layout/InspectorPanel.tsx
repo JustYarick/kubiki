@@ -1,7 +1,7 @@
 import { performResourceAction, restartManifest } from '../../providers/resource_actions';
 import { resourceBucket } from '../../core/resources/custom_resource_types';
 import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
-import { ArrowLeft, ArrowRight, Boxes, Loader2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Boxes, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react';
 import { useResourceStore } from '../../state/resource_store';
 import { useClusterStore } from '../../state/cluster_store';
 import type { RightTab } from '../../state/ui_store';
@@ -14,6 +14,7 @@ import { resourceKey, resourceRef } from '../../core/resources/identity';
 import { resourceEvents } from '../../core/resources/resource_events';
 import { podContainers } from '../../core/resources/containers';
 import { findWorkloadPods, preferredWorkloadPod } from '../../core/resources/workload_pods';
+import { gitOpsReferences } from '../../core/resources/gitops';
 import { NamespaceScopeNotice } from '../k8s/NamespaceScopeNotice';
 import { ResourceWarnings } from '../k8s/ResourceWarnings';
 import { ResourceKindBadge } from '../k8s/ResourceKindBadge';
@@ -22,6 +23,7 @@ import { SearchInput } from '../ui/Input';
 import { PFDialog } from '../dialogs/PFDialog';
 import { toast } from '../../state/notifications_store';
 import { parse } from 'yaml';
+import { cx } from '../../core/utils/cx';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
 import { FullManifest } from '../../views/FullManifest';
 import { k8s } from '../../providers/k8s_provider';
@@ -71,6 +73,75 @@ export function ResourceDetails(props: ResourceDetailsProps) {
   return <KubernetesResourceDetails {...props} />;
 }
 
+function getResourceKindRank(kind?: string): number {
+  if (!kind) return 999;
+  if (['HelmRelease', 'Kustomization', 'Application', 'ApplicationSet', 'GitRepository', 'HelmRepository', 'OCIRepository'].includes(kind)) return 10;
+  if (['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Rollout'].includes(kind)) return 20;
+  if (['Ingress', 'Gateway', 'HTTPRoute', 'GRPCRoute', 'TCPRoute', 'TLSRoute', 'VirtualService'].includes(kind)) return 30;
+  if (['Service', 'NetworkPolicy'].includes(kind)) return 40;
+  if (['ConfigMap', 'Secret', 'PersistentVolumeClaim', 'PersistentVolume', 'StorageClass'].includes(kind)) return 50;
+  if (['ServiceAccount', 'Role', 'ClusterRole', 'RoleBinding', 'ClusterRoleBinding'].includes(kind)) return 60;
+  if (['ReplicaSet'].includes(kind)) return 70;
+  if (['Pod'].includes(kind)) return 80;
+  if (['EndpointSlice', 'Endpoints'].includes(kind)) return 90;
+  if (['Event', 'Node', 'Lease'].includes(kind)) return 100;
+  return 65;
+}
+
+export interface RelatedItemEntry {
+  id: string;
+  target?: ResourceItem;
+  missing?: { kind: string; name: string; namespace?: string };
+  label: string;
+  outgoing: boolean;
+  kind: string;
+  name: string;
+  namespace?: string;
+}
+
+function RelatedRow({
+  entry,
+  onNavigate,
+  nested = false,
+}: {
+  entry: RelatedItemEntry;
+  onNavigate: (item: ResourceItem) => void;
+  nested?: boolean;
+}) {
+  const target = entry.target;
+  return (
+    <button
+      key={entry.id}
+      type="button"
+      disabled={!target}
+      onClick={() => target && onNavigate(target)}
+      className={cx(
+        'w-full flex items-center gap-2 py-2 border-b border-[var(--border-subtle)] text-left hover:bg-[var(--bg-hover)] disabled:opacity-60 transition-colors cursor-pointer disabled:cursor-not-allowed',
+        nested ? 'pl-6 pr-2 bg-[var(--bg-canvas)]/30' : 'px-2'
+      )}
+    >
+      {entry.outgoing ? (
+        <ArrowRight size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+      ) : (
+        <ArrowLeft size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start gap-2 text-xs font-mono break-all">
+          {target && <ResourceWarnings item={target} />}
+          <span>{entry.name}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)]">
+          <ResourceKindBadge kind={entry.kind} apiVersion={target?.apiVersion} />
+          <span>{entry.namespace ?? 'cluster'}{!target && ' · not loaded'}</span>
+        </div>
+      </div>
+      <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)] font-medium shrink-0">
+        {entry.label}
+      </span>
+    </button>
+  );
+}
+
 function KubernetesResourceDetails({
   item,
   onClose,
@@ -89,12 +160,25 @@ function KubernetesResourceDetails({
   const [relatedQuery, setRelatedQuery] = useState('');
   const [relatedLimit, setRelatedLimit] = useState(50);
 
+  const [expandedKinds, setExpandedKinds] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     setRelatedQuery('');
     setRelatedLimit(50);
+    setExpandedKinds(new Set());
   }, [item?.uid]);
 
-  const { graph, loading: relatedLoading, notice: relatedError } = useTopologyGraph(resources, 'related', item, 1, !!item && rightTab === 'related');
+  const { graph, loading: relatedLoading, notice: relatedError } = useTopologyGraph(resources, 'related', item, 2, !!item && rightTab === 'related');
+
+  const toggleKindGroup = (kind: string) => {
+    setExpandedKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
+
   const childPods = useMemo(
     () => (item ? findWorkloadPods(item, { Pod: resources.Pod, ReplicaSet: resources.ReplicaSet, Job: resources.Job }) : []),
     [item, resources.Pod, resources.ReplicaSet, resources.Job]
@@ -128,15 +212,281 @@ function KubernetesResourceDetails({
     );
   }
 
-  const key = resourceKey(item);
-  const related = graph?.relations.filter((edge) => edge.source === key || edge.target === key) ?? [];
-  const filteredRelated = related.filter((edge) => {
-    const target = graph?.items.get(edge.source === key ? edge.target : edge.source);
-    return [target?.name ?? edge.missing?.name, target?.kind ?? edge.missing?.kind, target?.namespace ?? edge.missing?.namespace, edge.type]
-      .join(' ')
-      .toLowerCase()
-      .includes(relatedQuery.toLowerCase());
-  });
+  const resolvedRelated = useMemo(() => {
+    if (!item) return [];
+    const key = resourceKey(item);
+    const seenKeys = new Set<string>([key]);
+    const entries: RelatedItemEntry[] = [];
+
+    const addEntry = (entry: RelatedItemEntry) => {
+      const entryKey = entry.target
+        ? resourceKey(entry.target)
+        : `${entry.kind}:${entry.namespace ?? ''}:${entry.name}`;
+      if (seenKeys.has(entryKey)) return;
+      seenKeys.add(entryKey);
+      entries.push(entry);
+    };
+
+    // 1. Direct & multi-hop relations from topology graph
+    const relations = graph?.relations ?? [];
+    for (const edge of relations) {
+      const isSource = edge.source === key;
+      const isTarget = edge.target === key;
+      if (isSource || isTarget) {
+        const outgoing = isSource;
+        const targetKey = outgoing ? edge.target : edge.source;
+        const target = edge.missing ? undefined : graph?.items.get(targetKey);
+        const kind = target?.kind ?? edge.missing?.kind ?? 'Resource';
+        const name = target?.name ?? edge.missing?.name ?? '';
+        const namespace = target?.namespace ?? edge.missing?.namespace;
+        addEntry({
+          id: edge.id,
+          target,
+          missing: edge.missing ? { kind, name, namespace } : undefined,
+          label: edge.label,
+          outgoing,
+          kind,
+          name,
+          namespace,
+        });
+      }
+    }
+
+    // 2. Upstream Owner references traversal (e.g. Pod -> ReplicaSet -> Deployment / Job -> CronJob)
+    const visitedOwners = new Set<string>();
+    let currentAncestors: ResourceItem[] = [item];
+    for (let hop = 0; hop < 3 && currentAncestors.length > 0; hop++) {
+      const nextAncestors: ResourceItem[] = [];
+      for (const current of currentAncestors) {
+        const owners = (current.raw?.metadata ?? current.metadata)?.ownerReferences ?? [];
+        for (const owner of owners) {
+          if (!owner.kind || !owner.name) continue;
+          const ownerKey = `${owner.kind}:${owner.name}`;
+          if (visitedOwners.has(ownerKey)) continue;
+          visitedOwners.add(ownerKey);
+
+          const ownerMap = (resources as any)[owner.kind] as Map<string, ResourceItem> | undefined;
+          let target: ResourceItem | undefined;
+          if (ownerMap) {
+            target = [...ownerMap.values()].find(
+              (r) => r.name === owner.name && (!r.namespace || r.namespace === current.namespace)
+            );
+          }
+          if (!target && graph?.items) {
+            target = [...graph.items.values()].find(
+              (r) => r.kind === owner.kind && r.name === owner.name && (!r.namespace || r.namespace === current.namespace)
+            );
+          }
+
+          addEntry({
+            id: `owner-${owner.kind}-${owner.name}`,
+            target,
+            missing: target ? undefined : { kind: owner.kind, name: owner.name, namespace: current.namespace },
+            label: hop === 0 ? 'controller' : 'root controller',
+            outgoing: false,
+            kind: owner.kind,
+            name: owner.name,
+            namespace: current.namespace,
+          });
+
+          if (target) nextAncestors.push(target);
+        }
+      }
+      currentAncestors = nextAncestors;
+    }
+
+    // 3. Delivery & GitOps root resolution (Helm, Flux, Argo CD)
+    const allAncestors = [
+      item,
+      ...[...visitedOwners].flatMap((k) => {
+        const [kind, name] = k.split(':');
+        const map = (resources as any)[kind] as Map<string, ResourceItem> | undefined;
+        return map ? [...map.values()].filter((r) => r.name === name) : [];
+      }),
+    ];
+
+    for (const candidate of allAncestors) {
+      const raw = candidate.raw ?? {};
+      const metadata = raw.metadata ?? candidate.metadata ?? {};
+      const annotations = metadata.annotations ?? {};
+      const labels = metadata.labels ?? {};
+
+      // Helm release lookup
+      const helmReleaseName =
+        annotations['meta.helm.sh/release-name'] ??
+        labels['helm.sh/release-name'] ??
+        labels['app.kubernetes.io/instance'];
+      const helmNamespace =
+        annotations['meta.helm.sh/release-namespace'] ?? candidate.namespace ?? item.namespace;
+      if (helmReleaseName && typeof helmReleaseName === 'string') {
+        const helmMap = (resources as any)['HelmRelease'] as Map<string, ResourceItem> | undefined;
+        let helmTarget: ResourceItem | undefined;
+        if (helmMap) {
+          helmTarget = [...helmMap.values()].find(
+            (r) => r.name === helmReleaseName && (!r.namespace || !helmNamespace || r.namespace === helmNamespace)
+          );
+        }
+        if (!helmTarget && graph?.items) {
+          helmTarget = [...graph.items.values()].find(
+            (r) => r.kind === 'HelmRelease' && r.name === helmReleaseName
+          );
+        }
+        addEntry({
+          id: `helm-${helmReleaseName}`,
+          target: helmTarget,
+          missing: helmTarget ? undefined : { kind: 'HelmRelease', name: helmReleaseName, namespace: helmNamespace },
+          label: 'Helm Release',
+          outgoing: false,
+          kind: 'HelmRelease',
+          name: helmReleaseName,
+          namespace: helmNamespace,
+        });
+      }
+
+      // Flux Kustomization lookup
+      const fluxKustomizationName = labels['kustomize.toolkit.fluxcd.io/name'];
+      const fluxKustomizationNs =
+        labels['kustomize.toolkit.fluxcd.io/namespace'] ?? candidate.namespace ?? item.namespace;
+      if (fluxKustomizationName && typeof fluxKustomizationName === 'string') {
+        const kustomizationMap = (resources as any)['Kustomization'] as Map<string, ResourceItem> | undefined;
+        let fluxTarget: ResourceItem | undefined;
+        if (kustomizationMap) {
+          fluxTarget = [...kustomizationMap.values()].find(
+            (r) => r.name === fluxKustomizationName && (!r.namespace || !fluxKustomizationNs || r.namespace === fluxKustomizationNs)
+          );
+        }
+        addEntry({
+          id: `flux-${fluxKustomizationName}`,
+          target: fluxTarget,
+          missing: fluxTarget
+            ? undefined
+            : { kind: 'Kustomization', name: fluxKustomizationName, namespace: fluxKustomizationNs },
+          label: 'Flux Kustomization',
+          outgoing: false,
+          kind: 'Kustomization',
+          name: fluxKustomizationName,
+          namespace: fluxKustomizationNs,
+        });
+      }
+
+      // Flux HelmRelease lookup
+      const fluxHelmName = labels['helm.toolkit.fluxcd.io/name'];
+      const fluxHelmNs =
+        labels['helm.toolkit.fluxcd.io/namespace'] ?? candidate.namespace ?? item.namespace;
+      if (fluxHelmName && typeof fluxHelmName === 'string') {
+        const hrMap = (resources as any)['HelmRelease'] as Map<string, ResourceItem> | undefined;
+        let fluxHrTarget: ResourceItem | undefined;
+        if (hrMap) {
+          fluxHrTarget = [...hrMap.values()].find(
+            (r) => r.name === fluxHelmName && (!r.namespace || !fluxHelmNs || r.namespace === fluxHelmNs)
+          );
+        }
+        addEntry({
+          id: `flux-hr-${fluxHelmName}`,
+          target: fluxHrTarget,
+          missing: fluxHrTarget
+            ? undefined
+            : { kind: 'HelmRelease', name: fluxHelmName, namespace: fluxHelmNs },
+          label: 'Flux HelmRelease',
+          outgoing: false,
+          kind: 'HelmRelease',
+          name: fluxHelmName,
+          namespace: fluxHelmNs,
+        });
+      }
+
+      // ArgoCD Application lookup
+      const argoAppName =
+        labels['argocd.argoproj.io/instance'] ??
+        annotations['argocd.argoproj.io/tracking-id']?.split(':')?.[0];
+      if (argoAppName && typeof argoAppName === 'string') {
+        const argoMap = (resources as any)['Application'] as Map<string, ResourceItem> | undefined;
+        let argoTarget: ResourceItem | undefined;
+        if (argoMap) {
+          argoTarget = [...argoMap.values()].find((r) => r.name === argoAppName);
+        }
+        addEntry({
+          id: `argocd-${argoAppName}`,
+          target: argoTarget,
+          missing: argoTarget ? undefined : { kind: 'Application', name: argoAppName, namespace: candidate.namespace },
+          label: 'Argo CD Application',
+          outgoing: false,
+          kind: 'Application',
+          name: argoAppName,
+          namespace: candidate.namespace,
+        });
+      }
+    }
+
+    // Also check GitOps status managed inventories (Flux & Argo)
+    const candidateKustomizations = (resources as any)['Kustomization'] as Map<string, ResourceItem> | undefined;
+    if (candidateKustomizations) {
+      for (const kustomization of candidateKustomizations.values()) {
+        if (kustomization.namespace && item.namespace && kustomization.namespace !== item.namespace) continue;
+        const refs = gitOpsReferences(kustomization);
+        if (refs.managed.some((m) => m.kind === item.kind && m.name === item.name)) {
+          addEntry({
+            id: `flux-inv-${kustomization.name}`,
+            target: kustomization,
+            label: 'Flux Kustomization',
+            outgoing: false,
+            kind: 'Kustomization',
+            name: kustomization.name,
+            namespace: kustomization.namespace,
+          });
+        }
+      }
+    }
+    const candidateApplications = (resources as any)['Application'] as Map<string, ResourceItem> | undefined;
+    if (candidateApplications) {
+      for (const app of candidateApplications.values()) {
+        const refs = gitOpsReferences(app);
+        if (refs.managed.some((m) => m.kind === item.kind && m.name === item.name)) {
+          addEntry({
+            id: `argocd-inv-${app.name}`,
+            target: app,
+            label: 'Argo CD Application',
+            outgoing: false,
+            kind: 'Application',
+            name: app.name,
+            namespace: app.namespace,
+          });
+        }
+      }
+    }
+
+    return entries;
+  }, [item, graph, resources]);
+
+  const filteredRelated = useMemo(() => {
+    const q = relatedQuery.trim().toLowerCase();
+    if (!q) return resolvedRelated;
+    return resolvedRelated.filter((entry) =>
+      [entry.name, entry.kind, entry.namespace, entry.label]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [resolvedRelated, relatedQuery]);
+
+  const groupedRelated = useMemo(() => {
+    const map = new Map<string, RelatedItemEntry[]>();
+    for (const entry of filteredRelated) {
+      const list = map.get(entry.kind) ?? [];
+      list.push(entry);
+      map.set(entry.kind, list);
+    }
+    const groups: Array<{ kind: string; rank: number; items: RelatedItemEntry[] }> = [];
+    for (const [kind, items] of map.entries()) {
+      groups.push({
+        kind,
+        rank: getResourceKindRank(kind),
+        items: items.sort((a, b) => a.name.localeCompare(b.name)),
+      });
+    }
+    return groups.sort((a, b) => a.rank - b.rank || a.kind.localeCompare(b.kind));
+  }, [filteredRelated]);
 
   const activePod = item.kind === 'Pod' ? item : preferredWorkloadPod(childPods);
   const containers = podContainers(activePod ?? item).map((c) => c.name);
@@ -373,42 +723,66 @@ function KubernetesResourceDetails({
                 className="mb-2 w-full"
               />
               <div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mb-2">
-                {filteredRelated.length} matching · {related.length} relationships
+                {filteredRelated.length} matching · {resolvedRelated.length} relationships
               </div>
-              {(helm.loading || relatedLoading) && !related.length && <ResourceLoading label="Loading resource relationships…" />}
+              {(helm.loading || relatedLoading) && !resolvedRelated.length && <ResourceLoading label="Loading resource relationships…" />}
               {relatedError && <p role="alert" className="text-xs text-[var(--status-danger)]">{relatedError}</p>}
-              {!helm.loading && !relatedLoading && !relatedError && !related.length && <p className="text-[var(--text-secondary)] text-xs">No relationships found in loaded resources.</p>}
-              {filteredRelated.slice(0, relatedLimit).map((edge) => {
-                const outgoing = edge.source === key;
-                const target = edge.missing ? undefined : graph?.items.get(outgoing ? edge.target : edge.source);
+              {!helm.loading && !relatedLoading && !relatedError && !resolvedRelated.length && <p className="text-[var(--text-secondary)] text-xs">No relationships found in loaded resources.</p>}
+              {groupedRelated.slice(0, relatedLimit).map((group) => {
+                if (group.items.length === 1) {
+                  return (
+                    <RelatedRow
+                      key={group.items[0].id}
+                      entry={group.items[0]}
+                      onNavigate={navigate}
+                    />
+                  );
+                }
+                const isExpanded = expandedKinds.has(group.kind) || relatedQuery.trim().length > 0;
                 return (
-                  <button
-                    key={edge.id}
-                    disabled={!target}
-                    onClick={() => target && navigate(target)}
-                    className="w-full flex items-center gap-2 px-2 py-2 border-b border-[var(--border-subtle)] text-left hover:bg-[var(--bg-hover)] disabled:opacity-60"
-                  >
-                    {outgoing ? <ArrowRight size="calc(12px * var(--ui-factor))" /> : <ArrowLeft size="calc(12px * var(--ui-factor))" />}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start gap-2 text-xs font-mono break-all">
-                        {target && <ResourceWarnings item={target} />}
-                        <span>{target?.name ?? edge.missing?.name}</span>
+                  <React.Fragment key={group.kind}>
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      onClick={() => toggleKindGroup(group.kind)}
+                      className="w-full flex items-center gap-2 px-2 py-2 border-b border-[var(--border-subtle)] text-left hover:bg-[var(--bg-hover)] transition-colors select-none cursor-pointer"
+                    >
+                      {isExpanded ? (
+                        <ChevronDown size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+                      ) : (
+                        <ChevronRight size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+                      )}
+                      <div className="flex-1 min-w-0 flex items-center gap-2">
+                        <ResourceKindBadge kind={group.kind} />
+                        <span className="text-xs font-medium text-[var(--text-primary)]">
+                          {group.kind}s
+                        </span>
+                        <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
+                          ({group.items.length})
+                        </span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)]">
-                        <ResourceKindBadge kind={target?.kind ?? edge.missing?.kind ?? 'Resource'} apiVersion={target?.apiVersion} />
-                        <span>{target?.namespace ?? edge.missing?.namespace ?? 'cluster'}{!target && ' · not loaded'}</span>
-                      </div>
-                    </div>
-                    <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)]">{edge.label}</span>
-                  </button>
+                      <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] shrink-0 font-mono">
+                        {isExpanded ? 'collapse' : 'expand'}
+                      </span>
+                    </button>
+                    {isExpanded &&
+                      group.items.map((entry) => (
+                        <RelatedRow
+                          key={entry.id}
+                          entry={entry}
+                          onNavigate={navigate}
+                          nested
+                        />
+                      ))}
+                  </React.Fragment>
                 );
               })}
-              {filteredRelated.length > relatedLimit && (
+              {groupedRelated.length > relatedLimit && (
                 <Button size="sm" className="mt-3" onClick={() => setRelatedLimit((limit) => limit + 50)}>
                   Show next 50
                 </Button>
               )}
-              {!!related.length && !filteredRelated.length && (
+              {!!resolvedRelated.length && !filteredRelated.length && (
                 <p className="text-xs text-[var(--text-muted)]">No related resources match this filter.</p>
               )}
             </Card>

@@ -25,6 +25,21 @@ interface TableViews {
   resetAll: () => void;
 }
 
+export function partializeTableViews(state: TableViews) {
+  return {
+    views: Object.fromEntries(
+      Object.entries(state.views).map(([id, view]) => [
+        id,
+        {
+          ...view,
+          searchQuery: '',
+          searchRegex: false,
+        },
+      ])
+    ),
+  };
+}
+
 /** Table controls belong to their workspace tab / resource kind and persist across reloads and tab reopening. */
 export const useTableViewStore = create<TableViews>()(
   persist(
@@ -47,6 +62,7 @@ export const useTableViewStore = create<TableViews>()(
     }),
     {
       name: 'kubiki.table_views.v1',
+      partialize: partializeTableViews,
     }
   )
 );

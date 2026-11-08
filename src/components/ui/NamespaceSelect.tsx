@@ -26,13 +26,16 @@ function NamespaceMenu({ label, value, options, onApply }: { label: string; valu
   const candidates = [...new Set(options)].sort();
   const showAll = !query.trim() || 'all namespaces'.includes(query.trim().toLowerCase());
   const filtered = candidates.filter(name => name.toLowerCase().includes(query.trim().toLowerCase()));
-  const choices = selectedFirst([...(showAll ? [null] : []), ...filtered], name => name === null ? selected === null : selected?.includes(name) ?? false);
+  const choices = selectedFirst(filtered, name => selected?.includes(name) ?? false);
   useLayoutEffect(() => {
     const list = document.getElementById(id);
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && list?.contains(focused)) focused.scrollIntoView({ block: 'nearest' });
   }, [selected, id]);
-  const toggle = (name: string) => setSelected(previous => previous?.includes(name) ? previous.filter(value => value !== name) : [...(previous ?? []), name]);
+  const toggle = (name: string) => setSelected(previous => {
+    if (previous === null) return [name];
+    return previous.includes(name) ? previous.filter(val => val !== name) : [...previous, name];
+  });
   return <div role="dialog" aria-label={`Choose ${label}`} className="text-xs">
     <div className="px-2 pb-2 pt-1">
       <div className="relative"><Search size="calc(13px * var(--ui-factor))" className="absolute left-2 top-2 text-[var(--text-muted)]" />
@@ -50,9 +53,39 @@ function NamespaceMenu({ label, value, options, onApply }: { label: string; valu
       const next = event.key === 'ArrowDown' ? buttons[(index + 1) % buttons.length] : event.key === 'ArrowUp' ? buttons[(index + buttons.length - 1) % buttons.length] : undefined;
       if (next) { event.preventDefault(); next.focus(); }
     }}>
-      {choices.map(name => name === null ? <button key="all" type="button" role="option" aria-selected={selected === null} onClick={() => setSelected(null)} className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)]"><span className="flex-1">All Namespaces</span>{selected === null && <Check size={13} className="text-[var(--accent)]" />}</button> : <button type="button" role="option" aria-selected={selected?.includes(name) ?? false} key={name} onClick={() => toggle(name)} className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)]">
-        <span className={cx('w-3 h-3 rounded-sm border shrink-0 flex items-center justify-center', selected?.includes(name) ? 'border-[var(--accent)] bg-[var(--accent)] text-white' : 'border-[var(--border-strong)]')}>{selected?.includes(name) && <Check size={11} />}</span><span className="truncate" title={name}>{name}</span>
-      </button>)}
+      {showAll && (
+        <button
+          key="all"
+          type="button"
+          role="option"
+          aria-selected={selected === null}
+          onMouseDown={event => event.preventDefault()}
+          onClick={() => setSelected(null)}
+          className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)] cursor-pointer"
+        >
+          <span className="flex-1 font-medium">All Namespaces</span>
+          {selected === null && <Check size={13} className="text-[var(--accent)] shrink-0" />}
+        </button>
+      )}
+      {choices.map(name => {
+        const isChecked = selected?.includes(name) ?? false;
+        return (
+          <button
+            type="button"
+            role="option"
+            aria-selected={isChecked}
+            key={name}
+            onMouseDown={event => event.preventDefault()}
+            onClick={() => toggle(name)}
+            className="flex items-center gap-2 w-full h-7 px-2.5 text-left hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)] cursor-pointer"
+          >
+            <span className={cx('w-3 h-3 rounded-sm border shrink-0 flex items-center justify-center transition-colors', isChecked ? 'border-[var(--accent)] bg-[var(--accent)] text-white' : 'border-[var(--border-strong)]')}>
+              {isChecked && <Check size={11} />}
+            </span>
+            <span className="truncate" title={name}>{name}</span>
+          </button>
+        );
+      })}
     </div>
     {!filtered.length && <p className="px-2.5 py-2 text-[var(--text-muted)]">No matching namespaces.</p>}
     <div className="flex justify-between gap-2 border-t border-[var(--border-subtle)] px-2 pt-2 mt-1"><Button size="sm" onClick={() => setSelected([])}>Clear selection</Button><Button size="sm" variant="primary" disabled={selected?.length === 0} onClick={() => onApply(namespaceScope(selected))}>Apply namespaces</Button></div>

@@ -124,7 +124,12 @@ export function restoreWorkspace(persisted: unknown, current: WorkspaceState): W
 }
 
 function clearDraftForTab(tab?: WorkspaceTab) {
-  if (tab) useTableViewStore.getState().clear(tab.id);
+  if (tab) {
+    useTableViewStore.getState().clear(tab.id);
+    if ('kind' in tab && tab.kind) {
+      useTableViewStore.getState().update(`kind:${tab.kind}`, { searchQuery: '', searchRegex: false });
+    }
+  }
   if (tab?.type === 'yaml-editor') {
     useYamlDraftStore.getState().clearDraft(
       yamlDraftKey(tab.context ?? '', tab.kind, tab.namespace, tab.name, tab.uid)

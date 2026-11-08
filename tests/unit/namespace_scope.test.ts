@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { selectedFirst } from '../../src/core/utils/selected_first';
 import { namespaceNames, namespaceScope, inNamespaceScope, namespaceScopeLabel, defaultNamespace } from '../../src/core/resources/namespace_scope';
 import { namespaceIsOutsideScope } from '../../src/core/resources/resource_types';
 import { compareRows, statusChoices, statusOrder, type SortKey } from '../../src/core/resources/resource_sort';
@@ -39,5 +40,31 @@ describe('Global namespace selection', () => {
     expect(statusChoices(['Failed', 'Running', 'Pending'])).toEqual(['Running', 'Pending', 'Failed']);
     expect(statusOrder('Running', 'Pending')).toBeGreaterThan(statusOrder('Pending', 'Pending'));
     expect(statusOrder('Pending', 'Pending')).toBe(-1);
+  });
+  it('floats selected namespaces to top and sinks deselected namespaces back to natural sorted position', () => {
+    const all = ['cert-manager', 'default', 'kube-node-lease', 'kube-public', 'kube-system', 'monitoring'];
+
+    // Initially none selected
+    let selected: string[] = [];
+    let choices = selectedFirst(all, (ns: string) => selected.includes(ns));
+    expect(choices).toEqual(all);
+
+    // Select 'monitoring': floats to top
+    selected = ['monitoring'];
+    choices = selectedFirst(all, (ns: string) => selected.includes(ns));
+    expect(choices[0]).toBe('monitoring');
+    expect(choices.slice(1)).toEqual(['cert-manager', 'default', 'kube-node-lease', 'kube-public', 'kube-system']);
+
+    // Select 'default' as well: both float to top preserving relative order
+    selected = ['default', 'monitoring'];
+    choices = selectedFirst(all, (ns: string) => selected.includes(ns));
+    expect(choices.slice(0, 2)).toEqual(['default', 'monitoring']);
+    expect(choices.slice(2)).toEqual(['cert-manager', 'kube-node-lease', 'kube-public', 'kube-system']);
+
+    // Deselect 'monitoring': sinks back down to the end of the alphabetical list
+    selected = ['default'];
+    choices = selectedFirst(all, (ns: string) => selected.includes(ns));
+    expect(choices[0]).toBe('default');
+    expect(choices[choices.length - 1]).toBe('monitoring');
   });
 });

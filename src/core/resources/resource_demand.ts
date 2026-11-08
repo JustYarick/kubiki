@@ -81,6 +81,11 @@ export function relatedResourceKinds(item: ResourceItem): ResourceKind[] {
     for (const [kind, targets] of Object.entries(related)) if (targets?.includes(item.kind)) kinds.add(kind);
     if (WORKLOADS.has(item.kind)) for (const kind of templateDependencies) kinds.add(kind);
     if (templateDependencies.includes(item.kind)) for (const kind of WORKLOADS) kinds.add(kind);
+    if (WORKLOADS.has(item.kind) || item.kind === 'Pod' || item.kind === 'ReplicaSet') {
+      kinds.add('HelmRelease');
+      kinds.add('Kustomization');
+      kinds.add('Application');
+    }
   }
   // Explicit references work for owners and custom kinds too, without fetching
   // every unrelated API in the catalog merely because the kind is unfamiliar.
