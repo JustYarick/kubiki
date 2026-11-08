@@ -18,8 +18,10 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        // macOS temporary paths contain "folders", including the substring "old".
+        // Exercise that case on every platform supported by this test fixture.
         let dir = std::env::temp_dir().join(format!(
-            "kubiki-helm-write-test-{}-{}",
+            "kubiki-helm-write-test-folders-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -148,9 +150,13 @@ impl Drop for Fixture {
 async fn concise_confirmation_cancel_and_upgrade_own_the_exact_payload() {
     let fixture = Fixture::new();
     let prepared = fixture.prepare(fixture.request("upgrade")).await;
-    assert!(prepared.summary().contains("Upgrade release web"));
-    assert!(!prepared.summary().contains("old"));
-    assert!(!prepared.summary().contains("BEFORE"));
+    assert_eq!(
+        prepared.summary(),
+        format!(
+            "Upgrade release web using chart {}.",
+            fixture.dir.join("chart.tgz").display()
+        )
+    );
     assert!(!fixture.wrote());
     assert_eq!(
         prepared
