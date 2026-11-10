@@ -3,7 +3,7 @@ import { ArrowRight, ExternalLink, KeyRound } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import type { SecretOrigin } from '../../../../core/resources/secret_origin';
 import { resourceBucket } from '../../../../core/resources/custom_resource_types';
-import { loadSecretOrigin } from '../../../../providers/secret_origin';
+import { clearSecretOriginCache, loadSecretOrigin } from '../../../../providers/secret_origin';
 import { useClusterStore } from '../../../../state/cluster_store';
 import { useResourceStore } from '../../../../state/resource_store';
 import { toast } from '../../../../state/notifications_store';
@@ -47,7 +47,7 @@ export function SecretOriginBlock({ item, onNavigate }: { item: ResourceItem; on
       <KeyRound size={12} aria-hidden="true" className="text-[var(--accent)]" />
       <h3 className="text-xs font-medium flex-1">Secret source</h3>
       <span role="status" className="text-xs text-[var(--text-secondary)]">{label}</span>
-      {origin?.incomplete && <Button size="sm" onClick={() => setAttempt(value => value + 1)}>Retry source lookup</Button>}
+      {origin?.incomplete && <Button size="sm" onClick={() => { clearSecretOriginCache(); setAttempt(value => value + 1); }}>Retry source lookup</Button>}
     </div>
     <div className="p-3 space-y-3 text-xs">
       {origin?.type === 'internal' && <p className="text-[var(--text-muted)]">Stored in Kubernetes. No External Secrets Operator or Vault Secrets Operator source was found.</p>}

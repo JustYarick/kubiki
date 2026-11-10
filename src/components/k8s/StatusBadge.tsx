@@ -29,8 +29,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status = 'Unknown', cl
   return (
     <span
       className={cx(
-        'inline-flex items-center gap-1.5 rounded-[calc(4px*var(--ui-factor))] font-mono font-medium border whitespace-nowrap transition-colors',
-        size === 'md' ? 'text-[length:calc(10.5px*var(--ui-factor))] px-1.5 py-[1px]' : 'text-[length:calc(10px*var(--ui-factor))] px-1.5 py-0',
+        'inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] font-mono font-medium border whitespace-nowrap transition-colors',
+        size === 'md' ? 'text-[length:var(--font-size-xs)] px-1.5 py-[1px]' : 'text-[length:var(--font-size-2xs)] px-1.5 py-0',
         colorPair[0],
         className
       )}

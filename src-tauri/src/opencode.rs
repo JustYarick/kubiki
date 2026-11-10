@@ -524,7 +524,6 @@ async fn start_opencode_inner(
         settings.runtime,
         &executable,
         &endpoint.bootstrap,
-        request.prompt.as_deref(),
     )?;
     let terminals = window.state::<HostTerminalManager>().inner().clone();
     if let Some(previous) = registry.0.lock().await.remove(window.label()) {
@@ -549,6 +548,10 @@ async fn start_opencode_inner(
         )
         .await
         .map_err(|e| e.message)?;
+    if let Some(prompt) = request.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+        let sanitized = sanitize_terminal_prompt(prompt);
+        let _ = terminals.write(window.label(), &session_id, sanitized).await;
+    }
     if pending.launch.check().is_err() {
         terminals.stop(window.label(), &session_id).await;
         // A process may already have spawned; return success to keep delivery ambiguous.
@@ -584,17 +587,20 @@ async fn start_opencode_inner(
     Ok(())
 }
 
+pub fn sanitize_terminal_prompt(prompt: &str) -> String {
+    prompt.replace("\r\n", " ").replace(['\n', '\r'], " ")
+}
+
 /// Session-only overrides: never rewrite the user's Codex/Claude configuration.
 fn external_arguments(
     runtime: AgentRuntime,
     executable: &Path,
     bootstrap: &Path,
-    prompt: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let command = executable.to_str().ok_or("Executable path is not UTF-8")?;
     let bootstrap = bootstrap.to_str().ok_or("MCP path is not UTF-8")?;
     let args = serde_json::json!(["--kubiki-mcp-attach", bootstrap]);
-    let mut result = match runtime {
+    let result = match runtime {
         AgentRuntime::OpenCode => vec!["--standalone".into()],
         AgentRuntime::Codex => vec![
             "-c".into(),
@@ -611,17 +617,6 @@ fn external_arguments(
         ],
         AgentRuntime::Kubiki => return Err("Not an external agent".into()),
     };
-    if let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) {
-        result.push(
-            if runtime == AgentRuntime::OpenCode {
-                "--prompt"
-            } else {
-                "--"
-            }
-            .into(),
-        );
-        result.push(prompt.into());
-    }
     Ok(result)
 }
 
@@ -629,18 +624,15 @@ fn external_arguments(
 mod tests {
     use super::*;
     #[test]
-    fn external_argv_is_session_scoped_and_preserves_literal_prompts() {
+    fn external_argv_is_session_scoped_and_does_not_pass_prompt_in_argv() {
         let path = Path::new("/path with spaces/kubiki");
         let bootstrap = Path::new("/tmp/session file.json");
-        let prompt = "--dangerously-skip-permissions $(echo unexpected)";
-        for runtime in [AgentRuntime::Codex, AgentRuntime::Claude] {
-            let args = external_arguments(runtime, path, bootstrap, Some(prompt)).unwrap();
-            assert_eq!(args[args.len() - 2], "--");
-            assert_eq!(args.last().unwrap(), prompt);
+        for runtime in [AgentRuntime::OpenCode, AgentRuntime::Codex, AgentRuntime::Claude] {
+            let args = external_arguments(runtime, path, bootstrap).unwrap();
             assert!(
                 !args
                     .iter()
-                    .any(|a| a == "--dangerously-skip-permissions" || a == "--yolo")
+                    .any(|a| a == "--prompt" || a == "--" || a == "--dangerously-skip-permissions" || a == "--yolo")
             );
             if runtime == AgentRuntime::Claude {
                 let config: serde_json::Value = serde_json::from_str(&args[1]).unwrap();
@@ -652,11 +644,24 @@ mod tests {
                     config["mcpServers"]["kubiki"]["args"][1],
                     bootstrap.to_str().unwrap()
                 );
-            } else {
+            } else if runtime == AgentRuntime::Codex {
                 assert!(args[1].starts_with("mcp_servers.kubiki={command="));
                 assert!(args[1].contains("--kubiki-mcp-attach"));
+            } else if runtime == AgentRuntime::OpenCode {
+                assert_eq!(args, vec!["--standalone"]);
             }
         }
+    }
+    #[test]
+    fn terminal_prompt_is_sanitized_to_prevent_accidental_execution() {
+        let raw = "Analyze Pod default/api\r\nCheck logs\nPropose remediation\rDone";
+        let sanitized = sanitize_terminal_prompt(raw);
+        assert!(!sanitized.contains('\n'));
+        assert!(!sanitized.contains('\r'));
+        assert_eq!(
+            sanitized,
+            "Analyze Pod default/api Check logs Propose remediation Done"
+        );
     }
     #[test]
     fn each_external_agent_has_independent_settings() {
@@ -699,7 +704,7 @@ mod tests {
     fn codex_external_arguments_enable_mcp_tool_list_changed_and_kubiki_server() {
         let path = Path::new("/usr/bin/kubiki");
         let bootstrap = Path::new("/tmp/bootstrap.json");
-        let args = external_arguments(AgentRuntime::Codex, path, bootstrap, None).unwrap();
+        let args = external_arguments(AgentRuntime::Codex, path, bootstrap).unwrap();
         assert_eq!(args[0], "-c");
         assert!(args[1].starts_with("mcp_servers.kubiki={command="));
         assert_eq!(args[2], "-c");

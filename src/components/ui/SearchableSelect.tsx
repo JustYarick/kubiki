@@ -13,7 +13,7 @@ export function SearchableSelect({ label, value, options, onChange, icon: Icon, 
 }) {
   const selected = options.find((option) => option.value === value);
   return <Popover width={320} trigger={({ open }) => <button type="button" aria-label={label} aria-haspopup="dialog" aria-expanded={open}
-    data-value={value} title={selected?.label} className={cx('flex items-center gap-1.5 h-[calc(26px*var(--ui-factor))] px-2 rounded border border-[var(--border-default)] text-xs min-w-0 max-w-[calc(260px*var(--ui-factor))] hover:bg-[var(--bg-hover)]', className)}>
+    data-value={value} title={selected?.label} className={cx('flex items-center gap-1.5 h-[var(--control-h-md)] px-2 rounded-[var(--radius-sm)] border border-[var(--border-default)] text-[length:var(--font-size-sm)] min-w-0 max-w-[calc(260px*var(--ui-factor))] hover:bg-[var(--bg-hover)]', className)}>
     {Icon && <Icon size="calc(12px * var(--ui-factor))" className="text-violet-400 shrink-0" />}<span className="truncate">{selected?.label ?? value}</span><ChevronDown size="calc(11px * var(--ui-factor))" className="shrink-0 ml-auto" />
   </button>}>
     {(close) => <SelectMenu label={label} value={value} options={options} customOption={customOption} customHint={customHint} onSelect={(value) => { onChange(value); close(); }} />}

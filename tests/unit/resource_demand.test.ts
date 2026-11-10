@@ -100,3 +100,30 @@ it('keeps a master-search detail tab pinned outside the global namespace without
   expect(result.scopes.get('ConfigMap')).toBe('beta');
   expect(result.scopes.get('Pod')).toBe('["alpha","beta"]');
 });
+
+it('opening a Secret resource-list tab demands only Secret without workloads or Pods', () => {
+  const result = demand([tab('secrets', 'Secret')]);
+  expect(result.kinds).toEqual(['Namespace', 'CustomResourceDefinition', 'Secret']);
+  expect(result.kinds).not.toContain('Pod');
+  expect(result.kinds).not.toContain('Deployment');
+  expect(result.kinds).not.toContain('Event');
+});
+
+it('selecting a Secret in inspector demands detail dependencies for that item only', () => {
+  const secret = { uid: 'sec-1', name: 'app-secret', namespace: 'prod', kind: 'Secret', apiVersion: 'v1' };
+  const input = {
+    context: 'test',
+    tabs: [tab('secrets', 'Secret')],
+    activeTabId: 'secrets',
+    splitTabId: null,
+    selectedNamespace: 'prod',
+    selectedItem: secret,
+    inspectorCollapsed: false,
+    rightTab: 'overview',
+  };
+  const result = resourceDemand(input);
+  expect(result.kinds).toEqual(expect.arrayContaining(['Secret', 'Pod', 'Deployment', 'Event']));
+  expect(result.scopes.get('Secret')).toBe('prod');
+  expect(result.scopes.get('Pod')).toBe('prod');
+});
+

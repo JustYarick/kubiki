@@ -74,6 +74,50 @@
 
   --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+
+  /* ================= Standard Sizing Scale Tokens ================= */
+  /* Controls (Inputs, Selects, Buttons, Dropdown triggers) */
+  --control-h-xs: calc(20px * var(--ui-factor)); /* Micro toggles, regex badge, inline actions */
+  --control-h-sm: calc(22px * var(--ui-factor)); /* Compact buttons, compact inputs, filter tags */
+  --control-h-md: calc(26px * var(--ui-factor)); /* Default interactive height across the entire app */
+  --control-h-lg: calc(30px * var(--ui-factor)); /* Dialog action buttons, primary CTAs */
+
+  /* Row & Grid Item Heights (Tables, Tree nodes, Inspector list rows) */
+  --row-h-compact: calc(24px * var(--ui-factor)); /* Dense / compact data rows */
+  --row-h-md: calc(28px * var(--ui-factor));      /* Standard / comfortable rows */
+  --row-h-lg: calc(34px * var(--ui-factor));      /* Multi-line or card rows */
+
+  /* Typography Scale */
+  --font-size-2xs: calc(9.5px * var(--ui-factor)); /* Badges, counters, tag labels */
+  --font-size-xs: calc(10.5px * var(--ui-factor)); /* Meta, subtitles, status badges, timestamps */
+  --font-size-sm: calc(11.5px * var(--ui-factor)); /* Table cells, resource names, input text, code */
+  --font-size-base: calc(12px * var(--ui-factor)); /* General body text, button labels, dropdown items */
+  --font-size-md: calc(13px * var(--ui-factor));   /* Section subheadings, dialog body */
+  --font-size-lg: calc(14px * var(--ui-factor));   /* Panel headers, card titles */
+  --font-size-xl: calc(16px * var(--ui-factor));   /* Page titles, modal headings */
+
+  /* Radius Scale */
+  --radius-xs: calc(3px * var(--ui-factor)); /* Tags, micro badges */
+  --radius-sm: calc(4px * var(--ui-factor)); /* Standard controls: inputs, buttons, selects */
+  --radius-md: calc(6px * var(--ui-factor)); /* Cards, popovers, sections, dropdown menus */
+  --radius-lg: calc(8px * var(--ui-factor)); /* Modals, dialogs, main panels */
+
+  /* Spacing Scale */
+  --space-1: calc(2px * var(--ui-factor));
+  --space-2: calc(4px * var(--ui-factor));
+  --space-3: calc(6px * var(--ui-factor));
+  --space-4: calc(8px * var(--ui-factor));
+  --space-5: calc(10px * var(--ui-factor));
+  --space-6: calc(12px * var(--ui-factor));
+  --space-8: calc(16px * var(--ui-factor));
+
+  /* Chrome Shell Component Heights */
+  --titlebar-h: calc(34px * var(--ui-factor));
+  --tabbar-h: calc(34px * var(--ui-factor));
+  --dock-header-h: calc(32px * var(--ui-factor));
+  --statusbar-h: calc(26px * var(--ui-factor));
+  --toolbar-h: calc(36px * var(--ui-factor));
+
   --tool-tab-height: 28px;
   --tool-tab-font-size: 12px;
   --tool-tab-line-height: 16px;
@@ -276,11 +320,11 @@ details[open] > summary::before { transform: rotate(90deg); }
   border-bottom: 1px solid var(--border-default);
   border-right: 1px solid var(--border-grid);
   color: var(--text-secondary);
-  font-size: calc(11px * var(--ui-factor));
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: calc(4px * var(--ui-factor)) calc(8px * var(--ui-factor));
+  padding: calc(4px * var(--ui-factor)) var(--space-4);
   user-select: none;
 }
 
@@ -296,8 +340,8 @@ body.column-layout-reordering, body.column-layout-reordering * { cursor: grabbin
 .datagrip-cell {
   border-bottom: 1px solid var(--border-grid);
   border-right: 1px solid var(--border-grid);
-  padding: calc(4px * var(--ui-factor)) calc(8px * var(--ui-factor));
-  font-size: calc(11.5px * var(--ui-factor));
+  padding: calc(3.5px * var(--ui-factor)) var(--space-4);
+  font-size: var(--font-size-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -331,22 +375,22 @@ body.column-layout-reordering, body.column-layout-reordering * { cursor: grabbin
 
 /* Inspector text and graph cards share the same restrained IDE surfaces. */
 .ide-select {
-  height: calc(26px * var(--ui-factor));
-  min-height: calc(26px * var(--ui-factor));
+  height: var(--control-h-md);
+  min-height: var(--control-h-md);
   min-width: 0;
   max-width: calc(240px * var(--ui-factor));
-  padding: calc(2px * var(--ui-factor)) calc(6px * var(--ui-factor));
+  padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-default);
-  border-radius: calc(4px * var(--ui-factor));
+  border-radius: var(--radius-sm);
   background: var(--bg-canvas);
   color: var(--text-primary);
   font: inherit;
-  font-size: calc(12px * var(--ui-factor));
+  font-size: var(--font-size-sm);
   line-height: calc(17px * var(--ui-factor));
 }
 select.ide-select {
   appearance: none;
-  padding-right: calc(26px * var(--ui-factor));
+  padding-right: var(--control-h-md);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239da0a8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right calc(8px * var(--ui-factor)) center;
@@ -355,7 +399,7 @@ select.ide-select {
 }
 .ide-select:hover { border-color: var(--border-strong); }
 .ide-select:focus-visible, .ide-textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; border-color: var(--accent); }
-.ide-textarea { min-width: 0; padding: calc(8px * var(--ui-factor)); border: 1px solid var(--border-default); border-radius: calc(4px * var(--ui-factor)); background: var(--bg-canvas); color: var(--text-primary); font-size: calc(12px * var(--ui-factor)); line-height: 1.5; resize: vertical; }
+.ide-textarea { min-width: 0; padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); font-size: var(--font-size-sm); line-height: 1.5; resize: vertical; }
 .topology-view .react-flow {
   --xy-background-color: var(--bg-canvas);
   --xy-controls-button-background-color: var(--bg-secondary);
@@ -386,11 +430,11 @@ select.ide-select {
 .resource-search-field { flex: 1; min-width: 0; }
 .resource-filter-controls { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); flex-shrink: 0; }
 .resource-filter-field { display: flex; flex-direction: column; gap: calc(4px * var(--ui-factor)); min-width: 0; }
-.resource-filter-field select { height: calc(26px * var(--ui-factor)); max-width: calc(160px * var(--ui-factor)); text-overflow: ellipsis; }
-.resource-filter-trigger { display: inline-flex; align-items: center; gap: calc(6px * var(--ui-factor)); height: calc(26px * var(--ui-factor)); padding: 0 calc(8px * var(--ui-factor)); border: 1px solid var(--border-strong); border-radius: calc(4px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); background: var(--bg-canvas); flex-shrink: 0; white-space: nowrap; }
+.resource-filter-field select { height: var(--control-h-md); max-width: calc(160px * var(--ui-factor)); text-overflow: ellipsis; }
+.resource-filter-trigger { display: inline-flex; align-items: center; gap: var(--space-3); height: var(--control-h-md); padding: 0 var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-size: var(--font-size-sm); background: var(--bg-canvas); flex-shrink: 0; white-space: nowrap; }
 .resource-filter-trigger:hover { background: var(--bg-hover); }
 .resource-filter-controls-popup { flex-direction: column; align-items: stretch; gap: calc(12px * var(--ui-factor)); }
-.resource-filter-controls-popup .resource-filter-field > span { font-size: calc(11px * var(--ui-factor)); color: var(--text-secondary); }
+.resource-filter-controls-popup .resource-filter-field > span { font-size: var(--font-size-xs); color: var(--text-secondary); }
 .resource-filter-controls-popup select { width: 100%; max-width: 100%; }
 .titlebar-search { container-type: inline-size; overflow: hidden; }
 .app-titlebar[data-layout="compact"] .app-titlebar-brand,
@@ -404,7 +448,7 @@ select.ide-select {
 .app-titlebar[data-layout="narrow"] .app-titlebar-sync,
 .app-titlebar[data-layout="narrow"] .app-titlebar-layout { display: none; }
 
-.app-statusbar { container-type: inline-size; white-space: nowrap; overflow: hidden; gap: calc(8px * var(--ui-factor)); }
+.app-statusbar { container-type: inline-size; white-space: nowrap; overflow: hidden; gap: var(--space-4); }
 .app-statusbar > button, .app-statusbar svg { flex-shrink: 0; }
 .app-statusbar .status-context { max-width: 20%; }
 .app-statusbar .status-namespace { min-width: 0; max-width: 25%; }
@@ -419,6 +463,7 @@ select.ide-select {
 /* Inline theme references resolve the scale at the element, including body portals. */
 @theme inline {
   --spacing: calc(0.25rem * var(--ui-factor));
+  --text-2xs: calc(9.5px * var(--ui-factor));
   --text-xs: calc(12px * var(--ui-factor));
   --text-sm: calc(14px * var(--ui-factor));
   --text-base: calc(16px * var(--ui-factor));

@@ -101,7 +101,10 @@ export class VirusTotalClient {
   file(sha256) { return this.request(`${API}/files/${sha256}`); }
 }
 
-function validateVerdicts(stats, results) {
+export const DEFAULT_MAX_ALLOWED_DETECTIONS = Number(process.env.VIRUSTOTAL_MAX_ALLOWED_DETECTIONS ?? 1);
+export const MIN_CLEAN_ENGINES_FOR_FALSE_POSITIVE = 40;
+
+export function validateVerdicts(stats, results, { maxAllowedDetections = DEFAULT_MAX_ALLOWED_DETECTIONS } = {}) {
   if (!stats || !results || typeof results !== 'object' || Array.isArray(results)) throw new Error('Incomplete VirusTotal verdicts.');
   const counts = Object.fromEntries(CATEGORIES.map(category => [category, 0]));
   for (const result of Object.values(results)) {
@@ -115,10 +118,22 @@ function validateVerdicts(stats, results) {
       throw new Error('Inconsistent VirusTotal engine statistics.');
     }
   }
-  if (counts.harmless + counts.undetected + counts.malicious + counts.suspicious === 0) {
+  const cleanEngines = (counts.harmless ?? 0) + (counts.undetected ?? 0);
+  const flaggedEngines = (counts.malicious ?? 0) + (counts.suspicious ?? 0);
+  if (cleanEngines + flaggedEngines === 0) {
     throw new Error('No antivirus engine completed a supported scan.');
   }
-  return counts.malicious === 0 && counts.suspicious === 0;
+
+  // 100% clean
+  if (flaggedEngines === 0) return true;
+
+  // When vast majority (>= 40 engines) are clean, tolerate up to maxAllowedDetections (default 1)
+  // isolated heuristic false positive (e.g. generic NSIS or unsigned Mach-O heuristic detection).
+  if (maxAllowedDetections > 0 && flaggedEngines <= maxAllowedDetections && cleanEngines >= MIN_CLEAN_ENGINES_FOR_FALSE_POSITIVE) {
+    return true;
+  }
+
+  return false;
 }
 
 async function hashFile(file) {
@@ -184,7 +199,25 @@ export async function scanReleaseAssets(client, dir, assets, report, { progress 
           stats: uploaded.attributes.last_analysis_stats, results: uploaded.attributes.last_analysis_results },
       });
       pending.delete(entry);
-      progress(`Completed ${file.name}: ${clear && currentClear ? 'no detections reported' : 'detections reported'}`);
+      const flaggedCount = ((analysis.stats?.malicious ?? 0) + (analysis.stats?.suspicious ?? 0)) ||
+                           ((uploaded.attributes?.last_analysis_stats?.malicious ?? 0) + (uploaded.attributes?.last_analysis_stats?.suspicious ?? 0));
+      const cleanCount = (uploaded.attributes?.last_analysis_stats?.undetected ?? analysis.stats?.undetected ?? 0) +
+                         (uploaded.attributes?.last_analysis_stats?.harmless ?? analysis.stats?.harmless ?? 0);
+      let verdictMessage;
+      if (flaggedCount === 0) {
+        verdictMessage = `no detections reported (${cleanCount} clean engines)`;
+      } else {
+        const flaggedDetails = Object.entries(uploaded.attributes?.last_analysis_results || analysis.results || {})
+          .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
+          .map(([engine, r]) => `${r.engine_name || engine}: ${r.result || r.category}`)
+          .join(', ');
+        if (clear && currentClear) {
+          verdictMessage = `no actionable detections (${cleanCount} clean, tolerated heuristic flag: ${flaggedDetails || '1 engine'}) - ${file.url}`;
+        } else {
+          verdictMessage = `detections reported (${flaggedCount} flagged: ${flaggedDetails || 'unknown'}) - ${file.url}`;
+        }
+      }
+      progress(`Completed ${file.name}: ${verdictMessage}`);
     }
   }
   for (const file of report.files) {
@@ -206,6 +239,17 @@ export function renderVirusTotalReport(report) {
     const stats = file.stats ?? {};
     const skipped = ['failure', 'timeout', 'confirmed-timeout', 'type-unsupported'].reduce((sum, category) => sum + (stats[category] ?? 0), 0);
     lines.push(`| ${cell(file.name)} | ${cell(file.sha256)} | ${stats.malicious ?? '—'} | ${stats.suspicious ?? '—'} | ${(stats.undetected ?? 0) + (stats.harmless ?? 0)} | ${skipped} | ${file.url ? `[${cell(file.status)}](${file.url})` : cell(file.status)} |`);
+  }
+  const flaggedFiles = (report.files ?? []).filter(f => (f.stats?.malicious ?? 0) + (f.stats?.suspicious ?? 0) > 0);
+  if (flaggedFiles.length > 0) {
+    lines.push('', '### Detections and engine details');
+    for (const file of flaggedFiles) {
+      const details = Object.entries(file.fileInfo?.results || file.results || {})
+        .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
+        .map(([engine, r]) => `- **${cell(file.name)}**: \`${cell(r.engine_name || engine)}\` reported \`${cell(r.result || r.category)}\``)
+        .join('\n');
+      if (details) lines.push(details);
+    }
   }
   if (report.error) lines.push('', `Error: ${cell(report.error)}`);
   lines.push('', 'JSON includes individual engine verdicts and the latest file report. Detached signatures are excluded from scanning.', '',

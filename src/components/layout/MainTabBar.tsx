@@ -52,6 +52,10 @@ export const MainTabBar: React.FC = () => {
   const handleTabClick = (tab: WorkspaceTab) => {
     setActiveTab(tab.id);
     if (tab.type === 'resource-list' && tab.kind) {
+      const store = useResourceStore.getState();
+      if (store.selectedItem && store.selectedItem.kind !== tab.kind) {
+        store.selectItem(null);
+      }
       setActiveKind(tab.kind);
     }
   };

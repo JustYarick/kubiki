@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, readFile, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { REQUEST_INTERVAL_MS, VirusTotalClient, scanReleaseAssets, verifyVirusTotalReport, writeVirusTotalReport } from '../../scripts/virustotal.mjs';
+import { REQUEST_INTERVAL_MS, VirusTotalClient, scanReleaseAssets, verifyVirusTotalReport, writeVirusTotalReport, validateVerdicts, renderVirusTotalReport } from '../../scripts/virustotal.mjs';
 import { clearVerdicts, releaseReport } from './virustotal-fixture.mjs';
 
 function mockClient(handler) {
@@ -214,4 +214,65 @@ test('missing API key produces a failed report and a nonzero exit without upload
   assert.equal(report.status, 'error');
   assert.match(report.error, /Missing VIRUSTOTAL_API_KEY/);
   assert.match(await readFile(path.join(output, 'VIRUSTOTAL-REPORT.md'), 'utf8'), /Status: \*\*error\*\*/);
+});
+
+test('validateVerdicts allows isolated false positives when clean engine count is high', () => {
+  const makeVerdicts = (clean, malicious = 0, suspicious = 0) => {
+    const stats = { harmless: 0, undetected: clean, malicious, suspicious, failure: 0, timeout: 0, 'confirmed-timeout': 0, 'type-unsupported': 0 };
+    const results = {};
+    for (let i = 0; i < clean; i++) results[`clean_${i}`] = { category: 'undetected', engine_name: `Clean Engine ${i}` };
+    for (let i = 0; i < malicious; i++) results[`mal_${i}`] = { category: 'malicious', engine_name: `Malicious Engine ${i}`, result: 'Trojan.Test' };
+    for (let i = 0; i < suspicious; i++) results[`susp_${i}`] = { category: 'suspicious', engine_name: `Suspicious Engine ${i}`, result: 'Suspicious.Test' };
+    return { stats, results };
+  };
+
+  // 100% clean passes
+  const clean = makeVerdicts(50);
+  assert.equal(validateVerdicts(clean.stats, clean.results), true);
+
+  // 1 false positive out of 50 clean engines passes with default tolerance (1)
+  const singleFp = makeVerdicts(50, 1, 0);
+  assert.equal(validateVerdicts(singleFp.stats, singleFp.results), true);
+
+  // 1 false positive rejected when maxAllowedDetections is 0
+  assert.equal(validateVerdicts(singleFp.stats, singleFp.results, { maxAllowedDetections: 0 }), false);
+
+  // 2 detections rejected even with default tolerance
+  const doubleFp = makeVerdicts(50, 2, 0);
+  assert.equal(validateVerdicts(doubleFp.stats, doubleFp.results), false);
+
+  // 1 detection with fewer than 40 clean engines is rejected
+  const fewEngines = makeVerdicts(20, 1, 0);
+  assert.equal(validateVerdicts(fewEngines.stats, fewEngines.results), false);
+});
+
+test('isolated heuristic false positive passes scanReleaseAssets and is recorded in the report', async t => {
+  const fixture = await payloadFixture(t);
+  const cleanCount = 60;
+  const stats = { harmless: 0, undetected: cleanCount, malicious: 1, suspicious: 0, failure: 0, timeout: 0, 'confirmed-timeout': 0, 'type-unsupported': 0 };
+  const results = {};
+  for (let i = 0; i < cleanCount; i++) results[`clean_engine_${i}`] = { category: 'undetected', engine_name: `Engine ${i}`, result: null };
+  results['deepinstinct'] = { category: 'malicious', engine_name: 'DeepInstinct', result: 'MALICIOUS' };
+
+  const { client } = mockClient(async (url, options) => {
+    if (options.method === 'POST') return json({ data: { type: 'analysis', id: 'analysis-id' } });
+    if (url.includes('/analyses/')) {
+      return json({ data: { type: 'analysis', id: 'analysis-id', attributes: {
+        status: 'completed', date: 1767225600, stats, results,
+      } } });
+    }
+    return json({ data: { type: 'file', id: fixture.sha256,
+      attributes: { size: fixture.assets[0].size, last_analysis_date: 1767225600,
+        last_analysis_stats: stats, last_analysis_results: results } } });
+  });
+
+  const report = releaseReport(fixture.assets, 'v1.0.0', 'a'.repeat(40));
+  const messages = [];
+  await scanReleaseAssets(client, fixture.dir, fixture.assets, report, { progress: msg => messages.push(msg) });
+  assert.equal(report.status, 'passed');
+  assert.ok(messages.some(msg => msg.includes('no actionable detections') && msg.includes('tolerated heuristic flag: DeepInstinct: MALICIOUS')));
+
+  const markdown = renderVirusTotalReport(report);
+  assert.match(markdown, /Detections and engine details/);
+  assert.match(markdown, /DeepInstinct.*MALICIOUS/);
 });

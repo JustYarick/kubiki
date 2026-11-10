@@ -193,6 +193,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const effectiveKind = definition?.key ?? kind;
         const id = `tab-list-${effectiveKind}`;
         const existing = tabs.find((t) => t.id === id || (t.type === 'resource-list' && t.kind === effectiveKind));
+        const store = useResourceStore.getState();
+        if (store.selectedItem && store.selectedItem.kind !== effectiveKind) {
+          store.selectItem(null);
+        }
 
         if (existing) {
           get().setActiveTab(existing.id);
