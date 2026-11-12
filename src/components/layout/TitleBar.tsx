@@ -246,14 +246,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
       <div className="titlebar-search flex-1 flex justify-center min-w-0 px-4">
         <button
           onClick={() => setPaletteOpen(true)}
-          className="group flex items-center gap-2 h-[calc(26px*var(--ui-factor))] w-[calc(380px*var(--ui-factor))] max-w-full px-2.5 rounded-[calc(5px*var(--ui-factor))] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors shadow-xs"
+          className="group flex items-center gap-2 h-[var(--control-h-md)] w-[calc(380px*var(--ui-factor))] max-w-full px-2.5 rounded-[var(--radius-sm)] bg-[var(--bg-canvas)] border border-[var(--border-default)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors shadow-xs"
           title={shortcutLabel("Search Everywhere (⌘K)")}
         >
           <Command size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />
-          <span className="text-xs flex-1 text-left truncate">
+          <span className="text-[length:var(--font-size-sm)] flex-1 text-left truncate">
             Search resources, YAML, actions…
           </span>
-          <kbd className="text-[length:calc(10px*var(--ui-factor))] font-mono border border-[var(--border-default)] rounded px-1.5 py-0.5 bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-2xs">
+          <kbd className="text-[length:var(--font-size-2xs)] font-mono border border-[var(--border-default)] rounded-[var(--radius-xs)] px-1.5 py-0.5 bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-2xs">
             {shortcutLabel('⌘K')}
           </kbd>
         </button>
@@ -266,7 +266,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
           <button
             onClick={handleRefresh}
             className={cx(
-              'app-titlebar-sync flex items-center gap-1 h-[calc(25px*var(--ui-factor))] px-2 rounded-[calc(4px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] transition-colors',
+              'app-titlebar-sync flex items-center gap-1 h-[var(--control-h-md)] px-2 rounded-[var(--radius-sm)] text-[length:var(--font-size-sm)] transition-colors',
               'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
             )}
             aria-label="Refresh"

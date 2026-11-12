@@ -23,8 +23,8 @@ const variantCls: Record<Variant, string> = {
 };
 
 const sizeCls: Record<Size, string> = {
-  sm: 'h-[calc(22px*var(--ui-factor))] px-2 text-[length:calc(11px*var(--ui-factor))] gap-1.5 rounded-[calc(4px*var(--ui-factor))]',
-  md: 'h-[calc(26px*var(--ui-factor))] px-2.5 text-xs gap-1.5 rounded-[calc(4px*var(--ui-factor))]',
+  sm: 'h-[var(--control-h-sm)] px-2 text-[length:var(--font-size-xs)] gap-1.5 rounded-[var(--radius-sm)]',
+  md: 'h-[var(--control-h-md)] px-2.5 text-[length:var(--font-size-sm)] gap-1.5 rounded-[var(--radius-sm)]',
 };
 
 export const Button = React.forwardRef<
@@ -92,8 +92,8 @@ export function Tooltip({
         <span
           role="tooltip"
           className={cx(
-            'pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)]',
-            'bg-[var(--bg-overlay)] px-2 py-1 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-primary)] shadow-[var(--shadow-popup)] z-[80]',
+            'pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[var(--radius-sm)] border border-[var(--border-default)]',
+            'bg-[var(--bg-overlay)] px-2 py-1 text-[length:var(--font-size-xs)] text-[var(--text-primary)] shadow-[var(--shadow-popup)] z-[80]',
             side === 'bottom' ? 'top-[calc(100%+calc(6px*var(--ui-factor)))]' : 'bottom-[calc(100%+calc(6px*var(--ui-factor)))]'
           )}
         >

@@ -355,6 +355,24 @@ pub async fn start_opencode(
             process_started: false,
         })
 }
+fn opencode_overlay(
+    phase: AgentPhase,
+    plan_permissions: Vec<serde_json::Value>,
+    executable: &std::path::Path,
+    bootstrap: &std::path::Path,
+) -> serde_json::Value {
+    let default_agent = match phase {
+        AgentPhase::Plan => "plan",
+        AgentPhase::Action => "build",
+    };
+    serde_json::json!({
+        "default_agent": default_agent,
+        "agents":{"plan":{"permissions":plan_permissions}},
+        "instructions":[".kubiki-instructions.md"],
+        "mcp":{"servers":{"kubiki":{"type":"local","command":[executable,"--kubiki-mcp-attach",bootstrap],"codemode":true}}}
+    })
+}
+
 async fn start_opencode_inner(
     session_id: String,
     request: StartRequest,
@@ -464,12 +482,7 @@ async fn start_opencode_inner(
                 plan_permissions.push(serde_json::json!({"action":format!("kubiki_{}",tool.name),"resource":"*","effect":"deny"}));
             }
         }
-        let overlay = serde_json::json!({
-            "default_agent":"plan",
-            "agents":{"plan":{"permissions":plan_permissions}},
-            "instructions":[".kubiki-instructions.md"],
-            "mcp":{"servers":{"kubiki":{"type":"local","command":[executable,"--kubiki-mcp-attach",endpoint.bootstrap],"codemode":true}}}
-        });
+        let overlay = opencode_overlay(settings.mcp_phase, plan_permissions, &executable, &endpoint.bootstrap);
         let config_path = cwd.join("opencode.json");
         let marker = cwd.join(".kubiki-workspace");
         if config_path.exists() && !marker.is_file() {
@@ -656,6 +669,20 @@ mod tests {
                 assert!(args[1].starts_with("mcp_servers.kubiki={command="));
                 assert!(args[1].contains("--kubiki-mcp-attach"));
             }
+        }
+        let opencode_args =
+            external_arguments(AgentRuntime::OpenCode, path, bootstrap, Some(prompt)).unwrap();
+        assert_eq!(
+            opencode_args,
+            vec!["--standalone", "--prompt", prompt]
+        );
+    }
+    #[test]
+    fn opencode_default_agent_defaults_to_plan_unless_action_configured() {
+        for (phase, expected) in [(AgentPhase::Plan, "plan"), (AgentPhase::Action, "build")] {
+            let overlay = opencode_overlay(phase, vec![], std::path::Path::new("kubiki"), std::path::Path::new("bootstrap"));
+            assert_eq!(overlay["default_agent"], expected);
+            assert_eq!(overlay["mcp"]["servers"]["kubiki"]["command"][2], "bootstrap");
         }
     }
     #[test]

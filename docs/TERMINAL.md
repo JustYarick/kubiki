@@ -23,8 +23,7 @@ frame; hidden panes never reduce the PTY to a tiny placeholder size.
 Unicode 11 widths are enabled before parsing output. WebGL draws custom box,
 block and Powerline glyphs, keeping TUI borders continuous with line spacing.
 When WebGL2 is unavailable or its context is lost, the same buffer and connection
-continue through the DOM renderer. Linux WebKitGTK uses DOM directly: the native
-NVIDIA/Wayland probe accepted WebGL2 but presented a blank canvas. No global
+continue through the DOM renderer. Linux WebKitGTK uses DOM directly. No global
 application graphics override is introduced.
 
 In DOM rendering, alternate-screen TUIs use line height 1.0 so font box/block glyphs
@@ -60,20 +59,3 @@ queries, resizing, appearance changes without reconnecting, and retained logs.
 Core tests cover real host PTYs and removal of inherited terminal capabilities.
 The opt-in `terminal_smoke` example checks remote TTY resize, advertised capabilities,
 stdin/stdout and exit against an explicitly selected disposable Pod.
-
-On 2026-11-02 the installed OpenCode 2.0.27 was also launched in a real local PTY
-and rendered in Chromium using the shared view, including a smaller viewport.
-The same real PTY was rendered in native WebKitGTK 2.54.1; after selecting DOM,
-its screen bounds fit and compositor capture confirmed visible output. The probe
-used the existing NVIDIA explicit-sync workaround, as the application does.
-No prompt or paid model request was sent. Remote smoke passed in testbed using
-an isolated namespace; that namespace was deleted. OS-specific native window/DPI
-behavior remains separate from browser renderer checks.
-
-Final validation: `pnpm typecheck`, 575 unit tests, 118 browser tests, 127 core
-Rust tests, 34 native tests (one existing live probe ignored), native `--all-targets`
-and the frontend build. The standalone Playwright WebKit distribution
-could not launch because host ICU/XML/Flite/GStreamer dependencies are missing;
-its launch failures are not behavioral test results. System WebKitGTK was checked
-separately as described above. Windows/macOS native rendering was not exercised.
-Local screenshots and probe logs live under `/tmp/kubiki-terminal-review/`.

@@ -1,5 +1,10 @@
 # 007: Переносимый модуль инструментов кластера и OpenCode внутри Kubiki
 
+> Implementation update: portable tools, embedded MCP, attached external CLIs and
+> standalone stdio serve exist. This record preserves the extraction design and
+> migration sequence. Current commands and boundaries: [AI agent](../AI_AGENT.md).
+> Model-facing structured plans are superseded by [ADR-010](010-conversational-markdown-plans.md).
+
 Дата: 2026-11-01. Статус: **принято; реализация и проверки выполняются**.
 Владелец: сопровождающие Kubiki core/desktop; отдельная сервисная команда не нужна.
 Уточняет [ADR-002](002-integrated-ai-agent.md), [ADR-003](003-shared-kubernetes-access-and-ai-phases.md)
@@ -393,7 +398,6 @@ legacy environment сохраняется инертным для миграци
 После release review исправлены изоляция отмены MCP-запросов, сохранение принятых
 UID/generation между вызовами, Stop во время startup и безопасный retry исходного
 задания. Conversation state и provider types возвращены в AI runtime. Проверки
-MCP на testbed прошли, включая замену ресурса и конкурентную смену generation;
-результаты описаны в [отчёте исправлений](../reviews/2026-11-02-review-fixes.md).
+MCP покрывают замену ресурса и конкурентную смену generation.
 Host permissions с live-моделью и Windows native transport остаются отдельными
 проверками перед объявлением полной совместимости.

@@ -38,29 +38,6 @@ pub fn tool_definitions(
             }),
             &["question", "options"],
         ),
-        tool(
-            "get_plan",
-            "Retrieve an exact session plan version. A proposal is not authorization or live evidence.",
-            json!({"planId":{"type":"string","maxLength":64},"version":{"type":"integer","minimum":1}}),
-            &["planId", "version"],
-        ),
-        tool(
-            "propose_plan",
-            "Create or revise a structured plan for review, with diagnosis, uncertainty, evidence and ordered steps. Does not execute changes.",
-            json!({
-                "kind":{"type":"string","enum":["remediation","investigation","deployment"]},
-                "diagnosis":{"type":"string","minLength":1,"maxLength":4000},
-                "uncertainty":{"type":"string","maxLength":2000},
-                "steps":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","properties":{"id":{"type":"string","maxLength":64},"title":{"type":"string","maxLength":200},"action":{"type":"string","enum":["inspect","manual","scale","restart","apply","delete"]},"target":{"type":["object","null"],"properties":target.clone(),"required":["group","version","kind","namespace","name"],"additionalProperties":false},"expectedUid":{"type":["string","null"]},"replicas":{"type":["integer","null"],"minimum":0,"maximum":10000},"yaml":{"type":["string","null"],"maxLength":24000},"reason":{"type":"string","maxLength":1000},"verification":{"type":"string","maxLength":1000},"risk":{"type":"string","maxLength":1000},"dependsOn":{"type":"array","maxItems":16,"items":{"type":"string"},"description":"Prerequisites that must be verified before this step."},"dependsOnAccepted":{"type":"array","maxItems":16,"items":{"type":"string"},"description":"Explicit API-acceptance-only dependencies, e.g. a WaitForFirstConsumer PVC. Readiness remains pending; explain this in the risk and verify after the consumer is created."}},"required":["id","title","action","reason","verification","risk"],"additionalProperties":false}},
-                "planId": {"type":"string","maxLength":64,"description":"Omit for new plan; otherwise create its next version."},
-                "title": {"type": "string", "maxLength": 200, "description": "Plan title"},
-                "bodyMarkdown": {"type": "string", "maxLength": 24000, "description": "Complete plan content in GitHub Flavored Markdown"},
-                "targetScope": {"type": "string", "maxLength": 256, "description": "Target cluster, namespace, or workload scope"},
-                "evidenceIds": {"type": "array", "items": {"type": "string"}, "maxItems": 16, "description": "Supporting evidence IDs"},
-                "proposedActions": {"type": "array", "items": {"type": "string"}, "maxItems": 16, "description": "Action summary"}
-            }),
-            &["title", "bodyMarkdown", "diagnosis", "uncertainty", "steps"],
-        ),
     ];
     if policy.resources {
         let mut verification_target = target.clone();

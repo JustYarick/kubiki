@@ -11,6 +11,21 @@ pub const SYSTEM_PROMPT: &str = r#"You are an expert Kubernetes SRE and software
 Answer in the user's language. Be direct, concise, and technically rigorous.
 Communicate like an experienced principal engineer: plain words first, exact field/image/config/command second. Explain findings directly without unnecessary conversational filler.
 
+FORMATTING & RICH MARKDOWN
+- Use rich GitHub Flavored Markdown and inline HTML to structure your responses cleanly.
+- Highlight important items and callouts using GitHub-style blockquotes:
+  * `> [!NOTE]` for background notes or explanations
+  * `> [!TIP]` for performance tips or best practices
+  * `> [!IMPORTANT]` for essential requirements or crucial findings
+  * `> [!WARNING]` for warnings, issues, or risks
+  * `> [!CAUTION]` for dangerous, destructive, or breaking actions
+- Use inline colored text and badges where helpful:
+  * Green / OK: `<span style="color: #34d399">healthy</span>`
+  * Red / Error: `<span style="color: #f87171">failed</span>`
+  * Yellow / Warn: `<span style="color: #fbbf24">warning</span>`
+  * Blue / Info: `<span style="color: #60a5fa">running</span>`
+- Use tables for comparative data, metrics or matrices; task lists (`- [x]`, `- [ ]`) for checklists; diff blocks (```diff) for manifest changes.
+
 WHAT A RESULT PROVES (EVIDENCE DISCIPLINE)
 - Exactly what it shows: one termination state describes one restart, not all of them.
 - An empty change window is that window, not all history.
@@ -32,9 +47,21 @@ INVESTIGATION METHOD
 - Follow ownerReferences by exact GVK/name and UID; never guess Deployment from a Pod name. Read dependencies before querying their targets.
 
 PHASES & ACTIONS
-- Plan phase: read-only investigation, diagnosis, and answering questions directly. You do not need to call propose_plan unless the user explicitly requests a structured remediation plan or deployment plan.
-- Action phase: only backend-authorized writes. When asked to change something, invoke the appropriate mutation tool (apply_manifest, scale_workload, restart_workload, delete_resource); in Ask mode, this opens interactive review. Use propose_manifests for drafts and previews.
-- After a write receipt, verify fresh controller status via verify_workload or get_resource; API acceptance is not completion. Stop on failed, declined, or uncertain changes. Never retry an ambiguous write without verification.
+- Plan phase: read-only investigation, diagnosis, and planning directly in the conversation. Use read tools to gather evidence. Do not execute or attempt write operations or cluster changes in Plan phase.
+  * When findings require changes or follow-up checks, formulate a clear, structured remediation plan directly in Markdown in your response:
+    ### Diagnosis
+    (Root cause proven by collected evidence)
+    ### Uncertainty
+    (Any gaps or unverified assumptions)
+    ### Remediation Plan
+    (Ordered numbered steps: exact resource GVK/namespace/name, action, risk, and verification)
+  * Present the plan directly to the user in your conversational response. Do not use a separate tool for declaring plans.
+  * Discuss the plan with the user directly. When the user asks for corrections or adjustments, refine the Markdown plan directly in your response.
+  * If the user instructs to execute while in Plan phase (e.g. "делай", "apply"), remind them to switch to Action phase.
+- Action phase: executing authorized changes. You have access to offered mutation tools (apply_manifest, scale_workload, restart_workload, delete_resource).
+  * When the user approves the plan or instructs to execute (e.g. "делай", "apply"), execute the steps sequentially using the offered mutation tools.
+  * In Ask mode, calling a mutation tool automatically presents an interactive review card to the user for approval.
+  * After each mutation receipt, immediately verify controller status using verify_workload or get_resource. Stop on failed, declined, or uncertain changes.
 - Use Helm/GitOps tools when relevant and offered; inspection does not authorize reconciliation writes."#;
 
 fn attach_evidence(session: &Session, revision: u64, call: &ToolCall, result: &mut Value) {
@@ -51,39 +78,14 @@ fn attach_evidence(session: &Session, revision: u64, call: &ToolCall, result: &m
     }
 }
 
-/// Only plans proposed in this run need reconciliation with later live reads.
-#[derive(Default)]
-struct PlanFreshness {
-    plan_id: Option<String>,
-    evidence_after_plan: bool,
-    correction_requested: bool,
-}
-impl PlanFreshness {
-    fn observe(&mut self, call: &ToolCall, result: &Value) {
-        if call.name == "propose_plan" {
-            if let Some(id) = result.pointer("/planArtifact/id").and_then(Value::as_str) {
-                self.plan_id = Some(id.into());
-                self.evidence_after_plan = false;
-            }
-        } else if self.plan_id.is_some()
-            && parallel_read_tool(&call.name)
-            && call.name != "get_evidence"
-            && result.get("evidenceId").is_some()
-            && result.get("error").is_none_or(Value::is_null)
-        {
-            self.evidence_after_plan = true;
-        }
-    }
-
-    fn correction(&mut self) -> Option<String> {
-        if !self.evidence_after_plan || self.correction_requested {
-            return None;
-        }
-        self.correction_requested = true;
-        Some(format!(
-            "Fresh permitted evidence was collected after plan {} was proposed in this turn. Reconcile the plan with that evidence before finishing: if the diagnosis or steps changed, call propose_plan with this planId to create an updated version; otherwise explicitly explain why the existing plan remains valid. This is the single plan reconciliation pass and does not authorize any writes.",
-            self.plan_id.as_deref()?
-        ))
+fn unoffered_tool_error(name: &str, phase: impl std::fmt::Debug, mode: impl std::fmt::Debug) -> String {
+    let writes = ["apply_manifest", "scale_workload", "restart_workload", "delete_resource"];
+    if writes.contains(&name) {
+        format!("{name} is not available (phase {phase:?}, mode {mode:?}): the current phase or the user's permissions do not allow this operation. Nothing was executed. Tell the user which permission is required, or offer an allowed alternative; do not claim the change was made.")
+    } else if name == "propose_plan" || name == "get_plan" {
+        "A separate tool for plans is not offered. Formulate your diagnosis, uncertainty, and remediation plan directly in Markdown in your conversational response.".into()
+    } else {
+        format!("{name} is not an offered tool in this conversation. Nothing was executed. Use only the offered tools.")
     }
 }
 async fn execute_read_batch(
@@ -204,7 +206,6 @@ pub async fn run(
     let approval_before_run = session.approval_wait();
     let outcome = async {
         let mut count = 0;
-        let mut plan_freshness = PlanFreshness::default();
         loop {
             let working = session.working_scope.lock().map_err(|_| "Working scope unavailable")?.clone();
             let working_str = if working.namespace.is_some() || working.root.is_some() || working.label_selector.is_some() {
@@ -249,16 +250,22 @@ pub async fn run(
             emit(AgentEvent::Usage { input_tokens: completion.input_tokens, output_tokens: completion.output_tokens });
             let calls = completion.calls.clone();
             let blocked: std::collections::HashMap<_,_> = calls.iter().filter_map(|call| crate::read_progress::repeated_failure(&history, call).map(|result| (call.id.clone(),result))).collect();
-            if calls.iter().any(|call| !definitions.iter().any(|tool| tool.name == call.name)) {
-                return Err("The model requested a tool that was not offered to this conversation".into());
-            }
             if count + calls.len() > 20 {return Err("AI run reached its 20-tool budget before dispatch".into());}
             history.push(Turn::Assistant(completion));
+            // A tool outside this phase/policy is never dispatched. Report it to the model
+            // instead of aborting, so it can explain the missing permission or switch approach.
+            let (calls, unoffered): (Vec<_>, Vec<_>) = calls.into_iter().partition(|call| definitions.iter().any(|tool| tool.name == call.name));
+            for call in unoffered {
+                count += 1;
+                let result = json!({"executed":false,"error":unoffered_tool_error(&call.name, state.phase, state.mode)});
+                emit(AgentEvent::ToolStarted { call: call.clone() });
+                emit(AgentEvent::ToolCompleted { id: call.id.clone(), result: result.clone() });
+                history.push(Turn::Tool { call, result });
+            }
+            if calls.is_empty() && history.last().is_some_and(|turn| matches!(turn, Turn::Tool { .. })) {
+                continue;
+            }
             if calls.is_empty() {
-                if let Some(correction) = plan_freshness.correction() {
-                    history.push(Turn::User(correction));
-                    continue;
-                }
                 return Ok(());
             }
             if calls.iter().any(|c| c.name == "ask_user") {
@@ -295,7 +302,6 @@ pub async fn run(
                     results = execute_read_batch(host.as_ref(), &session, calls, &emit) => results,
                 };
                 for (call, result) in results {
-                    plan_freshness.observe(&call, &result);
                     history.push(Turn::Tool { call, result });
                 }
                 continue;
@@ -315,7 +321,6 @@ pub async fn run(
                 };
                 let mut value = value;
                 attach_evidence(&session, expected_revision, &call, &mut value);
-                plan_freshness.observe(&call, &value);
                 emit(AgentEvent::ToolCompleted { id: call.id.clone(), result: value.clone() });
                 let error_text = value.get("error").and_then(Value::as_str).unwrap_or("");
                 let recoverable_validation_error = host.requires_action(&call.name)
@@ -333,8 +338,7 @@ pub async fn run(
                     && (value.get("error").is_some_and(|error| !error.is_null())
                         || value["isError"] == true
                         || matches!(value["status"].as_str(), Some("failed" | "uncertain" | "cancelled")));
-                let model_result=if call.name=="propose_plan" && value.get("planArtifact").is_some() {let plan=&value["planArtifact"];json!({"planId":plan["id"],"version":plan["version"],"kind":plan["kind"],"status":plan["status"],"stepIds":plan["steps"].as_array().map(|s|s.iter().map(|s|s["id"].clone()).collect::<Vec<_>>()),"evidenceIds":plan["evidenceIds"],"executed":false,"lookup":"Use get_plan only when the full prior proposal is needed"})} else {value};
-                history.push(Turn::Tool { call, result: model_result });
+                history.push(Turn::Tool { call, result: value });
                 if recoverable_validation_error {
                     for skipped in calls_iter {
                         let skipped_result = json!({"executed":false,"deferred":true,"error":"Skipped because an earlier write in the same batch failed pre-dispatch manifest validation; fix the manifest and retry"});

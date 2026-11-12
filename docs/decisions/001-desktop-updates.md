@@ -1,5 +1,9 @@
 # 001: Signed stable updates inside the desktop application
 
+> Implementation update: stable and dev update channels are supported. The original
+> stable-only scope below records the initial decision; current channel behavior and
+> recovery are defined in [Application updates](../APP_UPDATES.md).
+
 Status: accepted. Owner: Kubiki desktop/release maintainers.
 
 ## Context

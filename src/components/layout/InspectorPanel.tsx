@@ -103,10 +103,12 @@ function RelatedRow({
   entry,
   onNavigate,
   nested = false,
+  isCompact = false,
 }: {
   entry: RelatedItemEntry;
   onNavigate: (item: ResourceItem) => void;
   nested?: boolean;
+  isCompact?: boolean;
 }) {
   const target = entry.target;
   return (
@@ -115,27 +117,29 @@ function RelatedRow({
       type="button"
       disabled={!target}
       onClick={() => target && onNavigate(target)}
+      title={`${entry.kind}/${entry.name} (${entry.label})`}
       className={cx(
-        'w-full flex items-center gap-2 py-2 border-b border-[var(--border-subtle)] text-left hover:bg-[var(--bg-hover)] disabled:opacity-60 transition-colors cursor-pointer disabled:cursor-not-allowed',
-        nested ? 'pl-6 pr-2 bg-[var(--bg-canvas)]/30' : 'px-2'
+        'w-full flex items-center gap-1.5 border-b border-[var(--border-subtle)] last:border-b-0 text-left hover:bg-[var(--bg-hover)] disabled:opacity-60 transition-colors cursor-pointer disabled:cursor-not-allowed select-none group',
+        isCompact ? 'py-1 min-h-[var(--row-h-compact)]' : 'py-1.5 min-h-[var(--row-h-md)]',
+        nested ? 'pl-6 pr-2.5' : 'px-2.5'
       )}
     >
       {entry.outgoing ? (
-        <ArrowRight size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+        <ArrowRight size="calc(11px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors" />
       ) : (
-        <ArrowLeft size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+        <ArrowLeft size="calc(11px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors" />
       )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start gap-2 text-xs font-mono break-all">
-          {target && <ResourceWarnings item={target} />}
-          <span>{entry.name}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)]">
-          <ResourceKindBadge kind={entry.kind} apiVersion={target?.apiVersion} />
-          <span>{entry.namespace ?? 'cluster'}{!target && ' · not loaded'}</span>
-        </div>
+      <ResourceKindBadge kind={entry.kind} apiVersion={target?.apiVersion} />
+      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        {target && <ResourceWarnings item={target} />}
+        <span className="font-mono text-[length:var(--font-size-sm)] text-[var(--text-primary)] truncate group-hover:text-[var(--accent)] transition-colors" title={entry.name}>
+          {entry.name}
+        </span>
+        <span className="text-[length:var(--font-size-2xs)] text-[var(--text-muted)] truncate shrink-0">
+          {entry.namespace ?? 'cluster'}{!target && ' · not loaded'}
+        </span>
       </div>
-      <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-secondary)] font-medium shrink-0">
+      <span className="text-[length:var(--font-size-2xs)] text-[var(--text-muted)] font-mono shrink-0">
         {entry.label}
       </span>
     </button>
@@ -152,6 +156,8 @@ function KubernetesResourceDetails({
 }: ResourceDetailsProps) {
   const [pfOpen, setPfOpen] = useState(false);
   const inspectorTab = useUiStore((s) => s.rightTab);
+  const density = useUiStore((s) => s.density);
+  const isCompact = density === 'compact';
   const [localTab, setLocalTab] = useState<RightTab>('overview');
   const rightTab = inspector ? inspectorTab : localTab;
   const helm = useHelmGraph(item?.namespace, rightTab === 'related');
@@ -506,10 +512,14 @@ function KubernetesResourceDetails({
           <div className="details-scroll details-body">
             <NamespaceScopeNotice namespace={item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined)} />
             {helm.error && <p className="text-xs text-[var(--status-warn)] mb-2">Helm relationships unavailable: {helm.error}</p>}
-            <Card title="Resource relationships">
-              <p className="text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)] mb-2">
-                Resolved from owner references, selectors and explicit API references. Unloaded targets may require additional permissions.
-              </p>
+            <Card
+              title="Resource relationships"
+              headerRight={
+                <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono font-normal">
+                  {filteredRelated.length} matching · {resolvedRelated.length} relationships
+                </span>
+              }
+            >
               <SearchInput
                 value={relatedQuery}
                 onChange={(value) => {
@@ -519,69 +529,77 @@ function KubernetesResourceDetails({
                 placeholder="Filter related resources…"
                 className="mb-2 w-full"
               />
-              <div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mb-2">
-                {filteredRelated.length} matching · {resolvedRelated.length} relationships
-              </div>
               {(helm.loading || relatedLoading) && !resolvedRelated.length && <ResourceLoading label="Loading resource relationships…" />}
               {relatedError && <p role="alert" className="text-xs text-[var(--status-danger)]">{relatedError}</p>}
-              {!helm.loading && !relatedLoading && !relatedError && !resolvedRelated.length && <p className="text-[var(--text-secondary)] text-xs">No relationships found in loaded resources.</p>}
-              {groupedRelated.map((group) => {
-                const relatedLimit = relatedLimits[group.kind] ?? 50;
-                if (group.items.length === 1) {
-                  return (
-                    <RelatedRow
-                      key={group.items[0].id}
-                      entry={group.items[0]}
-                      onNavigate={navigate}
-                    />
-                  );
-                }
-                const isExpanded = expandedKinds.has(group.kind) || relatedQuery.trim().length > 0;
-                return (
-                  <React.Fragment key={group.kind}>
-                    <button
-                      type="button"
-                      aria-expanded={isExpanded}
-                      onClick={() => toggleKindGroup(group.kind)}
-                      className="w-full flex items-center gap-2 px-2 py-2 border-b border-[var(--border-subtle)] text-left hover:bg-[var(--bg-hover)] transition-colors select-none cursor-pointer"
-                    >
-                      {isExpanded ? (
-                        <ChevronDown size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
-                      ) : (
-                        <ChevronRight size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
-                      )}
-                      <div className="flex-1 min-w-0 flex items-center gap-2">
-                        <ResourceKindBadge kind={group.kind} />
-                        <span className="text-xs font-medium text-[var(--text-primary)]">
-                          {group.kind}s
-                        </span>
-                        <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] font-mono">
-                          ({group.items.length})
-                        </span>
-                      </div>
-                      <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] shrink-0 font-mono">
-                        {isExpanded ? 'collapse' : 'expand'}
-                      </span>
-                    </button>
-                    {isExpanded &&
-                      group.items.slice(0, relatedLimit).map((entry) => (
+              {!helm.loading && !relatedLoading && !relatedError && !resolvedRelated.length && <p className="text-[var(--text-secondary)] text-xs py-2">No relationships found in loaded resources.</p>}
+              {groupedRelated.length > 0 && (
+                <div className="rounded border border-[var(--border-subtle)] overflow-hidden bg-[var(--bg-canvas)]/30">
+                  {groupedRelated.map((group) => {
+                    const relatedLimit = relatedLimits[group.kind] ?? 50;
+                    if (group.items.length === 1) {
+                      return (
                         <RelatedRow
-                          key={entry.id}
-                          entry={entry}
+                          key={group.items[0].id}
+                          entry={group.items[0]}
                           onNavigate={navigate}
-                          nested
+                          isCompact={isCompact}
                         />
-                      ))}
-                    {isExpanded && group.items.length > relatedLimit && (
-                      <Button size="sm" className="my-2 ml-6" onClick={() => setRelatedLimits(limits => ({ ...limits, [group.kind]: relatedLimit + 50 }))}>
-                        Show next 50
-                      </Button>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+                      );
+                    }
+                    const isExpanded = expandedKinds.has(group.kind) || relatedQuery.trim().length > 0;
+                    return (
+                      <React.Fragment key={group.kind}>
+                        <button
+                          type="button"
+                          aria-expanded={isExpanded}
+                          onClick={() => toggleKindGroup(group.kind)}
+                          className={cx(
+                            "w-full flex items-center gap-1.5 px-2.5 border-b border-[var(--border-subtle)] last:border-b-0 text-left hover:bg-[var(--bg-hover)] transition-colors select-none cursor-pointer",
+                            isCompact ? "py-1 min-h-[var(--row-h-compact)]" : "py-1.5 min-h-[var(--row-h-md)]"
+                          )}
+                        >
+                          {isExpanded ? (
+                            <ChevronDown size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+                          ) : (
+                            <ChevronRight size="calc(12px * var(--ui-factor))" className="shrink-0 text-[var(--text-muted)]" />
+                          )}
+                          <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                            <ResourceKindBadge kind={group.kind} />
+                            <span className="text-[length:var(--font-size-sm)] font-medium text-[var(--text-primary)]">
+                              {group.kind}s
+                            </span>
+                            <span className="text-[length:var(--font-size-xs)] text-[var(--text-muted)] font-mono">
+                              ({group.items.length})
+                            </span>
+                          </div>
+                          <span className="text-[length:var(--font-size-2xs)] text-[var(--text-muted)] shrink-0 font-mono">
+                            {isExpanded ? 'collapse' : 'expand'}
+                          </span>
+                        </button>
+                        {isExpanded &&
+                          group.items.slice(0, relatedLimit).map((entry) => (
+                            <RelatedRow
+                              key={entry.id}
+                              entry={entry}
+                              onNavigate={navigate}
+                              nested
+                              isCompact={isCompact}
+                            />
+                          ))}
+                        {isExpanded && group.items.length > relatedLimit && (
+                          <div className="p-1.5 border-b border-[var(--border-subtle)] last:border-b-0">
+                            <Button size="sm" className="ml-5 text-xs" onClick={() => setRelatedLimits(limits => ({ ...limits, [group.kind]: relatedLimit + 50 }))}>
+                              Show next 50
+                            </Button>
+                          </div>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              )}
               {!!resolvedRelated.length && !filteredRelated.length && (
-                <p className="text-xs text-[var(--text-muted)]">No related resources match this filter.</p>
+                <p className="text-xs text-[var(--text-muted)] py-2">No related resources match this filter.</p>
               )}
             </Card>
           </div>
@@ -673,11 +691,12 @@ function ResourceEvents({ item }: { item: ResourceItem }) {
   );
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({ title, headerRight, children }: { title: string; headerRight?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section aria-label={title} className="details-section">
-      <div className="details-section-heading text-[length:calc(11px*var(--ui-factor))] font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)]">
-        {title}
+      <div className="details-section-heading flex items-center justify-between gap-2 text-[length:calc(11px*var(--ui-factor))] font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)]">
+        <span>{title}</span>
+        {headerRight}
       </div>
       <div className="details-section-body">{children}</div>
     </section>

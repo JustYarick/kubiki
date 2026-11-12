@@ -16,7 +16,7 @@ export function ResourceKindBadge({ kind, apiVersion }: { kind: string; apiVersi
       data-resource-kind={kind}
       style={{ color: tone.color, backgroundColor: tone.bg, borderColor: tone.border }}
       className={cx(
-        'inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[length:calc(10px*var(--ui-factor))] font-medium leading-none shrink-0',
+        'inline-flex max-w-full items-center gap-1 rounded-[var(--radius-xs)] border px-1.5 py-0.5 text-[length:var(--font-size-xs)] font-medium leading-none shrink-0',
       )}
       title={kind}
     >

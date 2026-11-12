@@ -1,5 +1,9 @@
 # 002: Integrated Kubernetes agent and execution modes
 
+> Current implementation: [AI agent](../AI_AGENT.md). This record preserves the
+> initial design; later decisions refine it. Model-facing structured plans are
+> superseded by [ADR-010](010-conversational-markdown-plans.md).
+
 Статус: **принято для первого этапа**, с уточнениями реализации ниже.
 Дата: 2026-10-30. Предлагаемый владелец: сопровождающие Kubiki desktop/core.
 Заменяет: —. При пересмотре связать новое ADR с этим документом.

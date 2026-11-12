@@ -37,6 +37,7 @@ test('manual CI publishes by default and invokes the same pipeline as tag releas
 function workflowIf(expression, context) {
   return runInNewContext(expression.trim().replace(/^\$\{\{/, '').replace(/\}\}$/, ''), {
     cancelled: () => false,
+    always: () => true,
     startsWith: (value, prefix) => value.startsWith(prefix),
     ...context,
   }, { timeout: 100 });
@@ -375,4 +376,22 @@ test('a dev release advances its own feed after publication and a failed promoti
     assert.equal(feed.manifest.version, '9876.1.0-dev.10');
     assert.ok(Object.values(feed.manifest.platforms).every(p => p.url.includes('/releases/download/v9876.1.0-dev.10/')));
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+
+test('advisory reports attach only after publication and never gate it', async () => {
+  const jobs = await workflowJobs();
+  const attachment = jobs.attach_antivirus_report;
+  assert.deepEqual(new Set(attachment.needs), new Set(['prepare', 'publish', 'malware_scan']));
+  assert.equal(attachment['continue-on-error'], true);
+  for (const scanResult of ['success', 'failure']) {
+    const needs = { publish: { result: 'success' }, malware_scan: { result: scanResult } };
+    assert.equal(workflowIf(attachment.if, { needs }), true);
+    needs.publish.result = 'failure';
+    assert.equal(workflowIf(attachment.if, { needs }), false);
+  }
+  assert.equal(workflowIf(attachment.if, { needs: {
+    publish: { result: 'success' }, malware_scan: { result: 'skipped' },
+  } }), false);
+  assert.equal(jobs.publish.needs.includes('attach_antivirus_report'), false);
 });

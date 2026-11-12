@@ -193,6 +193,10 @@ export const Sidebar: React.FC = () => {
   const countFor = (kind: string) => countsByKind.get(kind) ?? 0;
 
   const handleSelectKind = (kind: ResourceKind) => {
+    const store = useResourceStore.getState();
+    if (store.selectedItem && store.selectedItem.kind !== kind) {
+      store.selectItem(null);
+    }
     setActiveKind(kind);
     openResourceList(kind);
   };
@@ -252,12 +256,12 @@ export const Sidebar: React.FC = () => {
             onChange={(e) => setFilter(e.target.value)}
             onKeyDown={(e) => e.key === 'Escape' && setFilter('')}
             placeholder="Filter tree (e.g. pods, cm)…"
-            className="w-full h-[calc(24px*var(--ui-factor))] bg-[var(--bg-canvas)] text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] pl-7 pr-6"
+            className="w-full h-[var(--control-h-sm)] bg-[var(--bg-canvas)] text-[length:var(--font-size-sm)] text-[var(--text-primary)] rounded-[var(--radius-sm)] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] pl-7 pr-6"
           />
           {filter && (
             <button
               onClick={() => setFilter('')}
-              className="absolute right-1 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              className="absolute right-1 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] rounded-[var(--radius-xs)]"
             >
               <X size="calc(11px * var(--ui-factor))" />
             </button>
@@ -278,8 +282,8 @@ export const Sidebar: React.FC = () => {
             const kind = cat.directKind;
             const selected = activeKind === kind;
             return <button key={cat.id} data-resource-type={kind} aria-current={selected ? 'page' : undefined} onClick={() => handleSelectKind(kind)} onContextMenu={event => handleContextMenu(event, kind)}
-              className={cx('w-full flex items-center gap-2 pl-[calc(22px*var(--ui-factor))] pr-2 h-[calc(26px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] text-left hover:bg-[var(--bg-hover)]', selected ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)]')}>
-              <CatIcon size="calc(13px * var(--ui-factor))" className="shrink-0" /><span className="flex-1 truncate">{cat.label}</span>{catCount > 0 && <span className="text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)]">{catCount}</span>}
+              className={cx('w-full flex items-center gap-2 pl-[calc(22px*var(--ui-factor))] pr-2 h-[var(--control-h-md)] text-[length:var(--font-size-sm)] text-left hover:bg-[var(--bg-hover)]', selected ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)]')}>
+              <CatIcon size="calc(13px * var(--ui-factor))" className="shrink-0" /><span className="flex-1 truncate">{cat.label}</span>{catCount > 0 && <span className="text-[length:var(--font-size-xs)] font-mono text-[var(--text-muted)]">{catCount}</span>}
             </button>;
           }
           return (
@@ -289,7 +293,7 @@ export const Sidebar: React.FC = () => {
                 aria-expanded={catOpen} aria-controls={`sidebar-category-${cat.id}`}
                 onClick={() => { if (!searching) toggleGroup(cat.id); }}
                 className={cx(
-                  'w-full flex items-center gap-1.5 px-2 h-[calc(24px*var(--ui-factor))] text-[length:calc(11.5px*var(--ui-factor))] font-medium transition-colors',
+                  'w-full flex items-center gap-1.5 px-2 h-[var(--row-h-compact)] text-[length:var(--font-size-sm)] font-medium transition-colors',
                   catOpen ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]',
                   'hover:bg-[var(--bg-hover)]'
                 )}
@@ -298,7 +302,7 @@ export const Sidebar: React.FC = () => {
                 <CatIcon aria-hidden="true" size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--text-secondary)] shrink-0" />
                 <span className="truncate text-left flex-1">{cat.label}</span>
                 {catCount > 0 && (
-                  <span className="text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)] tabular-nums px-1 rounded bg-[var(--bg-canvas)]/50">
+                  <span className="text-[length:var(--font-size-xs)] font-mono text-[var(--text-muted)] tabular-nums px-1 rounded-[var(--radius-xs)] bg-[var(--bg-canvas)]/50">
                     {catCount}
                   </span>
                 )}
@@ -316,20 +320,20 @@ export const Sidebar: React.FC = () => {
                       <button
                         aria-expanded={gOpen} aria-controls={`sidebar-group-${encodeURIComponent(key(cat.id, g.id))}`}
                         onClick={() => { if (!searching) toggleGroup(key(cat.id, g.id)); }}
-                        className="w-full flex items-center gap-1.5 pl-[calc(22px*var(--ui-factor))] pr-2 h-[calc(22px*var(--ui-factor))] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                        className="w-full flex items-center gap-1.5 pl-[calc(22px*var(--ui-factor))] pr-2 h-[var(--control-h-sm)] text-[length:var(--font-size-xs)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
                       >
                         {gOpen
                           ? <ChevronDown size="calc(10px * var(--ui-factor))" className="opacity-50 shrink-0" />
                           : <ChevronRight size="calc(10px * var(--ui-factor))" className="opacity-50 shrink-0" />}
                         <span className="truncate text-left flex-1">{g.label}</span>
                         {!gOpen && gCount > 0 && (
-                          <span className="text-[length:calc(10px*var(--ui-factor))] font-mono text-[var(--text-muted)] tabular-nums">{gCount}</span>
+                          <span className="text-[length:var(--font-size-xs)] font-mono text-[var(--text-muted)] tabular-nums">{gCount}</span>
                         )}
                       </button>
                     )}
 
                     {gOpen && g.placeholder && (
-                      <div className="flex items-center gap-1.5 pl-[calc(34px*var(--ui-factor))] pr-2 h-[calc(22px*var(--ui-factor))] text-[length:calc(11px*var(--ui-factor))] text-[var(--text-disabled)] italic cursor-default">
+                      <div className="flex items-center gap-1.5 pl-[calc(34px*var(--ui-factor))] pr-2 h-[var(--control-h-sm)] text-[length:var(--font-size-xs)] text-[var(--text-disabled)] italic cursor-default">
                         <Lock size="calc(10px * var(--ui-factor))" className="shrink-0" />
                         <span className="truncate">{g.placeholder}</span>
                       </div>

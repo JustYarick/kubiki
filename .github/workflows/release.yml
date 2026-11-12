@@ -319,6 +319,11 @@ jobs:
       - name: Build standalone CLI
         shell: bash
         run: cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "$KUBIKI_BUILD_TARGET"
+      - name: Disable Spotlight indexing on macOS
+        if: runner.os == 'macOS'
+        run: |
+          sudo mdutil -a -i off || true
+          sudo mdutil -d / || true
       - name: Build and verify all installers
         shell: bash
         env:
@@ -425,3 +430,25 @@ jobs:
               tag: process.env.RELEASE_TAG, sha: process.env.SOURCE_SHA,
               dir: `${process.env.GITHUB_WORKSPACE}/release-artifacts`,
             });
+
+  attach_antivirus_report:
+    name: Attach advisory antivirus report
+    continue-on-error: true
+    needs: [prepare, publish, malware_scan]
+    if: >-
+      ${{ always() && needs.publish.result == 'success' &&
+          (needs.malware_scan.result == 'success' || needs.malware_scan.result == 'failure') }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: antivirus-report
+          path: antivirus-report
+      - name: Attach reports to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" antivirus-report/VIRUSTOTAL-REPORT.json antivirus-report/VIRUSTOTAL-REPORT.md --clobber

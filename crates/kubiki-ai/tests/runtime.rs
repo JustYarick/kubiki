@@ -131,7 +131,7 @@ fn sink() -> EventSink {
 #[tokio::test]
 async fn model_cannot_invoke_unoffered_writes_in_read_only() {
     let conversation = ConversationState::default();
-    let (client, _, task) = provider(vec![call("scale_workload")]).await;
+    let (client, requests, task) = provider(vec![call("scale_workload"), final_text()]).await;
     let dispatched = Arc::new(AtomicUsize::new(0));
     let outcome = run(
         session(),
@@ -146,9 +146,11 @@ async fn model_cannot_invoke_unoffered_writes_in_read_only() {
         sink(),
     )
     .await;
-    assert!(outcome.unwrap_err().contains("not offered"));
+    assert!(outcome.is_ok(), "{outcome:?}");
     assert_eq!(dispatched.load(Ordering::SeqCst), 0);
     task.await.unwrap();
+    let requests = requests.lock().unwrap();
+    assert!(requests.last().unwrap().to_string().contains("scale_workload is not available"));
 }
 
 #[tokio::test]
@@ -521,7 +523,7 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     assert!(plan_tool_names.contains(&"get_workload_diagnostics".to_string()));
     assert!(plan_tool_names.contains(&"get_service_diagnostics".to_string()));
     assert!(plan_tool_names.contains(&"get_pvc_diagnostics".to_string()));
-    assert!(plan_tool_names.contains(&"propose_plan".to_string()));
+    assert!(!plan_tool_names.contains(&"propose_plan".to_string()));
     assert!(plan_tool_names.contains(&"get_events_timeline".to_string()));
     assert!(!plan_tool_names.contains(&"apply_manifest".to_string()));
 
@@ -538,7 +540,7 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     assert!(action_tool_names.contains(&"get_workload_diagnostics".to_string()));
     assert!(action_tool_names.contains(&"get_service_diagnostics".to_string()));
     assert!(action_tool_names.contains(&"get_pvc_diagnostics".to_string()));
-    assert!(action_tool_names.contains(&"propose_plan".to_string()));
+    assert!(!action_tool_names.contains(&"propose_plan".to_string()));
     assert!(action_tool_names.contains(&"get_events_timeline".to_string()));
     assert!(!action_tool_names.contains(&"apply_manifest".to_string()));
 }
@@ -851,27 +853,24 @@ impl ToolExecutor for RemediationHost {
         if call.name == "get_resource" {
             return Ok(json!({"resource":{"metadata":{"name":"web"}}}));
         }
-        assert_eq!(call.name, "propose_plan");
-        Ok(
-            json!({"planArtifact":{"id":"plan-tested","kind":"remediation","bodyMarkdown":"do-not-duplicate-plan-body","steps":[{"id":"check","verification":"Observe Ready condition"}]}}),
-        )
+        panic!("Unoffered tool was dispatched: {}", call.name)
     }
 }
 
 #[tokio::test]
-async fn new_evidence_after_a_plan_requests_one_reconciliation_pass() {
+async fn unoffered_plan_tools_are_redirected_to_markdown_without_dispatch() {
     let conversation = ConversationState::default();
     let (client, requests, task) = provider(vec![
-        call("propose_plan"), call("get_resource"), final_text(), final_text(),
+        call("propose_plan"), call("get_resource"), final_text(),
     ]).await;
     run(session(), conversation, 0, client, "model".into(), GenerationOptions::default(),
         String::new(), "Investigate".into(), Arc::new(RemediationHost), sink()).await.unwrap();
     task.await.unwrap();
     let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 3);
     let last = requests.last().unwrap().to_string();
-    assert!(last.contains("plan-tested"));
-    assert!(last.contains("single plan reconciliation pass"));
+    assert!(last.contains("directly in Markdown"));
+    assert!(!last.contains("single plan reconciliation pass"));
 }
 
 #[tokio::test]
@@ -913,7 +912,7 @@ async fn investigate_can_complete_with_direct_answer_without_mandatory_plan() {
 }
 
 #[tokio::test]
-async fn investigate_processes_remediation_plan_when_proposed() {
+async fn investigate_redirects_legacy_plan_calls_to_markdown() {
     let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;
@@ -966,6 +965,8 @@ async fn investigate_allows_tools_without_forcing_propose_plan() {
     task.await.unwrap();
     assert_eq!(requests.lock().unwrap().len(), 2);
 }
+
+
 
 struct EnvironmentHost;
 #[async_trait]

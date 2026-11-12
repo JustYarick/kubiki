@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, readFile, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { REQUEST_INTERVAL_MS, VirusTotalClient, scanReleaseAssets, verifyVirusTotalReport, writeVirusTotalReport } from '../../scripts/virustotal.mjs';
+import { REQUEST_INTERVAL_MS, VirusTotalClient, scanReleaseAssets, verifyVirusTotalReport, writeVirusTotalReport, validateVerdicts, renderVirusTotalReport } from '../../scripts/virustotal.mjs';
 import { clearVerdicts, releaseReport } from './virustotal-fixture.mjs';
 
 function mockClient(handler) {
@@ -143,7 +143,7 @@ test('scan waits for completed verdicts, deduplicates identical bytes and preser
   assert.equal(reports.length, 2);
 });
 
-test('malicious and suspicious verdicts block a release; unsupported-only and empty analyses cannot pass', async t => {
+test('malicious and suspicious verdicts remain detections; unsupported-only and empty analyses cannot pass', async t => {
   const fixture = await payloadFixture(t);
   for (const category of ['malicious', 'suspicious']) {
     const { client } = scanApi(fixture, { category });
@@ -214,4 +214,64 @@ test('missing API key produces a failed report and a nonzero exit without upload
   assert.equal(report.status, 'error');
   assert.match(report.error, /Missing VIRUSTOTAL_API_KEY/);
   assert.match(await readFile(path.join(output, 'VIRUSTOTAL-REPORT.md'), 'utf8'), /Status: \*\*error\*\*/);
+});
+
+test('validateVerdicts preserves detections regardless of the number of other engines', () => {
+  const makeVerdicts = (clean, malicious = 0, suspicious = 0) => {
+    const stats = { harmless: 0, undetected: clean, malicious, suspicious, failure: 0, timeout: 0, 'confirmed-timeout': 0, 'type-unsupported': 0 };
+    const results = {};
+    for (let i = 0; i < clean; i++) results[`clean_${i}`] = { category: 'undetected', engine_name: `Clean Engine ${i}` };
+    for (let i = 0; i < malicious; i++) results[`mal_${i}`] = { category: 'malicious', engine_name: `Malicious Engine ${i}`, result: 'Trojan.Test' };
+    for (let i = 0; i < suspicious; i++) results[`susp_${i}`] = { category: 'suspicious', engine_name: `Suspicious Engine ${i}`, result: 'Suspicious.Test' };
+    return { stats, results };
+  };
+
+  // 100% clean passes
+  const clean = makeVerdicts(50);
+  assert.equal(validateVerdicts(clean.stats, clean.results), true);
+
+  // A single detection remains a finding even with 50 unflagged engines.
+  const singleFp = makeVerdicts(50, 1, 0);
+  assert.equal(validateVerdicts(singleFp.stats, singleFp.results), false);
+
+
+  // 2 detections rejected even with default tolerance
+  const doubleFp = makeVerdicts(50, 2, 0);
+  assert.equal(validateVerdicts(doubleFp.stats, doubleFp.results), false);
+
+  // 1 detection with fewer than 40 clean engines is rejected
+  const fewEngines = makeVerdicts(20, 1, 0);
+  assert.equal(validateVerdicts(fewEngines.stats, fewEngines.results), false);
+});
+
+test('isolated detection completes scanReleaseAssets and is recorded without a false-positive claim', async t => {
+  const fixture = await payloadFixture(t);
+  const cleanCount = 60;
+  const stats = { harmless: 0, undetected: cleanCount, malicious: 1, suspicious: 0, failure: 0, timeout: 0, 'confirmed-timeout': 0, 'type-unsupported': 0 };
+  const results = {};
+  for (let i = 0; i < cleanCount; i++) results[`clean_engine_${i}`] = { category: 'undetected', engine_name: `Engine ${i}`, result: null };
+  results['deepinstinct'] = { category: 'malicious', engine_name: 'DeepInstinct', result: 'MALICIOUS' };
+
+  const { client } = mockClient(async (url, options) => {
+    if (options.method === 'POST') return json({ data: { type: 'analysis', id: 'analysis-id' } });
+    if (url.includes('/analyses/')) {
+      return json({ data: { type: 'analysis', id: 'analysis-id', attributes: {
+        status: 'completed', date: 1767225600, stats, results,
+      } } });
+    }
+    return json({ data: { type: 'file', id: fixture.sha256,
+      attributes: { size: fixture.assets[0].size, last_analysis_date: 1767225600,
+        last_analysis_stats: stats, last_analysis_results: results } } });
+  });
+
+  const report = releaseReport(fixture.assets, 'v1.0.0', 'a'.repeat(40));
+  const messages = [];
+  await scanReleaseAssets(client, fixture.dir, fixture.assets, report, { progress: msg => messages.push(msg) });
+  assert.equal(report.status, 'detected');
+  assert.ok(messages.some(msg => msg.includes('detections reported') && msg.includes('DeepInstinct: MALICIOUS')));
+  assert.ok(messages.every(msg => !msg.includes('false positive') && !msg.includes('tolerated')));
+
+  const markdown = renderVirusTotalReport(report);
+  assert.match(markdown, /Detections and engine details/);
+  assert.match(markdown, /DeepInstinct.*MALICIOUS/);
 });

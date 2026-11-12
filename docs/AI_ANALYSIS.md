@@ -1,53 +1,43 @@
-# Resource analysis
+# Investigating a resource with AI
 
-For the integrated chat, resource investigation, YAML generation, API providers
-and backend-enforced execution modes, see [Integrated AI agent](AI_AGENT.md).
-Scoped field queries, pagination and working scope belong to the integrated
-agent; they do not add cluster-query tools to this snapshot workflow.
-The external CLI snapshot workflow below has its own controls and is not governed
-by the integrated agent's permissions.
+## Start an investigation
 
-Select Codex, OpenCode or Claude Code under **Settings → AI assistant**. The CLI
-must already be installed on the host's PATH and signed in. Kubiki uses the
-agent's configured account and model; it does not manage model credentials.
+1. Select the resource and open its **What's wrong** diagnostics.
+2. Choose **Investigate with AI**.
+3. Review the initial request in the AI workspace and continue with the selected agent.
 
-**Analyze** in **What's wrong** opens an independent workspace terminal with a
-bounded diagnostic snapshot: identity, reported issues, status, scheduling
-constraints, container images/resource requests, and matching loaded Events.
-Kubiki does not fetch additional logs or run cluster commands for this action.
-Secret/ConfigMap contents, environment values and annotations are excluded.
-The initial message can be inspected and copied. Snapshots are not persisted in
-workspace settings. Browser/demo mode provides the message preview; launching
-the process requires the desktop app.
+Kubiki attaches resource identity: API version, kind, namespace, name and UID.
+It does not attach the resource body, logs, Secret/ConfigMap values or a diagnostic
+snapshot. The request asks the agent to collect permitted evidence, starting with
+`diagnose_resource`, then explain diagnosis, uncertainty and any required next steps.
+A missing or filtered result is not evidence of health.
 
-The default starting instructions explicitly prohibit commands, cluster changes,
-experiments and attempts to fix or verify anything. They treat snapshot content as
-data and request an explanation, evidence, uncertainty and recommendations in Russian.
-Change **Settings → AI assistant → Starting prompt** to customize these
-instructions for all supported agents on this device, including the response
-language. The limit is 4000 characters; an empty value restores the default.
-**Restore default prompt** resets the instructions. Custom instructions replace
-the default starting block, so its requested restrictions and language should not
-be assumed to remain in a customized message. The snapshot filtering is unchanged.
+## Integrated agent
 
-Diagnostic information is sent to the selected CLI's configured model provider.
-Review the message before launching if the cluster data needs additional filtering.
+Select **Kubiki** in **Settings → AI assistant → Agent** and configure a provider
+and model. Investigations start in Plan + Ask. Native policy controls every live
+read and mutation. Plans are discussed in Markdown; execution requires Action
+and permitted mutation tools. See [AI agent](AI_AGENT.md) and
+[Planning and execution](AI_PLAN_CONTRACT.md).
 
-Native launch uses a fixed executable with separate arguments, never a shell
-command assembled from resource data. Codex starts with `--sandbox read-only`
-and `--ask-for-approval never`. OpenCode receives denied tool permissions through
-`OPENCODE_PERMISSION`. Claude Code starts in plan mode with built-in tools and
-configured MCP servers disabled. Local terminals and Analyze start directly
-without a local-process confirmation. The existing PTY lifecycle applies.
-Analyze uses its own `start_ai_analysis` IPC command; an older native backend
-reports that a rebuild/restart is required instead of launching a shell.
-These external CLI controls and the prompt are not a
-replacement for Kubernetes RBAC.
+## External agents
 
-References: [Codex CLI](https://learn.chatgpt.com/docs/cli/reference),
-[OpenCode CLI](https://docs.opencode.ai/docs/cli/),
-[OpenCode permissions](https://docs.opencode.ai/docs/permissions/).
+Select **OpenCode**, **Codex** or **Claude Code** and configure its executable and
+workspace. The CLI must be installed and authenticated. Kubiki starts it in a PTY,
+passes the initial request as a separate argument and connects Kubiki cluster tools
+through an authenticated attached MCP bridge.
 
-Ordinary consoles still open in the bottom panel. **Open terminal in tab**
-opens an additional session for the same target; the original session remains
-in the panel. Closing split view leaves its workspace tab available.
+The external CLI owns its model, credentials, conversation and local tool permissions.
+Kubiki's MCP policy and server phase govern the exposed cluster tools. They do not
+sandbox arbitrary host operations performed by the CLI. The initial request tells
+the agent to stop if cluster tools are unavailable instead of inspecting host
+credentials or sockets. This prompt is guidance, not a host security boundary.
+
+Data returned by tools can be sent to the CLI's configured model provider. Review
+MCP data-access settings before starting an investigation. The server phase defaults
+to Plan and is independent of the CLI's own planning/execution mode. See
+[External CLIs](AI_AGENT.md#agent-selection-and-external-clis) for lifecycle,
+permissions and cancellation behavior.
+
+Launching providers and terminal processes requires the desktop app; browser
+preview does not execute them.

@@ -119,7 +119,7 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
           onChange={(event) => setQuery(event.target.value)}
           placeholder={`Search ${columnLabel.toLowerCase()} values…`}
           aria-label={`Search ${columnLabel} values`}
-          className="w-full h-[calc(24px*var(--ui-factor))] bg-[var(--bg-canvas)] text-[length:calc(11.5px*var(--ui-factor))] text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] px-2"
+          className="w-full h-[var(--control-h-sm)] bg-[var(--bg-canvas)] text-[length:var(--font-size-sm)] text-[var(--text-primary)] rounded-[var(--radius-sm)] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] px-2"
         />
       </div>
 

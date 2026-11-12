@@ -1,5 +1,6 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, isValidElement, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, isValidElement, cloneElement, Children, type ReactNode, type ReactElement } from 'react';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   Bot,
@@ -8,11 +9,15 @@ import {
   Copy,
   Cpu,
   FileCode,
+  Flame,
+  Info,
+  Lightbulb,
   Plus,
   RefreshCw,
   Server,
   Settings,
   Shield,
+  ShieldAlert,
   Sparkles,
   Square,
   WandSparkles,
@@ -21,6 +26,8 @@ import {
 } from 'lucide-react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Button } from '../../../components/ui/Button';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
@@ -32,7 +39,7 @@ import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
 import { downloadMarkdown, transcriptMarkdown } from '../chat_artifacts';
 import { desktopAiAvailable } from '../transport';
-import { MODE_LABELS, PHASE_LABELS, isToolActiveInPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type ChatMessage, type Conversation } from '../types';
+import { MODE_LABELS, PHASE_LABELS, isToolActiveInPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type ChatMessage, type Conversation, type PlanArtifact } from '../types';
 import { isPlanArtifact } from '../plan_contract';
 import { PlanArtifactCard } from './PlanArtifactCard';
 import { highlightSkillChildren } from './SkillReferenceText';
@@ -1057,16 +1064,11 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
         {/* Bottom bar with status and circular send button */}
         <div className="ai-composer-card-bottom">
           <div className="ai-run-status min-w-0 flex-1 flex items-center gap-1.5 flex-wrap" role="status">
-            <span>{statusLabels[c.status] ?? c.status}</span>
-            {c.inputTokens + c.outputTokens > 0 && (
-              <span>· {c.inputTokens.toLocaleString()} in / {c.outputTokens.toLocaleString()} out</span>
-            )}
-            {!!c.generationMetrics?.length && <details className="text-xs min-w-0 max-w-full basis-full">
-              <summary className="cursor-pointer">Request costs</summary>
-              <div className="p-2 overflow-auto"><table className="text-left whitespace-nowrap [&_th]:pr-3 [&_td]:pr-3"><thead><tr><th>Model</th><th>System ≈</th><th>Tools ≈</th><th>History ≈</th><th>Input</th><th>Output</th><th>Cached</th><th>Reasoning</th><th>First token</th><th>Time</th></tr></thead><tbody>
-                {c.generationMetrics.slice(-10).map(m => <tr key={m.id}><td>{m.resolvedModel ?? m.model}</td><td>{m.systemTokens}</td><td>{m.toolTokens}</td><td>{m.historyTokens}</td><td>{m.inputTokens ?? 'Unknown'}</td><td>{m.outputTokens ?? 'Unknown'}</td><td>{m.cachedInputTokens ?? 'Unknown'}</td><td>{m.reasoningOutputTokens ?? 'Unknown'}</td><td>{m.firstTokenMs == null ? 'Unknown' : `${(m.firstTokenMs / 1000).toFixed(1)}s`}</td><td>{m.durationMs == null ? 'Unknown' : `${(m.durationMs / 1000).toFixed(1)}s`}</td></tr>)}
-              </tbody></table><p>≈ Estimated context components. Input/output are provider totals when available. Last 10 requests.</p></div>
-            </details>}
+            {c.busy ? (
+              <span>{statusLabels[c.status] ?? c.status}</span>
+            ) : c.status === 'failed' ? (
+              <span className="text-rose-400">{statusLabels[c.status] ?? c.status}</span>
+            ) : null}
             {maxContextTokens ? (
               <span
                 className="ai-context-indicator inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-mono text-[10.5px]"
@@ -1138,7 +1140,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
   const isMultiline = rawText.includes('\n');
   const normalizedLang = language.toLowerCase();
-  if (isMultiline && ['yaml', 'yml', 'json', 'bash', 'sh', 'shell', 'dockerfile'].includes(normalizedLang)) {
+  if (isMultiline && ['yaml', 'yml', 'json', 'bash', 'sh', 'shell', 'dockerfile', 'diff'].includes(normalizedLang)) {
     const lang = (normalizedLang === 'yml' ? 'yaml' : normalizedLang === 'shell' ? 'bash' : normalizedLang) as any;
     const lineCount = rawText.split('\n').length;
     const height = Math.min(360, Math.max(90, lineCount * 20 + 35));
@@ -1196,12 +1198,83 @@ function LiveStatusIndicator({ status }: { status: string }) {
   );
 }
 
+function AlertBlockquote({ children }: { children?: ReactNode }) {
+  const arr = Children.toArray(children);
+  const firstElem = arr.find(c => isValidElement(c));
+  if (firstElem && (firstElem as ReactElement<{ children?: ReactNode }>).props?.children) {
+    const pArr = Children.toArray((firstElem as ReactElement<{ children?: ReactNode }>).props.children);
+    const text = pArr.find(c => typeof c === 'string');
+    if (typeof text === 'string') {
+      const match = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/is.exec(text);
+      if (match) {
+        const kind = match[1].toLowerCase() as 'note' | 'tip' | 'important' | 'warning' | 'caution';
+        const rest = match[2];
+        const updatedPChildren = pArr.map(c => c === text ? (rest ? rest.trimStart() : null) : c).filter(Boolean);
+        const updatedFirstElem = cloneElement(firstElem as ReactElement<{ children?: ReactNode }>, {}, ...updatedPChildren);
+        const remaining = arr.map(c => c === firstElem ? updatedFirstElem : c);
+
+        const titles = {
+          note: 'Note',
+          tip: 'Tip',
+          important: 'Important',
+          warning: 'Warning',
+          caution: 'Caution',
+        };
+
+        return (
+          <div className={`ai-alert is-${kind}`} role="note">
+            <div className="ai-alert-title">
+              {kind === 'note' && <Info size={13} aria-hidden="true" />}
+              {kind === 'tip' && <Lightbulb size={13} aria-hidden="true" />}
+              {kind === 'important' && <Flame size={13} aria-hidden="true" />}
+              {kind === 'warning' && <AlertTriangle size={13} aria-hidden="true" />}
+              {kind === 'caution' && <ShieldAlert size={13} aria-hidden="true" />}
+              <span>{titles[kind]}</span>
+            </div>
+            <div className="ai-alert-content">
+              {remaining}
+            </div>
+          </div>
+        );
+      }
+    }
+  }
+  return <blockquote>{children}</blockquote>;
+}
+
+export const DANGEROUS_MARKDOWN_TAGS = new Set([
+  'script', 'iframe', 'object', 'embed', 'meta', 'base', 'link',
+  'form', 'input', 'button', 'textarea', 'select', 'style', 'svg', 'math',
+  'applet', 'frame', 'frameset',
+]);
+
+export const aiMarkdownSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: defaultSchema.tagNames?.filter(t => !DANGEROUS_MARKDOWN_TAGS.has(t.toLowerCase())) ?? [],
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [...(defaultSchema.attributes?.code || []), 'className'],
+    span: [...(defaultSchema.attributes?.span || []), 'className'],
+    div: [...(defaultSchema.attributes?.div || []), 'className'],
+    a: ['href', 'target', 'rel', 'title', 'className'],
+  },
+  protocols: {
+    ...defaultSchema.protocols,
+    href: ['http', 'https', 'mailto'],
+  },
+};
+
 // Stable renderers preserve editor DOM and its scroll position during streaming.
 const messageMarkdownComponents: Components = {
   p: ({ children }) => <p>{highlightSkillChildren(children)}</p>,
   li: ({ children }) => <li>{highlightSkillChildren(children)}</li>,
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  blockquote: ({ children }) => <AlertBlockquote>{children}</AlertBlockquote>,
   img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : '[Image omitted]'}</span>,
+  script: () => null,
+  iframe: () => null,
+  object: () => null,
+  embed: () => null,
   a: ({ href, children }) => href ? (
     <a
       href={href}
@@ -1240,7 +1313,7 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
       return <QuestionCard message={m} conversation={c} />;
     }
     if (m.call?.name === 'propose_plan' && isPlanArtifact(m.result?.planArtifact || m.planArtifact)) {
-      const artifact = (m.result?.planArtifact || m.planArtifact) as import('../types').PlanArtifact;
+      const artifact = (m.result?.planArtifact || m.planArtifact) as PlanArtifact;
       return <PlanArtifactCard artifact={artifact} conversation={c} />;
     }
 
@@ -1367,8 +1440,8 @@ function Message({ message: m, conversation: c }: { message: ChatMessage; conver
       <div className="ai-markdown">
         <Markdown
           remarkPlugins={[remarkGfm]}
-          skipHtml
-          urlTransform={url => /^https?:\/\//i.test(url) ? url : ''}
+          rehypePlugins={[rehypeRaw, [rehypeSanitize, aiMarkdownSanitizeSchema]]}
+          urlTransform={url => /^(https?|mailto):/i.test(url) ? url : ''}
           components={messageMarkdownComponents}
         >
           {thinking || isThinkingActive ? content : m.text}

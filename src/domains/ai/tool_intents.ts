@@ -75,6 +75,22 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
         color: 'emerald',
       };
     }
+    case 'propose_plan': {
+      return {
+        title: `Plan proposal: ${args.title || args.kind || 'Remediation plan'}`,
+        description: args.diagnosis || 'Structured remediation plan.',
+        badge: 'PLAN',
+        color: 'emerald',
+      };
+    }
+    case 'get_plan': {
+      return {
+        title: `Retrieve plan ${args.planId || ''} v${args.version || 1}`,
+        description: 'Retrieves prior plan version from session.',
+        badge: 'PLAN',
+        color: 'sky',
+      };
+    }
     case 'ask_user': {
       return {
         title: args.question || 'Agent Question',
@@ -371,6 +387,14 @@ export function getToolCallSummary(name: string, args: Record<string, any> = {},
     }
     case 'set_working_scope': return `Investigation scope: ${result.workingScope?.namespace ?? 'explicit queries'}`;
     case 'get_evidence': return 'Historical evidence retrieved';
+    case 'propose_plan': {
+      const title = args.title || result?.planArtifact?.title || 'Remediation plan';
+      const steps = Array.isArray(args.steps) ? args.steps.length : Array.isArray(result?.planArtifact?.steps) ? result.planArtifact.steps.length : 0;
+      return `${title}${steps > 0 ? ` (${steps} step${steps === 1 ? '' : 's'})` : ''}`;
+    }
+    case 'get_plan': {
+      return `Plan "${args.planId || ''}" v${args.version || 1} retrieved`;
+    }
     case 'list_resources': {
       const items = Array.isArray(result.items) ? result.items : [];
       const kind = args.kind || 'resource';

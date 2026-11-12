@@ -179,7 +179,11 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   useEffect(() => {
     setSelectedUids(new Set());
     setFocusedIndex(0);
-  }, [effectiveKind, currentContext]);
+    const store = useResourceStore.getState();
+    if (store.selectedItem && (store.selectedItem.kind !== effectiveKind || customType)) {
+      selectItem(null);
+    }
+  }, [effectiveKind, currentContext, customType, selectItem]);
 
   const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
   useEffect(() => {
@@ -195,7 +199,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, columnFilters, sorts]);
 
   const virtualized = rows.list.length > 200;
-  const rowHeight = Math.ceil(Math.max((density === 'compact' ? 25 : 30) * uiFactor(uiScale), (11.5 * 1.45 + 8) * uiFactor(uiScale) + 1));
+  const rowHeight = Math.ceil(Math.max((density === 'compact' ? 24 : 28) * uiFactor(uiScale), (11.5 * 1.45 + 7) * uiFactor(uiScale) + 1));
   const rowVirtualizer = useVirtualizer({ count: rows.list.length, getScrollElement: () => tableRef.current, estimateSize: () => rowHeight, overscan: 12,
     enabled: virtualized, getItemKey: index => rows.list[index]?.uid ?? index });
   const virtualRows = rowVirtualizer.getVirtualItems();

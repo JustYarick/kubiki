@@ -93,12 +93,36 @@ async function fetchChecksums(urls) {
   throw new Error(`Failed to fetch SHASUMS256.txt from all mirrors: ${lastError?.message}`);
 }
 
-const checksums = await fetchChecksums(baseUrls);
-const expected = checksums
-  .split('\n')
-  .map((line) => line.trim().split(/\s+/))
-  .find(([, file]) => file === archive)?.[0];
-if (!expected) throw new Error('Official Node checksum not found');
+// Pinned official SHA-256 checksums from https://nodejs.org/dist/v24.22.1/SHASUMS256.txt
+// to protect against compromised mirrors or supply-chain tampering.
+const PINNED_NODE_CHECKSUMS = {
+  'node-v24.22.1-darwin-arm64.tar.gz': '89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7',
+  'node-v24.22.1-darwin-x64.tar.gz': 'd132557e7ee2b85af08b0c8c34338e65c6430f2238d01f727728ef42dc83b035',
+  'node-v24.22.1-linux-arm64.tar.gz': '33c37be234ba8bee041961047b19160f4d7d0f164e8e246f78bdd10feff148b3',
+  'node-v24.22.1-linux-x64.tar.gz': 'eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c',
+  'node-v24.22.1-win-arm64.zip': 'a0c807319fede24c4a0d8f84564c82a619bd313b16b10c007c383c2609e99171',
+  'node-v24.22.1-win-x64.zip': 'd2046d28c2c3dcd211ac5145c0bf30e2047ef9dfb306693c8c6e2eccd8b95fa5',
+};
+
+const pinnedExpected = PINNED_NODE_CHECKSUMS[archive];
+if (!pinnedExpected) {
+  throw new Error(`No pinned SHA-256 checksum defined for target archive: ${archive}`);
+}
+
+let expected = pinnedExpected;
+try {
+  const checksums = await fetchChecksums(baseUrls);
+  const remoteChecksum = checksums
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .find(([, file]) => file === archive)?.[0];
+  if (remoteChecksum && remoteChecksum !== expected) {
+    throw new Error(`Remote SHASUMS256.txt checksum (${remoteChecksum}) does not match pinned official checksum (${expected})! Potential supply-chain tampering.`);
+  }
+} catch (err) {
+  if (err.message.includes('Potential supply-chain tampering')) throw err;
+  console.warn(`[SHASUMS256] Could not verify remote checksums file (${err.message}), relying on pinned SHA-256.`);
+}
 
 const userCacheDir = process.env.KUBIKI_CACHE_DIR || path.join(os.homedir(), '.cache', 'kubiki', 'node');
 const cachedArchivePath = path.join(userCacheDir, archive);

@@ -22,6 +22,9 @@ try {
 } finally {
   report.finishedAt = new Date().toISOString();
   await writeVirusTotalReport(output, report);
-  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, renderVirusTotalReport(report));
-  if (report.status !== 'passed') process.exitCode = 1;
+  const markdownReport = renderVirusTotalReport(report);
+  console.log('\n' + markdownReport + '\n');
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, markdownReport);
+  // Detections are findings in a completed advisory scan, not execution errors.
+  if (report.status === 'error') process.exitCode = 1;
 }

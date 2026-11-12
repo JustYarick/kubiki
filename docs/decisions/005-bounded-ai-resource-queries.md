@@ -1,5 +1,9 @@
 # 005: Ограниченные запросы и память AI-расследования
 
+> Current implementation and limits: [AI tools](../AI_AGENT.md#tools-and-execution-limits).
+> This record preserves the query design and its trade-offs; benchmark and migration
+> statements below are evidence from the decision period, not current performance guarantees.
+
 Дата: 2026-11-01. Статус: принято и реализовано; live-валидация отдельно.
 Владельцы: desktop/core — транспорт, lifecycle и budgets; AI — стратегия/контекст;
 frontend — история и отображение результатов. Уточняет [ADR-003](003-shared-kubernetes-access-and-ai-phases.md).

@@ -15,9 +15,19 @@ if (process.platform === 'linux') env.OPENSSL_CONF = '/dev/null';
 // Invoke the installed CLI through Node so Windows does not need shell quoting.
 const cli = path.resolve('node_modules/@tauri-apps/cli/tauri.js');
 function tauri(args) {
-  const result = spawnSync(process.execPath, [cli, ...args], { env, stdio: 'inherit' });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`tauri ${args[0]} failed (${result.status ?? result.signal})`);
+  let attempts = 0;
+  while (true) {
+    attempts++;
+    const result = spawnSync(process.execPath, [cli, ...args], { env, stdio: 'inherit' });
+    if (result.error) throw result.error;
+    if (result.status === 0) return;
+    if (process.platform === 'darwin' && attempts < 3 && args[0] === 'build') {
+      // Retry without touching disk images mounted by other applications.
+      console.warn(`tauri build failed (${result.status ?? result.signal}). Retrying (${attempts}/3)...`);
+      continue;
+    }
+    throw new Error(`tauri ${args[0]} failed (${result.status ?? result.signal})`);
+  }
 }
 const { version } = JSON.parse(await readFile('src-tauri/tauri.conf.json', 'utf8'));
 await mkdir('.kubiki-build', { recursive: true });

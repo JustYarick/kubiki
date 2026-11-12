@@ -569,7 +569,7 @@ function EventsPane() {
             </button>
           ))}
         </div>
-        <SearchInput value={filter} onChange={setFilter} placeholder="Filter events…" className="w-[calc(180px*var(--ui-factor))] h-[calc(22px*var(--ui-factor))]" />
+        <SearchInput size="sm" value={filter} onChange={setFilter} placeholder="Filter events…" className="w-[calc(180px*var(--ui-factor))]" />
       </div>
 
       {loadError && <div role="alert" className="p-2 text-[var(--status-warn)] text-xs">{loadError.message}</div>}
