@@ -1,17 +1,5 @@
 # Integrated AI agent
 
-Since 1.3.1, plans are conversational Markdown. Plan is read-only; execution
-uses offered mutation tools in Action, with native confirmation in Ask mode.
-Structured plan APIs and historical cards remain for compatibility; they are
-not offered to the model. See [planning contract](AI_PLAN_CONTRACT.md).
-
-Implementation snapshot: **2026-11-01**, checked against the repository, not a
-live-cluster performance benchmark. Backend Plan/Action phases, Pod/workload
-diagnostics, structured compaction and frontend conversation persistence already exist.
-Generic UI/agent reads now share core ResourceAccess, with field selection,
-pagination and working-scope defaults. Specialized readers use the same core transport and pinned connection generation.
-Live-cluster/model evaluation and optional informer reuse remain separate work.
-
 Kubiki's integrated agent has its own workspace tab and a shared runtime for
 ordinary chat, resource investigation and resource generation. It calls model
 APIs directly. Cluster tools run through the embedded Kubiki MCP dispatcher and
@@ -20,8 +8,8 @@ the integrated agent exposes no arbitrary shell or third-party MCP connections.
 Helm diagnostics delegate to the existing
 `HelmReader` for explicitly permitted release content. Inventory uses Kubernetes
 metadata-only reads of Helm storage labels; it never loads Secret bodies.
-The existing external CLI snapshot analysis is a separate
-feature described in [AI analysis](AI_ANALYSIS.md).
+Resource entry points for integrated and external agents are described in
+[Resource investigation](AI_ANALYSIS.md).
 
 The current investigation/result and execution format is specified in
 [AI_PLAN_CONTRACT.md](AI_PLAN_CONTRACT.md).
@@ -44,8 +32,7 @@ The current investigation/result and execution format is specified in
    also permits an explicit mode/phase selection.
 
 The browser preview does not connect to model providers, persist credentials or
-execute agent tools. Real connections require a rebuilt desktop backend with the
-new AI commands.
+execute agent tools. Provider connections and tool execution require the desktop backend.
 
 ## Entry points
 
@@ -54,9 +41,9 @@ new AI commands.
   conversation pinned to that resource's context and namespace. Only identity
   is attached; live object fields must pass through native read policy. It guides the
   agent to gather evidence (starting with `diagnose_resource`), deliver a diagnosis and
-  uncertainty, and propose a structured remediation `PlanArtifact` when remediation or
-  follow-up checks are warranted (while allowing direct answers in Plan/Investigate mode
-  when no plan artifact is needed). Internal reasoning/Markdown headings never gain a Plan badge.
+  uncertainty, and write ordered remediation or follow-up checks in Markdown when
+  needed. Informational questions can receive a direct answer. Thinking is separate
+  from the response and does not authorize changes.
 - **Create with AI** in resource lists: opens a creation conversation. For
   example, request a Nexus deployment, discuss image/version/storage/exposure,
   and receive a YAML proposal. A multi-namespace selection is not silently
@@ -71,7 +58,7 @@ This thought process is strictly informative and separate from remediation plans
 Generated YAML is a **proposal**, not evidence of a deployment. In
 Action a proposal can be passed back to the agent for application through
 the same guarded mutation tools. The application never executes a Markdown code
-block directly. Remote images and raw HTML in model output are not loaded.
+block directly. Raw HTML is sanitized before rendering; remote images are replaced with text.
 
 ## Modes and permissions
 
@@ -87,10 +74,10 @@ to a single approved diagnostic or mutation are covered by that operation, rathe
 than opening a prompt for every HTTP request. Read-only wire values are retained
 solely for legacy compatibility; Action still serializes as `tooling`.
 
-Plans have one **Apply selected steps** action. Native review prepares and pins the
-operations automatically, then execution asks for exact native mutation previews
-when the confirmation policy requires it. Auto accept skips those prompts unless
-the tool is in Always ask. Merely switching to Action never executes a proposal.
+Plans are discussed as Markdown in the conversation. To execute a plan, switch to
+Action and ask the agent to proceed. Mutation tools open native review when the
+confirmation policy requires it; Auto accept still respects Always ask and operation
+grants. Switching to Action alone does not execute anything.
 
 Changing to Auto accept does not enable disabled operations or expand data access.
 Kubernetes RBAC and admission still apply. The model cannot change mode, edit
@@ -226,9 +213,8 @@ require content access to the referenced object under the data policy.
 The agent reuses `PreparedMutation`, optimistic concurrency and the existing
 desktop `MutationGuard`. Ask uses the existing native consent dialog. Auto accept
 uses backend policy authorization and never a renderer-supplied approval flag.
-Only complete provider responses can produce executable calls; unknown tools,
-incomplete streams, malformed/duplicate calls and output-limit truncation fail
-closed. Native read tools have deadlines and cancellation. Writes are not retried
+Only complete provider responses can produce executable calls; unoffered tools are not dispatched and return an explanatory result to the model.
+Incomplete streams, malformed/duplicate calls and output-limit truncation fail closed. Native read tools have deadlines and cancellation. Writes are not retried
 automatically after an ambiguous result. Failed, declined or uncertain mutations
 stop the run and prevent queued companion operations from being dispatched.
 
@@ -286,9 +272,7 @@ context; the API still returns full objects unless only metadata was requested.
 1–10 bounded pages (default five, at most 20 seconds), returning counts and up to
 five example identities. Counts cover that invocation only. Follow its cursor to
 continue the same snapshot; expired snapshots require a new scan. It does not send
-all scanned objects to the model. Offline fixture evaluation at 10,000 Pods reduced
-selected-field JSON from 21,400,000 to 1,940,000 bytes (90.9%); the aggregate itself
-was 568 bytes. These figures measure fixture payloads, not API/LLM latency or accuracy.
+all scanned objects to the model.
 
 Namespaces are capped at 200. Logs default to 150 lines over one hour; callers may
 choose `tailLines` 1–500 and `sinceSeconds` 1–86400. The shared log reader bounds API
@@ -326,8 +310,10 @@ Provider connect timeout is 10 seconds, stream idle timeout 120 seconds, and the
 run's active generation deadline is five minutes; dispatched writes still await receipts.
 Time spent awaiting human approval is excluded from read and generation deadlines;
 request and byte caps remain unchanged.
-The estimated context budget defaults to 16,384 tokens, capped by advertised model
-metadata and any explicit runtime context. Model budget hints are not sent as local
+The estimated context budget uses an explicit model-budget hint when supplied,
+otherwise provider model discovery. If discovery has no context window, the fallback
+is 32,768 tokens for Ollama and 128,000 for other protocols. An explicit runtime
+context window can lower this budget. Model budget hints are not sent as local
 runtime allocation. The UI displays the conversation's pinned budget. Backend context events provide
 an input estimate even when provider token usage is unavailable; actual usage takes
 precedence when supplied. `contextBudgetTokens` is a budget-only model hint; it
@@ -410,7 +396,7 @@ crates/kubiki-tools/             Headless tools, policy, projections, receipts a
 crates/kubiki-mcp/               Shared MCP dispatcher, embedded client, standalone CLI/bridge
 src-tauri/src/agent_commands.rs  Window ownership, settings, credentials, lifecycle
 src-tauri/src/agent_tools.rs     Native consent and installed-skill adapter
-src-tauri/src/opencode.rs        Installed OpenCode launcher and attached MCP lifecycle
+src-tauri/src/opencode.rs        External CLI launchers and attached MCP lifecycle
 crates/kubiki-core/src/core/     ResourceAccess, shared reads, read budgets/cache
 ```
 
@@ -449,20 +435,11 @@ an explicit bounded historical transcript in the editable draft. Provider/model
 changes detach the previous native session; old tool evidence is not resent.
 Transcript/plan export checks the separate local export preference.
 
-Native plans are ephemeral versioned proposals (≤16 versions / 256 KiB; each ≤60 KB),
-with a formal schema, checked evidence references and actual session scope/policy ID.
-The UI renders plans as strictly validated typed cards (`PlanArtifact`), never by
-guessing at Markdown or model thinking. Concurrently, streaming thought processes
-(`<think>`/`<thought>`) are handled as distinct UI elements via `ThinkingBlock` to
-visualize reasoning without contaminating plan state.
-Selected concrete steps require an explicit native review and a single-use 5-minute
-token. Current UID/resourceVersion/absence is checked again at dispatch, including
-an independent mode/phase/cancellation guard after connection validation. Native
-server-accepted UIDs bind create verification and are kept out of model history when
-not permitted. Failed/uncertain/declined steps stop further writes. Unknown outcomes
-may collect bounded read-only reconciliation evidence without retrying the write.
-Verified dependencies and explicit acceptance-only dependencies remain distinct.
-See [the plan contract](AI_PLAN_CONTRACT.md) for lifecycle, limitations and statuses.
+Plans are conversational Markdown containing diagnosis, uncertainty, ordered steps,
+risks and verification. They do not authorize execution. In Action, permitted
+mutation tools use native confirmation in Ask mode and verify fresh state after
+writes. Failed, uncertain or declined changes stop further writes. Thinking is
+displayed separately from the answer. See [planning and execution](AI_PLAN_CONTRACT.md).
 
 Permission settings now provide diagnostic/metadata/workload/network/storage/limited
 action presets and a native-only effective-access/rule preview. `allowedFields`
@@ -484,26 +461,6 @@ Provider/network failure affects AI conversations, not ordinary cluster views.
 Disable a capability in permissions to revoke it from existing conversations;
 removing connections makes new provider requests unavailable. Already applied
 cluster changes require separately reviewed compensation. There is no general Undo.
-
-## Implementation research
-
-The following primary sources informed the design; code was not copied:
-
-- [Headlamp AI Assistant](https://github.com/headlamp-k8s/plugins/tree/main/ai-assistant):
-  closely matching chat, resource diagnosis/generation, provider and tool settings.
-  Kubiki keeps policy and credentials in the native backend rather than relying
-  on frontend tool switches.
-- [kubectl-ai](https://github.com/GoogleCloudPlatform/kubectl-ai): provider selection,
-  local-model support and configurable tools. Kubiki uses typed application tools
-  instead of exposing general `bash`/`kubectl` execution.
-- [Radar MCP](https://github.com/skyhook-io/radar/blob/main/docs/mcp.md): structured
-  diagnostic context and separation of diagnosis/application/verification. Kubiki's
-  tool layer is available through an embedded dispatcher and standalone MCP CLI.
-- [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling),
-  [Anthropic tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview),
-  [Anthropic model discovery](https://platform.claude.com/docs/en/api/models/list),
-  [Ollama API](https://docs.ollama.com/api/chat), and
-  [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai): protocol contracts.
 
 ## Verification
 
@@ -527,8 +484,9 @@ desktop platforms before relying on a new provider/model for automatic changes.
 ### Settings navigation
 
 AI settings use the same sections in the workspace dialog and global Settings:
-Connections & models, Confirmations, Data access, Scope & rules, Integrations,
-Instructions, and History. Switching sections preserves unsaved permission edits.
+Agent, Cluster tools (MCP), Connections & models, History, Environment, Data access,
+Scope & rules, Confirmations, Integrations, and Instructions. Runtime selection
+controls which sections are visible. Switching sections preserves unsaved permission edits.
 Always ask takes precedence over the read-confirmation checkbox and Auto accept.
 
 ## Agent environment
@@ -547,24 +505,25 @@ extend permissions. Discovery is bounded to 128 skills, depth three, 64 KiB per 
 a turn may explicitly select up to four skills. New conversations refresh the runtime
 catalog; the settings list has a Refresh button.
 
-## Agent selection and OpenCode
+## Agent selection and external CLIs
 
-Choose **Kubiki / OpenCode** under **Settings → AI assistant → Agent**. Missing
+Choose **Kubiki / OpenCode / Codex / Claude Code** under **Settings → AI assistant → Agent**. Missing
 runtime preferences default to Kubiki. The selection is application-wide, with
 separate histories. Only settings that affect the selected runtime are displayed.
 Kubiki provider/model/instructions/skills/confirmation settings are retained while
-hidden and do not control OpenCode. Switching invalidates integrated sessions and
+hidden and do not control external agents. Switching invalidates integrated sessions and
 stops attached processes; it never transfers approvals or replays tools.
 
-OpenCode uses the installed V2 executable, a real PTY, its user configuration and
-credentials. Its pane uses the same terminal renderer and typography preferences
-as local/Pod/Node shells (see [Terminal rendering](TERMINAL.md)). A dedicated Kubiki workspace adds only our local MCP connection;
+External agents use an installed executable, a real PTY, their own configuration
+and credentials. Each runtime has separate executable/workspace preferences.
+OpenCode requires its V2 CLI. Its pane uses the same terminal renderer and typography preferences
+as local/Pod/Node shells (see [Terminal rendering](TERMINAL.md)). A dedicated OpenCode workspace adds only our local MCP connection;
 existing project configuration is not overwritten. The desktop executable provides
 a headless `--kubiki-mcp-attach` bridge entrypoint, so desktop bundles do not need a
 separately installed CLI. Scope-specific workspace directories isolate windows and
 connections. Custom workspace roots must be absolute; the default lives in app data.
 
-OpenCode owns its permissions, Plan mode and confirmation prompts. No additional
+The external CLI owns its permissions, planning mode and confirmation prompts. No additional
 Kubiki Ask/Auto/alwaysAsk confirmation is applied to host-owned calls. A separate
 `mcpPolicy` controls what data and operations the application exposes: it is not
 inherited from the hidden Kubiki policy. Defaults expose filtered reads and no
@@ -586,96 +545,32 @@ silently retarget a running connection. Stop also cancels pending startup, inclu
 font loading and native version checks. Restart preserves an initial Analyze or
 creation prompt only after a typed native failure proves that no process was
 scheduled. Delivered tasks and ambiguous startup failures are never replayed.
-Normal TUI commands and model/provider choices belong to OpenCode. Its shell runs
+Normal TUI commands and model/provider choices belong to the selected CLI. Its shell runs
 under its own permissions and is outside MCP filtering.
 
-### MCP Architecture & Standalone Roadmap (`kubiki-mcp`)
+## Standalone MCP server
 
-The MCP layer is completely decoupled into `crates/kubiki-mcp` and `crates/kubiki-tools`. It has zero dependencies on Tauri, Webview, or frontend state, communicating purely via standard MCP primitives (`rmcp`) and generic Kubernetes session traits.
-
-* **Current Architecture (Embedded & Attached Bridge)**:
-  Desktop Kubiki manages Kubernetes cluster authentication and runs `kubiki-mcp` in attached socket/stdio bridge mode, exposing tools to external CLIs (OpenCode, Codex, Claude Code) and the internal AI assistant with synchronized live policy controls.
-* **Roadmap / Future Concept (Standalone Daemon & Independent CLI)**:
-  As an upcoming milestone, `kubiki-mcp` can be built and distributed as an independent standalone daemon without requiring the Kubiki desktop GUI to be installed or running:
-  - Declarative configuration files (`kubiki-mcp.json`)
-  - Standalone cluster discovery and connection pool
-  - Live reload commands (`kubiki-mcp reload`) over local IPC/SIGHUP
-  - Detailed design: see [ADR-009](decisions/009-standalone-mcp-server-and-unified-tool-permissions.md)
+`crates/kubiki-mcp` and `crates/kubiki-tools` run without Tauri or frontend state.
+Desktop sessions use an attached bridge and the desktop connection pool. The
+standalone executable owns its Kubernetes connections and serves MCP over stdio.
 
 ```sh
-# Future standalone CLI interface (Roadmap):
-kubiki-mcp init                                # Generate template configuration file
-kubiki-mcp validate --config kubiki-mcp.json    # Validate config and cluster connectivity
-kubiki-mcp serve --config kubiki-mcp.json       # Run standalone MCP server over stdio
-kubiki-mcp reload                              # Reload policy live without disconnecting clients
+cargo build --locked --release --manifest-path crates/kubiki-mcp/Cargo.toml
+./crates/kubiki-mcp/target/release/kubiki-mcp serve --context my-cluster --namespace default
 ```
 
-#### Declarative Configuration (`kubiki-mcp.json`)
+`--context` is required, together with `--namespace NAME` (repeatable) or
+`--all-namespaces`. Optional `--kubeconfig PATH` selects a kubeconfig and
+`--profile PATH` loads an `AgentPolicy` JSON file, limited to 1 MiB. Default
+exposure permits filtered reads. Permissions belong to the MCP host; desktop
+confirmation settings do not apply to standalone sessions. Logs go to stderr;
+stdout is reserved for MCP messages.
 
-The server discovers configuration from `--config PATH`, `./kubiki-mcp.json`, or `~/.config/kubiki/mcp.json`:
+An external MCP host can launch:
 
 ```json
 {
-  "$schema": "https://kubiki.dev/schemas/mcp-v1.json",
-  "version": 1,
-  "cluster": {
-    "context": "my-cluster",
-    "kubeconfig": null,
-    "namespaces": ["default", "production"],
-    "allNamespaces": false
-  },
-  "policy": {
-    "readOnly": false,
-    "writes": ["create", "update", "scale", "restart", "delete"],
-    "maxReplicas": 10,
-    "data": {
-      "resources": true,
-      "events": true,
-      "logs": true,
-      "metrics": true,
-      "clusterResources": true,
-      "secrets": "none",
-      "configMaps": "metadata",
-      "customResources": "metadata"
-    },
-    "integrations": {
-      "helm": "auto",
-      "argocd": "auto",
-      "flux": "auto"
-    },
-    "phases": {
-      "plan": { "disabledTools": [] },
-      "action": { "disabledTools": [] }
-    },
-    "disabledTools": [],
-    "deniedPaths": []
-  },
-  "server": {
-    "transport": "stdio"
-  }
+  "command": "/absolute/path/kubiki-mcp",
+  "args": ["serve", "--context", "my-cluster", "--namespace", "default"]
 }
 ```
-
-The MCP host launches `kubiki-mcp serve` over stdio. CLI flags `--context`, `--namespace`, `--all-namespaces`, and `--read-only` can override configuration values. Host-owned connections ignore `confirmReads`/`alwaysAsk`; host permissions decide whether each call may proceed. Logs go to stderr and mutation receipts to a process-specific journal; stdout is reserved for MCP JSON-RPC.
-
-OpenCode V2 configuration example:
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "kubiki": {
-        "type": "local",
-        "command": ["/absolute/path/kubiki-mcp", "serve", "--config", "/absolute/path/kubiki-mcp.json"],
-        "codemode": false
-      }
-    }
-  }
-}
-```
-
-Transport coverage is tested on Linux. The Windows named-pipe implementation needs
-native Windows validation. Live provider/cluster evaluation and infrastructure
-repositories remain separate work. Architecture and migration rationale:
-[ADR-007](decisions/007-portable-cluster-tools-and-opencode.md) and
-[ADR-009](decisions/009-standalone-mcp-server-and-unified-tool-permissions.md).

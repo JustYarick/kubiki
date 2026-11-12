@@ -1,12 +1,16 @@
 # ADR-008: Связанная диагностика, полный каталог чтения и внешние агенты
 
+> Current behavior and limits: [AI agent](../AI_AGENT.md). This record captures the
+> evidence-first design and full read-catalog choice; UI descriptions refer to that
+> decision period and do not prescribe the current placement of metrics.
+
 Статус: **Accepted** — направление реализации согласовано пользователем; сокращённые наборы read tools по intent отклонены. Ограничения реализации перечислены ниже.
 
 ## Проблема
 
 В сохранённом расследовании `caretta-sql4j` модель трижды обращалась к неподтверждённому Deployment или списку Deployments. `get_pod_diagnostics` раньше терял `metadata.ownerReferences`. Связи в интерфейсе вычислялись в TypeScript и не были доступны агенту как обход графа. Замена модели или собственного цикла на внешний CLI сама по себе эти данные не добавляет.
 
-Разбор диалога и сравнение MCP: [отчёт](../reviews/2026-11-03-mcp-pod-investigation.md).
+
 
 ## Принятое решение
 
@@ -74,32 +78,8 @@ CLI управляет своим диалогом, моделями и подт
 
 Справка интеграции: [Codex MCP](https://developers.openai.com/codex/mcp/), [Codex CLI](https://developers.openai.com/codex/cli/reference/), [Claude Code CLI](https://code.claude.com/docs/en/cli-reference). Локально проверены версии/help Codex 0.166.0 и Claude Code 2.1.299; платная модельная сессия не запускалась.
 
-## Измеренный размер контекста
-
-Оценщик `memory::estimate_tokens`: ASCII bytes / 3 с округлением, non-ASCII символы отдельно, плюс 8. Это **не tokenizer и не счёт провайдера**. Tools сериализованы в OpenAI-compatible shape. Взяты текущая локальная policy Ask/Plan, 8 установленных skills и два варианта capabilities. Настройки того старого запроса не сохранялись, поэтому baseline — реконструкция.
-
-| Компонент | До изменений | После |
-|---|---:|---:|
-| Каталог core + skills | 6 514 / 23 tools | 5 545 / 26 tools |
-| Каталог со всеми интеграциями | 7 268 / 29 tools | 6 299 / 32 tools |
-| Базовый SYSTEM_PROMPT | 1 467 | 779 |
-| Новая общая guidance | — | 278 |
-
-Каталог уменьшился на 13–15%, несмотря на добавление трёх инструментов. Базовый prompt сократился на 47%; новая guidance считается отдельно. Scope, phase, policy, пользовательская история и ответы инструментов добавляются сверху. Прежняя оценка первого запроса — 8,6–9,4k до tool results. Цель 3–4k, обсуждавшаяся для урезанного каталога, **отозвана**: пользователь выбрал полный read catalog.
-
-Исходные данные: [baseline](../reviews/2026-11-03-ai-context-cost.json), [после изменений](../reviews/2026-11-03-ai-context-after.json). В baseline `after_fix` означает только первый точечный ownership fix, а не итог этой реализации.
-
-В старом диалоге сохранены 8 сообщений и 5 tool calls; три ушли на неподтверждённый Deployment/список Deployments. Из 1 455 символов двух текстов модели 1 117 (~77%) находились внутри thinking. Backend обнулял usage и удалял тела ответов tools, поэтому точный суммарный расход, cache hits, тариф и самый большой фактический ответ восстановить нельзя. Нули не означают бесплатный диалог.
-
 ## Отличия от Radar и пределы результата
 
 [Neighborhood Radar](https://github.com/skyhook-io/radar/blob/4fa114de070f32d7a59db5b746cee619292ddc39/internal/mcp/tools_neighborhood.go) использует общий topology builder и bounded BFS, но просмотренный MCP-путь строит весь граф заново. Здесь используются целевые разрешённые чтения без полной перестройки кластера на каждый Pod. [Компактная guidance](https://github.com/skyhook-io/radar/blob/4fa114de070f32d7a59db5b746cee619292ddc39/pkg/investigation/guidance.go) и [CLI-адаптеры](https://github.com/skyhook-io/radar/blob/4fa114de070f32d7a59db5b746cee619292ddc39/internal/ai/agent.go) дают полезный архитектурный ориентир.
 
 Bundle сокращает необходимость отдельных model round trips, но фактическое ускорение p50/p95 и качество диагнозов требуют сравнения на одной модели и одинаковых инцидентах. Такие live-model измерения здесь не проводились. Полный перенос всех topology relations, tool-duration/API-byte ledger и поведенческая оценка на реальной модели остаются отдельными расширениями; не выдаём их за выполненную работу.
-
-## Проверка и остановка тестирования
-
-До просьбы пользователя прекратить тесты успешно завершились frontend unit/browser suites, встроенный runtime и native library checks; отдельные fixtures проверили DaemonSet, цепочку ReplicaSet/Deployment, UID replacement, скрытые ссылки, циклы, reverse selector pagination, previous logs, custom cluster owner и каталог из 125 CRD. Пользователь затем попросил не тратить время на тесты/их логи: последующие сокращения текстов каталога и небольшая правка таблицы метрик повторно не прогонялись. Release desktop не пересобирался, live-кластер не изменялся. После уточнения о Code Mode и CRD watch собран debug-бинарник без запуска тестов.
-
-
-Последующее расследование OpenCode подтвердило ошибку выбора каталога и разовый характер чтения CRD. Реализация, новые фактические usage counters и ограничения описаны в [дополнении](../reviews/2026-11-03-opencode-and-crd-watch.md).

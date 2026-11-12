@@ -23,7 +23,7 @@ Kubiki is a desktop application for inspecting and managing Kubernetes clusters.
   - [Helm releases](#helm-releases)
   - [Logs and terminals](#logs-and-terminals)
   - [Port forwarding](#port-forwarding)
-  - [Reviewing changes](#reviewing-changes)
+  - [Confirming operations](#confirming-operations)
   - [AI agent](#ai-agent)
   - [AI analysis](#ai-analysis)
   - [Extensions](#extensions)
@@ -59,8 +59,8 @@ The application supports switching between kubeconfig contexts and selecting one
 | Diagnostic sessions | Streaming container logs, interactive container shells, node debug shells, and local host terminals. |
 | Network access | TCP port forwarding to Pods and Services, with active sessions managed in the bottom panel. |
 | Cluster changes | YAML updates, scaling, rollout restarts, deletions, and other supported resource actions with confirmation and concurrency checks. |
-| AI agent | Integrated chat, resource investigation and YAML generation, cloud/local model discovery, detailed data/tool permissions and Read only / Ask / Accept modes. |
-| AI analysis | Diagnostic snapshots opened in a locally installed Codex, OpenCode or Claude Code CLI, with configurable starting instructions. |
+| AI agent | Integrated chat, resource investigation and YAML generation, cloud/local model discovery, detailed data/tool permissions, Plan / Action phases and Ask / Auto accept modes. |
+| AI investigation | Resource identity opens an investigation in Kubiki, OpenCode, Codex or Claude Code; live evidence passes through Kubiki cluster tools. |
 | Extensions | Local or public GitHub package installation, isolated panels, and manual extension updates and rollback. |
 | Application updates | Separate stable and dev update channels, signed package downloads and installation after confirmation. |
 
@@ -224,11 +224,11 @@ Interactive shell commands execute in their respective shell sessions. They are 
 
 ### AI agent
 
-Open **AI Agent** from the activity bar for chat, **Investigate with AI** on a failing resource, or **Create with AI** from a resource list. Connect a cloud API or local model server in AI settings, load its available models, and configure resource/data permissions. Every conversation starts in **Read only**. **Ask** reviews each permitted change; **Accept** executes permitted changes automatically. Secret contents, ConfigMap contents, logs and all writes are excluded by default. See [Integrated AI agent](docs/AI_AGENT.md) for providers, access rules, execution limits and setup.
+Open **AI Agent** from the activity bar for chat, **Investigate with AI** on a failing resource, or **Create with AI** from a resource list. Connect a cloud API or local model server in AI settings, load its available models, and configure resource/data permissions. New and restored conversations default to **Plan + Ask**. **Plan** forbids writes; in **Action**, **Ask** reviews permitted changes and **Auto accept** executes permitted changes automatically. Secret contents, ConfigMap contents, logs and all writes are excluded by default. See [Integrated AI agent](docs/AI_AGENT.md) for providers, access rules, execution limits and setup.
 
 ### AI analysis
 
-Choose a locally installed and authenticated CLI under **Settings → AI assistant**. **Analyze** in a resource's **What's wrong** panel opens a workspace terminal with the currently loaded diagnostic snapshot. The default instructions request analysis only; starting instructions can be changed in settings. Snapshot data is sent to the chosen agent's configured model provider. See [Resource analysis](docs/AI_ANALYSIS.md) for included data and launch behavior.
+Choose Kubiki or an installed, authenticated OpenCode, Codex or Claude Code CLI under **Settings → AI assistant → Agent**. **Investigate with AI** opens the AI workspace with the resource's identity and an investigation request. Live resource data is collected through permitted cluster tools, not attached as an unfiltered snapshot. External CLIs use their own model account and local permissions. See [Resource investigation](docs/AI_ANALYSIS.md) for launch and data-access boundaries.
 
 ### Extensions
 
@@ -381,6 +381,8 @@ Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validatio
 
 ## Documentation
 
+Start with the [documentation index](docs/README.md), [architecture decisions](docs/decisions/README.md) and [development plans](docs/plans/README.md).
+
 - [Test suites, browser coverage and timing reports](docs/TESTING.md)
 - [README GIFs and screenshots](docs/MEDIA.md)
 - [Local state persistence and topology rendering settings](docs/LOCAL_STATE.md)
@@ -388,11 +390,10 @@ Follow [Publishing desktop releases](docs/RELEASING.md) for key setup, validatio
 - [Application updates and signing](docs/APP_UPDATES.md)
 - [Project structure and architecture](docs/STRUCTURE.md)
 - [Master search, regex filters and node performance](docs/MASTER_SEARCH.md)
-- [Traffic observability research: Cilium, Istio, Calico and eBPF sources](docs/TRAFFIC_OBSERVABILITY.md)
 - [Workspace extensions](docs/EXTENSIONS.md) and [extension architecture](docs/EXTENSION_PLATFORM.md)
 - [Integrated AI agent](docs/AI_AGENT.md)
 - [Resource analysis](docs/AI_ANALYSIS.md)
-- [Desktop rendering investigation and platform validation](docs/DESKTOP_RENDERING.md)
+- [Desktop rendering and graphics settings](docs/DESKTOP_RENDERING.md)
 - [Shared tab metrics](docs/UI_TABS.md) and [resource icons](docs/ICONS.md)
 
 ## Repository structure

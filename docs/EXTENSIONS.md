@@ -101,13 +101,11 @@ operations and external database write confirmations.
 The external platform wraps this registry with host-owned iframe adapters. The
 registry itself continues to accept trusted application components; third-party
 code is not imported into the main React tree. See the
-[architecture rationale](EXTENSION_PLATFORM.md) for the runtime tradeoffs.
+[runtime architecture](EXTENSION_PLATFORM.md) for the runtime boundaries.
 
 ## Runtime cost
 
-A Linux development sample with bundled Node 24.22.1 measured approximately
-65 MiB RSS for the controller, 63 MiB for an active SDK Diagnostics backend and
-70 MiB for an idle Redis backend with no network connection. These are individual
-process snapshots, not a desktop memory benchmark. The Linux runtime binary is
-about 122 MiB uncompressed. Processes are started lazily for enabled extension
-views/commands; per-extension processes trade additional memory for failure isolation.
+The bundled runtime adds package size, and each active extension worker adds a
+Node process. Workers start lazily for enabled views/commands. This trades memory
+for failure isolation; measure installed-package size and process RSS on the target
+OS when evaluating an extension. See [the runtime decision](decisions/011-trusted-node-extension-runtime.md).

@@ -1,5 +1,11 @@
 # 003: Общий Kubernetes-доступ и фазы Plan / Action
 
+> Implementation update: shared ResourceAccess, bounded query contracts and
+> backend Plan/Action are implemented. The original partial-implementation status
+> below describes the decision date. Current sessions start Plan + Ask; structured
+> plan presentation is superseded by [ADR-010](010-conversational-markdown-plans.md).
+> See [current architecture](../STRUCTURE.md#ai-domain).
+
 Дата: 2026-10-30. Уточнено: 2026-10-31.
 Статус: **принято; частично реализовано**. Backend Plan/Action и запрет writes
 в Plan существуют; общий access service и единый query contract ещё предстоят.

@@ -121,14 +121,14 @@ The shared metrics subscription owns aggregate and per-node observation historie
 | `node_commands.rs` | Node debug preparation and exec sessions. |
 | `port_forward_commands.rs` | Starting, listing, and stopping TCP forwards. |
 | `extension_commands.rs` | Bundled extension runtime startup and brokered requests/cancellation. |
-| `update_commands.rs` | Stable feed/version policy, signed package downloads, session cleanup and installation. |
+| `update_commands.rs` | Stable/dev feed and version policy, signed package downloads, session cleanup and installation. |
 | `graphics.rs` | Linux graphics runtime initialization and diagnostics. |
 
 The desktop shell owns transport and application lifecycle concerns. Kubernetes request logic and reusable session managers reside in `kubiki-core`. Native discovery and snapshot/CRD reads use `core/reads.rs`; node drain orchestration lives in `core/drain.rs`. Terminal command adapters share `exec_stream.rs` for IPC batching and acknowledgements.
 
 ## Kubernetes engine
 
-`crates/kubiki-core/` is the Rust library used by the desktop backend. It uses Tokio for asynchronous work and the `kube` library for Kubernetes API access.
+`crates/kubiki-core/` is the Rust library used by the desktop backend. It uses Tokio for asynchronous work and the `kube` library for Kubernetes API access. Paths in this section are relative to `crates/kubiki-core/`.
 
 | Source directory | Responsibility |
 | --- | --- |
@@ -152,10 +152,10 @@ The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reus
 compaction, installed skills and the bounded agent loop. `ConversationState` is
 separate from the portable execution session. `crates/kubiki-tools/` owns cluster
 tools, policy/projection, reviewed execution, evidence, accepted operation identities
-and verification. It reuses `kubiki-core` without Tauri. The native AI runtime executes
-tools directly in-process via `ToolExecutor` / `ToolCatalog` (`kubiki-tools`), while
-`crates/kubiki-mcp/` provides the Model Context Protocol (MCP) server, stdio CLI
-(`kubiki-mcp serve`), and attached client bridges for external agent runtimes like OpenCode.
+and verification. It reuses `kubiki-core` without Tauri. The integrated AI adapter dispatches cluster tools through an in-memory MCP
+connection to the shared server; native consent and skills remain desktop adapters.
+`crates/kubiki-mcp/` also provides the stdio CLI (`kubiki-mcp serve`) and attached
+bridges for OpenCode, Codex and Claude Code.
 `src/domains/ai/` owns the chat and settings interface, conversation presentation, and
 modular components: `ActionApprovalCard` (mutation review & consent), `QuestionCard`
 (interactive clarification prompts), `ThinkingBlock` (animated collapsible model thought
@@ -185,7 +185,7 @@ writing. Mode changes invalidate pending authorization; dispatched requests stil
 return operation receipts. Accepted UID/generation are retained per connection,
 so verification cannot silently switch to a replacement resource.
 
-`src-tauri/src/opencode.rs` launches installed OpenCode in a PTY and owns its attached
+`src-tauri/src/opencode.rs` launches installed external agent CLIs in a PTY and owns its attached
 MCP lifecycle. OpenCode owns its conversation and permissions; the MCP exposure
 profile still limits scope, data and operations. Pending startup can be stopped
 before the process is scheduled. Runtime selection lives in AI settings.
@@ -265,11 +265,14 @@ for preparation and verification commands.
 
 ## Documentation and assets
 
+[Documentation index](README.md) links operating guides, references,
+[architecture decisions](decisions/README.md) and [development plans](plans/README.md).
+ADRs preserve rationale and supersession; plans label unimplemented capabilities.
+
 `docs/media/` contains the GIF demonstrations and static PNG alternatives used by the README: overview, resources, YAML, topology, and Helm. Run `pnpm docs:media` to regenerate them; see [README recordings](MEDIA.md). Native application icons are stored in `src-tauri/icons/`.
 
 Font and Redis/Kafka icon license notices are stored in `public/licenses/`.
-`docs/DESKTOP_RENDERING.md` records dated investigation results and limitations;
-`docs/diagnostics/` holds their raw results. The project's own license is defined
+`docs/DESKTOP_RENDERING.md` describes graphics settings and rendering diagnostics. The project's own license is defined
 in the root `LICENSE` file.
 
 ## Workspace extension points
@@ -315,6 +318,7 @@ Arrange, direction and grouping changes fit the viewport; changing context,
 scope, focus or depth starts a new diagram.
 
 See [Workspace extensions](EXTENSIONS.md) for installation and the registration
-contract, and [extension architecture](EXTENSION_PLATFORM.md) for the runtime
-tradeoffs and deferred APIs. Shared application/extension tab styling is documented
+contract, and [extension architecture](EXTENSION_PLATFORM.md) for runtime
+boundaries. [Architecture decisions](decisions/README.md) record the trade-offs;
+[development plans](plans/README.md) separate proposed work from implemented APIs. Shared application/extension tab styling is documented
 in [Internal tab metrics](UI_TABS.md).

@@ -25,8 +25,9 @@ All prerelease/build suffixes stay out of GitHub Latest.
 
 An explicit tag selects the channel: a plain `v0.2.0` tag on `dev` still creates
 a stable release. Manual runs with no tag automatically select the next stable
-version on `main` and a dev prerelease on other branches. Pushing a branch commit
-alone runs tests and installer builds without publication.
+version on `main` and a dev prerelease on other branches. Pushes and pull requests outside `dev`/`main` run tests and installer builds
+without publication. Pushes to `dev`/`main` and pull requests targeting those
+branches do not start CI; use a manual workflow run.
 The publish job promotes a successful stable release to Latest after validation
 when it is newer than the current Latest. It has no manual promotion gate.
 

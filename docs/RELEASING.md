@@ -63,7 +63,7 @@ the original inputs; select **Run workflow** to change modes. The VirusTotal
 scan is an optional report; it never blocks publication.
 
 Pushing a `v*` tag builds signed packages, publishes them and runs the optional
-VirusTotal report scan afterwards. Tag pushes do not implicitly enable tests. To
+VirusTotal report scan alongside publication. Tag pushes do not implicitly enable tests. To
 run tests before publication, manually start **CI**, or start **Release** and
 enable **run_tests**.
 For tag-triggered publication:
@@ -109,9 +109,11 @@ and macOS signing/notarization, which are not configured here.
 
 The scan is an **optional, report-only job**. Enable or disable it per run with
 the `virustotal_scan` input (default: enabled); it runs alongside publication
-and its verdicts, failures and errors never block or fail the release. To
-rescan an already published payload, use **Re-run jobs** on that publishing
-run: the original inputs are preserved, so the scan repeats on the same files.
+and its verdicts, failures and errors never block or fail the release. To repeat a scan while its build artifacts remain available, rerun the
+**Scan release files with VirusTotal** job and then **Attach advisory antivirus report**
+in the original publishing run. Rerun those jobs individually, not the complete
+workflow: preparation refuses an already published tag. The original artifact
+bytes are reused; expired build artifacts require a separate recovery procedure.
 
 Register a free [VirusTotal Community account](https://www.virustotal.com/gui/join-us).
 Find the personal API key in your account settings ([official instructions](https://docs.virustotal.com/reference/getting-started)).
@@ -196,7 +198,8 @@ section (`kubiki-TARGET`, retained for 14 days), including build-only runs.
 
 ## Publication and retries
 
-Only the final publish job writes GitHub release assets. It:
+The publish job writes distributable packages and updater metadata. The separate
+advisory report job attaches antivirus reports after publication. The publisher:
 
 1. Downloads all four matrix artifacts and checks their source SHA, tag, target,
    signed mode, package presence and file hashes.
@@ -219,8 +222,8 @@ independently of it. A failed upload leaves an unpublished draft.
 Use **Re-run failed jobs** for a transient failure, or rerun the workflow with the
 same **custom_tag** for a complete rebuild. The publish job replaces incomplete
 assets on that draft. There is no heuristic that silently skips a platform based
-on a few similarly named assets. Published releases are refused rather than
-modified; select a new version for changes to an already published release.
+on a few similarly named assets. Published package assets are not overwritten; select a new version for changes
+to installers or binaries. Advisory antivirus reports can be replaced by a repeat scan.
 
 Dev feed promotion is the exception for retries: if the versioned release was
 published but the feed upload failed, **Re-run failed jobs** repairs only the feed
@@ -256,8 +259,8 @@ Install native platform dependencies first. `pnpm desktop:build` uses the same
 packaging code as CI, including the Linux OpenSSL workaround and RPM version
 handling. It does not require updater keys for an ordinary local build.
 
-Linux packages are verified locally; macOS and Windows builds must run on their
-respective runners. Compilation and browser mocks do not prove native installer
+Build macOS and Windows packages on their respective runners; verify installed
+packages on each supported OS. Compilation and browser mocks do not prove native installer
 or updater behavior. Install and exercise the packages on each OS. The first
 updater-enabled release in each channel is installed normally; then test an update
 to a newer signed release in that same channel. Old dev builds without channel

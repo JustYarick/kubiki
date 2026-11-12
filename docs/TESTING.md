@@ -46,7 +46,7 @@ The exec scenario checks that Escape reaches the PTY when search is closed.
 `agent_domain.test.ts` isolates replaced sessions' events/completion while keeping
 dispatched operation receipts during Stop. Native manifest tests exercise both
 Secret volume schemas, including misleading unknown fields; runtime tests cover
-one plan reconciliation pass after fresh evidence and isolation across turns.
+redirecting unoffered plan tools to Markdown without dispatch and isolation across turns.
 `kubiki-tools/tests/data_permissions.rs` blocks generic Event/Metrics reads and
 lists before any HTTP call, including with broad content rules, and verifies
 that policy updates revoke evidence without reusing its IDs. MCP protocol tests
