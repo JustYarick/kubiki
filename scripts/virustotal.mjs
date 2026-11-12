@@ -101,10 +101,7 @@ export class VirusTotalClient {
   file(sha256) { return this.request(`${API}/files/${sha256}`); }
 }
 
-export const DEFAULT_MAX_ALLOWED_DETECTIONS = Number(process.env.VIRUSTOTAL_MAX_ALLOWED_DETECTIONS ?? 1);
-export const MIN_CLEAN_ENGINES_FOR_FALSE_POSITIVE = 40;
-
-export function validateVerdicts(stats, results, { maxAllowedDetections = DEFAULT_MAX_ALLOWED_DETECTIONS } = {}) {
+export function validateVerdicts(stats, results) {
   if (!stats || !results || typeof results !== 'object' || Array.isArray(results)) throw new Error('Incomplete VirusTotal verdicts.');
   const counts = Object.fromEntries(CATEGORIES.map(category => [category, 0]));
   for (const result of Object.values(results)) {
@@ -124,16 +121,7 @@ export function validateVerdicts(stats, results, { maxAllowedDetections = DEFAUL
     throw new Error('No antivirus engine completed a supported scan.');
   }
 
-  // 100% clean
-  if (flaggedEngines === 0) return true;
-
-  // When vast majority (>= 40 engines) are clean, tolerate up to maxAllowedDetections (default 1)
-  // isolated heuristic false positive (e.g. generic NSIS or unsigned Mach-O heuristic detection).
-  if (maxAllowedDetections > 0 && flaggedEngines <= maxAllowedDetections && cleanEngines >= MIN_CLEAN_ENGINES_FOR_FALSE_POSITIVE) {
-    return true;
-  }
-
-  return false;
+  return flaggedEngines === 0;
 }
 
 async function hashFile(file) {
@@ -183,7 +171,7 @@ export async function scanReleaseAssets(client, dir, assets, report, { progress 
       }
       if (analysis.status !== 'completed') continue;
       const file = entry.aliases[0];
-      const clear = validateVerdicts(analysis.stats, analysis.results);
+      validateVerdicts(analysis.stats, analysis.results);
       // Bind the completed analysis to the uploaded bytes, including API
       // versions whose analysis response omits meta.file_info.
       const uploaded = (await client.file(file.sha256)).data;
@@ -192,30 +180,26 @@ export async function scanReleaseAssets(client, dir, assets, report, { progress 
           !Number.isSafeInteger(uploaded.attributes.last_analysis_date) || uploaded.attributes.last_analysis_date < analysis.date) {
         throw new Error(`VirusTotal file identity or analysis date mismatch: ${file.name}`);
       }
-      const currentClear = validateVerdicts(uploaded.attributes.last_analysis_stats, uploaded.attributes.last_analysis_results);
+      validateVerdicts(uploaded.attributes.last_analysis_stats, uploaded.attributes.last_analysis_results);
       for (const alias of entry.aliases) Object.assign(alias, {
         status: 'completed', analyzedAt: analysis.date, stats: analysis.stats, results: analysis.results,
         fileInfo: { sha256: uploaded.id, size: uploaded.attributes.size, date: uploaded.attributes.last_analysis_date,
           stats: uploaded.attributes.last_analysis_stats, results: uploaded.attributes.last_analysis_results },
       });
       pending.delete(entry);
-      const flaggedCount = ((analysis.stats?.malicious ?? 0) + (analysis.stats?.suspicious ?? 0)) ||
-                           ((uploaded.attributes?.last_analysis_stats?.malicious ?? 0) + (uploaded.attributes?.last_analysis_stats?.suspicious ?? 0));
+      const flaggedCount = Math.max((analysis.stats?.malicious ?? 0) + (analysis.stats?.suspicious ?? 0),
+        (uploaded.attributes?.last_analysis_stats?.malicious ?? 0) + (uploaded.attributes?.last_analysis_stats?.suspicious ?? 0));
       const cleanCount = (uploaded.attributes?.last_analysis_stats?.undetected ?? analysis.stats?.undetected ?? 0) +
                          (uploaded.attributes?.last_analysis_stats?.harmless ?? analysis.stats?.harmless ?? 0);
       let verdictMessage;
       if (flaggedCount === 0) {
         verdictMessage = `no detections reported (${cleanCount} clean engines)`;
       } else {
-        const flaggedDetails = Object.entries(uploaded.attributes?.last_analysis_results || analysis.results || {})
+        const flaggedDetails = Object.entries(analysis.results).concat(Object.entries(uploaded.attributes?.last_analysis_results || {}))
           .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
           .map(([engine, r]) => `${r.engine_name || engine}: ${r.result || r.category}`)
           .join(', ');
-        if (clear && currentClear) {
-          verdictMessage = `no actionable detections (${cleanCount} clean, tolerated heuristic flag: ${flaggedDetails || '1 engine'}) - ${file.url}`;
-        } else {
-          verdictMessage = `detections reported (${flaggedCount} flagged: ${flaggedDetails || 'unknown'}) - ${file.url}`;
-        }
+        verdictMessage = `detections reported (${flaggedCount} flagged: ${flaggedDetails || 'unknown'}) - ${file.url}`;
       }
       progress(`Completed ${file.name}: ${verdictMessage}`);
     }
@@ -240,11 +224,13 @@ export function renderVirusTotalReport(report) {
     const skipped = ['failure', 'timeout', 'confirmed-timeout', 'type-unsupported'].reduce((sum, category) => sum + (stats[category] ?? 0), 0);
     lines.push(`| ${cell(file.name)} | ${cell(file.sha256)} | ${stats.malicious ?? '—'} | ${stats.suspicious ?? '—'} | ${(stats.undetected ?? 0) + (stats.harmless ?? 0)} | ${skipped} | ${file.url ? `[${cell(file.status)}](${file.url})` : cell(file.status)} |`);
   }
-  const flaggedFiles = (report.files ?? []).filter(f => (f.stats?.malicious ?? 0) + (f.stats?.suspicious ?? 0) > 0);
+  const flaggedFiles = (report.files ?? []).filter(f =>
+    (f.stats?.malicious ?? 0) + (f.stats?.suspicious ?? 0) +
+    (f.fileInfo?.stats?.malicious ?? 0) + (f.fileInfo?.stats?.suspicious ?? 0) > 0);
   if (flaggedFiles.length > 0) {
     lines.push('', '### Detections and engine details');
     for (const file of flaggedFiles) {
-      const details = Object.entries(file.fileInfo?.results || file.results || {})
+      const details = Object.entries(file.results || {}).concat(Object.entries(file.fileInfo?.results || {}))
         .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
         .map(([engine, r]) => `- **${cell(file.name)}**: \`${cell(r.engine_name || engine)}\` reported \`${cell(r.result || r.category)}\``)
         .join('\n');

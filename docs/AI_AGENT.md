@@ -1,5 +1,10 @@
 # Integrated AI agent
 
+Since 1.3.1, plans are conversational Markdown. Plan is read-only; execution
+uses offered mutation tools in Action, with native confirmation in Ask mode.
+Structured plan APIs and historical cards remain for compatibility; they are
+not offered to the model. See [planning contract](AI_PLAN_CONTRACT.md).
+
 Implementation snapshot: **2026-11-01**, checked against the repository, not a
 live-cluster performance benchmark. Backend Plan/Action phases, Pod/workload
 diagnostics, structured compaction and frontend conversation persistence already exist.

@@ -853,27 +853,24 @@ impl ToolExecutor for RemediationHost {
         if call.name == "get_resource" {
             return Ok(json!({"resource":{"metadata":{"name":"web"}}}));
         }
-        assert_eq!(call.name, "propose_plan");
-        Ok(
-            json!({"planArtifact":{"id":"plan-tested","kind":"remediation","bodyMarkdown":"do-not-duplicate-plan-body","steps":[{"id":"check","verification":"Observe Ready condition"}]}}),
-        )
+        panic!("Unoffered tool was dispatched: {}", call.name)
     }
 }
 
 #[tokio::test]
-async fn new_evidence_after_a_plan_requests_one_reconciliation_pass() {
+async fn unoffered_plan_tools_are_redirected_to_markdown_without_dispatch() {
     let conversation = ConversationState::default();
     let (client, requests, task) = provider(vec![
-        call("propose_plan"), call("get_resource"), final_text(), final_text(),
+        call("propose_plan"), call("get_resource"), final_text(),
     ]).await;
     run(session(), conversation, 0, client, "model".into(), GenerationOptions::default(),
         String::new(), "Investigate".into(), Arc::new(RemediationHost), sink()).await.unwrap();
     task.await.unwrap();
     let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 3);
     let last = requests.last().unwrap().to_string();
-    assert!(last.contains("plan-tested"));
-    assert!(last.contains("single plan reconciliation pass"));
+    assert!(last.contains("directly in Markdown"));
+    assert!(!last.contains("single plan reconciliation pass"));
 }
 
 #[tokio::test]
@@ -915,7 +912,7 @@ async fn investigate_can_complete_with_direct_answer_without_mandatory_plan() {
 }
 
 #[tokio::test]
-async fn investigate_processes_remediation_plan_when_proposed() {
+async fn investigate_redirects_legacy_plan_calls_to_markdown() {
     let conversation = ConversationState::default();
     let mut s = session();
     s.intent = AgentIntent::Investigate;

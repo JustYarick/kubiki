@@ -78,42 +78,6 @@ fn attach_evidence(session: &Session, revision: u64, call: &ToolCall, result: &m
     }
 }
 
-/// Only plans proposed in this run need reconciliation with later live reads.
-#[derive(Default)]
-struct PlanFreshness {
-    plan_id: Option<String>,
-    evidence_after_plan: bool,
-    correction_requested: bool,
-}
-impl PlanFreshness {
-    fn observe(&mut self, call: &ToolCall, result: &Value) {
-        if call.name == "propose_plan" {
-            if let Some(id) = result.pointer("/planArtifact/id").and_then(Value::as_str) {
-                self.plan_id = Some(id.into());
-                self.evidence_after_plan = false;
-            }
-        } else if self.plan_id.is_some()
-            && parallel_read_tool(&call.name)
-            && call.name != "get_evidence"
-            && result.get("evidenceId").is_some()
-            && result.get("error").is_none_or(Value::is_null)
-        {
-            self.evidence_after_plan = true;
-        }
-    }
-
-    fn correction(&mut self) -> Option<String> {
-        if !self.evidence_after_plan || self.correction_requested {
-            return None;
-        }
-        self.correction_requested = true;
-        Some(format!(
-            "Fresh permitted evidence was collected after plan {} was proposed in this turn. Reconcile the plan with that evidence before finishing: if the diagnosis or steps changed, call propose_plan with this planId to create an updated version; otherwise explicitly explain why the existing plan remains valid. This is the single plan reconciliation pass and does not authorize any writes.",
-            self.plan_id.as_deref()?
-        ))
-    }
-}
-
 fn unoffered_tool_error(name: &str, phase: impl std::fmt::Debug, mode: impl std::fmt::Debug) -> String {
     let writes = ["apply_manifest", "scale_workload", "restart_workload", "delete_resource"];
     if writes.contains(&name) {
@@ -242,7 +206,6 @@ pub async fn run(
     let approval_before_run = session.approval_wait();
     let outcome = async {
         let mut count = 0;
-        let mut plan_freshness = PlanFreshness::default();
         loop {
             let working = session.working_scope.lock().map_err(|_| "Working scope unavailable")?.clone();
             let working_str = if working.namespace.is_some() || working.root.is_some() || working.label_selector.is_some() {
@@ -291,7 +254,7 @@ pub async fn run(
             history.push(Turn::Assistant(completion));
             // A tool outside this phase/policy is never dispatched. Report it to the model
             // instead of aborting, so it can explain the missing permission or switch approach.
-            let (calls, unoffered): (Vec<_>, Vec<_>) = calls.into_iter().partition(|call| definitions.iter().any(|tool| tool.name == call.name) || call.name == "propose_plan" || call.name == "get_plan");
+            let (calls, unoffered): (Vec<_>, Vec<_>) = calls.into_iter().partition(|call| definitions.iter().any(|tool| tool.name == call.name));
             for call in unoffered {
                 count += 1;
                 let result = json!({"executed":false,"error":unoffered_tool_error(&call.name, state.phase, state.mode)});
@@ -303,10 +266,6 @@ pub async fn run(
                 continue;
             }
             if calls.is_empty() {
-                if let Some(correction) = plan_freshness.correction() {
-                    history.push(Turn::User(correction));
-                    continue;
-                }
                 return Ok(());
             }
             if calls.iter().any(|c| c.name == "ask_user") {
@@ -343,7 +302,6 @@ pub async fn run(
                     results = execute_read_batch(host.as_ref(), &session, calls, &emit) => results,
                 };
                 for (call, result) in results {
-                    plan_freshness.observe(&call, &result);
                     history.push(Turn::Tool { call, result });
                 }
                 continue;
@@ -363,7 +321,6 @@ pub async fn run(
                 };
                 let mut value = value;
                 attach_evidence(&session, expected_revision, &call, &mut value);
-                plan_freshness.observe(&call, &value);
                 emit(AgentEvent::ToolCompleted { id: call.id.clone(), result: value.clone() });
                 let error_text = value.get("error").and_then(Value::as_str).unwrap_or("");
                 let recoverable_validation_error = host.requires_action(&call.name)
@@ -381,8 +338,7 @@ pub async fn run(
                     && (value.get("error").is_some_and(|error| !error.is_null())
                         || value["isError"] == true
                         || matches!(value["status"].as_str(), Some("failed" | "uncertain" | "cancelled")));
-                let model_result=if call.name=="propose_plan" && value.get("planArtifact").is_some() {let plan=&value["planArtifact"];json!({"planId":plan["id"],"version":plan["version"],"kind":plan["kind"],"status":plan["status"],"stepIds":plan["steps"].as_array().map(|s|s.iter().map(|s|s["id"].clone()).collect::<Vec<_>>()),"evidenceIds":plan["evidenceIds"],"executed":false,"lookup":"Use get_plan only when the full prior proposal is needed"})} else {value};
-                history.push(Turn::Tool { call, result: model_result });
+                history.push(Turn::Tool { call, result: value });
                 if recoverable_validation_error {
                     for skipped in calls_iter {
                         let skipped_result = json!({"executed":false,"deferred":true,"error":"Skipped because an earlier write in the same batch failed pre-dispatch manifest validation; fix the manifest and retry"});

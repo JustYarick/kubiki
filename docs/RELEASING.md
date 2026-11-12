@@ -142,12 +142,17 @@ and file identity. Any malicious/suspicious verdict, missing key, API error,
 timeout, inconsistent report, or absence of supported completed engine results
 is recorded in the report, but publication never depends on it. Investigate
 detections, including possible false positives, yourself; the pipeline does not
-ignore them automatically.
+ignore them automatically. A completed scan with detections exits successfully:
+`passed` means no detections, `detected` means findings requiring review, and
+`error` means the scan could not complete and the scanner exits nonzero.
+There is no detection-count tolerance and no automatic false-positive claim.
+Windows Authenticode is not required or configured.
 
 The `antivirus-report` workflow artifact contains **`VIRUSTOTAL-REPORT.json`**
 and **`VIRUSTOTAL-REPORT.md`**, retained for 14 days even after a scan failure
-when the report step can run. They are published separately from the release;
-the release contains only packages, signatures, `SHA256SUMS` and `latest.json`.
+when the report step can run. After publication and scanning finish, a separate
+job attaches both reports to the GitHub Release for durable access. This job
+does not block publication.
 JSON records hashes, analysis IDs, engine names/versions/verdicts and links to
 VirusTotal; Markdown gives a readable table.
 

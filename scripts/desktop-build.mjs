@@ -22,14 +22,8 @@ function tauri(args) {
     if (result.error) throw result.error;
     if (result.status === 0) return;
     if (process.platform === 'darwin' && attempts < 3 && args[0] === 'build') {
-      console.warn(`tauri build failed (${result.status ?? result.signal}). Retrying after detaching disk images (${attempts}/3)...`);
-      try {
-        const info = spawnSync('hdiutil', ['info'], { encoding: 'utf8' }).stdout || '';
-        for (const line of info.split('\n')) {
-          const match = line.match(/\/dev\/disk\d+/);
-          if (match) spawnSync('hdiutil', ['detach', match[0], '-force']);
-        }
-      } catch {}
+      // Retry without touching disk images mounted by other applications.
+      console.warn(`tauri build failed (${result.status ?? result.signal}). Retrying (${attempts}/3)...`);
       continue;
     }
     throw new Error(`tauri ${args[0]} failed (${result.status ?? result.signal})`);

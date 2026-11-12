@@ -143,7 +143,7 @@ test('scan waits for completed verdicts, deduplicates identical bytes and preser
   assert.equal(reports.length, 2);
 });
 
-test('malicious and suspicious verdicts block a release; unsupported-only and empty analyses cannot pass', async t => {
+test('malicious and suspicious verdicts remain detections; unsupported-only and empty analyses cannot pass', async t => {
   const fixture = await payloadFixture(t);
   for (const category of ['malicious', 'suspicious']) {
     const { client } = scanApi(fixture, { category });
@@ -216,7 +216,7 @@ test('missing API key produces a failed report and a nonzero exit without upload
   assert.match(await readFile(path.join(output, 'VIRUSTOTAL-REPORT.md'), 'utf8'), /Status: \*\*error\*\*/);
 });
 
-test('validateVerdicts allows isolated false positives when clean engine count is high', () => {
+test('validateVerdicts preserves detections regardless of the number of other engines', () => {
   const makeVerdicts = (clean, malicious = 0, suspicious = 0) => {
     const stats = { harmless: 0, undetected: clean, malicious, suspicious, failure: 0, timeout: 0, 'confirmed-timeout': 0, 'type-unsupported': 0 };
     const results = {};
@@ -230,12 +230,10 @@ test('validateVerdicts allows isolated false positives when clean engine count i
   const clean = makeVerdicts(50);
   assert.equal(validateVerdicts(clean.stats, clean.results), true);
 
-  // 1 false positive out of 50 clean engines passes with default tolerance (1)
+  // A single detection remains a finding even with 50 unflagged engines.
   const singleFp = makeVerdicts(50, 1, 0);
-  assert.equal(validateVerdicts(singleFp.stats, singleFp.results), true);
+  assert.equal(validateVerdicts(singleFp.stats, singleFp.results), false);
 
-  // 1 false positive rejected when maxAllowedDetections is 0
-  assert.equal(validateVerdicts(singleFp.stats, singleFp.results, { maxAllowedDetections: 0 }), false);
 
   // 2 detections rejected even with default tolerance
   const doubleFp = makeVerdicts(50, 2, 0);
@@ -246,7 +244,7 @@ test('validateVerdicts allows isolated false positives when clean engine count i
   assert.equal(validateVerdicts(fewEngines.stats, fewEngines.results), false);
 });
 
-test('isolated heuristic false positive passes scanReleaseAssets and is recorded in the report', async t => {
+test('isolated detection completes scanReleaseAssets and is recorded without a false-positive claim', async t => {
   const fixture = await payloadFixture(t);
   const cleanCount = 60;
   const stats = { harmless: 0, undetected: cleanCount, malicious: 1, suspicious: 0, failure: 0, timeout: 0, 'confirmed-timeout': 0, 'type-unsupported': 0 };
@@ -269,8 +267,9 @@ test('isolated heuristic false positive passes scanReleaseAssets and is recorded
   const report = releaseReport(fixture.assets, 'v1.0.0', 'a'.repeat(40));
   const messages = [];
   await scanReleaseAssets(client, fixture.dir, fixture.assets, report, { progress: msg => messages.push(msg) });
-  assert.equal(report.status, 'passed');
-  assert.ok(messages.some(msg => msg.includes('no actionable detections') && msg.includes('tolerated heuristic flag: DeepInstinct: MALICIOUS')));
+  assert.equal(report.status, 'detected');
+  assert.ok(messages.some(msg => msg.includes('detections reported') && msg.includes('DeepInstinct: MALICIOUS')));
+  assert.ok(messages.every(msg => !msg.includes('false positive') && !msg.includes('tolerated')));
 
   const markdown = renderVirusTotalReport(report);
   assert.match(markdown, /Detections and engine details/);
