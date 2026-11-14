@@ -14,6 +14,13 @@ let unregister: ReturnType<typeof vi.fn>;
 beforeEach(() => { mock.invoke.mockReset().mockResolvedValue(undefined); mock.channels.length = 0; unregister = vi.fn(); vi.stubGlobal('window', { __TAURI_INTERNALS__: { unregisterCallback: unregister } }); });
 afterEach(() => vi.unstubAllGlobals());
 
+it('projects discovery metadata to the strict native CRD identity contract', async () => {
+  const definition = { name: 'widgets.example.io', uid: 'crd-uid', columns: [{ name: 'Status' }], group: 'example.io', kind: 'Widget', key: 'custom' };
+  const close = await watchTauriResources(query, vi.fn(), new AbortController().signal, definition);
+  expect(mock.invoke.mock.calls[0][1].customResource).toEqual({ name: definition.name, uid: definition.uid });
+  close();
+});
+
 it('does not register an already cancelled watch', async () => {
   const abort = new AbortController(); abort.abort(); await watchTauriResources(query, vi.fn(), abort.signal);
   expect(mock.invoke).not.toHaveBeenCalled(); expect(mock.channels).toHaveLength(0);

@@ -41,6 +41,30 @@ pub struct HostProcess {
     pub cwd: std::path::PathBuf,
     pub environment: Vec<(String, String)>,
 }
+impl HostProcess {
+    /// Start a trusted CLI after the user's interactive login startup files.
+    /// Arguments remain positional data; prompts and paths never become shell code.
+    pub fn with_shell_environment(self) -> Result<Self, ApiError> {
+        #[cfg(unix)]
+        {
+            let shell = host_terminal_info()?.default_shell;
+            Ok(self.through_shell(&shell))
+        }
+        #[cfg(not(unix))]
+        { Ok(self) }
+    }
+
+    #[cfg(unix)]
+    fn through_shell(self, shell: &str) -> Self {
+        let fish = Path::new(shell).file_name().is_some_and(|name| name == "fish");
+        let mut args = vec!["-l".into(), "-i".into(), "-c".into(),
+            if fish { "exec $argv".into() } else { "exec \"$@\"".into() }];
+        if !fish { args.push("kubiki-agent".into()); }
+        args.push(self.program.to_string_lossy().into_owned());
+        args.extend(self.args);
+        Self { program: shell.into(), args, cwd: self.cwd, environment: self.environment }
+    }
+}
 fn error(status: u16, message: impl Into<String>) -> ApiError {
     ApiError::from_status(status, message, "host_terminal", None)
 }
@@ -663,6 +687,39 @@ mod tests {
     use super::*;
     use portable_pty::{ChildKiller, ExitStatus};
     use std::sync::Weak;
+
+    #[tokio::test]
+    async fn agent_inherits_interactive_zsh_startup_and_preserves_literal_arguments() {
+        let Some(shell) = ["/bin/zsh", "/usr/bin/zsh"].into_iter().find(|path| Path::new(path).is_file()) else { return; };
+        let directory = std::env::temp_dir().join(format!("kubiki-shell-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join(".zshrc"), "export KUBIKI_STARTUP_TEST=synthetic-startup-value\n").unwrap();
+        let process = HostProcess {
+            program: "/bin/sh".into(), cwd: directory.clone(),
+            args: vec!["-c".into(), "printf '\\nSTARTUP:%s\\nARG:%s\\n' \"$KUBIKI_STARTUP_TEST\" \"$1\"".into(), "test".into(), "literal ; $(echo BAD) ' \"".into()],
+            environment: vec![("ZDOTDIR".into(), directory.to_string_lossy().into_owned())],
+        }.through_shell(shell);
+        let manager = HostTerminalManager::default();
+        let mut sub = manager.start_process("test", "startup", HostTerminalRequest { shell: None, cols: 80, rows: 24 }, process).await.unwrap();
+        let mut bytes = Vec::new();
+        let code = tokio::time::timeout(Duration::from_secs(10), async {
+            while let Some(message) = sub.output.recv().await {
+                match message.event {
+                    ExecEvent::Output { data } => bytes.extend(data),
+                    ExecEvent::Exited { code } => return code,
+                    ExecEvent::Failed { error } => panic!("{}", error.message),
+                    _ => {},
+                }
+            }
+            panic!("Missing exit event")
+        }).await.unwrap();
+        manager.stop_owner("test").await;
+        std::fs::remove_dir_all(directory).unwrap();
+        assert_eq!(code, 0);
+        let output = String::from_utf8_lossy(&bytes);
+        assert!(output.contains("STARTUP:synthetic-startup-value"));
+        assert!(output.contains("ARG:literal ; $(echo BAD) ' \""));
+    }
 
     #[derive(Clone, Debug)]
     struct DrainSensitiveChild {

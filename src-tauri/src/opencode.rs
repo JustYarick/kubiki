@@ -558,7 +558,7 @@ async fn start_opencode_inner(
                 args,
                 cwd,
                 environment: vec![],
-            },
+            }.with_shell_environment().map_err(|e| e.message)?,
         )
         .await
         .map_err(|e| e.message)?;

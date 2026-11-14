@@ -33,7 +33,28 @@ Node details include independently sampled CPU and memory histories, usage relat
 
 Scheduling state, provider ID, Pod CIDRs, region/zone, machine/system/boot identity, cached image-group counts and volume information accompany the existing capacity, runtime, addresses, taints, conditions and Pod details. Node Pod inventory covers all namespaces; permission failures are displayed as incomplete data.
 
+Opening a Node can widen the shared Pod watch. Existing rows that match the new
+scope and their navigation history remain available while it initializes. The
+table still follows the namespace selector; retained rows do not establish a
+complete snapshot of the wider scope. The same rule applies to other inspectors
+and split views that expand resource demand.
+
 Metrics Server supplies CPU and memory, not disk/network performance rates or historical data from before the application collected it. Missing or denied usage is shown as unavailable. Unknown capacities and system fields remain unknown.
+
+## Helm release diagnostics
+
+Release Overview shows Helm's latest operation description for failed/pending
+operations. Failed and pending releases load revision manifests and hooks for
+comparison with observed objects. Details retain workload reads in the release
+namespace, independently of the table's namespace selection.
+
+**Release events** reads events in the release namespace and namespaces of its
+observed objects. It correlates events to observed release objects, hooks and
+loaded descendants (including Job Pods) by resource identity and owner UID.
+The newest 100 matching events are shown with reason, message, time and count;
+**Refresh release events** reads them again. Read failures are shown per
+namespace. Unloaded objects, deleted hooks and expired events can leave gaps;
+an empty event list does not establish release health.
 
 ## Pod details and shared charts
 

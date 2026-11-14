@@ -26,7 +26,7 @@ export class ResourceWatchSession {
   /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
   private scopedFallback = new Set<ResourceKind>();
   private kindScopes: ReadonlyMap<ResourceKind, string> = new Map();
-  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery) => ResourceItem[] | undefined, private customType?: ResourceType) {}
+  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery, allowPartial?: boolean) => ResourceItem[] | undefined, private customType?: ResourceType) {}
 
   private query(kind: ResourceKind, scope: string): ResourceQuery {
     if (!this.customType) return resourceQuery(this.context, kind, scope);
@@ -73,13 +73,16 @@ export class ResourceWatchSession {
     const query = this.query(kind, scope);
     const sameScope = previous && sameQuery(previous.query, query);
     const cached = !sameScope ? this.cachedSnapshot?.(query) : undefined;
+    // Keep overlapping observations while a broader scope initializes, without
+    // claiming that these rows form a complete snapshot of the new scope.
+    const retained = cached ?? (!sameScope ? this.cachedSnapshot?.(query, true) : undefined);
     let resolve!: () => void; let reject!: (error: K8sRequestError) => void;
     const ready = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     let settled = false;
     const subscription: Subscription = { query, abort: new AbortController(), sequence: 0, changes: new Map(), phase: 'connecting', hasSnapshot: sameScope ? previous.hasSnapshot : cached !== undefined,
       settle: (error) => { if (settled) return; settled = true; clearTimeout(subscription.firstTimer); if (error) reject(error); else resolve(); } };
     this.subscriptions.set(kind, subscription);
-    this.commit(kind, { ...(!sameScope ? { snapshot: cached ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
+    this.commit(kind, { ...(!sameScope ? { snapshot: retained ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
     void (async () => {
       if (!this.current(kind, subscription)) return;
       if (!this.provider.managesInitialSyncTimeout) subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);

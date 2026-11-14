@@ -98,10 +98,10 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
         useClusterStore.getState().setAvailableNamespaces(watched.sort());
       }
     }
-  }, useClusterStore.getState().selectedNamespace, new Set(), query => {
+  }, useClusterStore.getState().selectedNamespace, new Set(), (query, allowPartial) => {
     const state = useResourceStore.getState();
     const snapshot = state.watchStates[query.kind as ResourceKind];
-    if (!snapshot?.hasSnapshot || snapshot.query.context !== query.context || !namespaceScopeCovers(snapshot.query.namespace ?? 'all', query.namespace ?? 'all')) return;
+    if (!snapshot || snapshot.query.context !== query.context || !allowPartial && (!snapshot.hasSnapshot || !namespaceScopeCovers(snapshot.query.namespace ?? 'all', query.namespace ?? 'all'))) return;
     return [...state.resources[query.kind as ResourceKind].values()].filter(item => inNamespaceScope(query.namespace ?? 'all', item.namespace));
   });
   session = next;

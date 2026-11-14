@@ -22,7 +22,9 @@ export async function watchTauriResources(query: ResourceQuery, onBatch: (batch:
   };
   signal.addEventListener('abort', close, { once: true });
   try {
-    await invoke('watch_resources', { query, subscriptionId: id, onEvent: channel, ...(customResource ? {customResource} : {}) });
+    // Discovery definitions also carry presentation fields. The native contract
+    // deliberately accepts only the CRD identity.
+    await invoke('watch_resources', { query, subscriptionId: id, onEvent: channel, ...(customResource ? {customResource: { name: customResource.name, uid: customResource.uid }} : {}) });
     // Cancellation can beat native registration: an idempotent second stop closes that race.
     if (closed) unwatch();
     return close;

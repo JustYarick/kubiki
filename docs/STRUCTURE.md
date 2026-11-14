@@ -186,7 +186,8 @@ return operation receipts. Accepted UID/generation are retained per connection,
 so verification cannot silently switch to a replacement resource.
 
 `src-tauri/src/opencode.rs` launches installed external agent CLIs in a PTY and owns its attached
-MCP lifecycle. OpenCode owns its conversation and permissions; the MCP exposure
+MCP lifecycle. On Unix, the CLI inherits the default shell's interactive login
+startup environment through the shared host-terminal process builder. OpenCode owns its conversation and permissions; the MCP exposure
 profile still limits scope, data and operations. Pending startup can be stopped
 before the process is scheduled. Runtime selection lives in AI settings.
 

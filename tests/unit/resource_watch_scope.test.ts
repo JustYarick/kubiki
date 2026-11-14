@@ -13,6 +13,32 @@ vi.mock('../../src/providers/k8s_provider', () => ({ k8s: mock }));
 beforeEach(() => { vi.useFakeTimers(); useResourceStore.getState().reset(); useResourceRequirements.setState({ entries: new Map() }); useWorkspaceStore.setState({ tabs: [{ id: 'pods', type: 'resource-list', kind: 'Pod', title: 'Pods' }], activeTabId: 'pods', splitTabId: null }); useUiStore.setState({ inspectorCollapsed: true }); useClusterStore.setState({ currentContext: 'test', selectedNamespace: 'backend', availableNamespaces: [], availableResourceKinds: null }); mock.watchResources.mockReset(); });
 afterEach(() => { stopResourceWatches(); vi.useRealTimers(); });
 
+it('keeps Pod rows and back history while Node inspection expands the watch, then isolates namespace changes', async () => {
+  const pod = { apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'pod', name: 'web', namespace: 'backend' }, spec: { nodeName: 'worker' } };
+  let finishCluster!: () => void;
+  mock.watchResources.mockImplementation(async (query: ResourceQuery, emit: (batch: WatchBatch) => void) => {
+    const send = () => emit({ query, subscription_id: 'test', messages: [{ sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: query.kind === 'Pod' ? [pod] : query.kind === 'Node' ? [{ apiVersion: 'v1', kind: 'Node', metadata: { uid: 'node', name: 'worker' } }] : [] } } } }, { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } }] });
+    if (query.kind === 'Pod' && query.namespace === null) finishCluster = send;
+    else if (query.kind !== 'Pod' || query.namespace === 'backend') send();
+    return vi.fn();
+  });
+  const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(50); await ready;
+  const original = useResourceStore.getState().resources.Pod.get('pod')!;
+  useResourceStore.getState().selectItem(original);
+  useUiStore.setState({ inspectorCollapsed: false });
+  await vi.advanceTimersByTimeAsync(50);
+  useResourceStore.getState().selectItem(useResourceStore.getState().resources.Node.get('node')!, { history: true });
+  await vi.advanceTimersByTimeAsync(50);
+  expect(useResourceStore.getState().resources.Pod.get('pod')).toEqual(original);
+  expect(useResourceStore.getState().watchStates.Pod).toMatchObject({ hasSnapshot: false, phase: 'connecting' });
+  expect(useResourceStore.getState().selectionHistory).toContain(original);
+  finishCluster(); await vi.advanceTimersByTimeAsync(50);
+  expect(useResourceStore.getState().watchStates.Pod?.hasSnapshot).toBe(true);
+  useUiStore.setState({ inspectorCollapsed: true });
+  useClusterStore.getState().selectNamespace('other'); await vi.advanceTimersByTimeAsync(50);
+  expect(useResourceStore.getState().resources.Pod.size).toBe(0);
+});
+
 it('subscribes to selected namespace, preserves cluster watches and removes the namespace listener on stop', async () => {
   const queries: ResourceQuery[] = []; const signals: AbortSignal[] = [];
   mock.watchResources.mockImplementation(async (query: ResourceQuery, emit: (batch: WatchBatch) => void, signal: AbortSignal) => {

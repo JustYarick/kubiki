@@ -25,6 +25,38 @@ async function open(page: Page, section = 'Releases') {
   await page.getByRole('button', { name: `Open Helm ${section}`, exact: true }).click();
 }
 
+test('failed release shows the Helm error and events from hook Job Pods', async ({ page }) => {
+  await baseApi(page);
+  const namespaces: string[] = [];
+  await page.route('**/api/k8s/resources?**', route => {
+    const url = new URL(route.request().url());
+    const kind = url.searchParams.get('kind');
+    if (kind === 'Job') return route.fulfill({ json: { items: [{ apiVersion: 'batch/v1', kind: 'Job', metadata: { uid: 'hook', name: 'web-migrate', namespace: 'backend' }, status: { failed: 1 } }] } });
+    if (kind === 'Pod') return route.fulfill({ json: { items: [{ apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'hook-pod', name: 'web-migrate-pod', namespace: 'backend', ownerReferences: [{ uid: 'hook', kind: 'Job', name: 'web-migrate', apiVersion: 'batch/v1' }] }, status: { phase: 'Failed' } }] } });
+    if (kind === 'Event') {
+      namespaces.push(url.searchParams.get('namespace') ?? 'all');
+      return route.fulfill({ json: { items: [{ apiVersion: 'v1', kind: 'Event', metadata: { uid: 'event', name: 'migration-failed', namespace: 'backend' }, type: 'Warning', reason: 'Failed', message: 'Migration database connection refused', involvedObject: { apiVersion: 'v1', kind: 'Pod', uid: 'hook-pod', name: 'web-migrate-pod', namespace: 'backend' } }] } });
+    }
+    return route.fallback();
+  });
+  await page.route('**/api/k8s/helm/**', route => {
+    const url = new URL(route.request().url()); const op = url.pathname.split('/').pop();
+    if (op === 'inventory') return route.fulfill({ json: [release('web', 'backend', 'failed')] });
+    if (op === 'history') return route.fulfill({ json: [{ revision: 2, updated: '2026-10-20T12:00:00Z', status: 'failed', chart: 'web-chart-1.0', app_version: '1', description: 'UPGRADE FAILED: post-upgrade hooks failed: job failed: BackoffLimitExceeded' }] });
+    if (op === 'content') return route.fulfill({ json: url.searchParams.get('document') === 'hooks' ? 'apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: web-migrate\n  namespace: backend\n' : '' });
+    return route.fulfill({ json: [] });
+  });
+  await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await open(page);
+  await page.getByRole('row', { name: 'Inspect Helm release web in backend' }).click();
+  const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
+  await expect(details.getByRole('alert')).toContainText('BackoffLimitExceeded');
+  const events = details.getByRole('region', { name: 'Release events (1)', exact: true });
+  await expect(events).toContainText('Migration database connection refused');
+  await expect(events).toContainText('web-migrate-pod');
+  await events.getByRole('button', { name: 'Refresh release events', exact: true }).click();
+  await expect.poll(() => namespaces.filter(namespace => namespace === 'backend').length).toBeGreaterThan(1);
+});
+
 test('Helm supports inspection, revision documents, name/namespace filters, incremental rendering and one tab per section', async ({ page }) => {
   await baseApi(page);
   const calls: URL[] = [];

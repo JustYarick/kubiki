@@ -52,7 +52,7 @@ async function setup(page: Page, denied = false) {
         if (command === 'close_pod_logs') { const s = logSessions.get(args.sessionId); if (s) oldLogs.push(s); logSessions.delete(args.sessionId); return; }
         if (command === 'get_pod_logs') { logContainers.push(args.container); return `2026-10-20T00:00:00Z ${args.container} log output\n`; }
         if (command === 'stop_pod_execs') { active.clear(); return; }
-        if (command === 'start_pod_exec') {
+        if (command === 'start_pod_exec' || command === 'start_pod_attach') {
           starts.push(args.request); const s = { id: args.sessionId, channel: args.onEvent, sequence: 0 }; active.set(s.id, s);
           queueMicrotask(() => send(s, denied ? [{ type: 'Failed', payload: { error: { code: 'forbidden', status: 403, retryable: false, message: 'pods/exec is forbidden', operation: 'exec' } } }] : [{ type: 'Started' }, out(`${args.request.container}$ `)])); return;
         }
@@ -225,6 +225,23 @@ test('Pod shell carries real adapter input, resize, UTF-8 and exit; container sw
   await pane.getByRole('button', { name: 'Reconnect shell' }).click(); await expect(pane.getByRole('status')).toHaveText('Connected');
   await pane.getByRole('button', { name: 'Disconnect shell' }).click(); await expect(pane.getByRole('status')).toHaveText('Disconnected');
   expect(await page.evaluate(() => (window as any).__execHarness.active())).toBe(0);
+});
+
+test('attach explains PID 1 input and detaches without sending interrupt or detach keys', async ({ page }) => {
+  await setup(page);
+  await page.evaluate(async name => {
+    const { useDockStore } = await import(/* @vite-ignore */ '/src/state/dock_store.ts' as string);
+    useDockStore.getState().openAttachTerminal(name, 'backend', 'app');
+  }, name);
+  const pane = page.getByTestId('live-terminal');
+  await expect(pane.getByRole('status')).toHaveText('Connected');
+  await expect(pane.getByRole('note')).toContainText('Ctrl+C or exit can stop it');
+  expect(await page.evaluate(() => (window as any).__execHarness.starts[0].mode)).toBe('attach');
+  await pane.locator('.xterm-helper-textarea').focus();
+  await page.keyboard.press('Control+p'); await page.keyboard.press('Control+q');
+  await expect(pane.getByRole('status')).toHaveText('Disconnected');
+  await expect.poll(() => page.evaluate(() => (window as any).__execHarness.active())).toBe(0);
+  expect(await page.evaluate(() => (window as any).__execHarness.input.join(''))).not.toMatch(/[\x03\x10\x11]/);
 });
 
 test('container indicators and responsive logs toolbar include init/sidecar/ephemeral; switching preserves filters', async ({ page }) => {
