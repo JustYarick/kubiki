@@ -24,6 +24,7 @@ import { Popover, MenuList, type MenuItem } from '../ui/Dropdown';
 import { IconButton, Tooltip } from '../ui/Button';
 import { NamespaceSelect } from '../ui/NamespaceSelect';
 import { toast } from '../../state/notifications_store';
+import { McpQuickControl } from '../../domains/ai/components/McpQuickControl';
 import type { ResourceKind } from '../../types/k8s';
 import { cx } from '../../core/utils/cx';
 
@@ -259,8 +260,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
         </button>
       </div>
 
-      {/* Right: Sync Controls + Layout Toggles + Settings */}
+      {/* Right: MCP Status + Sync Controls + Layout Toggles + Settings */}
       <div className="app-titlebar-tools flex items-center gap-1 shrink-0">
+        <McpQuickControl placement="titlebar" />
+
+        <div className="app-titlebar-divider h-4 w-px bg-[var(--border-default)] mx-1" />
+
         {/* Refresh Cluster Button */}
         <Tooltip label="Synchronize cluster state" delay={300}>
           <button

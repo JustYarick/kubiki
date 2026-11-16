@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { createTerminalView, type TerminalView } from '../../../core/terminal_view';
 import { Button } from '../../../components/ui/Button';
-import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { Select } from '../../../components/ui/Select';
 import { connectOpenCode, OpenCodeNotStartedError, type ExecConnection } from '../../../providers/tauri_exec';
 import { useTerminalAppearance } from '../../../components/k8s/useTerminalAppearance';
@@ -10,7 +9,14 @@ import { useUiStore } from '../../../state/ui_store';
 import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
-import { normalizeMcpPolicy, syncSharedPolicyFields, isToolActiveInPolicy, toggleReadOnlyMcpPolicy, externalAgentName, MCP_TOOL_CATALOG, type AgentPolicy, type ExternalTerminalMode } from '../types';
+import {
+  ensureMcpProfiles,
+  externalAgentName,
+  resolveEffectiveMcpPolicy,
+  summarizeMcpPolicy,
+  updateAiMcpSettings,
+  type ExternalTerminalMode,
+} from '../types';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 
 export function OpenCodePane({ visible = true }: { visible?: boolean }) {
@@ -20,9 +26,17 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const terminalMode: ExternalTerminalMode = settings[runtimeKey]?.terminalMode ?? 'embedded';
   const httpMcpEnabled = Boolean(settings.mcpServer?.enabled);
   const httpMcpPort = settings.mcpServer?.port ?? 3847;
-  const mcpPolicy = normalizeMcpPolicy(settings.mcpPolicy);
-  const savedMcpPhase = settings.mcpPhase;
-  const mcpPhase = !savedMcpPhase || savedMcpPhase === 'plan' ? 'plan' : 'action';
+  const { profiles, activeId: storeActiveId, activeProfile: storeActiveProfile } = ensureMcpProfiles(settings);
+  const [optimisticActiveId, setOptimisticActiveId] = useState<string | null>(null);
+  useEffect(() => { setOptimisticActiveId(null); }, [storeActiveId]);
+  const activeId = optimisticActiveId ?? storeActiveId;
+  const activeProfile = profiles.find(p => p.id === activeId) ?? storeActiveProfile;
+  const effectivePolicy = resolveEffectiveMcpPolicy({
+    ...settings,
+    activeMcpProfileId: activeId,
+    mcpServer: { enabled: httpMcpEnabled, port: httpMcpPort, ...settings.mcpServer },
+  }, activeProfile);
+  const summary = summarizeMcpPolicy(effectivePolicy);
   const saving = useAiStore(s => s.saving);
   const name = externalAgentName(runtime);
   const request = useAiStore(s => s.openCodeRequest);
@@ -40,28 +54,15 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const startup = useRef<AbortController | null>(null);
   const pinnedContext = useRef<string | null>(context);
 
-  const readOnly = Boolean(mcpPolicy.readOnly);
-  const activeToolCount = MCP_TOOL_CATALOG.filter(tool => isToolActiveInPolicy(tool.id, mcpPolicy, mcpPhase)).length;
-
-  async function updateMcpPolicyLive(patch: Partial<AgentPolicy>) {
+  async function updateMcpLive(patch: Parameters<typeof updateAiMcpSettings>[1]) {
     if (!desktopAiAvailable()) return;
     setError('');
-    const current = useAiStore.getState().settings;
-    const base = normalizeMcpPolicy(current.mcpPolicy);
-    const nextMcp: AgentPolicy = {
-      ...base,
-      ...patch,
-      alwaysAsk: [],
-      confirmReads: false,
-      rules: [],
-    };
+    if (patch.activeProfileId !== undefined) setOptimisticActiveId(patch.activeProfileId);
     try {
-      await useAiStore.getState().save({
-        ...current,
-        mcpPolicy: nextMcp,
-        policy: syncSharedPolicyFields(nextMcp, current.policy),
-      });
+      const current = useAiStore.getState().settings;
+      await useAiStore.getState().save(updateAiMcpSettings(current, patch));
     } catch (e) {
+      setOptimisticActiveId(null);
       setError(agentError(e));
     }
   }
@@ -226,26 +227,32 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
         <div className="ai-form-line px-3 py-2 border-b border-[var(--border-default)]">
           <strong>{name}</strong>
           <span className="ai-help ai-grow">{scopeLabel} · {status}</span>
-          <label className="flex items-center gap-1.5 text-xs" title="Enforced by the Kubiki MCP server. The external agent's own mode is independent.">
-            MCP phase
-            <Select aria-label="MCP server phase" value={mcpPhase} disabled={saving} onChange={e => {
-              const current = useAiStore.getState().settings;
-              void useAiStore.getState().save({ ...current, mcpPhase: e.target.value as 'plan' | 'action' }).catch(e => setError(agentError(e)));
-            }}><option value="plan">Plan</option><option value="action">Action</option></Select>
+          <label className="flex items-center gap-1.5 text-xs" title="Active MCP access profile enforced for external agents">
+            MCP profile
+            <Select
+              aria-label="MCP profile"
+              value={activeId}
+              disabled={saving}
+              onChange={e => void updateMcpLive({ activeProfileId: e.target.value })}
+            >
+              {profiles.map(p => {
+                const eff = resolveEffectiveMcpPolicy(settings, p);
+                const s = summarizeMcpPolicy(eff);
+                return (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({s.isReadOnly ? 'RO' : 'RW'})
+                  </option>
+                );
+              })}
+            </Select>
           </label>
-          <CheckboxRow
-            label="Read-only MCP"
-            checked={readOnly}
-            disabled={saving}
-            onChange={e => void updateMcpPolicyLive(toggleReadOnlyMcpPolicy(e.target.checked, mcpPolicy))}
-          />
           <Button
             size="sm"
             variant="secondary"
             aria-label="Live MCP tools"
             onClick={() => useAiStore.getState().openSettings('mcp')}
           >
-            MCP Tools ({activeToolCount}/{MCP_TOOL_CATALOG.length})
+            MCP Tools ({summary.activeToolCount}/{summary.totalToolCount}) · {summary.isReadOnly ? 'RO' : 'RW'}
           </Button>
           <Button
             size="sm"
@@ -267,7 +274,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
                 {launchedTerminal ? `${name} launched in ${launchedTerminal}` : `${name} · System terminal`}
               </h3>
               <p className="ai-help">
-                Scope: <code>{scopeLabel}</code> · MCP phase: <strong>{mcpPhase === 'plan' ? 'Plan' : 'Action'}</strong>{readOnly ? ' · Read-only' : ''}
+                Scope: <code>{scopeLabel}</code> · MCP profile: <strong>{activeProfile.name}</strong> ({summary.isReadOnly ? 'RO' : 'RW'})
               </p>
               {httpMcpEnabled ? (
                 <p className="ai-help mt-1">
@@ -276,7 +283,7 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
               ) : null}
               <p className="ai-help mt-2">
                 {httpMcpEnabled
-                  ? <>{name} runs inside your system default terminal with your shell init scripts (e.g. zsh <code>.zshrc</code>) and connects to Kubiki&apos;s Desktop HTTP MCP server. Rules in <strong>Cluster tools (MCP)</strong> and the Plan/Action phase apply live; manage the HTTP MCP server from the status bar or settings.</>
+                  ? <>{name} runs inside your system default terminal with your shell init scripts (e.g. zsh <code>.zshrc</code>) and connects to Kubiki&apos;s Desktop HTTP MCP server. Shared Permissions and your active MCP profile apply live; switch MCP profiles or toggle HTTP MCP anytime from the top bar or status bar.</>
                   : <>{name} runs inside your system default terminal with your shell init scripts (e.g. zsh <code>.zshrc</code>) and connects back to Kubiki&apos;s attached MCP bridge. Click <strong>Stop</strong> in the toolbar to terminate the launched process and revoke this attached session, or enable <strong>Desktop HTTP MCP</strong> to connect from any terminal session.</>}
               </p>
               <div className="ai-form-line mt-3">

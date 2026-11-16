@@ -1,8 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
-import { Bot, Boxes, Code2, FileCode2, FileText, Info, Network, Palette, Terminal } from 'lucide-react';
+import { Bot, Boxes, Code2, FileCode2, FileText, Info, Network, Palette, Plug, Terminal } from 'lucide-react';
 import { fuzzyScore } from '../../core/utils/fuzzy';
 
-export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'topology' | 'ai' | 'developer' | 'about';
+export type SettingsPageId = 'appearance' | 'editor' | 'terminal' | 'logs' | 'kubernetes' | 'topology' | 'ai' | 'mcp' | 'developer' | 'about';
 
 export interface SettingsEntry {
   /** Stable id used as a DOM anchor when jump-to-match is triggered. */
@@ -29,11 +29,17 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: 'ai', title: 'AI assistant', icon: Bot, sectionTitle: 'AI assistant',
     entries: [
-      { id: 'ai.agent', label: 'Agent', description: 'Runtime, instructions, installed skills, and local conversation history.', keywords: 'runtime opencode codex claude executable workspace skills history instructions prompt retention export' },
-      { id: 'ai.providers', label: 'Connections & models', description: 'Cloud and local connections, models and generation options.', keywords: 'openai anthropic ollama endpoint provider API key tokens temperature' },
-      { id: 'ai.access', label: 'Permissions', description: 'Read access, Secrets, ConfigMaps, allowed changes, and confirmations.', keywords: 'data access permissions read write sensitive replicas scale restart delete ask auto accept approval consent always' },
+      { id: 'ai.agent', label: 'Agent', description: 'Runtime, external CLI settings, Kubiki instructions, skills, and local history.', keywords: 'runtime opencode codex claude executable workspace skills history instructions prompt retention export' },
+      { id: 'ai.providers', label: 'Connections & models', description: 'Kubiki Agent cloud and local connections, models and generation options.', keywords: 'openai anthropic ollama endpoint provider API key tokens temperature' },
+      { id: 'ai.access', label: 'Permissions', description: 'Bind Kubiki Plan and Action modes to MCP profiles and configure Agent confirmations.', keywords: 'permissions plan action profile binding confirmations ask auto accept approval consent always' },
       { id: 'ai.scope', label: 'Scope & rules', description: 'Cluster and namespace boundaries, resource rules and field filters.', keywords: 'contexts namespaces policy exclusions security' },
-      { id: 'ai.mcp', label: 'Cluster tools (MCP)', description: 'Local MCP server, live tool permissions, and Helm/Argo CD/Flux integrations.', keywords: 'exposure mcp namespaces cluster tools integrations gitops helm argo flux' },
+    ],
+  },
+  {
+    id: 'mcp', title: 'MCP Server & Tools', icon: Plug, sectionTitle: 'MCP Server & Tools',
+    entries: [
+      { id: 'mcp.server', label: 'Desktop HTTP MCP server', description: 'Localhost HTTP MCP server, port, Bearer token auth, and 1-click client auto-configuration.', keywords: 'mcp http port token bearer opencode claude cursor auto configure' },
+      { id: 'mcp.profiles', label: 'Access profiles & tools', description: 'Single place to configure Read-only, Action, and custom tool/data access profiles.', keywords: 'mcp profiles read-only action tools permissions writes data access secrets configmaps integrations helm argo flux' },
     ],
   },
   {

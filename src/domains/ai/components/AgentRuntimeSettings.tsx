@@ -3,13 +3,9 @@ import { Save } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { Select } from '../../../components/ui/Select';
 import { Input } from '../../../components/ui/Input';
-import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { useAiStore } from '../store';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 import {
-  normalizeMcpPolicy,
-  syncSharedPolicyFields,
-  toggleReadOnlyMcpPolicy,
   externalAgentName,
   type AgentRuntime,
   type ExternalTerminalMode,
@@ -24,7 +20,6 @@ export function AgentRuntimeSettings() {
   const runtime = settings.runtime ?? 'kubiki';
   const key = runtime === 'codex' ? 'codex' : runtime === 'claude' ? 'claude' : 'opencode';
   const name = externalAgentName(runtime);
-  const mcpPolicy = normalizeMcpPolicy(settings.mcpPolicy);
   const initialDraft: OpenCodeSettings = {
     executable: settings[key]?.executable ?? '',
     workingDirectory: settings[key]?.workingDirectory ?? '',
@@ -68,13 +63,11 @@ export function AgentRuntimeSettings() {
     setError('');
     setMessage('');
     const current = useAiStore.getState().settings;
-    const normalizedMcp = { ...normalizeMcpPolicy(current.mcpPolicy), alwaysAsk: [], confirmReads: false, rules: [] };
     try {
       await useAiStore.getState().save({
         ...current,
         runtime: nextRuntime,
         [key]: draft,
-        mcpPolicy: normalizedMcp,
       });
       setMessage('Agent settings saved.');
     } catch (e) {
@@ -92,22 +85,6 @@ export function AgentRuntimeSettings() {
         instructions: instructionsDraft,
       });
       setMessage('Instructions saved.');
-    } catch (e) {
-      setError(agentError(e));
-    }
-  }
-
-  async function toggleReadOnlyMcp(readOnly: boolean) {
-    setError('');
-    const current = useAiStore.getState().settings;
-    const base = normalizeMcpPolicy(current.mcpPolicy);
-    const updated = { ...toggleReadOnlyMcpPolicy(readOnly, base), alwaysAsk: [], confirmReads: false, rules: [] };
-    try {
-      await useAiStore.getState().save({
-        ...current,
-        mcpPolicy: updated,
-        policy: syncSharedPolicyFields(updated, current.policy),
-      });
     } catch (e) {
       setError(agentError(e));
     }
@@ -169,21 +146,8 @@ export function AgentRuntimeSettings() {
         </div>
       </div>
 
-      {runtime !== 'kubiki' ? (
+      {runtime !== 'kubiki' && (
         <div className="ai-settings-card flex flex-col gap-3">
-          <div className="ai-setting-row">
-            <div className="ai-setting-row-label">
-              <CheckboxRow
-                label="Read-only MCP"
-                checked={Boolean(mcpPolicy.readOnly)}
-                onChange={e => void toggleReadOnlyMcp(e.target.checked)}
-              />
-              <p className="ai-help mt-1">
-                Removes write tools from Kubiki MCP immediately without restarting {name}.
-              </p>
-            </div>
-          </div>
-
           <div className="ai-form-grid">
             <label className="ai-field">
               Terminal host
@@ -241,41 +205,39 @@ export function AgentRuntimeSettings() {
             </Button>
           </div>
         </div>
-      ) : (
-        <>
-          <div className="ai-settings-card flex flex-col gap-2.5">
-            <div className="ai-card-header">
-              <div>
-                <h4>Instructions</h4>
-                <p className="ai-help">Set a response language or investigation style. Does not change permissions.</p>
-              </div>
-              <Button
-                size="sm"
-                disabled={saving || !desktopAiAvailable() || instructionsDraft === (settings.instructions ?? '')}
-                onClick={() => void saveInstructions()}
-              >
-                <Save size={12} aria-hidden="true" />
-                Save instructions
-              </Button>
-            </div>
-            <label className="ai-field">
-              <span className="sr-only">Agent instructions</span>
-              <textarea
-                aria-label="Integrated agent instructions"
-                className="ide-textarea"
-                rows={3}
-                maxLength={8000}
-                value={instructionsDraft}
-                placeholder="For example: answer in Russian and check Pod events first."
-                onChange={e => setInstructionsDraft(e.target.value)}
-              />
-            </label>
-          </div>
-
-          <AgentEnvironmentSettings />
-          <HistorySettings />
-        </>
       )}
+
+      <div className="ai-settings-card flex flex-col gap-2.5">
+        <div className="ai-card-header">
+          <div>
+            <h4>Kubiki Agent · Instructions</h4>
+            <p className="ai-help">Set a response language or investigation style for the built-in Kubiki Agent. Always editable even when another runtime tab is selected.</p>
+          </div>
+          <Button
+            size="sm"
+            disabled={saving || !desktopAiAvailable() || instructionsDraft === (settings.instructions ?? '')}
+            onClick={() => void saveInstructions()}
+          >
+            <Save size={12} aria-hidden="true" />
+            Save instructions
+          </Button>
+        </div>
+        <label className="ai-field">
+          <span className="sr-only">Agent instructions</span>
+          <textarea
+            aria-label="Integrated agent instructions"
+            className="ide-textarea"
+            rows={3}
+            maxLength={8000}
+            value={instructionsDraft}
+            placeholder="For example: answer in Russian and check Pod events first."
+            onChange={e => setInstructionsDraft(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <AgentEnvironmentSettings />
+      <HistorySettings />
 
       {message && <p role="status" className="ai-help text-emerald-400 mt-2">{message}</p>}
       {error && <p role="alert" className="ai-error mt-2">{error}</p>}

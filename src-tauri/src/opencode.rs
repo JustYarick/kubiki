@@ -263,7 +263,7 @@ impl OpenCodeManager {
             entry.stop().await;
         }
     }
-    pub async fn update_policy(&self, policy: &AgentPolicy, phase: AgentPhase) -> Result<(), String> {
+    pub async fn update_policy(&self, policy: &AgentPolicy, _phase: AgentPhase) -> Result<(), String> {
         let sanitized = sanitize_mcp_policy(policy);
         let servers = self
             .0
@@ -273,7 +273,7 @@ impl OpenCodeManager {
             .filter_map(|entry| entry.server.clone())
             .collect::<Vec<_>>();
         for server in servers {
-            server.update_access(sanitized.clone(), phase)?;
+            server.update_access(sanitized.clone(), AgentPhase::Action)?;
         }
         Ok(())
     }
@@ -283,7 +283,8 @@ pub fn sanitize_mcp_policy(policy: &AgentPolicy) -> AgentPolicy {
     let mut sanitized = policy.clone();
     sanitized.confirm_reads = false;
     sanitized.always_ask.clear();
-    sanitized.rules.clear();
+    sanitized.plan_disabled_tools.clear();
+    sanitized.action_disabled_tools.clear();
     sanitized
 }
 fn executable_for_with_path(
@@ -483,17 +484,11 @@ pub async fn start_opencode(
         })
 }
 fn opencode_overlay(
-    phase: AgentPhase,
     plan_permissions: Vec<serde_json::Value>,
     executable: &std::path::Path,
     bootstrap: &std::path::Path,
 ) -> serde_json::Value {
-    let default_agent = match phase {
-        AgentPhase::Plan => "plan",
-        AgentPhase::Action => "build",
-    };
     serde_json::json!({
-        "default_agent": default_agent,
         "agents":{"plan":{"permissions":plan_permissions}},
         "instructions":[".kubiki-instructions.md"],
         "mcp":{"servers":{"kubiki":{"type":"local","command":[executable,"--kubiki-mcp-attach",bootstrap],"codemode":true}}}
@@ -548,7 +543,7 @@ async fn prepare_external_agent(
     };
     pending.launch.check()?;
     let pool = window.state::<ClusterClientPool>().inner().clone();
-    let policy = sanitize_mcp_policy(&settings.mcp_policy);
+    let policy = settings.effective_mcp_policy();
     policy.validate()?;
     use std::hash::{Hash, Hasher};
     let mut key = std::collections::hash_map::DefaultHasher::new();
@@ -573,7 +568,7 @@ async fn prepare_external_agent(
     );
     pending.launch.bind(&session)?;
     session.mode(AgentMode::Accept)?;
-    session.phase(settings.mcp_phase)?;
+    session.phase(AgentPhase::Action)?;
     let data = window
         .app_handle()
         .path()
@@ -614,7 +609,7 @@ async fn prepare_external_agent(
                 plan_permissions.push(serde_json::json!({"action":format!("kubiki_{}",tool.name),"resource":"*","effect":"deny"}));
             }
         }
-        let overlay = opencode_overlay(settings.mcp_phase, plan_permissions, &executable, &endpoint.bootstrap);
+        let overlay = opencode_overlay(plan_permissions, &executable, &endpoint.bootstrap);
         let config_path = cwd.join("opencode.json");
         let marker = cwd.join(".kubiki-workspace");
         if config_path.exists() && !marker.is_file() {
@@ -1035,12 +1030,10 @@ mod tests {
         );
     }
     #[test]
-    fn opencode_default_agent_defaults_to_plan_unless_action_configured() {
-        for (phase, expected) in [(AgentPhase::Plan, "plan"), (AgentPhase::Action, "build")] {
-            let overlay = opencode_overlay(phase, vec![], std::path::Path::new("kubiki"), std::path::Path::new("bootstrap"));
-            assert_eq!(overlay["default_agent"], expected);
-            assert_eq!(overlay["mcp"]["servers"]["kubiki"]["command"][2], "bootstrap");
-        }
+    fn opencode_overlay_omits_default_agent_and_attaches_mcp_bootstrap() {
+        let overlay = opencode_overlay(vec![], std::path::Path::new("kubiki"), std::path::Path::new("bootstrap"));
+        assert!(overlay.get("default_agent").is_none());
+        assert_eq!(overlay["mcp"]["servers"]["kubiki"]["command"][2], "bootstrap");
     }
     #[test]
     fn each_external_agent_has_independent_settings() {
@@ -1067,17 +1060,45 @@ mod tests {
         assert!(settings.mcp_policy.writes.is_empty());
     }
     #[test]
-    fn exposure_and_kubiki_permissions_are_independent() {
+    fn mcp_policy_shares_permissions_and_rules_while_keeping_host_confirmations_separate() {
         let mut settings = crate::agent_commands::AiSettings::default();
         settings.runtime = AgentRuntime::OpenCode;
         settings.policy.always_ask = vec!["get_resource".into()];
+        settings.policy.confirm_reads = true;
         settings.policy.logs = true;
-        assert!(!settings.mcp_policy.logs);
-        assert!(settings.mcp_policy.always_ask.is_empty());
+        settings.policy.writes = vec![WriteOperation::Restart];
+        settings.policy.rules = vec![ResourceRule {
+            group: "".into(),
+            kind: "Secret".into(),
+            namespace: "apps".into(),
+            name: "*".into(),
+            read: DataAccess::None,
+            writes: vec![],
+        }];
+        settings.ensure_mcp_profiles();
+        assert_eq!(settings.active_mcp_profile_id.as_deref(), Some("read-only"));
+        let ro_effective = settings.effective_mcp_policy();
+        assert!(ro_effective.logs);
+        assert!(ro_effective.writes.is_empty());
+        assert!(ro_effective.always_ask.is_empty());
+        assert!(!ro_effective.confirm_reads);
+        assert_eq!(ro_effective.rules.len(), 1);
+
+        settings.active_mcp_profile_id = Some("action".into());
+        let effective = settings.effective_mcp_policy();
+        assert!(effective.logs);
+        assert_eq!(effective.writes, vec![WriteOperation::Restart]);
+        assert!(effective.always_ask.is_empty());
+        assert!(!effective.confirm_reads);
+        assert_eq!(effective.rules.len(), 1);
+
+        let serialized = serde_json::to_value(&settings).unwrap();
+        assert!(serialized["mcpServer"].get("readOnly").is_none());
         let restored: crate::agent_commands::AiSettings =
-            serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+            serde_json::from_value(serialized).unwrap();
         assert!(restored.runtime == AgentRuntime::OpenCode);
         assert!(restored.policy.logs);
+        assert_eq!(restored.active_mcp_profile_id.as_deref(), Some("action"));
     }
     #[test]
     fn codex_external_arguments_enable_mcp_tool_list_changed_and_kubiki_server() {

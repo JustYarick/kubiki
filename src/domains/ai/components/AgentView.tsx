@@ -14,6 +14,8 @@ import {
   Lightbulb,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Save,
   Server,
   Settings,
   Shield,
@@ -39,7 +41,7 @@ import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
 import { downloadMarkdown, transcriptMarkdown } from '../chat_artifacts';
 import { desktopAiAvailable } from '../transport';
-import { MODE_LABELS, PHASE_LABELS, isToolActiveInPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type ChatMessage, type Conversation, type PlanArtifact } from '../types';
+import { MODE_LABELS, PHASE_LABELS, isToolActiveInPolicy, resolveEffectiveKubikiPolicy, MCP_TOOL_CATALOG, type AgentMode, type AgentPhase, type AgentScope, type AgentSettingsPage, type AgentSettingsResetAction, type AgentSettingsSaveAction, type ChatMessage, type Conversation, type PlanArtifact } from '../types';
 import { isPlanArtifact } from '../plan_contract';
 import { PlanArtifactCard } from './PlanArtifactCard';
 import { highlightSkillChildren } from './SkillReferenceText';
@@ -68,11 +70,63 @@ const statusLabels: Record<string, string> = {
   executing: 'Applying change', completed: 'Complete', cancelled: 'Stopped', stopping: 'Stopping; awaiting in-flight requests', failed: 'Failed',
 };
 
+function renderSettingsFooter(
+  onClose: () => void,
+  saveAction: AgentSettingsSaveAction | null,
+  status?: { message?: string; error?: string; saving?: boolean },
+  resetAction?: AgentSettingsResetAction | null,
+) {
+  return (
+    <div className="flex items-center justify-between gap-2 w-full">
+      <div className="flex items-center gap-2 min-w-0">
+        {resetAction && (
+          <Button
+            size="sm"
+            aria-label={resetAction.ariaLabel}
+            disabled={resetAction.disabled}
+            onClick={resetAction.onReset}
+          >
+            <RotateCcw size={12} aria-hidden="true" />
+            {resetAction.label}
+          </Button>
+        )}
+        {status?.message || status?.error ? (
+          <span className={`text-xs truncate max-w-[360px] ${status?.error ? 'text-[var(--status-danger)]' : 'text-emerald-400'}`} role="status">
+            {status?.message || status?.error}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {saveAction && (
+          <>
+            {saveAction.dirty && <span className="ai-status-pill is-warn">Unsaved changes</span>}
+            <Button
+              size="sm"
+              variant="primary"
+              aria-label={saveAction.ariaLabel}
+              disabled={saveAction.disabled}
+              loading={saveAction.loading}
+              onClick={saveAction.onSave}
+            >
+              <Save size={12} aria-hidden="true" />
+              {saveAction.label}
+            </Button>
+          </>
+        )}
+        <Button size="sm" variant={saveAction ? 'secondary' : 'primary'} onClick={onClose}>Done</Button>
+      </div>
+    </div>
+  );
+}
+
 export function AgentView({visible=true}:{visible?:boolean}) {
   const runtime = useAiStore(s => s.settings.runtime);
   const settingsOpen = useAiStore(s => s.settingsOpen);
   const settingsPage = useAiStore(s => s.settingsPage);
   const setSettingsOpen = useAiStore(s => s.setSettingsOpen);
+  const [settingsStatus, setSettingsStatus] = useState<{ message?: string; error?: string; saving?: boolean }>({});
+  const [saveAction, setSaveAction] = useState<AgentSettingsSaveAction | null>(null);
+  const [resetAction, setResetAction] = useState<AgentSettingsResetAction | null>(null);
   useEffect(() => { void useAiStore.getState().load(); }, []);
   if ((runtime ?? 'kubiki') === 'kubiki') return <KubikiAgentView visible={visible} />;
   return (
@@ -82,13 +136,16 @@ export function AgentView({visible=true}:{visible?:boolean}) {
         title="AI Agent settings"
         width={880}
         centered
-        footer={<Button size="sm" onClick={() => setSettingsOpen(false)}>Done</Button>}
+        footer={renderSettingsFooter(() => setSettingsOpen(false), saveAction, settingsStatus, resetAction)}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       >
         <AgentSettings
           page={settingsPage}
           onPageChange={page => useAiStore.setState({ settingsPage: page })}
+          onStatusChange={setSettingsStatus}
+          onSaveActionChange={setSaveAction}
+          onResetActionChange={setResetAction}
         />
       </Modal>
     </>
@@ -103,6 +160,8 @@ function KubikiAgentView({ visible = true }: { visible?: boolean }) {
   const setSettingsOpen = state.setSettingsOpen;
   const openSettings = state.openSettings;
   const [settingsStatus, setSettingsStatus] = useState<{ message?: string; error?: string; saving?: boolean }>({});
+  const [saveAction, setSaveAction] = useState<AgentSettingsSaveAction | null>(null);
+  const [resetAction, setResetAction] = useState<AgentSettingsResetAction | null>(null);
 
   useEffect(() => { void useAiStore.getState().load(); }, []);
   useEffect(() => () => {
@@ -147,19 +206,14 @@ function KubikiAgentView({ visible = true }: { visible?: boolean }) {
       title="AI Agent settings"
       width={880}
       centered
-      footer={<div className="flex items-center justify-between w-full">
-        <span className={`text-xs truncate max-w-[420px] ${settingsStatus.error ? 'text-[var(--status-danger)]' : 'text-emerald-400'}`} role="status">
-          {settingsStatus.message || settingsStatus.error}
-        </span>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button size="sm" variant="secondary" onClick={() => setSettingsOpen(false)}>Done</Button>
-        </div>
-      </div>}
+      footer={renderSettingsFooter(() => setSettingsOpen(false), saveAction, settingsStatus, resetAction)}
     >
       <AgentSettings
         page={settingsPage}
         onPageChange={page => useAiStore.setState({ settingsPage: page })}
         onStatusChange={setSettingsStatus}
+        onSaveActionChange={setSaveAction}
+        onResetActionChange={setResetAction}
       />
     </Modal>
   </section>;
@@ -337,7 +391,7 @@ function AgentHome({ onSettings }: { onSettings?: (page?: AgentSettingsPage) => 
   const [sending, setSending] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
 
-  const mcpPolicy = settings.policy;
+  const mcpPolicy = resolveEffectiveKubikiPolicy(settings, phase);
   const activeToolCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, mcpPolicy, phase)).length;
   const totalTools = phase === 'plan' ? MCP_TOOL_CATALOG.filter(t => t.group !== 'write').length : MCP_TOOL_CATALOG.length;
 
@@ -529,8 +583,8 @@ function AgentHome({ onSettings }: { onSettings?: (page?: AgentSettingsPage) => 
               size="sm"
               variant="ghost"
               className="ai-composer-permissions-btn"
-              onClick={() => onSettings?.('mcp')}
-              title="Configure MCP cluster tools and mode permissions"
+              onClick={() => onSettings?.('access')}
+              title="Configure shared tools and permissions"
               aria-label="MCP tools and permissions"
             >
               <Wrench size={13} aria-hidden="true" />
@@ -814,7 +868,7 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
     : 0;
   useEffect(() => { if (selectedModel && c.model) void useAiStore.getState().inspectModel(c.providerId, c.model); }, [c.providerId, c.model, selectedModel]);
 
-  const mcpPolicy = settings.policy;
+  const mcpPolicy = resolveEffectiveKubikiPolicy(settings, c.phase);
   const activeToolCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, mcpPolicy, c.phase)).length;
   const totalTools = c.phase === 'plan' ? MCP_TOOL_CATALOG.filter(t => t.group !== 'write').length : MCP_TOOL_CATALOG.length;
 
@@ -834,8 +888,8 @@ function Chat({ conversation: c, visible, onSettings }: { conversation: Conversa
       <Button
         size="sm"
         variant="ghost"
-        onClick={() => onSettings('mcp')}
-        title="Live MCP cluster tools and permissions"
+        onClick={() => onSettings('access')}
+        title="Configure shared tools and permissions"
       >
         <Wrench size={13} aria-hidden="true" />
         <span>MCP Tools ({activeToolCount}/{totalTools})</span>

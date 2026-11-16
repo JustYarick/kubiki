@@ -10,9 +10,14 @@ import {
   AI_SETTINGS_PAGES,
   PROVIDER_PRESETS,
   WRITE_OPERATIONS,
-  normalizeMcpPolicy,
-  syncSharedPolicyFields,
+  defaultPolicy,
+  ensureMcpProfiles,
+  resolveEffectiveMcpPolicy,
+  summarizeMcpPolicy,
+  updateAiMcpSettings,
   type AgentSettingsPage,
+  type AgentSettingsResetAction,
+  type AgentSettingsSaveAction,
   type AgentPolicy,
   type AiSettings,
   type DataAccess,
@@ -22,7 +27,7 @@ import {
   type ProviderProtocol,
   type WriteOperation,
 } from '../types';
-import { PERMISSION_PROFILES, permissionProfile } from '../permission_profiles';
+import { useUiStore } from '../../../state/ui_store';
 import { PolicyPreview } from './PreferencePanels';
 import { AgentRuntimeSettings } from './AgentRuntimeSettings';
 import { McpAccessSettings } from './McpAccessSettings';
@@ -73,10 +78,8 @@ const ALWAYS_ASK_TOOLS = [
 
 export { AI_SETTINGS_PAGES, type AgentSettingsPage };
 
-export function availableAiSettingsPages(settings: Pick<AiSettings, 'runtime'>) {
-  return (settings.runtime ?? 'kubiki') !== 'kubiki'
-    ? AI_SETTINGS_PAGES.filter(item => item.id === 'agent' || item.id === 'mcp')
-    : AI_SETTINGS_PAGES;
+export function availableAiSettingsPages(_settings?: Pick<AiSettings, 'runtime'>) {
+  return AI_SETTINGS_PAGES;
 }
 
 export interface AgentSettingsHandle {
@@ -89,10 +92,12 @@ export interface AgentSettingsProps {
   onPageChange?: (page: AgentSettingsPage) => void;
   hideNavigation?: boolean;
   onStatusChange?: (status: { message?: string; error?: string; saving?: boolean }) => void;
+  onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void;
+  onResetActionChange?: (action: AgentSettingsResetAction | null) => void;
 }
 
 export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>(function AgentSettings(
-  { section = 'all', page: controlledPage, onPageChange, hideNavigation = false, onStatusChange },
+  { section = 'all', page: controlledPage, onPageChange, hideNavigation = false, onStatusChange, onSaveActionChange, onResetActionChange },
   ref,
 ) {
   const settings = useAiStore(s => s.settings);
@@ -166,17 +171,27 @@ export const AgentSettings = forwardRef<AgentSettingsHandle, AgentSettingsProps>
           )}
           <div className="ai-settings-content">
             {page === 'agent' && <AgentRuntimeSettings />}
-            {page === 'mcp' && <McpAccessSettings />}
-            {(settings.runtime ?? 'kubiki') === 'kubiki' && (
-              <>
-                <div style={{ display: page === 'providers' ? undefined : 'none' }}>
-                  <ProviderSettings />
-                </div>
-                <div style={{ display: policyPage ? undefined : 'none' }}>
-                  <PolicySettings page={page} commitRef={policyCommitRef} onStatusChange={onStatusChange} />
-                </div>
-              </>
-            )}
+            {page === 'mcp' && <McpAccessSettings onSaveActionChange={onSaveActionChange} onResetActionChange={onResetActionChange} />}
+            <div style={{ display: page === 'providers' ? undefined : 'none' }}>
+              <ProviderSettings />
+            </div>
+            <div style={{ display: policyPage ? undefined : 'none' }}>
+              <PolicySettings
+                page={page}
+                active={policyPage}
+                commitRef={policyCommitRef}
+                onOpenMcpProfiles={() => {
+                  if (hideNavigation) {
+                    useUiStore.getState().setSettingsOpen(true, 'ai.mcp.profiles');
+                  } else {
+                    handleSelectPage('mcp');
+                  }
+                }}
+                onStatusChange={onStatusChange}
+                onSaveActionChange={onSaveActionChange}
+                onResetActionChange={onResetActionChange}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -307,7 +322,7 @@ function ProviderSettings() {
       <div className="ai-section-header">
         <div>
           <h3>Connections &amp; models</h3>
-          <p className="ai-help">Connect a cloud API or local server, then choose your default model.</p>
+          <p className="ai-help">Used by the built-in Kubiki Agent only. Connect a cloud API or local server, then choose your default model.</p>
         </div>
       </div>
 
@@ -612,32 +627,82 @@ export function Writes({
 
 const tokens = (text: string) => text.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
 
+const WRITE_OP_TO_TOOL: Record<WriteOperation, string> = {
+  create: 'apply_manifest',
+  update: 'apply_manifest',
+  scale: 'scale_workload',
+  restart: 'restart_workload',
+  delete: 'delete_resource',
+};
+
+function sanitizeSharedPolicyDraft(policy: AgentPolicy): AgentPolicy {
+  return policy.readOnly && policy.writes.length > 0
+    ? { ...policy, readOnly: false }
+    : policy;
+}
+
+export function applySharedWritesChange(policy: AgentPolicy, nextWrites: WriteOperation[]): AgentPolicy {
+  const reenabledTools = new Set(
+    nextWrites.filter(op => !policy.writes.includes(op) || policy.readOnly).map(op => WRITE_OP_TO_TOOL[op]),
+  );
+  return {
+    ...policy,
+    readOnly: false,
+    writes: nextWrites,
+    disabledTools: (policy.disabledTools ?? []).filter(id => !reenabledTools.has(id)),
+    actionDisabledTools: (policy.actionDisabledTools ?? []).filter(id => !reenabledTools.has(id)),
+  };
+}
+
 function PolicySettings({
   page,
+  active,
   commitRef,
+  onOpenMcpProfiles,
   onStatusChange,
+  onSaveActionChange,
+  onResetActionChange,
 }: {
   page: AgentSettingsPage;
+  active: boolean;
   commitRef?: React.MutableRefObject<(() => Promise<boolean>) | null>;
+  onOpenMcpProfiles?: () => void;
   onStatusChange?: (status: { message?: string; error?: string; saving?: boolean }) => void;
+  onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void;
+  onResetActionChange?: (action: AgentSettingsResetAction | null) => void;
 }) {
   const settings = useAiStore(s => s.settings);
   const saving = useAiStore(s => s.saving);
   const save = useAiStore(s => s.save);
-  const [draft, setDraft] = useState<AiSettings>(settings);
+  const ensured = ensureMcpProfiles(settings);
+  const [draft, setDraft] = useState<AiSettings>(() => ({
+    ...settings,
+    policy: sanitizeSharedPolicyDraft(settings.policy),
+    kubikiPlanProfileId: ensured.kubikiPlanProfileId,
+    kubikiActionProfileId: ensured.kubikiActionProfileId,
+  }));
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  const savedPolicy = useRef(JSON.stringify([settings.policy, settings.instructions]));
+  const savedPolicy = useRef(JSON.stringify([settings.policy, settings.instructions, ensured.kubikiPlanProfileId, ensured.kubikiActionProfileId]));
   useEffect(() => {
-    const signature = JSON.stringify([settings.policy, settings.instructions]);
+    const curEnsured = ensureMcpProfiles(settings);
+    const signature = JSON.stringify([settings.policy, settings.instructions, curEnsured.kubikiPlanProfileId, curEnsured.kubikiActionProfileId]);
     if (signature !== savedPolicy.current) {
       savedPolicy.current = signature;
-      setDraft(d => ({ ...d, policy: settings.policy, instructions: settings.instructions }));
+      setDraft(d => ({
+        ...d,
+        policy: sanitizeSharedPolicyDraft(settings.policy),
+        instructions: settings.instructions,
+        kubikiPlanProfileId: curEnsured.kubikiPlanProfileId,
+        kubikiActionProfileId: curEnsured.kubikiActionProfileId,
+      }));
     }
   }, [settings]);
 
   const policy = draft.policy;
+  const planProfileId = draft.kubikiPlanProfileId ?? ensured.kubikiPlanProfileId;
+  const actionProfileId = draft.kubikiActionProfileId ?? ensured.kubikiActionProfileId;
   const patch = (change: Partial<AgentPolicy>) => {
     setMessage('');
     setError('');
@@ -657,16 +722,13 @@ function PolicySettings({
     onStatusChange?.({ saving: true, message: '', error: '' });
     try {
       const current = useAiStore.getState().settings;
-      const syncedMcp = {
-        ...syncSharedPolicyFields(draft.policy, normalizeMcpPolicy(current.mcpPolicy)),
-        alwaysAsk: [],
-        confirmReads: false,
-        rules: [],
-      };
+      const nextSettings = updateAiMcpSettings(current, {
+        sharedPolicy: draft.policy,
+        kubikiPlanProfileId: planProfileId,
+        kubikiActionProfileId: actionProfileId,
+      });
       await save({
-        ...current,
-        policy: draft.policy,
-        mcpPolicy: syncedMcp,
+        ...nextSettings,
         instructions: draft.instructions,
       });
       const msg = 'Permissions saved successfully.';
@@ -688,6 +750,67 @@ function PolicySettings({
 
   const alwaysAskCount = (policy.alwaysAsk ?? []).length;
 
+  const isDirty = JSON.stringify([draft.policy, draft.instructions, planProfileId, actionProfileId])
+    !== JSON.stringify([settings.policy, settings.instructions, ensured.kubikiPlanProfileId, ensured.kubikiActionProfileId]);
+
+  const commitFnRef = useRef(commit);
+  commitFnRef.current = commit;
+  async function resetPermissions() {
+    setError('');
+    setMessage('');
+    const defaults = defaultPolicy();
+    const defaultPlan = ensured.profiles.find(p => p.id === 'read-only')?.id ?? ensured.profiles[0]?.id ?? 'read-only';
+    const defaultAction = ensured.profiles.find(p => p.id === 'action')?.id ?? ensured.profiles[0]?.id ?? 'action';
+    setDraft(d => ({ ...d, policy: defaults, kubikiPlanProfileId: defaultPlan, kubikiActionProfileId: defaultAction }));
+    if (!desktopAiAvailable()) return;
+    onStatusChange?.({ saving: true, message: '', error: '' });
+    try {
+      const current = useAiStore.getState().settings;
+      const nextSettings = updateAiMcpSettings(current, {
+        sharedPolicy: defaults,
+        kubikiPlanProfileId: defaultPlan,
+        kubikiActionProfileId: defaultAction,
+      });
+      await save(nextSettings);
+      const msg = 'Permissions restored to defaults.';
+      setMessage(msg);
+      onStatusChange?.({ saving: false, message: msg, error: '' });
+    } catch (e) {
+      const err = agentError(e);
+      setError(err);
+      onStatusChange?.({ saving: false, message: '', error: err });
+    }
+  }
+  const resetFnRef = useRef(resetPermissions);
+  resetFnRef.current = resetPermissions;
+  useEffect(() => {
+    if (!active) return;
+    onSaveActionChange?.({
+      label: 'Save changes',
+      ariaLabel: 'Save agent permissions',
+      dirty: isDirty,
+      disabled: !desktopAiAvailable() || saving,
+      loading: saving,
+      onSave: () => void commitFnRef.current(),
+    });
+    return () => {
+      onSaveActionChange?.(null);
+    };
+  }, [active, onSaveActionChange, isDirty, saving]);
+
+  useEffect(() => {
+    if (!active) return;
+    onResetActionChange?.({
+      label: 'Reset permissions',
+      ariaLabel: 'Reset permissions',
+      disabled: !desktopAiAvailable() || saving,
+      onReset: () => void resetFnRef.current(),
+    });
+    return () => {
+      onResetActionChange?.(null);
+    };
+  }, [active, onResetActionChange, saving]);
+
   return (
     <section className="ai-settings-section" aria-label="AI access policy">
       <div className="ai-section-header">
@@ -695,95 +818,76 @@ function PolicySettings({
           <h3>{AI_SETTINGS_PAGES.find(item => item.id === page)?.label}</h3>
           <p className="ai-help">
             {page === 'access'
-              ? 'Control which cluster data the agent can read, modify, and when it must ask.'
-              : 'Bound allowed clusters, namespaces, field redactions, and resource rules.'}
+              ? 'Bind Kubiki Agent Plan and Action phases to MCP access profiles and configure Agent confirmations.'
+              : 'Cluster and namespace boundaries, resource rules and field filters for Kubiki Agent and MCP.'}
           </p>
         </div>
-        <Button
-          size="md"
-          variant="primary"
-          aria-label="Save agent permissions"
-          disabled={!desktopAiAvailable() || saving}
-          loading={saving}
-          onClick={() => void commit()}
-        >
-          <Save size={12} aria-hidden="true" />
-          Save changes
-        </Button>
       </div>
 
       <fieldset className="ai-fieldset" disabled={saving}>
         {page === 'access' && (
           <>
-            <div className="ai-settings-card">
-              <div className="ai-presets">
-                <span className="ai-help mr-1">Permission presets:</span>
-                {PERMISSION_PROFILES.map(profile => (
-                  <Button key={profile} size="sm" onClick={() => patch(permissionProfile(policy, profile))}>
-                    {profile}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="ai-settings-card">
-              <h4>Read access</h4>
-              <div className="ai-permission-checks">
-                {([
-                  ['resources', 'Read resources'],
-                  ['events', 'Read Events'],
-                  ['logs', 'Read Pod logs'],
-                  ['metrics', 'Read metrics'],
-                  ['clusterResources', 'Read cluster-scoped resources'],
-                  ['workloadConfiguration', 'Read inline env & commands'],
-                  ['annotations', 'Read annotations'],
-                ] as const).map(([key, label]) => (
-                  <CheckboxRow
-                    key={key}
-                    label={label}
-                    checked={policy[key]}
-                    onChange={e => patch({ [key]: e.target.checked })}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="ai-settings-card flex flex-col gap-2.5">
-              <h4 className="mb-0">Resource contents</h4>
-              <div className="ai-form-grid-3">
-                <DataSelect label="Secret access" value={policy.secrets} onChange={secrets => patch({ secrets })} />
-                <DataSelect label="ConfigMap access" value={policy.configMaps} onChange={configMaps => patch({ configMaps })} />
-                <DataSelect label="Custom resources" value={policy.customResources} onChange={customResources => patch({ customResources })} />
-              </div>
-              <p className="ai-help">
-                Secret and ConfigMap contents are only read if explicitly permitted. Metadata-only reads omit bodies.
-              </p>
-            </div>
-
             <div className="ai-settings-card flex flex-col gap-3">
-              <h4 className="mb-0">Allowed changes</h4>
-              <Writes value={policy.writes} onChange={writes => patch({ writes })} />
-              <div className="ai-setting-row">
-                <div className="ai-setting-row-label">
-                  <div className="ai-setting-row-title">Maximum replicas</div>
-                  <p className="ai-help">Applies to scaling and explicit workload replicas in manifests. Changes run only in Action.</p>
+              <div className="ai-card-header mb-0">
+                <div>
+                  <h4>Kubiki Agent Profile Bindings</h4>
+                  <p className="ai-help">
+                    Tool and data access permissions are configured once in MCP access profiles. Choose which profile Kubiki Agent uses in each phase.
+                  </p>
                 </div>
-                <div className="ai-setting-row-control">
-                  <Input
-                    aria-label="Maximum AI replicas"
-                    className="w-28"
-                    type="number"
-                    min={0}
-                    max={10000}
-                    value={policy.maxReplicas}
-                    onChange={e => patch({ maxReplicas: Number(e.target.value) })}
-                  />
-                </div>
+                {onOpenMcpProfiles && (
+                  <Button size="sm" variant="secondary" onClick={onOpenMcpProfiles}>
+                    Manage MCP profiles…
+                  </Button>
+                )}
+              </div>
+              <div className="ai-form-grid">
+                <label className="ai-field">
+                  Plan phase profile
+                  <Select
+                    aria-label="Plan mode MCP profile"
+                    className="ide-select"
+                    value={planProfileId}
+                    onChange={e => setDraft(d => ({ ...d, kubikiPlanProfileId: e.target.value }))}
+                  >
+                    {ensured.profiles.map(p => {
+                      const sum = summarizeMcpPolicy({ ...resolveEffectiveMcpPolicy(settings, p), readOnly: true });
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.name} (RO · {sum.activeToolCount}/{sum.totalToolCount})
+                        </option>
+                      );
+                    })}
+                  </Select>
+                  <span className="ai-help">Defaults to Read-only. Mutations remain blocked in Plan phase.</span>
+                </label>
+                <label className="ai-field">
+                  Action phase profile
+                  <Select
+                    aria-label="Action mode MCP profile"
+                    className="ide-select"
+                    value={actionProfileId}
+                    onChange={e => setDraft(d => ({ ...d, kubikiActionProfileId: e.target.value }))}
+                  >
+                    {ensured.profiles.map(p => {
+                      const sum = summarizeMcpPolicy(resolveEffectiveMcpPolicy(settings, p));
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({sum.isReadOnly ? 'RO' : 'RW'} · {sum.activeToolCount}/{sum.totalToolCount})
+                        </option>
+                      );
+                    })}
+                  </Select>
+                  <span className="ai-help">Defaults to Action. Controls which tools and writes run in Action phase.</span>
+                </label>
               </div>
             </div>
 
             <div className="ai-settings-card flex flex-col gap-2.5">
-              <h4 className="mb-0">Confirmations</h4>
+              <div className="mb-0">
+                <h4 className="mb-0.5">Confirmations (Kubiki Agent)</h4>
+                <p className="ai-help">Applies to built-in Kubiki Agent Ask / Auto accept dialogs. External MCP clients handle approvals themselves.</p>
+              </div>
               <div className="ai-setting-row">
                 <div className="ai-setting-row-label">
                   <CheckboxRow

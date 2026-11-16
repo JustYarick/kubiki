@@ -45,6 +45,12 @@ export interface McpServerSettings {
   port: number;
   requireAuth?: boolean;
 }
+export interface McpProfile {
+  id: string;
+  name: string;
+  inheritShared: boolean;
+  policy: AgentPolicy;
+}
 export interface McpHttpStatus {
   enabled: boolean;
   running: boolean;
@@ -70,6 +76,20 @@ export const AI_SETTINGS_PAGES = [
 ] as const;
 
 export type AgentSettingsPage = typeof AI_SETTINGS_PAGES[number]['id'];
+export interface AgentSettingsSaveAction {
+  label: string;
+  ariaLabel?: string;
+  dirty?: boolean;
+  disabled?: boolean;
+  loading?: boolean;
+  onSave: () => void;
+}
+export interface AgentSettingsResetAction {
+  label: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+  onReset: () => void;
+}
 export interface AiSettings {
   runtime?: AgentRuntime;
   opencode?: OpenCodeSettings;
@@ -77,6 +97,10 @@ export interface AiSettings {
   claude?: OpenCodeSettings;
   mcpPolicy?: AgentPolicy;
   mcpPhase?: AgentPhase;
+  mcpProfiles?: McpProfile[];
+  activeMcpProfileId?: string;
+  kubikiPlanProfileId?: string;
+  kubikiActionProfileId?: string;
   mcpServer?: McpServerSettings;
   /** Inert legacy configuration, retained for lossless migration. */
   environment?: unknown;
@@ -259,6 +283,186 @@ export function toggleReadOnlyMcpPolicy(readOnly: boolean, policy: AgentPolicy):
   return {
     ...policy,
     readOnly,
+  };
+}
+
+export function ensureMcpProfiles(settings: AiSettings): {
+  profiles: McpProfile[];
+  activeId: string;
+  activeProfile: McpProfile;
+  kubikiPlanProfileId: string;
+  kubikiActionProfileId: string;
+} {
+  const rawShared = normalizeMcpPolicy(settings.policy);
+  const shared = rawShared.readOnly && rawShared.writes.length > 0
+    ? { ...rawShared, readOnly: false }
+    : rawShared;
+  let profiles: McpProfile[];
+  let migratedActiveFromGeneral = false;
+  if (settings.mcpProfiles && settings.mcpProfiles.length > 0) {
+    const hasAction = settings.mcpProfiles.some(p => p.id === 'action');
+    profiles = settings.mcpProfiles.map(profile => {
+      const upgradeUntouched = !hasAction && profile.id === 'general' && profile.name === 'General' && profile.inheritShared;
+      if (upgradeUntouched) migratedActiveFromGeneral = true;
+      return {
+        ...profile,
+        id: upgradeUntouched ? 'action' : profile.id,
+        name: upgradeUntouched ? 'Action' : profile.name,
+        policy: normalizeMcpPolicy(profile.inheritShared ? shared : profile.policy),
+      };
+    });
+  } else {
+    const readOnlyProfile: McpProfile = {
+      id: 'read-only',
+      name: 'Read-only',
+      inheritShared: false,
+      policy: {
+        ...shared,
+        writes: [],
+        readOnly: false,
+        confirmReads: false,
+        alwaysAsk: [],
+        planDisabledTools: [],
+        actionDisabledTools: [],
+      },
+    };
+    const actionProfile: McpProfile = {
+      id: 'action',
+      name: 'Action',
+      inheritShared: true,
+      policy: shared,
+    };
+    profiles = [readOnlyProfile, actionProfile];
+  }
+  const legacyLockedReadOnly = Boolean((settings.mcpServer as { readOnly?: boolean } | undefined)?.readOnly);
+  const rawCandidate = migratedActiveFromGeneral && settings.activeMcpProfileId === 'general'
+    ? 'action'
+    : settings.activeMcpProfileId;
+  const candidateId = legacyLockedReadOnly ? 'read-only' : rawCandidate;
+  const defaultProfile = profiles.find(p => p.id === 'read-only') ?? profiles[0];
+  const actionFallback = profiles.find(p => p.id === 'action') ?? profiles[0];
+  const activeProfile = (candidateId ? profiles.find(p => p.id === candidateId) : undefined) ?? defaultProfile;
+  const kubikiPlanProfileId = (settings.kubikiPlanProfileId && profiles.some(p => p.id === settings.kubikiPlanProfileId))
+    ? settings.kubikiPlanProfileId
+    : defaultProfile.id;
+  const kubikiActionProfileId = (settings.kubikiActionProfileId && profiles.some(p => p.id === settings.kubikiActionProfileId))
+    ? settings.kubikiActionProfileId
+    : actionFallback.id;
+  return {
+    profiles,
+    activeId: activeProfile.id,
+    activeProfile,
+    kubikiPlanProfileId,
+    kubikiActionProfileId,
+  };
+}
+
+export function resolveEffectiveKubikiPolicy(settings: AiSettings, phase: AgentPhase): AgentPolicy {
+  const { profiles, kubikiPlanProfileId, kubikiActionProfileId } = ensureMcpProfiles(settings);
+  const targetId = phase === 'plan' ? kubikiPlanProfileId : kubikiActionProfileId;
+  const target = profiles.find(p => p.id === targetId) ?? profiles[0];
+  const raw = target.inheritShared ? settings.policy : target.policy;
+  const normalized = normalizeMcpPolicy(raw);
+  return {
+    ...normalized,
+    confirmReads: settings.policy.confirmReads ?? false,
+    alwaysAsk: settings.policy.alwaysAsk ?? [],
+    planDisabledTools: settings.policy.planDisabledTools ?? [],
+    actionDisabledTools: settings.policy.actionDisabledTools ?? [],
+    contexts: settings.policy.contexts,
+    namespaces: settings.policy.namespaces,
+    rules: settings.policy.rules,
+    deniedPaths: settings.policy.deniedPaths,
+    writes: phase === 'plan' ? [] : normalized.writes,
+  };
+}
+
+export function resolveEffectiveMcpPolicy(settings: AiSettings, profile?: McpProfile): AgentPolicy {
+  const { activeProfile } = ensureMcpProfiles(settings);
+  const target = profile ?? activeProfile;
+  const raw = target.inheritShared ? settings.policy : target.policy;
+  const normalized = normalizeMcpPolicy(raw);
+  const profileReadOnly = normalized.readOnly && normalized.writes.length > 0 && target.inheritShared
+    ? false
+    : Boolean(normalized.readOnly);
+  return {
+    ...normalized,
+    confirmReads: false,
+    alwaysAsk: [],
+    planDisabledTools: [],
+    actionDisabledTools: [],
+    readOnly: Boolean(profileReadOnly),
+  };
+}
+
+export function summarizeMcpPolicy(effectivePolicy: AgentPolicy): {
+  isReadOnly: boolean;
+  allowedWrites: WriteOperation[];
+  activeToolCount: number;
+  totalToolCount: number;
+} {
+  const activeToolCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, effectivePolicy, 'action')).length;
+  if (effectivePolicy.readOnly) {
+    return { isReadOnly: true, allowedWrites: [], activeToolCount, totalToolCount: MCP_TOOL_CATALOG.length };
+  }
+  const disabled = new Set(effectivePolicy.disabledTools ?? []);
+  const opTool: Record<WriteOperation, string> = {
+    create: 'apply_manifest',
+    update: 'apply_manifest',
+    scale: 'scale_workload',
+    restart: 'restart_workload',
+    delete: 'delete_resource',
+  };
+  const allowedWrites = WRITE_OPERATIONS.filter(op =>
+    !disabled.has(opTool[op])
+    && (effectivePolicy.writes.includes(op) || (effectivePolicy.rules ?? []).some(r => r.writes.includes(op))),
+  );
+  return {
+    isReadOnly: allowedWrites.length === 0,
+    allowedWrites,
+    activeToolCount,
+    totalToolCount: MCP_TOOL_CATALOG.length,
+  };
+}
+
+export function updateAiMcpSettings(
+  current: AiSettings,
+  options: {
+    activeProfileId?: string;
+    kubikiPlanProfileId?: string;
+    kubikiActionProfileId?: string;
+    profiles?: McpProfile[];
+    mcpServer?: Partial<McpServerSettings>;
+    sharedPolicy?: AgentPolicy;
+  },
+): AiSettings {
+  const ensured = ensureMcpProfiles(current);
+  const nextShared = options.sharedPolicy ?? current.policy;
+  const nextProfiles = (options.profiles ?? ensured.profiles).map(p => ({
+    ...p,
+    policy: p.inheritShared ? normalizeMcpPolicy(nextShared) : normalizeMcpPolicy(p.policy),
+  }));
+  const requestedActive = options.activeProfileId ?? ensured.activeId;
+  const activeExists = nextProfiles.some(p => p.id === requestedActive);
+  const defaultNextActive = nextProfiles.find(p => p.id === 'read-only')?.id ?? nextProfiles[0]?.id ?? 'read-only';
+  const requestedPlan = options.kubikiPlanProfileId ?? ensured.kubikiPlanProfileId;
+  const requestedAction = options.kubikiActionProfileId ?? ensured.kubikiActionProfileId;
+  const nextMcpServer = options.mcpServer
+    ? { enabled: false, port: 3847, ...current.mcpServer, ...options.mcpServer }
+    : (current.mcpServer ? { ...current.mcpServer } : undefined);
+  if (nextMcpServer && 'readOnly' in nextMcpServer) {
+    delete (nextMcpServer as { readOnly?: boolean }).readOnly;
+  }
+  return {
+    ...current,
+    policy: nextShared,
+    mcpProfiles: nextProfiles,
+    activeMcpProfileId: activeExists ? requestedActive : defaultNextActive,
+    kubikiPlanProfileId: nextProfiles.some(p => p.id === requestedPlan) ? requestedPlan : defaultNextActive,
+    kubikiActionProfileId: nextProfiles.some(p => p.id === requestedAction)
+      ? requestedAction
+      : (nextProfiles.find(p => p.id === 'action')?.id ?? nextProfiles[0]?.id ?? 'action'),
+    mcpServer: nextMcpServer,
   };
 }
 

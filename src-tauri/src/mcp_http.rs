@@ -19,6 +19,9 @@ pub struct McpServerSettings {
     pub enabled: bool,
     pub port: u16,
     pub require_auth: bool,
+    /// Deprecated legacy field tolerated when loading existing ai.json files; ignored and omitted when saving.
+    #[serde(default, skip_serializing)]
+    pub read_only: bool,
 }
 
 impl Default for McpServerSettings {
@@ -27,6 +30,7 @@ impl Default for McpServerSettings {
             enabled: false,
             port: DEFAULT_MCP_HTTP_PORT,
             require_auth: false,
+            read_only: false,
         }
     }
 }
@@ -156,7 +160,7 @@ impl Default for PersistentMcpManager {
             policy: Arc::new(StdMutex::new(crate::opencode::sanitize_mcp_policy(
                 &AgentPolicy::default(),
             ))),
-            phase: Arc::new(StdMutex::new(AgentPhase::Plan)),
+            phase: Arc::new(StdMutex::new(AgentPhase::Action)),
             servers: Arc::new(StdMutex::new(Vec::new())),
         }
     }
@@ -266,7 +270,6 @@ impl PersistentMcpManager {
         let journal = data.join("ai").join("mcp-http.jsonl");
         let scope_ref = self.scope.clone();
         let policy_ref = self.policy.clone();
-        let phase_ref = self.phase.clone();
         let servers_ref = self.servers.clone();
 
         Ok(Arc::new(move || {
@@ -275,10 +278,6 @@ impl PersistentMcpManager {
                 .lock()
                 .map(|g| g.clone())
                 .unwrap_or_else(|_| crate::opencode::sanitize_mcp_policy(&AgentPolicy::default()));
-            let phase = phase_ref
-                .lock()
-                .map(|g| *g)
-                .unwrap_or(AgentPhase::Plan);
             let session = Session::new(
                 format!("mcp-http-{}", kubiki_mcp::http::generate_bearer_token()),
                 "desktop-http".into(),
@@ -291,7 +290,7 @@ impl PersistentMcpManager {
                 },
             );
             let _ = session.mode(AgentMode::Accept);
-            let _ = session.phase(phase);
+            let _ = session.phase(AgentPhase::Action);
             let executor = Arc::new(DynamicConnectionExecutor {
                 pool: pool.clone(),
                 journal: journal.clone(),
@@ -318,7 +317,8 @@ impl PersistentMcpManager {
         settings: &crate::agent_commands::AiSettings,
     ) -> Result<(), String> {
         settings.mcp_server.validate()?;
-        self.update_access(&settings.mcp_policy, settings.mcp_phase)?;
+        let effective = settings.effective_mcp_policy();
+        self.update_access(&effective, AgentPhase::Action)?;
 
         let desired = &settings.mcp_server;
         let token = if desired.enabled && desired.require_auth {

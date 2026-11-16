@@ -1,7 +1,7 @@
 import { Select } from '../ui/Select';
 import './settings.css';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, Search, X } from 'lucide-react';
+import { RotateCcw, Save, Search, X } from 'lucide-react';
 import packageJson from '../../../package.json';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -29,6 +29,8 @@ import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_renderi
 import { cx } from '../../core/utils/cx';
 import { useAiStore } from '../../domains/ai/store';
 import { AgentSettings, availableAiSettingsPages, type AgentSettingsPage } from '../../domains/ai/components/AgentSettings';
+import { McpAccessSettings } from '../../domains/ai/components/McpAccessSettings';
+import type { AgentSettingsResetAction, AgentSettingsSaveAction } from '../../domains/ai/types';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
   entryMatches, filterPages, findEntry, findPage, firstMatchingPage,
@@ -679,8 +681,16 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
   );
 }
 
-function AiPage({ page }: { page: AgentSettingsPage }) {
-  return <AgentSettings page={page} hideNavigation />;
+function AiPage({
+  page,
+  onSaveActionChange,
+  onResetActionChange,
+}: {
+  page: AgentSettingsPage;
+  onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void;
+  onResetActionChange?: (action: AgentSettingsResetAction | null) => void;
+}) {
+  return <AgentSettings page={page} hideNavigation onSaveActionChange={onSaveActionChange} onResetActionChange={onResetActionChange} />;
 }
 
 function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
@@ -698,11 +708,17 @@ function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
   );
 }
 
-function pageContent(page: SettingsPageDef, aiPage: AgentSettingsPage): React.ReactElement {
+function pageContent(
+  page: SettingsPageDef,
+  aiPage: AgentSettingsPage,
+  onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void,
+  onResetActionChange?: (action: AgentSettingsResetAction | null) => void,
+): React.ReactElement {
   switch (page.id) {
     case 'topology': return <TopologyPage sectionTitle={page.sectionTitle} />;
     case 'developer': return <DeveloperPage sectionTitle={page.sectionTitle} />;
-    case 'ai': return <AiPage page={aiPage} />;
+    case 'ai': return <AiPage page={aiPage} onSaveActionChange={onSaveActionChange} onResetActionChange={onResetActionChange} />;
+    case 'mcp': return <McpAccessSettings onSaveActionChange={onSaveActionChange} onResetActionChange={onResetActionChange} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
     case 'editor': return <EditorPage sectionTitle={page.sectionTitle} />;
     case 'terminal': return <TerminalPage sectionTitle={page.sectionTitle} />;
@@ -821,15 +837,29 @@ export const SettingsDialog: React.FC = () => {
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const [query, setQuery] = useState('');
   const [aiPage, setAiPage] = useState<AgentSettingsPage>('agent');
+  const [aiSaveAction, setAiSaveAction] = useState<AgentSettingsSaveAction | null>(null);
+  const [aiResetAction, setAiResetAction] = useState<AgentSettingsResetAction | null>(null);
   const [pageId, setPageId] = useState<SettingsPageId>('appearance');
   const contentRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!open || !settingsSection) return;
-    if (settingsSection === 'ai.mcp') {
+    if (settingsSection === 'ai.mcp' || settingsSection === 'ai.mcp.profiles') {
+      setQuery('');
+      setPageId('mcp');
+      if (settingsSection === 'ai.mcp.profiles') {
+        requestAnimationFrame(() => {
+          document.getElementById('mcp-profiles-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+    } else if (settingsSection === 'ai.access') {
       setQuery('');
       setPageId('ai');
-      setAiPage('mcp');
+      setAiPage('access');
+    } else if (settingsSection === 'ai.scope') {
+      setQuery('');
+      setPageId('ai');
+      setAiPage('scope');
     } else if (settingsSection === 'ai.agent') {
       setQuery('');
       setPageId('ai');
@@ -838,13 +868,14 @@ export const SettingsDialog: React.FC = () => {
   }, [open, settingsSection]);
 
   const aiSettings=useAiStore(s=>s.settings);
-  const aiPages=availableAiSettingsPages(aiSettings);
+  const aiPages=availableAiSettingsPages(aiSettings).filter(item => item.id !== 'mcp');
   const aiMode=aiSettings.runtime;
   const pages = useMemo(() => filterPages(query).map(page=>page.id==='ai'?{...page,entries:page.entries.filter(entry=>availableAiSettingsPages({runtime:aiMode}).some(item=>entry.id===`ai.${item.id}`))}:page).filter(page=>page.entries.length>0 && (page.id!=='ai' || !query.trim() || page.entries.some(entry=>entryMatches(entry,query)) || /^(ai|agent|assistant)$/i.test(query.trim()))), [query,aiMode]);
   const activePage = pages.find((page) => page.id === pageId) ?? pages[0];
   const requestedAiPage = query.trim() ? aiPages.find(item => entryMatches(findEntry(`ai.${item.id}`), query))?.id ?? aiPage : aiPage;
   const selectedAiPage = aiPages.some(item=>item.id===requestedAiPage) ? requestedAiPage : 'agent';
   const resetHandler = activePage ? RESET_HANDLERS[activePage.id] : undefined;
+  const showFooterActions = activePage?.id === 'ai' || activePage?.id === 'mcp';
   useEffect(() => { contentRef.current?.scrollTo({top: 0}); }, [activePage?.id, selectedAiPage]);
 
   const close = () => setOpen(false);
@@ -866,8 +897,34 @@ export const SettingsDialog: React.FC = () => {
                 <RotateCcw size="calc(12px * var(--ui-factor))" /> {activePage.resetLabel}
               </Button>
             )}
+            {showFooterActions && aiResetAction && (
+              <Button
+                size="sm"
+                aria-label={aiResetAction.ariaLabel}
+                disabled={aiResetAction.disabled}
+                onClick={aiResetAction.onReset}
+              >
+                <RotateCcw size="calc(12px * var(--ui-factor))" /> {aiResetAction.label}
+              </Button>
+            )}
             <span className="flex-1" />
-            <Button size="sm" variant="primary" onClick={close}>Done</Button>
+            {showFooterActions && aiSaveAction && (
+              <>
+                {aiSaveAction.dirty && <span className="ai-status-pill is-warn">Unsaved changes</span>}
+                <Button
+                  size="sm"
+                  variant="primary"
+                  aria-label={aiSaveAction.ariaLabel}
+                  disabled={aiSaveAction.disabled}
+                  loading={aiSaveAction.loading}
+                  onClick={aiSaveAction.onSave}
+                >
+                  <Save size="calc(12px * var(--ui-factor))" aria-hidden="true" />
+                  {aiSaveAction.label}
+                </Button>
+              </>
+            )}
+            <Button size="sm" variant={showFooterActions && aiSaveAction ? 'secondary' : 'primary'} onClick={close}>Done</Button>
           </>
         }
       >
@@ -928,7 +985,7 @@ export const SettingsDialog: React.FC = () => {
               className="settings-content flex-1 min-w-0 overflow-y-auto kubiki-scrollbar px-4 pb-4"
             >
               {activePage ? (
-                pageContent(activePage, selectedAiPage)
+                pageContent(activePage, selectedAiPage, setAiSaveAction, setAiResetAction)
               ) : (
                 <div className="h-full flex flex-col items-center justify-center gap-1 text-center px-6">
                   <Search size="calc(22px * var(--ui-factor))" className="text-[var(--text-muted)] mb-1" />

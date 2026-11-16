@@ -13,6 +13,46 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpProfile {
+    pub id: String,
+    pub name: String,
+    pub inherit_shared: bool,
+    pub policy: AgentPolicy,
+}
+
+impl Default for McpProfile {
+    fn default() -> Self {
+        Self {
+            id: "read-only".into(),
+            name: "Read-only".into(),
+            inherit_shared: false,
+            policy: AgentPolicy::default(),
+        }
+    }
+}
+
+impl McpProfile {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.id.is_empty()
+            || self.id.len() > 64
+            || !self
+                .id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        {
+            return Err("Invalid MCP profile ID".into());
+        }
+        let trimmed = self.name.trim();
+        if trimmed.is_empty() || self.name.len() > 64 || self.name.chars().any(char::is_control) {
+            return Err("MCP profile name must be 1 to 64 printable characters".into());
+        }
+        self.policy.validate()?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiSettings {
@@ -21,7 +61,11 @@ pub struct AiSettings {
     pub codex: crate::opencode::OpenCodeSettings,
     pub claude: crate::opencode::OpenCodeSettings,
     pub mcp_policy: AgentPolicy,
-    pub mcp_phase: AgentPhase,
+    pub mcp_phase: Option<AgentPhase>,
+    pub mcp_profiles: Vec<McpProfile>,
+    pub active_mcp_profile_id: Option<String>,
+    pub kubiki_plan_profile_id: Option<String>,
+    pub kubiki_action_profile_id: Option<String>,
     pub mcp_server: crate::mcp_http::McpServerSettings,
     pub providers: Vec<ProviderProfile>,
     pub default_provider: Option<String>,
@@ -30,6 +74,169 @@ pub struct AiSettings {
     pub policy: AgentPolicy,
     pub instructions: String,
     pub environment: kubiki_ai::environment::EnvironmentSettings,
+}
+
+impl AiSettings {
+    pub fn ensure_mcp_profiles(&mut self) {
+        if self.policy.read_only && !self.policy.writes.is_empty() {
+            self.policy.read_only = false;
+        }
+        if self.mcp_profiles.is_empty() {
+            let action_policy = self.policy.clone();
+            let mut readonly_policy = self.policy.clone();
+            readonly_policy.writes.clear();
+            readonly_policy.read_only = false;
+            readonly_policy.confirm_reads = false;
+            readonly_policy.always_ask.clear();
+            readonly_policy.plan_disabled_tools.clear();
+            readonly_policy.action_disabled_tools.clear();
+            self.mcp_profiles = vec![
+                McpProfile {
+                    id: "read-only".into(),
+                    name: "Read-only".into(),
+                    inherit_shared: false,
+                    policy: readonly_policy,
+                },
+                McpProfile {
+                    id: "action".into(),
+                    name: "Action".into(),
+                    inherit_shared: true,
+                    policy: action_policy,
+                },
+            ];
+            if self.active_mcp_profile_id.is_none() {
+                self.active_mcp_profile_id = Some("read-only".into());
+            }
+        } else if !self.mcp_profiles.iter().any(|p| p.id == "action") {
+            if let Some(legacy_general) = self
+                .mcp_profiles
+                .iter_mut()
+                .find(|p| p.id == "general" && p.name == "General" && p.inherit_shared)
+            {
+                legacy_general.id = "action".into();
+                legacy_general.name = "Action".into();
+                if self.active_mcp_profile_id.as_deref() == Some("general") {
+                    self.active_mcp_profile_id = Some("action".into());
+                }
+            }
+        }
+        if self.mcp_server.read_only {
+            if self.mcp_profiles.iter().any(|p| p.id == "read-only") {
+                self.active_mcp_profile_id = Some("read-only".into());
+            }
+            self.mcp_server.read_only = false;
+        }
+        if !self
+            .active_mcp_profile_id
+            .as_ref()
+            .is_some_and(|id| self.mcp_profiles.iter().any(|p| &p.id == id))
+        {
+            self.active_mcp_profile_id = if self.mcp_profiles.iter().any(|p| p.id == "read-only") {
+                Some("read-only".into())
+            } else {
+                self.mcp_profiles.first().map(|p| p.id.clone())
+            };
+        }
+        if !self
+            .kubiki_plan_profile_id
+            .as_ref()
+            .is_some_and(|id| self.mcp_profiles.iter().any(|p| &p.id == id))
+        {
+            self.kubiki_plan_profile_id = if self.mcp_profiles.iter().any(|p| p.id == "read-only") {
+                Some("read-only".into())
+            } else {
+                self.mcp_profiles.first().map(|p| p.id.clone())
+            };
+        }
+        if !self
+            .kubiki_action_profile_id
+            .as_ref()
+            .is_some_and(|id| self.mcp_profiles.iter().any(|p| &p.id == id))
+        {
+            self.kubiki_action_profile_id = if self.mcp_profiles.iter().any(|p| p.id == "action") {
+                Some("action".into())
+            } else {
+                self.mcp_profiles.first().map(|p| p.id.clone())
+            };
+        }
+    }
+
+    pub fn validate_mcp_profiles(&self) -> Result<(), String> {
+        if self.mcp_profiles.len() > 16 {
+            return Err("At most 16 MCP profiles are supported".into());
+        }
+        let mut ids = std::collections::HashSet::new();
+        for profile in &self.mcp_profiles {
+            profile.validate()?;
+            if !ids.insert(&profile.id) {
+                return Err("MCP profile IDs must be unique".into());
+            }
+        }
+        if let Some(active) = &self.active_mcp_profile_id {
+            if !self.mcp_profiles.is_empty() && !ids.contains(active) {
+                return Err("Active MCP profile does not exist".into());
+            }
+        }
+        if let Some(plan_id) = &self.kubiki_plan_profile_id {
+            if !self.mcp_profiles.is_empty() && !ids.contains(plan_id) {
+                return Err("Kubiki Plan MCP profile does not exist".into());
+            }
+        }
+        if let Some(action_id) = &self.kubiki_action_profile_id {
+            if !self.mcp_profiles.is_empty() && !ids.contains(action_id) {
+                return Err("Kubiki Action MCP profile does not exist".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn effective_mcp_policy(&self) -> AgentPolicy {
+        let profile = self
+            .active_mcp_profile_id
+            .as_ref()
+            .and_then(|id| self.mcp_profiles.iter().find(|p| &p.id == id))
+            .or_else(|| self.mcp_profiles.iter().find(|p| p.id == "read-only"))
+            .or_else(|| self.mcp_profiles.first());
+        let raw = match profile {
+            Some(p) if !p.inherit_shared => p.policy.clone(),
+            Some(_) => self.policy.clone(),
+            None if self.active_mcp_profile_id.as_deref() == Some("action") => self.policy.clone(),
+            None => {
+                let mut p = self.policy.clone();
+                p.writes.clear();
+                p
+            }
+        };
+        crate::opencode::sanitize_mcp_policy(&raw)
+    }
+
+    pub fn effective_kubiki_policy(&self, phase: AgentPhase) -> AgentPolicy {
+        let target_id = match phase {
+            AgentPhase::Plan => self.kubiki_plan_profile_id.as_deref().unwrap_or("read-only"),
+            AgentPhase::Action => self.kubiki_action_profile_id.as_deref().unwrap_or("action"),
+        };
+        let profile = self
+            .mcp_profiles
+            .iter()
+            .find(|p| p.id == target_id)
+            .or_else(|| self.mcp_profiles.first());
+        let mut resolved = match profile {
+            Some(p) if !p.inherit_shared => p.policy.clone(),
+            _ => self.policy.clone(),
+        };
+        resolved.confirm_reads = self.policy.confirm_reads;
+        resolved.always_ask = self.policy.always_ask.clone();
+        resolved.plan_disabled_tools = self.policy.plan_disabled_tools.clone();
+        resolved.action_disabled_tools = self.policy.action_disabled_tools.clone();
+        resolved.contexts = self.policy.contexts.clone();
+        resolved.namespaces = self.policy.namespaces.clone();
+        resolved.rules = self.policy.rules.clone();
+        resolved.denied_paths = self.policy.denied_paths.clone();
+        if phase == AgentPhase::Plan {
+            resolved.writes.clear();
+        }
+        resolved
+    }
 }
 
 #[derive(Serialize)]
@@ -70,14 +277,70 @@ mod live_policy_tests {
     }
 
     #[test]
-    fn external_connections_default_to_plan_and_explicit_denials_survive_loading() {
-        let settings = AiSettings::default();
-        assert_eq!(settings.mcp_phase, AgentPhase::Plan);
-        let configured: AiSettings = serde_json::from_value(serde_json::json!({"mcpPolicy":{"writes":[],"logs":false,"clusterResources":false}})).unwrap();
-        let policy = crate::opencode::sanitize_mcp_policy(&configured.mcp_policy);
-        assert!(policy.writes.is_empty());
-        assert!(!policy.logs);
-        assert!(!policy.cluster_resources);
+    fn mcp_profiles_default_to_read_only_and_support_switching_or_customizing() {
+        let mut settings = AiSettings::default();
+        settings.policy.logs = true;
+        settings.policy.writes = vec![WriteOperation::Restart];
+        settings.ensure_mcp_profiles();
+        assert_eq!(settings.active_mcp_profile_id.as_deref(), Some("read-only"));
+        assert_eq!(
+            settings.mcp_profiles.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            vec!["read-only", "action"]
+        );
+        let default_effective = settings.effective_mcp_policy();
+        assert!(default_effective.logs);
+        assert!(default_effective.writes.is_empty());
+
+        // Switching to Action inherits Shared Permissions writes.
+        settings.active_mcp_profile_id = Some("action".into());
+        let effective = settings.effective_mcp_policy();
+        assert_eq!(effective.writes, vec![WriteOperation::Restart]);
+        assert!(!effective.read_only);
+
+        // Legacy mcp_server.read_only migrates safely to read-only profile and stops persisting readOnly.
+        settings.mcp_server.read_only = true;
+        settings.ensure_mcp_profiles();
+        assert_eq!(settings.active_mcp_profile_id.as_deref(), Some("read-only"));
+        assert!(!settings.mcp_server.read_only);
+        assert!(settings.effective_mcp_policy().writes.is_empty());
+
+        // Customizing Read-only profile (e.g. allowing Restart + custom name) works directly.
+        settings.mcp_profiles[0].name = "Safe + Restart".into();
+        settings.mcp_profiles[0].policy.writes = vec![WriteOperation::Restart];
+        assert_eq!(settings.effective_mcp_policy().writes, vec![WriteOperation::Restart]);
+        assert!(!settings.effective_mcp_policy().read_only);
+
+        // Kubiki Plan/Action profile bindings default to read-only / action and enforce Plan safety.
+        assert_eq!(settings.kubiki_plan_profile_id.as_deref(), Some("read-only"));
+        assert_eq!(settings.kubiki_action_profile_id.as_deref(), Some("action"));
+        assert!(settings.effective_kubiki_policy(AgentPhase::Plan).writes.is_empty());
+        assert_eq!(
+            settings.effective_kubiki_policy(AgentPhase::Action).writes,
+            vec![WriteOperation::Restart]
+        );
+    }
+
+    #[test]
+    fn legacy_settings_with_writes_and_plan_phase_migrate_safely_to_read_only_profile() {
+        let mut legacy: AiSettings = serde_json::from_value(serde_json::json!({
+            "policy": { "writes": ["create", "scale"], "readOnly": true },
+            "mcpPolicy": { "readOnly": true },
+            "mcpPhase": "plan"
+        }))
+        .unwrap();
+        legacy.ensure_mcp_profiles();
+        assert_eq!(legacy.active_mcp_profile_id.as_deref(), Some("read-only"));
+        assert!(legacy.effective_mcp_policy().writes.is_empty());
+        assert!(!legacy.mcp_server.read_only);
+        assert!(!legacy.policy.read_only);
+
+        // Switching to Action unlocks writes configured in Shared Permissions without being trapped by legacy readOnly.
+        legacy.active_mcp_profile_id = Some("action".into());
+        assert_eq!(
+            legacy.effective_mcp_policy().writes,
+            vec![WriteOperation::Create, WriteOperation::Scale]
+        );
+        assert!(!legacy.effective_mcp_policy().read_only);
     }
 }
 
@@ -116,6 +379,17 @@ impl AgentManager {
         let sessions = self.sessions.lock().map_err(|_| "AI session registry unavailable")?;
         for managed in sessions.values() {
             managed.session.set_policy(policy.clone())?;
+            *managed.plan_review.lock().map_err(|_| "Plan review unavailable")? = None;
+        }
+        Ok(())
+    }
+    fn update_kubiki_policies(&self, settings: &AiSettings) -> Result<(), String> {
+        let sessions = self.sessions.lock().map_err(|_| "AI session registry unavailable")?;
+        for managed in sessions.values() {
+            let phase = managed.session.control()?.phase;
+            managed
+                .session
+                .set_policy(settings.effective_kubiki_policy(phase))?;
             *managed.plan_review.lock().map_err(|_| "Plan review unavailable")? = None;
         }
         Ok(())
@@ -162,9 +436,11 @@ pub(crate) async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
         .join("ai.json");
     tokio::task::spawn_blocking(move || match std::fs::read(path) {
         Ok(bytes) if bytes.len() <= 1024 * 1024 => {
-            let settings: AiSettings = serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned())?;
+            let mut settings: AiSettings = serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned())?;
             settings.policy.validate()?;
             settings.mcp_policy.validate()?;
+            settings.validate_mcp_profiles()?;
+            settings.ensure_mcp_profiles();
             settings.mcp_server.validate()?;
             settings.opencode.validate()?;
             settings.codex.validate()?;
@@ -173,7 +449,11 @@ pub(crate) async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
             Ok(settings)
         }
         Ok(_) => Err("AI settings file exceeds 1 MiB".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AiSettings::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let mut settings = AiSettings::default();
+            settings.ensure_mcp_profiles();
+            Ok(settings)
+        }
         Err(_) => Err("Cannot read AI settings".into()),
     }).await.map_err(|_| "AI settings task failed")?
 }
@@ -279,12 +559,14 @@ pub async fn ai_get_settings(
 
 #[tauri::command]
 pub async fn ai_save_settings(
-    settings: AiSettings,
+    mut settings: AiSettings,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, AgentManager>,
 ) -> Result<(), String> {
     settings.policy.validate()?;
     settings.mcp_policy.validate()?;
+    settings.validate_mcp_profiles()?;
+    settings.ensure_mcp_profiles();
     settings.mcp_server.validate()?;
     settings.opencode.validate()?;
     settings.codex.validate()?;
@@ -352,8 +634,12 @@ pub async fn ai_save_settings(
         manager.invalidate();
     }
     store(window.app_handle(), &settings).await?;
-    if serde_json::to_value(&before.policy).ok() != serde_json::to_value(&settings.policy).ok() {
-        manager.update_policy(&settings.policy)?;
+    if serde_json::to_value(&before.effective_kubiki_policy(AgentPhase::Plan)).ok()
+        != serde_json::to_value(&settings.effective_kubiki_policy(AgentPhase::Plan)).ok()
+        || serde_json::to_value(&before.effective_kubiki_policy(AgentPhase::Action)).ok()
+            != serde_json::to_value(&settings.effective_kubiki_policy(AgentPhase::Action)).ok()
+    {
+        manager.update_kubiki_policies(&settings)?;
     }
     if before.runtime != settings.runtime
         || before.opencode != settings.opencode
@@ -364,13 +650,12 @@ pub async fn ai_save_settings(
             .state::<crate::opencode::OpenCodeManager>()
             .stop_all()
             .await;
-    } else if serde_json::to_value((&before.mcp_policy, &before.policy)).ok()
-        != serde_json::to_value((&settings.mcp_policy, &settings.policy)).ok()
-        || before.mcp_phase != settings.mcp_phase
+    } else if serde_json::to_value(&before.effective_mcp_policy()).ok()
+        != serde_json::to_value(&settings.effective_mcp_policy()).ok()
     {
         window
             .state::<crate::opencode::OpenCodeManager>()
-            .update_policy(&settings.mcp_policy, settings.mcp_phase)
+            .update_policy(&settings.effective_mcp_policy(), AgentPhase::Action)
             .await?;
     }
     window
@@ -530,7 +815,7 @@ pub async fn ai_create_session(
         id.clone(),
         window.label().into(),
         request.scope.clone(),
-        settings.policy.clone(),
+        settings.effective_kubiki_policy(AgentPhase::Plan),
         capabilities,
     );
     if request.intent == AgentIntent::Investigate && request.options.tool_use == Some(false) {
@@ -593,14 +878,17 @@ pub fn ai_set_mode(
 }
 
 #[tauri::command]
-pub fn ai_set_phase(
+pub async fn ai_set_phase(
     session_id: String,
     phase: AgentPhase,
     window: tauri::WebviewWindow,
     manager: tauri::State<'_, AgentManager>,
 ) -> Result<SessionView, String> {
+    let settings = load(window.app_handle()).await?;
     let managed = manager.get(&session_id, window.label())?;
-    managed.session.phase(phase)?;
+    managed
+        .session
+        .set_access(settings.effective_kubiki_policy(phase), Some(phase))?;
     let control = managed.session.control()?;
     Ok(SessionView {
         id: session_id,

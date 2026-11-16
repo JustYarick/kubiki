@@ -642,3 +642,113 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
   expect(synced.logs).toBe(true);
   expect(synced.alwaysAsk).toEqual(['delete_resource']);
 });
+
+it('defaults to read-only MCP profile, resolves shared permissions for action, and migrates legacy global read-only lock', async () => {
+  const {
+    defaultPolicy,
+    ensureMcpProfiles,
+    resolveEffectiveKubikiPolicy,
+    resolveEffectiveMcpPolicy,
+    summarizeMcpPolicy,
+    updateAiMcpSettings,
+  } = await import('../../src/domains/ai/types');
+
+  const baseSettings = {
+    providers: [],
+    defaultProvider: null,
+    defaultModel: null,
+    options: {},
+    policy: {
+      ...defaultPolicy(),
+      logs: true,
+      writes: ['restart', 'scale'] as import('../../src/domains/ai/types').WriteOperation[],
+      alwaysAsk: ['scale_workload'],
+      confirmReads: true,
+      planDisabledTools: ['get_logs'],
+    },
+    instructions: '',
+    mcpServer: { enabled: true, port: 3847 },
+  };
+
+  const ensured = ensureMcpProfiles(baseSettings);
+  expect(ensured.activeId).toBe('read-only');
+  expect(ensured.kubikiPlanProfileId).toBe('read-only');
+  expect(ensured.kubikiActionProfileId).toBe('action');
+  expect(ensured.profiles.map(p => p.id)).toEqual(['read-only', 'action']);
+
+  // Kubiki Agent Plan/Action profile bindings resolve Plan -> read-only and Action -> action
+  expect(resolveEffectiveKubikiPolicy(baseSettings, 'plan').writes).toEqual([]);
+  expect(resolveEffectiveKubikiPolicy(baseSettings, 'action').writes).toEqual(['restart', 'scale']);
+
+  // Default Read-only profile blocks all writes even when Shared Permissions permit writes
+  const defaultEffective = resolveEffectiveMcpPolicy(baseSettings);
+  expect(defaultEffective.logs).toBe(true);
+  expect(defaultEffective.writes).toEqual([]);
+  expect(defaultEffective.alwaysAsk).toEqual([]);
+  expect(defaultEffective.confirmReads).toBe(false);
+  expect(defaultEffective.planDisabledTools).toEqual([]);
+  const defaultSummary = summarizeMcpPolicy(defaultEffective);
+  expect(defaultSummary.isReadOnly).toBe(true);
+  expect(defaultSummary.allowedWrites).toEqual([]);
+
+  // Switching to Action inherits shared permissions & rules while stripping Kubiki-specific Plan/Action & confirmation prompts
+  const actionSettings = updateAiMcpSettings(baseSettings, { activeProfileId: 'action' });
+  const actionEffective = resolveEffectiveMcpPolicy(actionSettings);
+  expect(actionEffective.logs).toBe(true);
+  expect(actionEffective.writes).toEqual(['restart', 'scale']);
+  const actionSummary = summarizeMcpPolicy(actionEffective);
+  expect(actionSummary.isReadOnly).toBe(false);
+  expect(actionSummary.allowedWrites).toEqual(['scale', 'restart']);
+
+  // Read-only profile can be renamed/customized (e.g. allow restart only)
+  const customSettings = updateAiMcpSettings(baseSettings, {
+    activeProfileId: 'read-only',
+    profiles: ensured.profiles.map(p =>
+      p.id === 'read-only'
+        ? { ...p, name: 'Safe + Restart', policy: { ...p.policy, writes: ['restart'] } }
+        : p,
+    ),
+  });
+  const customSummary = summarizeMcpPolicy(resolveEffectiveMcpPolicy(customSettings));
+  expect(customSummary.isReadOnly).toBe(false);
+  expect(customSummary.allowedWrites).toEqual(['restart']);
+
+  // Legacy mcpServer.readOnly=true migrates to read-only profile and is removed on save
+  const legacyLocked = {
+    ...actionSettings,
+    mcpServer: { enabled: true, port: 3847, readOnly: true } as typeof actionSettings.mcpServer,
+  };
+  expect(ensureMcpProfiles(legacyLocked).activeId).toBe('read-only');
+  expect(summarizeMcpPolicy(resolveEffectiveMcpPolicy(legacyLocked)).isReadOnly).toBe(true);
+  const cleaned = updateAiMcpSettings(legacyLocked, { activeProfileId: 'read-only' });
+  expect((cleaned.mcpServer as Record<string, unknown> | undefined)?.readOnly).toBeUndefined();
+
+  // Ghost readOnly alongside shared writes never traps Action or legacy migration
+  const migrated = ensureMcpProfiles({
+    ...baseSettings,
+    policy: { ...baseSettings.policy, readOnly: true },
+    mcpPhase: 'action',
+  });
+  expect(migrated.activeId).toBe('read-only');
+  const actionProfile = migrated.profiles.find(p => p.id === 'action')!;
+  expect(summarizeMcpPolicy(resolveEffectiveMcpPolicy(baseSettings, actionProfile)).isReadOnly).toBe(false);
+
+  // Permission presets and Allowed changes edits clear stale policy.readOnly / disabledTools
+  const { permissionProfile } = await import('../../src/domains/ai/permission_profiles');
+  const { applySharedWritesChange } = await import('../../src/domains/ai/components/AgentSettings');
+  const staleReadOnlyPolicy = {
+    ...defaultPolicy(),
+    readOnly: true,
+    disabledTools: ['scale_workload'],
+    actionDisabledTools: ['restart_workload'],
+    writes: ['create'] as import('../../src/domains/ai/types').WriteOperation[],
+  };
+  const afterPreset = permissionProfile(staleReadOnlyPolicy, 'limited actions');
+  expect(afterPreset.readOnly).toBe(false);
+  expect(afterPreset.writes).toEqual(['scale', 'restart']);
+
+  const afterWrites = applySharedWritesChange(staleReadOnlyPolicy, ['create', 'scale', 'restart']);
+  expect(afterWrites.readOnly).toBe(false);
+  expect(afterWrites.disabledTools).not.toContain('scale_workload');
+  expect(afterWrites.actionDisabledTools).not.toContain('restart_workload');
+});

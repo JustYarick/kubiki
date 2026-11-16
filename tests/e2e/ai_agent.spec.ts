@@ -198,9 +198,13 @@ test('provider credentials stay out of rendered settings and access rules persis
   await agent.getByTestId('ai-conversations-panel').getByRole('button', { name: 'AI settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
   await dialog.getByRole('button', { name: 'Permissions', exact: true }).click();
-  await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toHaveValue('none');
-  await expect(dialog.getByRole('combobox', { name: 'ConfigMap access', exact: true })).toHaveValue('metadata');
-  await expect(dialog.getByRole('checkbox', { name: 'Read Pod logs', exact: true })).not.toBeChecked();
+  await expect(dialog.getByRole('combobox', { name: 'Plan mode MCP profile', exact: true })).toHaveValue('read-only');
+  await expect(dialog.getByRole('combobox', { name: 'Action mode MCP profile', exact: true })).toHaveValue('action');
+  await dialog.getByRole('button', { name: 'Cluster tools (MCP)', exact: true }).click();
+  await dialog.getByRole('tab', { name: /Action/ }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Secrets', exact: true })).toHaveValue('none');
+  await expect(dialog.getByRole('combobox', { name: 'ConfigMaps', exact: true })).toHaveValue('metadata');
+  await expect(dialog.getByRole('checkbox', { name: 'Logs', exact: true })).not.toBeChecked();
   await dialog.getByRole('button', { name: 'Connections & models', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add connection', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'AI connection name' }).fill('My cloud connection');
@@ -212,10 +216,11 @@ test('provider credentials stay out of rendered settings and access rules persis
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('test-only-provider-credential');
   await dialog.getByRole('combobox', { name: 'Default AI model', exact: true }).selectOption('model-from-endpoint');
   await dialog.getByRole('button', { name: 'Use as default', exact: true }).click();
-  await dialog.getByRole('button', { name: 'Permissions', exact: true }).click();
-  await dialog.getByRole('combobox', { name: 'Secret access', exact: true }).selectOption('metadata');
-  await dialog.getByRole('checkbox', { name: 'Read Pod logs', exact: true }).check();
-  await dialog.getByRole('group', { name: 'Allowed AI changes', exact: true }).getByRole('checkbox', { name: 'Create', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Cluster tools (MCP)', exact: true }).click();
+  await dialog.getByRole('tab', { name: /Action/ }).click();
+  await dialog.getByRole('combobox', { name: 'Secrets', exact: true }).selectOption('metadata');
+  await dialog.getByRole('checkbox', { name: 'Logs', exact: true }).check();
+  await dialog.getByRole('checkbox', { name: 'Create', exact: true }).check();
   await dialog.getByRole('button', { name: 'Scope & rules', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add resource rule', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Rule 1 kind', exact: true }).fill('Secret');
@@ -339,11 +344,12 @@ test('global AI settings have subsections and find confirmations through search'
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await dialog.getByRole('button', { name: 'AI assistant', exact: true }).click();
   const sections = dialog.getByLabel('AI settings subsections');
+  await expect(dialog.getByRole('button', { name: 'MCP Server & Tools', exact: true })).toBeVisible();
   await sections.getByRole('button', { name: 'Permissions', exact: true }).click();
   await expect(dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'Plan mode MCP profile', exact: true })).toBeVisible();
   await sections.getByRole('button', { name: 'Scope & rules', exact: true }).click();
-  await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).not.toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'Plan mode MCP profile', exact: true })).not.toBeVisible();
   await dialog.getByRole('textbox', { name: 'Search settings', exact: true }).fill('confirmations');
   await expect(dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
@@ -381,56 +387,101 @@ test('provider can be tested before saving and skill completion works in both co
   expect(errors).toEqual([]);
 });
 
-test('agent selection is in settings and OpenCode only exposes effective settings', async ({ page }) => {
-  const errors=await setup(page);const agent=await openAgent(page);
-  await agent.getByRole('button',{name:'AI settings',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
-  await expect(dialog.getByRole('combobox',{name:'AI agent',exact:true})).toHaveValue('kubiki');
-  await dialog.getByRole('combobox',{name:'AI agent',exact:true}).selectOption('open_code');
+test('shared settings remain accessible for external runtimes while Plan/Action phase splits stay Kubiki-only', async ({ page }) => {
+  const errors = await setup(page); const agent = await openAgent(page);
+  await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
+  await expect(dialog.getByRole('combobox', { name: 'AI agent', exact: true })).toHaveValue('kubiki');
+
+  // When Kubiki Agent is active, Permissions binds Plan / Action phases to MCP profiles (Read-only / Action)
+  await dialog.getByRole('button', { name: 'Permissions', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Plan mode MCP profile', exact: true })).toHaveValue('read-only');
+  await expect(dialog.getByRole('combobox', { name: 'Action mode MCP profile', exact: true })).toHaveValue('action');
+
+  // Switch to OpenCode: Kubiki settings remain accessible alongside single-source MCP profiles
+  await dialog.getByRole('button', { name: 'Agent', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'AI agent', exact: true }).selectOption('open_code');
   await expect(page.getByTestId('opencode-pane')).toBeVisible();
-  await expect(page.getByRole('textbox',{name:'Search conversations',exact:true})).toHaveCount(0);
-  await expect(dialog.getByRole('button',{name:'Connections & models',exact:true})).toHaveCount(0);
-  await expect(dialog.getByRole('button',{name:'Permissions',exact:true})).toHaveCount(0);
-  await expect(dialog.getByRole('button',{name:'Scope & rules',exact:true})).toHaveCount(0);
-  await dialog.getByRole('button',{name:'Check installation',exact:true}).click();
+  await expect(page.getByRole('textbox', { name: 'Search conversations', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Connections & models', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Permissions', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Scope & rules', exact: true })).toBeVisible();
+  // Kubiki Agent instructions remain editable when OpenCode is selected
+  await expect(dialog.getByRole('textbox', { name: 'Integrated agent instructions', exact: true })).toBeVisible();
+
+  await dialog.getByRole('button', { name: 'Check installation', exact: true }).click();
   await expect(dialog.getByRole('status')).toContainText('opencode v2.0.27');
-  await dialog.getByRole('button',{name:'Cluster tools (MCP)',exact:true}).click();
-  await expect(dialog.getByRole('checkbox',{name:'Logs',exact:true})).not.toBeChecked();
-  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(false);
-  await dialog.getByRole('checkbox',{name:'Logs',exact:true}).check();
-  await dialog.getByRole('button',{name:'Save cluster access',exact:true}).click();
-  await expect.poll(()=>page.evaluate(()=>(window as any).__aiHarness.settings().mcpPolicy?.logs)).toBe(true);
-  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(true);
-  await captureScreenshot(page,{path:'test-results/opencode-cluster-settings.png'});
-  await page.setViewportSize({width:375,height:812});
-  expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
-  await captureScreenshot(page,{path:'test-results/opencode-cluster-settings-narrow.png'});
-  await page.setViewportSize({width:1440,height:900});
-  await dialog.getByRole('button',{name:'Agent',exact:true}).click();
-  await dialog.getByRole('combobox',{name:'AI agent',exact:true}).selectOption('kubiki');
+
+  // Cluster tools (MCP) is the single source of truth for profile tools & permissions (no Plan/Action split)
+  await dialog.getByRole('button', { name: 'Cluster tools (MCP)', exact: true }).click();
+  await expect(dialog.getByRole('tab', { name: /Read-only/, selected: true })).toBeVisible();
+  await dialog.getByRole('tab', { name: /Action/ }).click();
+  await expect(dialog.getByRole('button', { name: 'Plan (Kubiki)', exact: true })).toHaveCount(0);
+  await dialog.getByRole('checkbox', { name: 'Create', exact: true }).check();
+  await expect(dialog.getByRole('checkbox', { name: /Apply manifest/ })).toBeChecked();
+  await dialog.getByRole('checkbox', { name: 'Create', exact: true }).uncheck();
+  await expect(dialog.getByRole('checkbox', { name: /Apply manifest/ })).not.toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: 'Logs', exact: true })).not.toBeChecked();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy.logs)).toBe(false);
+  await dialog.getByRole('checkbox', { name: 'Logs', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Save cluster access', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy.logs)).toBe(true);
+  await captureScreenshot(page, { path: 'test-results/opencode-cluster-settings.png' });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+  await captureScreenshot(page, { path: 'test-results/opencode-cluster-settings-narrow.png' });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await dialog.getByRole('button', { name: 'Agent', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'AI agent', exact: true }).selectOption('kubiki');
   await expect(page.getByTestId('opencode-pane')).toHaveCount(0);
-  await dialog.getByRole('button',{name:'Connections & models',exact:true}).click();
-  await expect(dialog.getByRole('combobox',{name:'Saved AI connection',exact:true})).toHaveValue('local');
-  expect(await page.evaluate(()=>(window as any).__aiHarness.settings().policy.logs)).toBe(true);
+  await dialog.getByRole('button', { name: 'Connections & models', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Saved AI connection', exact: true })).toHaveValue('local');
+  expect(await page.evaluate(() => (window as any).__aiHarness.settings().policy.logs)).toBe(true);
   expect(errors).toEqual([]);
 });
 
-test('external MCP phase changes live without restarting the terminal', async ({ page }) => {
+test('MCP profiles default to Read-only and TitleBar quick controls update live without Plan/Action gating or terminal restart', async ({ page }) => {
   const errors = await setup(page); const agent = await openAgent(page);
-  await agent.getByRole('button', { name:'AI settings', exact:true }).click();
-  const dialog = page.getByRole('dialog', { name:'AI Agent settings', exact:true });
-  await dialog.getByRole('combobox', { name:'AI agent', exact:true }).selectOption('open_code');
+  await agent.getByRole('button', { name: 'AI settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
+  await dialog.getByRole('combobox', { name: 'AI agent', exact: true }).selectOption('open_code');
   await page.keyboard.press('Escape');
+
   const pane = page.getByTestId('opencode-pane');
   await expect(pane).toContainText('Connected');
+  await expect(pane.getByRole('combobox', { name: 'MCP server phase', exact: true })).toHaveCount(0);
+  await expect(pane.getByRole('checkbox', { name: /Read-only MCP/ })).toHaveCount(0);
+
   const starts = await page.evaluate(() => (window as any).__aiHarness.openCodeStarts.length);
-  const phase = pane.getByRole('combobox', { name:'MCP server phase', exact:true });
-  await expect(phase).toHaveValue('plan');
-  await phase.selectOption('action');
-  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().mcpPhase)).toBe('action');
-  await expect(phase).toBeEnabled();
-  await phase.selectOption('plan');
-  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().mcpPhase)).toBe('plan');
+  const profileSelect = pane.getByRole('combobox', { name: 'MCP profile', exact: true });
+  await expect(profileSelect).toHaveValue('read-only');
+
+  // Verify default Read-only profile, edit port, and switch profiles from TitleBar popover without global lock
+  const titleMcp = page.getByRole('button', { name: 'MCP Control', exact: true });
+  await expect(titleMcp).toContainText('Read-only');
+  await expect(titleMcp).toContainText('RO');
+  await titleMcp.click();
+  await expect(page.getByRole('checkbox', { name: /Read-only MCP/ })).toHaveCount(0);
+  const quickPort = page.getByRole('spinbutton', { name: 'MCP port', exact: true });
+  expect(await quickPort.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await quickPort.fill('3855');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().mcpServer?.port)).toBe(3855);
+  await page.getByRole('radio', { name: /Action/ }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().activeMcpProfileId)).toBe('action');
+  await expect(profileSelect).toHaveValue('action');
+  await page.getByRole('button', { name: 'Edit MCP profiles', exact: true }).click();
+
+  // Customize Read-only profile (rename + allow Restart) in Cluster tools (MCP)
+  const settingsDialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settingsDialog.getByRole('checkbox', { name: /Read-only MCP/ })).toHaveCount(0);
+  await settingsDialog.getByRole('tab', { name: /Read-only/ }).click();
+  await settingsDialog.getByRole('textbox', { name: 'MCP profile name', exact: true }).fill('Ops Light');
+  await settingsDialog.getByRole('button', { name: 'Rename', exact: true }).click();
+  await settingsDialog.getByRole('checkbox', { name: 'Restart', exact: true }).check();
+  await expect(titleMcp).toContainText('Ops Light');
+  await expect(titleMcp).toContainText('RW');
+
   expect(await page.evaluate(() => (window as any).__aiHarness.openCodeStarts.length)).toBe(starts);
   await expect(pane).toContainText('Connected');
   expect(errors).toEqual([]);
@@ -444,6 +495,8 @@ test('changing tool permissions keeps an integrated conversation usable', async 
   const firstSession = await page.evaluate(() => (window as any).__aiHarness.sends[0].sessionId);
   await agent.getByRole('button', { name:/^MCP Tools/ }).click();
   const dialog = page.getByRole('dialog', { name:'AI Agent settings', exact:true });
+  await dialog.getByRole('button', { name:'Manage MCP profiles…', exact:true }).click();
+  await dialog.getByRole('tab', { name:/Action/ }).click();
   await dialog.getByRole('checkbox', { name:'Logs', exact:true }).check();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy.logs)).toBe(true);
   await page.keyboard.press('Escape');
@@ -679,7 +732,7 @@ for (const [runtime, label, version] of [['codex', 'Codex', 'codex-cli'], ['clau
     await dialog.getByRole('button', {name:`Save ${label} settings`,exact:true}).click();
     await expect.poll(()=>page.evaluate(key=>(window as any).__aiHarness.settings()[key]?.executable,runtime)).toBe(`/opt/bin/${runtime}`);
     await expect(page.getByTestId('opencode-pane')).toContainText(label);
-    await expect(dialog.getByRole('button', {name:'Connections & models',exact:true})).toHaveCount(0);
+    await expect(dialog.getByRole('button', {name:'Permissions',exact:true})).toBeVisible();
     await dialog.getByRole('combobox', {name:'AI agent',exact:true}).selectOption('kubiki');
     await expect(page.getByTestId('opencode-pane')).toHaveCount(0);
     expect(errors).toEqual([]);
@@ -789,6 +842,7 @@ test('always-on Desktop MCP HTTP server supports 1-click Auto-Configure, StatusB
   const mcpBtn = page.getByRole('button', { name: 'MCP Server', exact: true });
   await expect(mcpBtn).toContainText('MCP off');
   await mcpBtn.click();
+  await page.getByRole('button', { name: 'MCP Settings…', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await expect(dialog).toBeVisible();
   const toggle = dialog.getByLabel('Keep MCP HTTP server running while Kubiki is open');
