@@ -133,7 +133,6 @@ pub struct PersistentMcpManager {
     inner: Arc<Mutex<ManagerState>>,
     scope: Arc<StdMutex<AgentScope>>,
     policy: Arc<StdMutex<AgentPolicy>>,
-    phase: Arc<StdMutex<AgentPhase>>,
     servers: Arc<StdMutex<Vec<kubiki_mcp::ClusterServer>>>,
 }
 
@@ -160,7 +159,6 @@ impl Default for PersistentMcpManager {
             policy: Arc::new(StdMutex::new(crate::opencode::sanitize_mcp_policy(
                 &AgentPolicy::default(),
             ))),
-            phase: Arc::new(StdMutex::new(AgentPhase::Action)),
             servers: Arc::new(StdMutex::new(Vec::new())),
         }
     }
@@ -253,6 +251,19 @@ async fn store_new_token(app: &tauri::AppHandle) -> Result<String, String> {
     .map_err(|_| "MCP token task failed")?
 }
 
+fn register_server_with_limit(
+    servers: &StdMutex<Vec<kubiki_mcp::ClusterServer>>,
+    server: kubiki_mcp::ClusterServer,
+) {
+    if let Ok(mut list) = servers.lock() {
+        if list.len() >= 16 {
+            let evicted = list.remove(0);
+            evicted.session.invalidate();
+        }
+        list.push(server);
+    }
+}
+
 impl PersistentMcpManager {
     fn build_factory(
         &self,
@@ -301,12 +312,7 @@ impl PersistentMcpManager {
             let server =
                 kubiki_mcp::ClusterServer::new(session, executor, Arc::new(|_| {}), true)
                     .with_dynamic_scope(scope_ref.clone());
-            if let Ok(mut list) = servers_ref.lock() {
-                if list.len() >= 16 {
-                    list.remove(0);
-                }
-                list.push(server.clone());
-            }
+            register_server_with_limit(&servers_ref, server.clone());
             server
         }))
     }
@@ -318,7 +324,7 @@ impl PersistentMcpManager {
     ) -> Result<(), String> {
         settings.mcp_server.validate()?;
         let effective = settings.effective_mcp_policy();
-        self.update_access(&effective, AgentPhase::Action)?;
+        self.update_access(&effective)?;
 
         let desired = &settings.mcp_server;
         let token = if desired.enabled && desired.require_auth {
@@ -410,13 +416,10 @@ impl PersistentMcpManager {
         }
     }
 
-    pub fn update_access(&self, policy: &AgentPolicy, phase: AgentPhase) -> Result<(), String> {
+    pub fn update_access(&self, policy: &AgentPolicy) -> Result<(), String> {
         let sanitized = crate::opencode::sanitize_mcp_policy(policy);
         if let Ok(mut guard) = self.policy.lock() {
             *guard = sanitized.clone();
-        }
-        if let Ok(mut guard) = self.phase.lock() {
-            *guard = phase;
         }
         let servers = self
             .servers
@@ -424,7 +427,7 @@ impl PersistentMcpManager {
             .map(|g| g.clone())
             .unwrap_or_default();
         for server in servers {
-            let _ = server.update_access(sanitized.clone(), phase);
+            let _ = server.update_access(sanitized.clone(), AgentPhase::Action);
         }
         Ok(())
     }
@@ -700,5 +703,44 @@ mod tests {
             parsed_claude["mcpServers"]["kubiki"]["url"],
             "http://127.0.0.1:3847/mcp"
         );
+    }
+
+    #[test]
+    fn server_eviction_invalidates_oldest_session() {
+        struct NoopExecutor;
+        #[async_trait::async_trait]
+        impl kubiki_tools::ToolExecutor for NoopExecutor {
+            async fn execute(
+                &self,
+                _session: &Session,
+                _call: &kubiki_tools::ToolCall,
+                _emit: &kubiki_tools::EventSink,
+            ) -> Result<Value, String> {
+                Ok(Value::Null)
+            }
+        }
+
+        let manager = PersistentMcpManager::default();
+        let mut created = Vec::new();
+        for i in 0..17 {
+            let session = Session::new(
+                format!("s-{i}"),
+                "desktop-http".into(),
+                AgentScope::default(),
+                AgentPolicy::default(),
+                ClusterCapabilities::default(),
+            );
+            let server = kubiki_mcp::ClusterServer::new(
+                session,
+                Arc::new(NoopExecutor),
+                Arc::new(|_| {}),
+                true,
+            );
+            register_server_with_limit(&manager.servers, server.clone());
+            created.push(server);
+        }
+        assert!(created[0].session.control().unwrap().invalidated);
+        assert!(!created[1].session.control().unwrap().invalidated);
+        assert_eq!(manager.servers.lock().unwrap().len(), 16);
     }
 }

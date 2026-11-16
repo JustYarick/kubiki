@@ -65,15 +65,7 @@ impl ClusterServer {
         self
     }
     pub fn rebind_scope(&self, next: &AgentScope) {
-        if let Ok(mut e) = self.session.evidence.lock() {
-            e.clear();
-        }
-        if let Ok(mut c) = self.session.query_cursors.lock() {
-            *c = CursorStore::default();
-        }
-        if let Ok(mut w) = self.session.working_scope.lock() {
-            *w = WorkingScope::initial(next);
-        }
+        self.session.rebind_scope(next);
         self.notify_tools_changed();
     }
     pub fn update_policy(&self, policy: AgentPolicy) -> Result<(), String> {
@@ -161,7 +153,11 @@ impl ClusterServer {
         cancellation: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<Value, String> {
         let cancellation = cancellation.unwrap_or_default();
-        let revision = self.session.control()?.revision;
+        let control = self.session.control()?;
+        if control.invalidated {
+            return Err("MCP session has been invalidated".into());
+        }
+        let revision = control.revision;
         let _guard = if self.host_owned {
             Some(tokio::select! { biased;
                 _ = cancellation.cancelled() => return Err("Tool request cancelled while queued".into()),
@@ -189,6 +185,7 @@ impl ClusterServer {
         let _running = if self.host_owned {
             Some(self.session.begin_run(self.session.control()?.revision)?)
         } else {
+            self.session.clear_cancellation_for_revision(revision);
             None
         };
         let sink = self
@@ -611,5 +608,61 @@ mod cancellation_tests {
     #[tokio::test]
     async fn parallel_embedded_cancellation_is_request_local() {
         cancelling_b_does_not_stop_a(false).await;
+    }
+    #[tokio::test]
+    async fn rebind_scope_cancels_inflight_reads_and_allows_subsequent_calls() {
+        let session = Session::new(
+            "rebind-test".into(),
+            "host".into(),
+            AgentScope {
+                context: "fixture".into(),
+                namespaces: vec!["apps".into()],
+                all_namespaces: false,
+            },
+            AgentPolicy::default(),
+            ClusterCapabilities::default(),
+        );
+        let started = Arc::new(tokio::sync::Notify::new());
+        let finish = Arc::new(tokio::sync::Notify::new());
+        let server = ClusterServer::new(
+            session,
+            Arc::new(Blocking {
+                started: started.clone(),
+                finish: finish.clone(),
+            }),
+            Arc::new(|_| {}),
+            false,
+        );
+        let initial_revision = server.session.control().unwrap().revision;
+        let mut rx = server.session.cancellation();
+        assert!(!*rx.borrow());
+
+        server.rebind_scope(&AgentScope {
+            context: "staging".into(),
+            namespaces: vec!["apps".into()],
+            all_namespaces: false,
+        });
+        assert!(server.session.control().unwrap().revision > initial_revision);
+        assert!(*rx.borrow_and_update());
+
+        // Subsequent parallel calls on the rebound scope clear the stale cancel and succeed.
+        let (c, s) = tokio::io::duplex(65536);
+        let (client, service) = tokio::join!(().serve(c), server.clone().serve(s));
+        let client = client.unwrap();
+        let service = service.unwrap();
+        let peer = client.peer().clone();
+        let call = tokio::spawn(async move {
+            peer.call_tool(
+                CallToolRequestParams::new("get_resource")
+                    .with_arguments(serde_json::from_value(json!({"name": "A"})).unwrap()),
+            )
+            .await
+        });
+        started.notified().await;
+        finish.notify_one();
+        let res = call.await.unwrap().unwrap();
+        assert_ne!(res.is_error, Some(true));
+        let _ = client.cancel().await;
+        let _ = service.cancel().await;
     }
 }

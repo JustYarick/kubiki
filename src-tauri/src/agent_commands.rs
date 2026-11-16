@@ -126,39 +126,21 @@ impl AiSettings {
             }
             self.mcp_server.read_only = false;
         }
-        if !self
-            .active_mcp_profile_id
-            .as_ref()
-            .is_some_and(|id| self.mcp_profiles.iter().any(|p| &p.id == id))
-        {
-            self.active_mcp_profile_id = if self.mcp_profiles.iter().any(|p| p.id == "read-only") {
-                Some("read-only".into())
-            } else {
-                self.mcp_profiles.first().map(|p| p.id.clone())
-            };
-        }
-        if !self
-            .kubiki_plan_profile_id
-            .as_ref()
-            .is_some_and(|id| self.mcp_profiles.iter().any(|p| &p.id == id))
-        {
-            self.kubiki_plan_profile_id = if self.mcp_profiles.iter().any(|p| p.id == "read-only") {
-                Some("read-only".into())
-            } else {
-                self.mcp_profiles.first().map(|p| p.id.clone())
-            };
-        }
-        if !self
-            .kubiki_action_profile_id
-            .as_ref()
-            .is_some_and(|id| self.mcp_profiles.iter().any(|p| &p.id == id))
-        {
-            self.kubiki_action_profile_id = if self.mcp_profiles.iter().any(|p| p.id == "action") {
-                Some("action".into())
-            } else {
-                self.mcp_profiles.first().map(|p| p.id.clone())
-            };
-        }
+        let resolve_profile_id = |slot: &mut Option<String>, preferred: &str| {
+            if !slot
+                .as_ref()
+                .is_some_and(|id| self.mcp_profiles.iter().any(|p| &p.id == id))
+            {
+                *slot = if self.mcp_profiles.iter().any(|p| p.id == preferred) {
+                    Some(preferred.into())
+                } else {
+                    self.mcp_profiles.first().map(|p| p.id.clone())
+                };
+            }
+        };
+        resolve_profile_id(&mut self.active_mcp_profile_id, "read-only");
+        resolve_profile_id(&mut self.kubiki_plan_profile_id, "read-only");
+        resolve_profile_id(&mut self.kubiki_action_profile_id, "action");
     }
 
     pub fn validate_mcp_profiles(&self) -> Result<(), String> {
@@ -655,7 +637,7 @@ pub async fn ai_save_settings(
     {
         window
             .state::<crate::opencode::OpenCodeManager>()
-            .update_policy(&settings.effective_mcp_policy(), AgentPhase::Action)
+            .update_policy(&settings.effective_mcp_policy())
             .await?;
     }
     window

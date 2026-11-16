@@ -134,6 +134,34 @@ impl Session {
         self.plans.lock().map_err(|_| "Plan registry unavailable")?.stale();
         Ok(())
     }
+    /// Rebind the dynamic cluster/namespace scope, cancelling in-flight reads and clearing scoped caches.
+    pub fn rebind_scope(&self, next: &AgentScope) {
+        if let Ok(mut state) = self.control.lock() {
+            state.revision += 1;
+        }
+        self.cancel.send_replace(true);
+        if let Ok(mut e) = self.evidence.lock() {
+            e.clear();
+        }
+        if let Ok(mut c) = self.query_cursors.lock() {
+            *c = CursorStore::default();
+        }
+        if let Ok(mut w) = self.working_scope.lock() {
+            *w = WorkingScope::initial(next);
+        }
+        if let Ok(mut plans) = self.plans.lock() {
+            plans.stale();
+        }
+    }
+    /// Reset global cancellation for a new parallel request if the session revision is still active and valid.
+    pub fn clear_cancellation_for_revision(&self, revision: u64) {
+        if let Ok(state) = self.control.lock()
+            && state.revision == revision
+            && !state.invalidated
+        {
+            self.cancel.send_replace(false);
+        }
+    }
     /// Per-tool cancellation has its own signal; global control and scope stay shared.
     pub fn request_scope(&self) -> Self {
         let (cancel, _) = watch::channel(*self.cancel.borrow());

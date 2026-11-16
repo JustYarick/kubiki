@@ -263,7 +263,7 @@ impl OpenCodeManager {
             entry.stop().await;
         }
     }
-    pub async fn update_policy(&self, policy: &AgentPolicy, _phase: AgentPhase) -> Result<(), String> {
+    pub async fn update_policy(&self, policy: &AgentPolicy) -> Result<(), String> {
         let sanitized = sanitize_mcp_policy(policy);
         let servers = self
             .0
@@ -797,6 +797,51 @@ fn direct_http_arguments(runtime: AgentRuntime, prompt: Option<&str>) -> Result<
     Ok(result)
 }
 
+async fn launch_in_system_terminal(
+    registry: &OpenCodeManager,
+    window: &tauri::WebviewWindow,
+    pending: &PendingStart,
+    session_id: String,
+    terminal_executable: &str,
+    process: HostProcess,
+    server: Option<kubiki_mcp::ClusterServer>,
+    endpoint: Option<kubiki_mcp::attached::AttachedEndpoint>,
+) -> Result<SystemTerminalLaunchResult, String> {
+    let search_path = crate::shell_environment::effective_path().await;
+    let terminal =
+        crate::system_terminal::detect_system_terminal(terminal_executable, &search_path).await?;
+    if let Some(previous) = registry.0.lock().await.remove(window.label()) {
+        previous.stop().await;
+    }
+    pending.launch.check()?;
+    let child = crate::system_terminal::spawn_in_system_terminal(&terminal, process)?;
+    let child_holder = Arc::new(tokio::sync::Mutex::new(Some(child)));
+    if pending.launch.check().is_err() {
+        if let Some(mut child) = child_holder.lock().await.take() {
+            let _ = child.start_kill();
+        }
+        return Ok(SystemTerminalLaunchResult {
+            session_id,
+            terminal: terminal.label,
+        });
+    }
+    let owner = window.label().to_owned();
+    registry.0.lock().await.insert(
+        owner.clone(),
+        Active {
+            id: session_id.clone(),
+            owner,
+            launch: ActiveLaunch::System(child_holder),
+            server,
+            _endpoint: endpoint,
+        },
+    );
+    Ok(SystemTerminalLaunchResult {
+        session_id,
+        terminal: terminal.label,
+    })
+}
+
 async fn start_external_agent_system_terminal_inner(
     session_id: String,
     request: SystemTerminalStartRequest,
@@ -843,51 +888,23 @@ async fn start_external_agent_system_terminal_inner(
             }
             dir
         };
-        let search_path = crate::shell_environment::effective_path().await;
-        let terminal = crate::system_terminal::detect_system_terminal(
-            &external_settings.terminal_executable,
-            &search_path,
-        )
-        .await?;
         let args = direct_http_arguments(settings.runtime, request.prompt.as_deref())?;
-        if let Some(previous) = registry.0.lock().await.remove(window.label()) {
-            previous.stop().await;
-        }
-        pending.launch.check()?;
-        let child = crate::system_terminal::spawn_in_system_terminal(
-            &terminal,
+        return launch_in_system_terminal(
+            &registry,
+            &window,
+            &pending,
+            session_id,
+            &external_settings.terminal_executable,
             HostProcess {
                 program: install.executable.into(),
                 args,
                 cwd,
                 environment: vec![],
             },
-        )?;
-        let child_holder = Arc::new(tokio::sync::Mutex::new(Some(child)));
-        if pending.launch.check().is_err() {
-            if let Some(mut child) = child_holder.lock().await.take() {
-                let _ = child.start_kill();
-            }
-            return Ok(SystemTerminalLaunchResult {
-                session_id,
-                terminal: terminal.label,
-            });
-        }
-        let owner = window.label().to_owned();
-        registry.0.lock().await.insert(
-            owner.clone(),
-            Active {
-                id: session_id.clone(),
-                owner,
-                launch: ActiveLaunch::System(child_holder),
-                server: None,
-                _endpoint: None,
-            },
-        );
-        return Ok(SystemTerminalLaunchResult {
-            session_id,
-            terminal: terminal.label,
-        });
+            None,
+            None,
+        )
+        .await;
     }
 
     let pending = registry.begin(window.label(), &session_id)?;
@@ -899,42 +916,17 @@ async fn start_external_agent_system_terminal_inner(
         &pending,
     )
     .await?;
-    let search_path = crate::shell_environment::effective_path().await;
-    let terminal = crate::system_terminal::detect_system_terminal(
-        &prepared.external_settings.terminal_executable,
-        &search_path,
-    )
-    .await?;
-    if let Some(previous) = registry.0.lock().await.remove(window.label()) {
-        previous.stop().await;
-    }
-    pending.launch.check()?;
-    let child = crate::system_terminal::spawn_in_system_terminal(&terminal, prepared.process)?;
-    let child_holder = Arc::new(tokio::sync::Mutex::new(Some(child)));
-    if pending.launch.check().is_err() {
-        if let Some(mut child) = child_holder.lock().await.take() {
-            let _ = child.start_kill();
-        }
-        return Ok(SystemTerminalLaunchResult {
-            session_id,
-            terminal: terminal.label,
-        });
-    }
-    let owner = window.label().to_owned();
-    registry.0.lock().await.insert(
-        owner,
-        Active {
-            id: session_id.clone(),
-            owner: window.label().to_owned(),
-            launch: ActiveLaunch::System(child_holder),
-            server: Some(prepared.server),
-            _endpoint: Some(prepared.endpoint),
-        },
-    );
-    Ok(SystemTerminalLaunchResult {
+    launch_in_system_terminal(
+        &registry,
+        &window,
+        &pending,
         session_id,
-        terminal: terminal.label,
-    })
+        &prepared.external_settings.terminal_executable,
+        prepared.process,
+        Some(prepared.server),
+        Some(prepared.endpoint),
+    )
+    .await
 }
 
 #[tauri::command]
