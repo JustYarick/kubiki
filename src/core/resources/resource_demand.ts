@@ -11,7 +11,7 @@ export const OVERVIEW_KINDS: readonly ResourceKind[] = ['Pod', 'Deployment', 'St
 const WORKLOADS = new Set(['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController', 'Job', 'CronJob']);
 export const structuralKinds = RESOURCE_TYPES.filter(type => type.kind !== 'Event').map(type => type.kind as ResourceKind);
 const details: Partial<Record<ResourceKind, ResourceKind[]>> = {
-  Pod: ['Node'],
+  Pod: ['Node', 'Deployment', 'CronJob'],
   Service: ['Pod', 'EndpointSlice', 'Endpoints'],
   PersistentVolumeClaim: ['Pod'],
   Role: ['RoleBinding', 'ClusterRoleBinding'],
@@ -37,7 +37,7 @@ const details: Partial<Record<ResourceKind, ResourceKind[]>> = {
 // Structural edges understood by buildResourceGraph. Diagnostic dependencies
 // above are deliberately separate: sharing a detail panel is not a graph edge.
 const related: Partial<Record<ResourceKind, ResourceKind[]>> = {
-  Pod: ['Node', 'Deployment', 'CronJob', 'ServiceAccount', 'PersistentVolumeClaim', 'ConfigMap', 'Secret', 'PriorityClass', 'RuntimeClass', 'ResourceClaim', 'ResourceClaimTemplate'],
+  Pod: ['Node', 'ServiceAccount', 'PersistentVolumeClaim', 'ConfigMap', 'Secret', 'PriorityClass', 'RuntimeClass', 'ResourceClaim', 'ResourceClaimTemplate'],
   Deployment: ['ReplicaSet', 'HorizontalPodAutoscaler'],
   ReplicaSet: ['Pod', 'HorizontalPodAutoscaler'],
   StatefulSet: ['Pod', 'HorizontalPodAutoscaler'],
