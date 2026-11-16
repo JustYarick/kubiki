@@ -262,7 +262,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSelectContext, compact = f
 
       {/* Right: MCP Status + Sync Controls + Layout Toggles + Settings */}
       <div className="app-titlebar-tools flex items-center gap-1 shrink-0">
-        <McpQuickControl placement="titlebar" />
+        <McpQuickControl />
 
         <div className="app-titlebar-divider h-4 w-px bg-[var(--border-default)] mx-1" />
 

@@ -18,7 +18,7 @@ import {
   type McpHttpStatus,
 } from '../types';
 
-export function McpQuickControl({ placement }: { placement: 'titlebar' | 'statusbar' }) {
+export function McpQuickControl() {
   const settings = useAiStore(s => s.settings);
   const saving = useAiStore(s => s.saving);
   const { currentContext, selectedNamespace, isConnected } = useClusterStore();
@@ -133,18 +133,14 @@ export function McpQuickControl({ placement }: { placement: 'titlebar' | 'status
       trigger={({ open }) => (
         <button
           type="button"
-          aria-label={placement === 'statusbar' ? 'MCP Server' : 'MCP Control'}
+          aria-label="MCP Control"
           title={title}
-          className={
-            placement === 'titlebar'
-              ? cx(
-                  'app-titlebar-mcp flex items-center gap-1.5 h-[var(--control-h-md)] px-2 rounded-[var(--radius-sm)] text-[length:var(--font-size-sm)] border transition-colors shrink-0',
-                  open
-                    ? 'bg-[var(--bg-elevated)] border-[var(--border-strong)] text-[var(--text-primary)]'
-                    : 'bg-[var(--bg-primary)] border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]',
-                )
-              : 'flex items-center gap-1.5 hover:text-[var(--text-primary)] shrink-0'
-          }
+          className={cx(
+            'app-titlebar-mcp flex items-center gap-1.5 h-[var(--control-h-md)] px-2 rounded-[var(--radius-sm)] text-[length:var(--font-size-sm)] border transition-colors shrink-0',
+            open
+              ? 'bg-[var(--bg-elevated)] border-[var(--border-strong)] text-[var(--text-primary)]'
+              : 'bg-[var(--bg-primary)] border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]',
+          )}
         >
           <span
             className={cx(
@@ -157,24 +153,13 @@ export function McpQuickControl({ placement }: { placement: 'titlebar' | 'status
             )}
           />
           <Plug
-            size={placement === 'titlebar' ? 'calc(12px * var(--ui-factor))' : 'calc(11px * var(--ui-factor))'}
+            size="calc(12px * var(--ui-factor))"
             className={mcpEnabled ? 'text-[var(--status-ok)] shrink-0' : 'shrink-0'}
           />
-          {placement === 'statusbar' ? (
-            <span className="status-action-label font-mono">
-              {mcpEnabled ? `MCP :${mcpPort}` : 'MCP off'}
-            </span>
-          ) : (
-            <span className="font-medium hidden md:inline">
-              {mcpEnabled ? 'MCP' : 'MCP off'}
-            </span>
-          )}
-          <span
-            className={cx(
-              'truncate max-w-[92px] text-[length:calc(10px*var(--ui-factor))]',
-              placement === 'titlebar' ? 'hidden md:inline text-[var(--text-primary)]' : 'hidden xl:inline text-[var(--text-secondary)]',
-            )}
-          >
+          <span className="font-medium hidden md:inline">
+            {mcpEnabled ? 'MCP' : 'MCP off'}
+          </span>
+          <span className="truncate max-w-[92px] text-[length:calc(10px*var(--ui-factor))] hidden md:inline text-[var(--text-primary)]">
             {activeProfile.name}
           </span>
           <span

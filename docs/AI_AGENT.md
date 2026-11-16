@@ -543,7 +543,7 @@ enforced by the server.
 
 ## Always-on Desktop MCP Server (Local HTTP)
 
-Under **Settings → MCP Server & Tools** — or directly from the quick **MCP** popover in the top-right **TitleBar** or bottom **StatusBar** (where you can toggle HTTP MCP, edit its port, switch profiles, jump to profile editing, or open **Permissions…**) — **Keep MCP HTTP server running while Kubiki is open** (off by default) starts a loopback Streamable HTTP MCP endpoint (`http://127.0.0.1:<port>/mcp`, default port `3847`, valid `1024–65535`).
+Under **Settings → MCP Server & Tools** — or directly from the quick **MCP** popover in the top-right **TitleBar** (where you can toggle HTTP MCP, edit its port, switch profiles, jump to profile editing, or open **Permissions…**) — **Keep MCP HTTP server running while Kubiki is open** (off by default) starts a loopback Streamable HTTP MCP endpoint (`http://127.0.0.1:<port>/mcp`, default port `3847`, valid `1024–65535`).
 When enabled, independent external sessions (such as OpenCode, Claude Code, Codex, or Cursor launched from Ghostty or another terminal) can connect directly to the running Kubiki application:
 
 - Bound strictly to `127.0.0.1:<port>` on `/mcp`; non-loopback `Host` headers and requests carrying browser `Origin` headers are always rejected (`403 Forbidden`).

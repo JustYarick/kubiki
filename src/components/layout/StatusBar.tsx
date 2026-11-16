@@ -6,7 +6,6 @@ import { useResourceStore } from '../../state/resource_store';
 import { usePfStore } from '../../state/pf_store';
 import { useDockStore } from '../../state/dock_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
-import { McpQuickControl } from '../../domains/ai/components/McpQuickControl';
 import { k8s } from '../../providers/k8s_provider';
 
 export function StatusBar() {
@@ -37,7 +36,6 @@ export function StatusBar() {
     <span className="status-sync hidden lg:inline">{!isConnected ? 'Disconnected' : syncMode === 'watch' ? watchLabel : isLoading ? 'Loading resources…' : k8s.demo ? 'Demo data' : 'Snapshot · use Sync to refresh'}</span>
     <span className="status-pods hidden xl:inline">Pods: {podStats.running}/{podStats.total}</span>
     <div className="flex-1" />
-    <McpQuickControl placement="statusbar" />
     <button aria-label="Topology" title="Topology" onClick={() => useWorkspaceStore.getState().openTopology()} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><GitBranch size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Topology</span></button>
     <button aria-label="Shells" title="Shells" onClick={() => focusTool('terminal')} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><Terminal size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Shells</span> {sessions.filter((s) => s.type === 'terminal').length}</button>
     <button aria-label="Ports" title="Ports" onClick={openPorts} className="flex items-center gap-1 hover:text-[var(--text-primary)]"><ArrowRightLeft size="calc(11px * var(--ui-factor))" /><span className="status-action-label">Ports</span> {pfCount}</button>

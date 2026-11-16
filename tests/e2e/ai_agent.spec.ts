@@ -836,10 +836,10 @@ test('OpenCode can launch in system default terminal and Stop revokes the attach
   expect(errors).toEqual([]);
 });
 
-test('always-on Desktop MCP HTTP server supports 1-click Auto-Configure, StatusBar navigation, and optional Bearer token', async ({ page }) => {
+test('always-on Desktop MCP HTTP server supports 1-click Auto-Configure, TitleBar navigation, and optional Bearer token', async ({ page }) => {
   const errors = await setup(page);
   await page.goto('/?demo=1');
-  const mcpBtn = page.getByRole('button', { name: 'MCP Server', exact: true });
+  const mcpBtn = page.getByRole('button', { name: 'MCP Control', exact: true });
   await expect(mcpBtn).toContainText('MCP off');
   await mcpBtn.click();
   await page.getByRole('button', { name: 'MCP Settings…', exact: true }).click();
@@ -850,7 +850,8 @@ test('always-on Desktop MCP HTTP server supports 1-click Auto-Configure, StatusB
   await dialog.getByRole('button', { name: 'Auto-Configure OpenCode', exact: true }).click();
   await expect(dialog).toContainText('Configured OpenCode in /home/user/.config/opencode/opencode.json');
   await expect(toggle).toBeChecked();
-  await expect(mcpBtn).toContainText('MCP :3847');
+  await expect(mcpBtn).toContainText('MCP');
+  await expect(mcpBtn).not.toContainText('MCP off');
   await expect(dialog).toContainText('Listening on http://127.0.0.1:3847/mcp');
 
   // Bearer token is optional on loopback 127.0.0.1; enabling it reveals token controls.
