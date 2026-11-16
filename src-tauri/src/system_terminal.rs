@@ -244,7 +244,9 @@ pub async fn detect_system_terminal(
         return Err(format!("Configured terminal '{trimmed}' was not found"));
     }
 
-    let home_apps = dirs::home_dir().map(|h| h.join("Applications"));
+    let home_apps = std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(|h| PathBuf::from(h).join("Applications"));
     for app_name in [
         "Ghostty.app",
         "iTerm.app",
