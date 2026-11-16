@@ -110,6 +110,14 @@ Search releases, inspect their history, select an earlier revision, and read its
 
 [Static PNG](docs/media/helm.png)
 
+### AI agent
+
+Start an investigation directly from a failing Pod, inspect structured diagnostics and events collected through permitted cluster tools, and review the proposed remediation plan.
+
+![AI agent: investigate a CrashLoopBackOff Pod, inspect diagnostic tool results, and review a remediation plan](docs/media/agent.gif)
+
+[Static PNG](docs/media/agent.png)
+
 ## Installation
 
 Download the installer for your operating system from [GitHub Releases](https://github.com/JustYarick/kubiki/releases).

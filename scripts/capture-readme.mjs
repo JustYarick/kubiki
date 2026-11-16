@@ -154,6 +154,142 @@ const scenes = {
       await pause(1500);
     },
   },
+  agent: {
+    initScript: () => {
+      const w = window;
+      const roPolicy = {
+        resources: true, events: true, logs: true, metrics: true,
+        clusterResources: false, secrets: 'none', configMaps: 'metadata',
+        workloadConfiguration: false, annotations: false, customResources: 'metadata',
+        contexts: ['*'], namespaces: ['*'], writes: [], maxReplicas: 10,
+        rules: [], deniedPaths: [], alwaysAsk: [], planDisabledTools: [], actionDisabledTools: [],
+      };
+      const rwPolicy = { ...roPolicy, writes: ['create', 'update', 'scale', 'restart'] };
+      const settings = {
+        runtime: 'kubiki',
+        providers: [{ id: 'anthropic', name: 'Anthropic Claude', protocol: 'anthropic', baseUrl: 'https://api.anthropic.com' }],
+        defaultProvider: 'anthropic',
+        defaultModel: 'claude-sonnet-4',
+        options: {},
+        policy: rwPolicy,
+        instructions: '',
+        confirmReads: false,
+        mcpServer: { enabled: true, port: 3847, requireAuth: false },
+        mcpProfiles: [
+          { id: 'read-only', name: 'Read-only', inheritShared: false, policy: roPolicy },
+          { id: 'action', name: 'Action', inheritShared: true, policy: rwPolicy },
+        ],
+        activeMcpProfileId: 'read-only',
+        kubikiPlanProfileId: 'read-only',
+        kubikiActionProfileId: 'action',
+      };
+      const history = new Map();
+      const sessions = new Map();
+      const callbacks = new Map();
+      let sequence = 0;
+      const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+      w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+      w.__TAURI_INTERNALS__ = {
+        transformCallback: (cb) => { callbacks.set(++sequence, cb); return sequence; },
+        unregisterCallback: (id) => callbacks.delete(id),
+        invoke: async (command, args = {}) => {
+          if (command === 'plugin:event|listen' || command === 'plugin:event|unlisten' || command.startsWith('stop_')) return ++sequence;
+          if (command === 'ai_history_load') return { conversations: [...history.values()], preferences: { enabled: true, retentionDays: 30, allowExport: true }, migrated: true };
+          if (command === 'ai_history_sync') { for (const id of args.deleted ?? []) history.delete(id); for (const c of args.documents ?? []) history.set(c.id, structuredClone(c)); return; }
+          if (command === 'ai_get_settings') return { settings: structuredClone(settings), credentials: { anthropic: true } };
+          if (command === 'ai_list_skills') return [];
+          if (command === 'ai_list_models') return [{ id: 'claude-sonnet-4', name: 'Claude Sonnet 4', contextWindow: 200000, maxOutputTokens: 8192, tools: true }];
+          if (command === 'ai_preview_policy') return { explanation: { allowed: false, explanation: 'Plan forbids writes', dataAccess: 'content', writeAllowed: false }, issues: [] };
+          if (command === 'ai_mcp_set_scope') return;
+          if (command === 'ai_mcp_http_status') return { enabled: true, running: true, port: 3847, requireAuth: false, url: 'http://127.0.0.1:3847/mcp', scope: { context: 'kubiki-demo', namespaces: ['backend'], allNamespaces: false }, error: null, token: null };
+          if (command === 'ai_create_session') {
+            const id = `demo-${++sequence}`;
+            const session = { ...args.request, id, mode: 'ask', phase: 'plan', policy: roPolicy };
+            sessions.set(id, session);
+            return session;
+          }
+          if (command === 'ai_set_mode' || command === 'ai_set_phase') {
+            const s = sessions.get(args.sessionId) ?? { scope: { context: 'kubiki-demo', namespaces: ['backend'], allNamespaces: false }, mode: 'ask', phase: 'plan', policy: roPolicy };
+            if (args.mode) s.mode = args.mode;
+            if (args.phase) s.phase = args.phase;
+            return { id: args.sessionId, scope: s.scope, mode: s.mode, phase: s.phase, policy: s.policy };
+          }
+          if (command === 'ai_stop') return;
+          if (command === 'ai_send_message') {
+            const emit = (ev) => args.onEvent.onmessage(ev);
+            const scope = sessions.get(args.sessionId)?.scope ?? { context: 'kubiki-demo', namespaces: ['backend'], allNamespaces: false };
+            emit({ type: 'status', status: 'running' });
+            await delay(250);
+            emit({ type: 'text_delta', text: '<think>Inspecting Pod payment-worker-67f98b984-pv4n8 container termination state and recent warning events in namespace backend.</think>' });
+            await delay(300);
+            emit({ type: 'tool_started', call: { id: 'diag-1', name: 'get_pod_diagnostics', arguments: { namespace: 'backend', name: 'payment-worker-67f98b984-pv4n8' } } });
+            await delay(450);
+            emit({ type: 'tool_completed', id: 'diag-1', result: { evidenceId: 'ev-pod-1', evidence: { completeness: 'complete' }, issuesSummary: ['Container payment-worker in CrashLoopBackOff (6 restarts)', 'Last termination: OOMKilled (exitCode 137)'], phase: 'Running', waitingReason: 'CrashLoopBackOff', lastTerminatedReason: 'OOMKilled', exitCode: 137, restartCount: 6, memoryLimit: '256Mi' } });
+            await delay(250);
+            emit({ type: 'tool_started', call: { id: 'evt-1', name: 'get_events', arguments: { namespace: 'backend', involvedObject: 'payment-worker-67f98b984-pv4n8' } } });
+            await delay(400);
+            emit({ type: 'tool_completed', id: 'evt-1', result: { evidenceId: 'ev-evt-1', items: [{ reason: 'OOMKilling', message: 'Memory cgroup out of memory: Killed process payment-worker' }, { reason: 'BackOff', message: 'Back-off restarting failed container payment-worker' }] } });
+            await delay(250);
+            emit({ type: 'text_delta', text: '**Root cause:** `payment-worker` hits its `256Mi` memory ceiling during batch processing (`OOMKilled`, exit code `137`, 6 restarts).\n\n' });
+            await delay(250);
+            emit({ type: 'text_delta', text: '| Signal | Observed Value |\n| --- | --- |\n| Container State | `CrashLoopBackOff` (6 restarts) |\n| Last Termination | `OOMKilled` (`exitCode: 137`) |\n| Current Limit | `256Mi` |\n' });
+            await delay(300);
+            const plan = {
+              schemaVersion: 1,
+              sessionId: args.sessionId,
+              id: 'remediation-plan-1',
+              version: 1,
+              title: 'Raise payment-worker memory limit to 512Mi',
+              kind: 'remediation',
+              diagnosis: 'Container exceeded its 256Mi memory limit (OOMKilled, exitCode 137).',
+              uncertainty: 'Monitor heap usage after rollout to confirm 512Mi headroom.',
+              bodyMarkdown: 'Update the Deployment container memory limit from `256Mi` to `512Mi` and verify rollout readiness.',
+              scope,
+              evidenceIds: ['ev-pod-1', 'ev-evt-1'],
+              status: 'draft',
+              policyRevision: 0,
+              createdAt: new Date().toISOString(),
+              steps: [{
+                id: 'step-memory',
+                title: 'Update Deployment payment-worker memory limit to 512Mi',
+                action: 'update',
+                target: { group: 'apps', version: 'v1', kind: 'Deployment', namespace: 'backend', name: 'payment-worker' },
+                reason: 'Eliminate OOMKilled restarts observed in container diagnostics',
+                risk: 'Higher per-pod memory reservation on scheduling nodes',
+                verification: 'Deployment readyReplicas matches spec.replicas without restarts',
+                dependsOn: [],
+                dependsOnAccepted: [],
+              }],
+            };
+            emit({ type: 'tool_started', call: { id: 'plan-1', name: 'propose_plan', arguments: { title: plan.title } } });
+            emit({ type: 'plan_updated', plan });
+            emit({ type: 'tool_completed', id: 'plan-1', result: { planArtifact: plan, executed: false } });
+            emit({ type: 'usage', inputTokens: 1420, outputTokens: 285 });
+            emit({ type: 'status', status: 'completed' });
+            return;
+          }
+          return null;
+        },
+      };
+    },
+    async prepare(page) {
+      await pods(page);
+      await page.getByPlaceholder('Filter pods…').fill('payment-worker-67f98b984-pv4n8');
+      await table(page).getByText('payment-worker-67f98b984-pv4n8', { exact: true }).click();
+      await expect(details(page)).toContainText('CrashLoopBackOff');
+      await expect(details(page).getByRole('button', { name: 'Investigate with AI', exact: true })).toBeVisible();
+    },
+    async act(page) {
+      await click(page, details(page).getByRole('button', { name: 'Investigate with AI', exact: true }));
+      const agent = page.getByRole('region', { name: 'AI Agent workspace', exact: true });
+      await expect(agent).toBeVisible();
+      await pause(650);
+      await click(page, agent.getByRole('button', { name: 'Send', exact: true }));
+      await expect(agent.getByRole('article', { name: 'Agent response' }).last()).toContainText('OOMKilled', { timeout: 15000 });
+      await expect(agent.getByRole('button', { name: 'Send', exact: true })).toBeVisible({ timeout: 15000 });
+      await pause(1100);
+    },
+  },
 };
 const selected = values.scene ?? Object.keys(scenes);
 for (const name of selected) if (!scenes[name]) throw new Error(`Unknown scene: ${name}`);
@@ -185,6 +321,9 @@ try {
     await context.addInitScript(() => {
       localStorage.setItem('kubiki.settings.v3', JSON.stringify({ state: { uiScale: 100, sidebarWidth: 220, inspectorWidth: 520 }, version: 0 }));
     });
+    if (scenes[name].initScript) {
+      await context.addInitScript(scenes[name].initScript);
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(20000);
     page.on('pageerror', error => errors.push(error.message));
