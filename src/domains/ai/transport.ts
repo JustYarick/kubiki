@@ -1,4 +1,5 @@
-import type { ToolCall, AgentEvent, AgentMode, AgentPhase, AgentScope, AiSettings, ClusterCapabilities, GenerationOptions, ModelInfo, SessionView, SettingsView } from './types';
+import type { ToolCall, AgentEvent, AgentMode, AgentPhase, AgentScope, AiSettings, AutoConfigureResult, ClusterCapabilities, GenerationOptions, McpHttpStatus, ModelInfo, SessionView, SettingsView } from './types';
+import { OpenCodeNotStartedError } from '../../providers/tauri_exec';
 
 export function desktopAiAvailable(): boolean { return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window; }
 export function agentError(error: unknown): string {
@@ -14,6 +15,25 @@ export const agentTransport = {
   skills: () => invoke<import('./types').SkillInfo[]>('ai_list_skills'),
   testExternalAgent: (runtime: import('./types').AgentRuntime, settings: import('./types').OpenCodeSettings) => invoke<{executable:string;version:string}>('ai_test_external_agent', {runtime, settings}),
   testOpenCode: (settings: import('./types').OpenCodeSettings) => invoke<{executable:string;version:string}>('ai_test_opencode', {settings}),
+  detectSystemTerminal: (overrideExecutable?: string) => invoke<{ label: string; executable: string }>('ai_detect_system_terminal', { overrideExecutable: overrideExecutable || null }),
+  async startExternalAgentSystemTerminal(sessionId: string, request: { scope: AgentScope; prompt: string | null }): Promise<{ sessionId: string; terminal: string }> {
+    try {
+      return await invoke<{ sessionId: string; terminal: string }>('start_external_agent_system_terminal', { sessionId, request });
+    } catch (error) {
+      if (error && typeof error === 'object'
+        && 'code' in error && error.code === 'opencode_start_failed'
+        && 'processStarted' in error && error.processStarted === false
+        && 'message' in error && typeof error.message === 'string') {
+        throw new OpenCodeNotStartedError(error.message);
+      }
+      throw error;
+    }
+  },
+  stopExternalAgentSystemTerminal: (sessionId: string) => invoke<void>('stop_external_agent_system_terminal', { sessionId }),
+  mcpHttpStatus: (revealToken?: boolean) => invoke<McpHttpStatus>('ai_mcp_http_status', { revealToken: Boolean(revealToken) }),
+  mcpHttpRegenerateToken: () => invoke<McpHttpStatus>('ai_mcp_http_regenerate_token'),
+  mcpSetScope: (scope: AgentScope) => invoke<void>('ai_mcp_set_scope', { scope }),
+  mcpAutoConfigure: (client: 'opencode' | 'claude' | 'cursor') => invoke<AutoConfigureResult>('ai_mcp_auto_configure', { client }),
   evidence: (sessionId:string,evidenceId:string) => invoke<{data:Record<string,unknown>;warning:string}>('ai_get_evidence',{sessionId,evidenceId}),
   previewPolicy: (request: { policy: AiSettings['policy']; scope: AgentScope; target: {group:string;version:string;kind:string;namespace:string|null;name:string}; mode:AgentMode;phase:AgentPhase;operation?:string }) => invoke<{explanation:{allowed:boolean;explanation:string;dataAccess:string;writeAllowed:boolean};issues:Array<{ruleIndex:number;kind:string;message:string}>}>('ai_preview_policy', { request }),
   reviewPlan: (sessionId:string,planId:string,version:number,stepIds:string[]) => invoke<{reviewToken:string;plan:import('./types').PlanArtifact;steps:Array<{stepId:string;target:{kind:string;namespace:string|null;name:string};operation:string;call:ToolCall}>}>('ai_review_plan',{request:{sessionId,planId,version,stepIds}}),

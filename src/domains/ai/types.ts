@@ -33,19 +33,40 @@ export interface AgentPolicy {
 }
 export interface SkillInfo { name: string; description: string; directory: string }
 export type AgentRuntime = 'kubiki' | 'open_code' | 'codex' | 'claude';
-export interface OpenCodeSettings { executable: string; workingDirectory: string }
+export type ExternalTerminalMode = 'embedded' | 'system';
+export interface OpenCodeSettings {
+  executable: string;
+  workingDirectory: string;
+  terminalMode?: ExternalTerminalMode;
+  terminalExecutable?: string;
+}
+export interface McpServerSettings {
+  enabled: boolean;
+  port: number;
+  requireAuth?: boolean;
+}
+export interface McpHttpStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  requireAuth?: boolean;
+  url: string;
+  scope: AgentScope;
+  error?: string | null;
+  token?: string | null;
+}
+export interface AutoConfigureResult {
+  client: string;
+  configPath: string;
+  url: string;
+}
 
 export const AI_SETTINGS_PAGES = [
   { id: 'agent', label: 'Agent' },
-  { id: 'mcp', label: 'Cluster tools (MCP)' },
   { id: 'providers', label: 'Connections & models' },
-  { id: 'history', label: 'History' },
-  { id: 'environment', label: 'Environment' },
-  { id: 'access', label: 'Data access' },
+  { id: 'access', label: 'Permissions' },
   { id: 'scope', label: 'Scope & rules' },
-  { id: 'confirmations', label: 'Confirmations' },
-  { id: 'integrations', label: 'Integrations' },
-  { id: 'instructions', label: 'Instructions' },
+  { id: 'mcp', label: 'Cluster tools (MCP)' },
 ] as const;
 
 export type AgentSettingsPage = typeof AI_SETTINGS_PAGES[number]['id'];
@@ -56,6 +77,7 @@ export interface AiSettings {
   claude?: OpenCodeSettings;
   mcpPolicy?: AgentPolicy;
   mcpPhase?: AgentPhase;
+  mcpServer?: McpServerSettings;
   /** Inert legacy configuration, retained for lossless migration. */
   environment?: unknown;
   providers: ProviderProfile[]; defaultProvider: string | null; defaultModel: string | null;

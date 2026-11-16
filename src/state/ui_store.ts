@@ -79,6 +79,7 @@ interface UIState extends TopologyRenderingPreferences {
   rightTab: RightTab;
   paletteOpen: boolean;
   settingsOpen: boolean;
+  settingsSection: string | null;
   activePerspective: Perspective;
 
   setDensity: (d: Density) => void;
@@ -131,7 +132,7 @@ interface UIState extends TopologyRenderingPreferences {
   resetAllTableLayouts: () => void;
   setRightTab: (t: RightTab) => void;
   setPaletteOpen: (open: boolean) => void;
-  setSettingsOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean, section?: string | null) => void;
   setActivePerspective: (p: Perspective) => void;
   resetLayout: () => void;
 }
@@ -210,6 +211,7 @@ export const useUiStore = create<UIState>()(
       rightTab: 'overview',
       paletteOpen: false,
       settingsOpen: false,
+      settingsSection: null,
       activePerspective: 'workloads' as Perspective,
 
       setDensity: (density) => set({ density }),
@@ -297,7 +299,7 @@ export const useUiStore = create<UIState>()(
         }),
       setRightTab: (rightTab) => set({ rightTab }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
-      setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+      setSettingsOpen: (settingsOpen, settingsSection = null) => set({ settingsOpen, settingsSection }),
       setActivePerspective: (activePerspective) => set({ activePerspective }),
       resetLayout: () => {
         useDockStore.getState().resetLayout();

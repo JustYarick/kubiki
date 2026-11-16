@@ -6,12 +6,14 @@ async function setup(page: Page) {
   await page.addInitScript(() => {
     const w = window as any;
     const policy = { resources: true, events: true, logs: false, metrics: true, clusterResources: false, secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false, customResources: 'metadata', contexts: ['*'], namespaces: ['*'], writes: [], maxReplicas: 10, rules: [], deniedPaths: [] };
-    let settings = { providers: [{ id: 'local', name: 'Local Ollama', protocol: 'ollama', baseUrl: 'http://localhost:11434' }], defaultProvider: 'local', defaultModel: 'model-from-endpoint', options: {}, policy, instructions: '' };
+    let settings = { providers: [{ id: 'local', name: 'Local Ollama', protocol: 'ollama', baseUrl: 'http://localhost:11434' }], defaultProvider: 'local', defaultModel: 'model-from-endpoint', options: {}, policy, instructions: '', mcpServer: { enabled: false, port: 3847 } };
     const history=new Map<string,any>();let historyPrefs={enabled:true,retentionDays:30,allowExport:true};const plans=new Map<string,any>();const reviews=new Map<string,any>();
     const keys = new Map<string, string>(); const sessions = new Map<string, any>();
+    let mcpToken = 'kubiki_test_token_0123456789abcdef0123456789abcdef';
+    let mcpScope = { context: '', namespaces: [], allNamespaces: true };
     const callbacks = new Map<number, unknown>(); let sequence = 0;
     const commands: Array<{ command: string; args: any }> = []; const sends: any[] = []; const modes: any[] = []; const stops: any[] = [];
-    w.__aiHarness = { commands, sends, modes, stops, hold: false, openCodeStarts: [], openCodeCloses: [], openCodeCompletions: 0, openCodeWrites: [], openCodeSizes: [], models: [{ id: 'model-from-endpoint', name: 'Endpoint model', contextWindow: 32768, maxOutputTokens: 8192, tools: true }], settings: () => settings, key: (id: string) => keys.get(id) };
+    w.__aiHarness = { commands, sends, modes, stops, hold: false, openCodeStarts: [], openCodeCloses: [], openCodeCompletions: 0, openCodeWrites: [], openCodeSizes: [], systemTerminalStarts: [], systemTerminalStops: [], models: [{ id: 'model-from-endpoint', name: 'Endpoint model', contextWindow: 32768, maxOutputTokens: 8192, tools: true }], settings: () => settings, key: (id: string) => keys.get(id) };
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     w.__TAURI_INTERNALS__ = {
       transformCallback: (callback: unknown) => { callbacks.set(++sequence, callback); return sequence; }, unregisterCallback: (id: number) => callbacks.delete(id),
@@ -36,6 +38,7 @@ async function setup(page: Page) {
 
         if (command === 'plugin:event|listen') { if(args.event === 'mutation-confirm-request') w.__aiHarness.confirm = (payload: any) => (callbacks.get(args.handler) as ((event: any) => void) | undefined)?.({event: args.event, payload}); return ++sequence; }
         if (command === 'resolve_mutation_confirm') { w.__aiHarness.decision = args.approved; w.__aiHarness.resolveApproval?.(); return true; }
+        if (command === 'stop_external_agent_system_terminal') { w.__aiHarness.systemTerminalStops.push(args.sessionId); return; }
         if (command === 'plugin:event|unlisten' || command.startsWith('stop_')) return;
         if(command==='ai_history_load')return{conversations:[...history.values()],preferences:historyPrefs,migrated:true};
         if(command==='ai_history_sync'){for(const id of args.deleted)history.delete(id);if(historyPrefs.enabled)for(const c of args.documents)history.set(c.id,structuredClone(c));return;}
@@ -51,6 +54,30 @@ async function setup(page: Page) {
         if (command === 'ai_test_provider') { if(args.profile.baseUrl.includes('broken')) throw new Error('Provider connection failed'); return structuredClone(w.__aiHarness.models); }
         if (command === 'ai_test_external_agent') return {executable:`/usr/local/bin/${args.runtime}`,version:args.runtime === 'codex' ? 'codex-cli 0.166.0' : '2.1.299 (Claude Code)'};
         if (command === 'ai_test_opencode') return {executable:'/usr/local/bin/opencode',version:'opencode v2.0.27'};
+        if (command === 'ai_detect_system_terminal') return { label: args.overrideExecutable || 'ghostty', executable: `/usr/bin/${args.overrideExecutable || 'ghostty'}` };
+        if (command === 'start_external_agent_system_terminal') {
+          w.__aiHarness.systemTerminalStarts.push(structuredClone(args.request));
+          if (w.__aiHarness.openCodeFailure) throw w.__aiHarness.openCodeFailure;
+          return { sessionId: args.sessionId, terminal: 'ghostty' };
+        }
+        if (command === 'ai_mcp_set_scope') { mcpScope = structuredClone(args.scope); return; }
+        if (command === 'ai_mcp_http_status') {
+          const enabled = Boolean((settings as any).mcpServer?.enabled);
+          const port = (settings as any).mcpServer?.port ?? 3847;
+          const requireAuth = Boolean((settings as any).mcpServer?.requireAuth);
+          return { enabled, running: enabled, port, requireAuth, url: `http://127.0.0.1:${port}/mcp`, scope: mcpScope, error: null, token: args.revealToken ? mcpToken : null };
+        }
+        if (command === 'ai_mcp_http_regenerate_token') {
+          mcpToken = 'kubiki_regenerated_token_0123456789abcdef01234567';
+          const enabled = Boolean((settings as any).mcpServer?.enabled);
+          const port = (settings as any).mcpServer?.port ?? 3847;
+          const requireAuth = Boolean((settings as any).mcpServer?.requireAuth);
+          return { enabled, running: enabled, port, requireAuth, url: `http://127.0.0.1:${port}/mcp`, scope: mcpScope, error: null, token: mcpToken };
+        }
+        if (command === 'ai_mcp_auto_configure') {
+          (settings as any).mcpServer = { ...(settings as any).mcpServer, enabled: true, port: (settings as any).mcpServer?.port ?? 3847 };
+          return { client: args.client, configPath: `/home/user/.config/${args.client}/opencode.json`, url: `http://127.0.0.1:${(settings as any).mcpServer.port}/mcp` };
+        }
         if (command === 'ai_list_models') {
           if (!settings.providers.some(p => p.id === args.providerId)) throw new Error('Unknown AI provider');
           if (w.__aiHarness.failedProviders?.includes(args.providerId)) throw new Error('AI endpoint returned HTTP 401');
@@ -170,7 +197,7 @@ test('provider credentials stay out of rendered settings and access rules persis
   const errors = await setup(page); const agent = await openAgent(page);
   await agent.getByTestId('ai-conversations-panel').getByRole('button', { name: 'AI settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'AI Agent settings', exact: true });
-  await dialog.getByRole('button', { name: 'Data access', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Permissions', exact: true }).click();
   await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toHaveValue('none');
   await expect(dialog.getByRole('combobox', { name: 'ConfigMap access', exact: true })).toHaveValue('metadata');
   await expect(dialog.getByRole('checkbox', { name: 'Read Pod logs', exact: true })).not.toBeChecked();
@@ -185,7 +212,7 @@ test('provider credentials stay out of rendered settings and access rules persis
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('test-only-provider-credential');
   await dialog.getByRole('combobox', { name: 'Default AI model', exact: true }).selectOption('model-from-endpoint');
   await dialog.getByRole('button', { name: 'Use as default', exact: true }).click();
-  await dialog.getByRole('button', { name: 'Data access', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Permissions', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Secret access', exact: true }).selectOption('metadata');
   await dialog.getByRole('checkbox', { name: 'Read Pod logs', exact: true }).check();
   await dialog.getByRole('group', { name: 'Allowed AI changes', exact: true }).getByRole('checkbox', { name: 'Create', exact: true }).check();
@@ -196,7 +223,7 @@ test('provider credentials stay out of rendered settings and access rules persis
   await dialog.getByRole('textbox', { name: 'Rule 1 name', exact: true }).fill('nexus-credentials');
   await dialog.getByRole('combobox', { name: 'Rule 1 read access', exact: true }).selectOption('content');
   await dialog.getByRole('textbox', { name: 'Excluded AI field paths', exact: true }).fill('/data/private.conf');
-  await dialog.getByRole('button', { name: 'Confirmations', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Permissions', exact: true }).click();
   await dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true }).uncheck();
   await dialog.getByText('Always ask', { exact: true }).click();
@@ -312,11 +339,11 @@ test('global AI settings have subsections and find confirmations through search'
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await dialog.getByRole('button', { name: 'AI assistant', exact: true }).click();
   const sections = dialog.getByLabel('AI settings subsections');
-  await sections.getByRole('button', { name: 'Confirmations', exact: true }).click();
+  await sections.getByRole('button', { name: 'Permissions', exact: true }).click();
   await expect(dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).not.toBeVisible();
-  await sections.getByRole('button', { name: 'Data access', exact: true }).click();
   await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).toBeVisible();
+  await sections.getByRole('button', { name: 'Scope & rules', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Secret access', exact: true })).not.toBeVisible();
   await dialog.getByRole('textbox', { name: 'Search settings', exact: true }).fill('confirmations');
   await expect(dialog.getByRole('checkbox', { name: 'Ask permission for reads', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
@@ -363,8 +390,8 @@ test('agent selection is in settings and OpenCode only exposes effective setting
   await expect(page.getByTestId('opencode-pane')).toBeVisible();
   await expect(page.getByRole('textbox',{name:'Search conversations',exact:true})).toHaveCount(0);
   await expect(dialog.getByRole('button',{name:'Connections & models',exact:true})).toHaveCount(0);
-  await expect(dialog.getByRole('button',{name:'Confirmations',exact:true})).toHaveCount(0);
-  await expect(dialog.getByRole('button',{name:'Skills',exact:true})).toHaveCount(0);
+  await expect(dialog.getByRole('button',{name:'Permissions',exact:true})).toHaveCount(0);
+  await expect(dialog.getByRole('button',{name:'Scope & rules',exact:true})).toHaveCount(0);
   await dialog.getByRole('button',{name:'Check installation',exact:true}).click();
   await expect(dialog.getByRole('status')).toContainText('opencode v2.0.27');
   await dialog.getByRole('button',{name:'Cluster tools (MCP)',exact:true}).click();
@@ -456,14 +483,14 @@ test('AI settings sections fit desktop and narrow dialogs without horizontal ove
   const errors=await setup(page); const agent=await openAgent(page);
   await agent.getByRole('button',{name:'AI settings',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'AI Agent settings',exact:true});
-  for(const section of ['Connections & models','Confirmations','Data access','Scope & rules','Integrations','Environment','Instructions','History']) {
+  for(const section of ['Agent','Connections & models','Permissions','Scope & rules','Cluster tools (MCP)']) {
     await dialog.getByRole('navigation',{name:'AI settings sections'}).getByRole('button',{name:section,exact:true}).click();
     expect(await dialog.locator('.ai-settings-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
   }
-  await dialog.getByRole('button',{name:'Environment',exact:true}).click();
+  await dialog.getByRole('button',{name:'Agent',exact:true}).click();
   await captureScreenshot(page,{path:'test-results/ai-settings-desktop.png'});
   await page.setViewportSize({width:375,height:812}); await page.emulateMedia({reducedMotion:'reduce'});
-  for(const section of ['Confirmations','Data access','Scope & rules','Integrations','Environment']) {
+  for(const section of ['Agent','Connections & models','Permissions','Scope & rules','Cluster tools (MCP)']) {
     await dialog.getByRole('navigation',{name:'AI settings sections'}).getByRole('button',{name:section,exact:true}).click();
     expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
     expect(await dialog.locator('.ai-settings-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),section).toBe(true);
@@ -473,7 +500,7 @@ test('AI settings sections fit desktop and narrow dialogs without horizontal ove
   await page.getByRole('banner').getByRole('button',{name:'Settings',exact:true}).click();
   const global=page.getByRole('dialog',{name:'Settings',exact:true});
   await global.getByRole('combobox',{name:'Settings category',exact:true}).selectOption('ai');
-  await global.getByRole('combobox',{name:'AI settings section',exact:true}).selectOption('environment');
+  await global.getByRole('combobox',{name:'AI settings section',exact:true}).selectOption('agent');
   await expect(global.getByRole('heading',{name:'Skills',exact:true})).toBeVisible();
   expect(await global.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
   await captureScreenshot(page,{path:'test-results/global-settings-narrow.png'});
@@ -626,7 +653,7 @@ test('integration detection is shown only for discovered APIs in Auto', async ({
   const agent = await openAgent(page);
   await agent.getByRole('button', {name: 'AI settings', exact: true}).click();
   const dialog = page.getByRole('dialog', {name: 'AI Agent settings', exact: true});
-  await dialog.getByRole('button', {name: 'Integrations', exact: true}).click();
+  await dialog.getByRole('button', {name: 'Cluster tools (MCP)', exact: true}).click();
   const rows = dialog.locator('.ai-integration-row');
   const helm = rows.filter({has: page.getByText('Helm', {exact: true})});
   await expect(helm.locator('.ai-integration-status')).toHaveCount(0);
@@ -739,5 +766,48 @@ test('streaming Markdown preserves code editor nodes and reading position', asyn
   await expect(log).toContainText('Next token.');
   expect(await editor.evaluate(el => el === (window as any).__streamingEditor)).toBe(true);
   await expect.poll(() => log.evaluate(el => el.scrollTop)).toBeCloseTo(top, 0);
+  expect(errors).toEqual([]);
+});
+
+test('OpenCode can launch in system default terminal and Stop revokes the attached MCP session', async ({ page }) => {
+  const errors = await setup(page);
+  const pane = await selectOpenCode(page);
+  await pane.getByRole('button', { name: 'Open in system terminal', exact: true }).click();
+  await expect(pane.getByTestId('opencode-system-terminal')).toBeVisible();
+  await expect(pane.getByTestId('opencode-system-terminal')).toContainText('OpenCode launched in ghostty');
+  await expect(pane.getByRole('button', { name: 'Stop MCP session', exact: true })).toHaveCount(0);
+  await expect(pane.getByRole('button', { name: 'Enable Desktop HTTP MCP', exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.systemTerminalStarts.length)).toBe(1);
+  await pane.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.systemTerminalStops.length)).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
+test('always-on Desktop MCP HTTP server supports 1-click Auto-Configure, StatusBar navigation, and optional Bearer token', async ({ page }) => {
+  const errors = await setup(page);
+  await page.goto('/?demo=1');
+  const mcpBtn = page.getByRole('button', { name: 'MCP Server', exact: true });
+  await expect(mcpBtn).toContainText('MCP off');
+  await mcpBtn.click();
+  const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(dialog).toBeVisible();
+  const toggle = dialog.getByLabel('Keep MCP HTTP server running while Kubiki is open');
+  await expect(toggle).not.toBeChecked();
+  await dialog.getByRole('button', { name: 'Auto-Configure OpenCode', exact: true }).click();
+  await expect(dialog).toContainText('Configured OpenCode in /home/user/.config/opencode/opencode.json');
+  await expect(toggle).toBeChecked();
+  await expect(mcpBtn).toContainText('MCP :3847');
+  await expect(dialog).toContainText('Listening on http://127.0.0.1:3847/mcp');
+
+  // Bearer token is optional on loopback 127.0.0.1; enabling it reveals token controls.
+  const authToggle = dialog.getByLabel('Require Bearer token (optional on 127.0.0.1)');
+  await expect(authToggle).not.toBeChecked();
+  await authToggle.check();
+  await dialog.locator('summary', { hasText: 'Manual client config' }).click();
+  await expect(dialog).toContainText('<click Reveal or Copy>');
+  await dialog.getByRole('button', { name: 'Reveal token', exact: true }).click();
+  await expect(dialog).toContainText('kubiki_test_token_0123456789abcdef0123456789abcdef');
+  await dialog.getByRole('button', { name: 'Regenerate token', exact: true }).click();
+  await expect(dialog).toContainText('kubiki_regenerated_token_0123456789abcdef01234567');
   expect(errors).toEqual([]);
 });

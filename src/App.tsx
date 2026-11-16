@@ -37,6 +37,9 @@ import { resetExecSessions, closeExecConnections } from './providers/tauri_exec'
 import { closeNodeDebugConnections } from './providers/node_debug';
 import { cancelResourceSnapshots, syncResourceSnapshot } from './providers/snapshot_sync';
 import { startResourceWatches, stopResourceWatches } from './state/resource_watch';
+import { namespaceNames } from './core/resources/namespace_scope';
+import { agentTransport, desktopAiAvailable } from './domains/ai/transport';
+import { useAiStore } from './domains/ai/store';
 
 export default function App() {
   useEffect(() => { if (desktopExtensions()) void refreshExtensions(); }, []);
@@ -82,6 +85,32 @@ export default function App() {
   /* The persisted default details tab opens the inspector on the configured tab for the session. */
   useEffect(() => {
     useUiStore.setState({ rightTab: useUiStore.getState().defaultRightTab });
+  }, []);
+
+  useEffect(() => {
+    if (desktopAiAvailable()) void useAiStore.getState().load();
+  }, []);
+
+  useEffect(() => {
+    const syncScope = (state: ReturnType<typeof useClusterStore.getState>) => {
+      if (!desktopAiAvailable()) return;
+      const names = namespaceNames(state.selectedNamespace);
+      void agentTransport.mcpSetScope({
+        context: state.isConnected && state.currentContext ? state.currentContext : '',
+        namespaces: names ?? [],
+        allNamespaces: names === null,
+      }).catch(() => {});
+    };
+    syncScope(useClusterStore.getState());
+    return useClusterStore.subscribe((state, previous) => {
+      if (
+        state.currentContext !== previous.currentContext
+        || state.selectedNamespace !== previous.selectedNamespace
+        || state.isConnected !== previous.isConnected
+      ) {
+        syncScope(state);
+      }
+    });
   }, []);
 
   const connectionGeneration = useRef(0);

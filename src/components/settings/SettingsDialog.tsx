@@ -166,8 +166,9 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
   const setUiScale = useUiStore((s) => s.setUiScale);
   const setDefaultRightTab = useUiStore((s) => s.setDefaultRightTab);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row
         entry={findEntry('appearance.ui-scale')}
         below={
@@ -222,7 +223,7 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
       </Row>
       <Row entry={findEntry('appearance.reset-tables')}>
         <Button
-          size="sm"
+          size="md"
           onClick={() => {
             useUiStore.getState().resetAllTableLayouts();
             useTableViewStore.getState().resetAll();
@@ -232,6 +233,7 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
           <RotateCcw size="calc(12px * var(--ui-factor))" /> Reset table columns & filters
         </Button>
       </Row>
+      </div>
     </div>
   );
 }
@@ -239,14 +241,16 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
 function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
   const ui = useUiStore();
   const fast = ui.topologyPerformanceMode === 'performance';
-  return <div>
+  return <div className="settings-page-stack">
     <SectionTitle>{sectionTitle}</SectionTitle>
+    <div className="settings-card">
     <Row entry={findEntry('topology.performance')} below={<p className="settings-hint">{fast
       ? 'Uses compact nodes and straight connections. Turns off shadows, animations, labels, grid and minimap.'
       : ui.topologyPerformanceMode === 'quality' ? 'Shows node shadows.' : 'Hides node shadows.'}</p>}>
       <Segmented ariaLabel="Topology rendering profile" value={ui.topologyPerformanceMode} onChange={ui.setTopologyPerformanceMode}
         options={[{ value: 'quality', label: 'Quality' }, { value: 'balanced', label: 'Balanced' }, { value: 'performance', label: 'Performance' }]} />
     </Row>
+    </div>
     <SettingsGroup title="Layout" entries={['topology.grouping', 'topology.edges']}>
     <Row entry={findEntry('topology.grouping')}>
       <Segmented ariaLabel="Cluster layout grouping" value={ui.topologyGrouping} onChange={ui.setTopologyGrouping}
@@ -272,11 +276,13 @@ function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
       <Checkbox aria-label="Topology background grid" disabled={fast} checked={!fast && ui.topologyShowBackground} onChange={event => ui.setTopologyShowBackground(event.target.checked)} />
     </Row>
     </SettingsGroup>
+    <div className="settings-card">
     <Row entry={findEntry('topology.updates')}>
       <Select aria-label="Topology live redraw interval" className="ide-select" value={fast ? Math.max(3000, ui.topologyUpdateIntervalMs) : ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
         {TOPOLOGY_UPDATE_INTERVALS.filter(value => !fast || value >= 3000).map(value => <option key={value} value={value}>{value < 1000 ? `${value} ms` : `${value / 1000} s`}</option>)}
       </Select>
     </Row>
+    </div>
   </div>;
 }
 
@@ -288,8 +294,9 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
   const yamlHideManagedFields = useUiStore((s) => s.yamlHideManagedFields);
   const setYamlHideManagedFields = useUiStore((s) => s.setYamlHideManagedFields);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('editor.font-size')}>
         <NumberField label="YAML editor font size" value={editorFontSize} min={10} max={24} onCommit={setEditorFontSize} />
       </Row>
@@ -308,6 +315,7 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
           onChange={(event) => setYamlHideManagedFields(event.target.checked)}
         />
       </Row>
+      </div>
     </div>
   );
 }
@@ -328,8 +336,9 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
     (p) => p.value.toLowerCase() === terminalBackground.toLowerCase()
   );
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('terminal.font-size')}>
         <NumberField label="Terminal font size" value={terminalFontSize} min={10} max={24} onCommit={setTerminalFontSize} />
       </Row>
@@ -352,7 +361,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
             ))}
             <option value="custom">Custom color…</option>
           </Select>
-          <div className="flex items-center gap-1.5 border border-[var(--border-default)] rounded px-2 py-1 bg-[var(--bg-canvas)]">
+          <div className="flex items-center gap-1.5 h-[var(--control-h-md)] border border-[var(--border-default)] rounded-[var(--radius-sm)] px-2 bg-[var(--bg-canvas)]">
             <input
               type="color"
               aria-label="Pick terminal background color"
@@ -410,6 +419,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
           ))}
         </Select>
       </Row>
+      </div>
     </div>
   );
 }
@@ -434,9 +444,9 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
   const logsScrollStickiness = useUiStore((s) => s.logsScrollStickiness);
   const setLogsScrollStickiness = useUiStore((s) => s.setLogsScrollStickiness);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
-      <p className="settings-hint">Changes apply to all log panes.</p>
+      <p className="settings-hint -mt-2">Changes apply to all log panes.</p>
       <SettingsGroup title="Updates" entries={['logs.mode', 'logs.poll-interval']}>
       <Row entry={findEntry('logs.mode')}>
         <Segmented
@@ -566,8 +576,9 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   };
 
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('kubernetes.remember-context')}>
         <Checkbox aria-label="Reopen last selected cluster" checked={rememberLastContext} onChange={event => setRememberLastContext(event.target.checked)} />
       </Row>
@@ -588,10 +599,10 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
               placeholder="~/.kube/config"
               className="flex-1"
             />
-            <Button size="sm" variant="primary" loading={loading} disabled={loading} onClick={handleSavePath}>
+            <Button size="md" variant="primary" loading={loading} disabled={loading} onClick={handleSavePath}>
               Apply
             </Button>
-            <Button size="sm" variant="secondary" disabled={loading} onClick={handleReset} title="Reset to standard ~/.kube/config or $KUBECONFIG">
+            <Button size="md" variant="secondary" disabled={loading} onClick={handleReset} title="Reset to standard ~/.kube/config or $KUBECONFIG">
               Reset
             </Button>
           </div>
@@ -616,6 +627,7 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
           onChange={(event) => setPortForwardAutoOpen(event.target.checked)}
         />
       </Row>
+      </div>
     </div>
   );
 }
@@ -624,8 +636,9 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
   const currentContext = useClusterStore((s) => s.currentContext);
   const clusterVersion = useClusterStore((s) => s.clusterVersion);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('about.kubiki')} wide>
         <div className="p-3 rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-surface)]">
           <div className="min-w-0">
@@ -661,6 +674,7 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
           <Input aria-label="Server version" value={clusterVersion ? `v${clusterVersion.replace(/^v?/, '')}` : '—'} readOnly className="w-20" />
         </div>
       </Row>
+      </div>
     </div>
   );
 }
@@ -672,9 +686,16 @@ function AiPage({ page }: { page: AgentSettingsPage }) {
 function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
   const enabled = useUiStore(state => state.developerMode);
   const setEnabled = useUiStore(state => state.setDeveloperMode);
-  return <div><SectionTitle>{sectionTitle}</SectionTitle>
-    <Row entry={findEntry('developer.mode')}><Checkbox aria-label="Developer mode" checked={enabled} onChange={event => setEnabled(event.target.checked)} /></Row>
-  </div>;
+  return (
+    <div className="settings-page-stack">
+      <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
+        <Row entry={findEntry('developer.mode')}>
+          <Checkbox aria-label="Developer mode" checked={enabled} onChange={event => setEnabled(event.target.checked)} />
+        </Row>
+      </div>
+    </div>
+  );
 }
 
 function pageContent(page: SettingsPageDef, aiPage: AgentSettingsPage): React.ReactElement {
@@ -796,11 +817,25 @@ function SettingsSearch({ value, onChange, onKeyDown }: {
 
 export const SettingsDialog: React.FC = () => {
   const open = useUiStore((s) => s.settingsOpen);
+  const settingsSection = useUiStore((s) => s.settingsSection);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const [query, setQuery] = useState('');
   const [aiPage, setAiPage] = useState<AgentSettingsPage>('agent');
   const [pageId, setPageId] = useState<SettingsPageId>('appearance');
   const contentRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!open || !settingsSection) return;
+    if (settingsSection === 'ai.mcp') {
+      setQuery('');
+      setPageId('ai');
+      setAiPage('mcp');
+    } else if (settingsSection === 'ai.agent') {
+      setQuery('');
+      setPageId('ai');
+      setAiPage('agent');
+    }
+  }, [open, settingsSection]);
 
   const aiSettings=useAiStore(s=>s.settings);
   const aiPages=availableAiSettingsPages(aiSettings);
@@ -864,7 +899,7 @@ export const SettingsDialog: React.FC = () => {
                     aria-current={selected && page.id !== 'ai' ? 'page' : undefined}
                     aria-expanded={page.id === 'ai' ? selected : undefined}
                     className={cx(
-                      'w-full flex items-center gap-2 px-2.5 h-[calc(27px*var(--ui-factor))] rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] text-left transition-colors',
+                      'w-full flex items-center gap-2 px-2.5 h-[calc(30px*var(--ui-factor))] rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] text-left transition-colors',
                       selected && page.id !== 'ai'
                         ? 'bg-[var(--bg-selection)] text-white'
                         : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'

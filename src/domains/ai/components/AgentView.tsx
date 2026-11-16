@@ -80,7 +80,8 @@ export function AgentView({visible=true}:{visible?:boolean}) {
       <OpenCodePane visible={visible} />
       <Modal
         title="AI Agent settings"
-        width={840}
+        width={880}
+        centered
         footer={<Button size="sm" onClick={() => setSettingsOpen(false)}>Done</Button>}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -144,7 +145,8 @@ function KubikiAgentView({ visible = true }: { visible?: boolean }) {
       open={settingsOpen}
       onClose={() => setSettingsOpen(false)}
       title="AI Agent settings"
-      width={840}
+      width={880}
+      centered
       footer={<div className="flex items-center justify-between w-full">
         <span className={`text-xs truncate max-w-[420px] ${settingsStatus.error ? 'text-[var(--status-danger)]' : 'text-emerald-400'}`} role="status">
           {settingsStatus.message || settingsStatus.error}
