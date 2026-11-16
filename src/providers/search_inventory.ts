@@ -96,7 +96,21 @@ export async function loadSearchInventory(
         bucket,
         tier: 2,
         read: async () => {
-          const items = await reader.getCustomResources(context, type.name, type.uid, type.namespaced && scope !== 'all' ? scope : null, signal, { projection: 'search', priority: 'low', lane: 'search' });
+          const items = await reader.getCustomResources(
+            context,
+            type.name,
+            type.uid,
+            type.namespaced && scope !== 'all' ? scope : null,
+            signal,
+            {
+              projection: 'search',
+              priority: 'low',
+              lane: 'search',
+              onPartialError: failures => {
+                errors.push(`${type.kind}: partial (${failures.map(f => f.namespace).join(', ')} unavailable)`);
+              },
+            },
+          );
           for (const entry of items) projectedSearchItems.add(entry);
           return items;
         },
@@ -125,7 +139,18 @@ export async function loadSearchInventory(
       tier: kindPriority(type.kind),
       read: async () => {
         try {
-          const items = await reader.getResources(context, type.kind as ResourceKind, type.namespaced ? scope : 'all', signal, readOptions);
+          const items = await reader.getResources(
+            context,
+            type.kind as ResourceKind,
+            type.namespaced ? scope : 'all',
+            signal,
+            {
+              ...readOptions,
+              onPartialError: failures => {
+                errors.push(`${type.kind}: partial (${failures.map(f => f.namespace).join(', ')} unavailable)`);
+              },
+            },
+          );
           if (type.kind === 'CustomResourceDefinition') {
             if (!signal.aborted) addCustoms(items);
           } else {

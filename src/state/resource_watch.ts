@@ -57,10 +57,23 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     // Browser reads are also demand-driven. They refresh explicitly without
     // introducing background polling or contacting unopened collections.
     async watchResources(query, emit, signal, filter) {
-      const items = await k8s.getResources(query.context, query.kind as ResourceKind, query.namespace ?? 'all', signal, filter?.fieldSelector || filter?.labelSelector ? filter : undefined);
+      let partialFailures: import('../providers/contract').PartialNamespaceFailure[] = [];
+      const readOpts = {
+        ...(filter?.fieldSelector || filter?.labelSelector ? filter : {}),
+        onPartialError: (failures: import('../providers/contract').PartialNamespaceFailure[]) => {
+          partialFailures = failures;
+        },
+      };
+      const items = await k8s.getResources(query.context, query.kind as ResourceKind, query.namespace ?? 'all', signal, readOpts);
+      const partialError = partialFailures.length
+        ? {
+            ...partialFailures[0].error,
+            message: `Partial read: unavailable in ${partialFailures.map(f => f.namespace).join(', ')} (${partialFailures[0].error.message})`,
+          }
+        : null;
       if (!signal.aborted) emit({ query, subscription_id: 'snapshot', messages: [
         { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: items.map(item => item.raw!) } } } },
-        { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } },
+        { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: partialError } } },
       ] });
       return () => {};
     },

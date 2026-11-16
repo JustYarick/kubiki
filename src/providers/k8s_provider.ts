@@ -14,7 +14,7 @@ import { mapK8sResource, mapK8sResourceList } from '../core/utils/k8s_mapper';
 import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
 import { buildMockMetrics } from './mock/mock_metrics';
 import { parseApiVersion, resourceQuery, resourceType } from '../core/resources/resource_types';
-import type { KubernetesProvider, ReadResourceOptions } from './contract';
+import type { KubernetesProvider, PartialNamespaceFailure, ReadResourceOptions } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
 import type { ResourceQuery, ResourceRef } from '../core/resources/resource_types';
 import type { WatchBatch, WatchFilter } from './watch_types';
@@ -150,6 +150,38 @@ export class K8sProvider implements KubernetesProvider {
     return { http, native: { options: clean } };
   }
 
+  private async readNamespacesSettled<T>(
+    names: string[],
+    readOne: (namespace: string) => Promise<T[]>,
+    signal?: AbortSignal,
+    onPartialError?: (failures: PartialNamespaceFailure[]) => void,
+  ): Promise<T[]> {
+    const settled = await Promise.allSettled(names.map(readOne));
+    const items: T[] = [];
+    const failures: PartialNamespaceFailure[] = [];
+    let firstReason: unknown;
+    for (let i = 0; i < settled.length; i++) {
+      const result = settled[i];
+      if (result.status === 'fulfilled') {
+        items.push(...result.value);
+      } else {
+        const normalized = normalizeK8sError(result.reason);
+        if (signal?.aborted || normalized.code === 'cancelled') {
+          throw result.reason;
+        }
+        if (failures.length === 0) firstReason = result.reason;
+        failures.push({ namespace: names[i], error: normalized });
+      }
+    }
+    if (failures.length === names.length && names.length > 0) {
+      throw firstReason;
+    }
+    if (failures.length > 0) {
+      onPartialError?.(failures);
+    }
+    return items;
+  }
+
   async getResources(context: string, kind: ResourceKind, namespace?: string, signal?: AbortSignal, options?: ReadResourceOptions): Promise<ResourceItem[]> {
     if (this.demo) {
       this.mock ??= buildMockResources();
@@ -157,12 +189,12 @@ export class K8sProvider implements KubernetesProvider {
     }
     const names = namespaceNames(namespace ?? 'all');
     if (names && names.length !== 1 && resourceType(kind).namespaced) {
-      const settled = await Promise.allSettled(names.map(name => this.getResources(context, kind, name, signal, options)));
-      const items = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
-      if (settled.every(result => result.status === 'rejected') && settled.length > 0) {
-        throw (settled[0] as PromiseRejectedResult).reason;
-      }
-      return items;
+      return this.readNamespacesSettled(
+        names,
+        name => this.getResources(context, kind, name, signal, options),
+        signal,
+        options?.onPartialError,
+      );
     }
     const query = resourceQuery(context, kind, namespace);
     const extra = this.buildListOptions(options);
@@ -296,12 +328,12 @@ export class K8sProvider implements KubernetesProvider {
   async getCustomResources(context: string, name: string, uid: string, namespace: string | null, signal?: AbortSignal, options?: ReadResourceOptions): Promise<CustomResourceInstance[]> {
     const names = namespaceNames(namespace ?? 'all');
     if (names && names.length !== 1) {
-      const settled = await Promise.allSettled(names.map(ns => this.getCustomResources(context, name, uid, ns, signal, options)));
-      const items = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
-      if (settled.every(result => result.status === 'rejected') && settled.length > 0) {
-        throw (settled[0] as PromiseRejectedResult).reason;
-      }
-      return items;
+      return this.readNamespacesSettled(
+        names,
+        ns => this.getCustomResources(context, name, uid, ns, signal, options),
+        signal,
+        options?.onPartialError,
+      );
     }
     if (this.demo) {
       if (name === 'buckets.source.toolkit.fluxcd.io') {

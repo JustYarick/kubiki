@@ -10,7 +10,6 @@ import {
   WRITE_OPERATIONS,
   type AgentPhase,
   type AgentPolicy,
-  type McpToolCatalogEntry,
   type WriteOperation,
 } from '../types';
 
@@ -19,8 +18,6 @@ interface McpToolsPanelProps {
   onChange: (next: AgentPolicy) => void | Promise<void>;
   currentPhase?: AgentPhase;
   modeScope?: 'phased' | 'general';
-  showCategories?: boolean;
-  toolAriaLabel?: (tool: McpToolCatalogEntry) => string | undefined;
   onClose?: () => void;
   title?: string;
   subtitle?: string;
@@ -32,8 +29,6 @@ export function McpToolsPanel({
   policy,
   onChange,
   modeScope = 'phased',
-  showCategories = true,
-  toolAriaLabel,
   onClose,
   title = 'Cluster Tools & Permissions',
   subtitle = 'Changes apply live across active sessions without restarting',
@@ -177,17 +172,15 @@ export function McpToolsPanel({
           <Button size="sm" variant="secondary" disabled={disabled} onClick={handleEnableAll} title="Enable all permitted tools and categories for this view">
             Enable all
           </Button>
-          {showCategories && (
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={disabled}
-              onClick={() => void onChange({ ...policy, readOnly: false, writes: [] })}
-              title="Disable all cluster mutations in this profile while keeping customizations"
-            >
-              Clear writes
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={disabled}
+            onClick={() => void onChange({ ...policy, readOnly: false, writes: [] })}
+            title="Disable all cluster mutations in this profile while keeping customizations"
+          >
+            Clear writes
+          </Button>
           {onClose && (
             <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close MCP tools panel" title="Close panel">
               ✕
@@ -208,73 +201,69 @@ export function McpToolsPanel({
         </p>
       )}
 
-      {showCategories && (
-        <>
-          <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium text-[var(--text-secondary)]">Data access</span>
-            <div className="ai-permission-checks">
-              {([
-                { key: 'resources', label: 'Resources', title: 'Allow reading Kubernetes workload, config and network objects' },
-                { key: 'events', label: 'Events', title: 'Allow reading cluster and namespace warning and informational events' },
-                { key: 'logs', label: 'Logs', title: 'Allow streaming container and previous crash logs' },
-                { key: 'metrics', label: 'Metrics', title: 'Allow querying CPU and memory usage statistics' },
-                { key: 'clusterResources', label: 'Cluster resources', title: 'Allow reading non-namespaced resources (Nodes, Namespaces, StorageClasses)' },
-                { key: 'workloadConfiguration', label: 'Inline env & commands', title: 'Expose Pod container environment variables and startup commands' },
-                { key: 'annotations', label: 'Annotations', title: 'Include Kubernetes object annotations in responses' },
-              ] as const).map(({ key, label, title: tip }) => (
-                <CheckboxRow
-                  key={key}
-                  label={label}
-                  title={tip}
-                  checked={Boolean(policy[key])}
-                  disabled={disabled}
-                  onChange={e => void onChange({ ...policy, [key]: e.target.checked })}
-                />
-              ))}
-            </div>
-          </div>
+      <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-1.5">
+        <span className="text-[11px] font-medium text-[var(--text-secondary)]">Data access</span>
+        <div className="ai-permission-checks">
+          {([
+            { key: 'resources', label: 'Resources', title: 'Allow reading Kubernetes workload, config and network objects' },
+            { key: 'events', label: 'Events', title: 'Allow reading cluster and namespace warning and informational events' },
+            { key: 'logs', label: 'Logs', title: 'Allow streaming container and previous crash logs' },
+            { key: 'metrics', label: 'Metrics', title: 'Allow querying CPU and memory usage statistics' },
+            { key: 'clusterResources', label: 'Cluster resources', title: 'Allow reading non-namespaced resources (Nodes, Namespaces, StorageClasses)' },
+            { key: 'workloadConfiguration', label: 'Inline env & commands', title: 'Expose Pod container environment variables and startup commands' },
+            { key: 'annotations', label: 'Annotations', title: 'Include Kubernetes object annotations in responses' },
+          ] as const).map(({ key, label, title: tip }) => (
+            <CheckboxRow
+              key={key}
+              label={label}
+              title={tip}
+              checked={Boolean(policy[key])}
+              disabled={disabled}
+              onChange={e => void onChange({ ...policy, [key]: e.target.checked })}
+            />
+          ))}
+        </div>
+      </div>
 
-          <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-medium text-[var(--text-secondary)]">Allowed changes</span>
-              {activePhase === 'plan' && (
-                <span className="text-[10.5px] text-amber-400 font-medium" title="Planning phase is read-only by design">
-                  Mutations disabled in Plan mode
-                </span>
-              )}
-            </div>
-            <div className="ai-permission-checks">
-              {WRITE_OPERATIONS.map(op => {
-                const tooltips: Record<WriteOperation, string> = {
-                  create: 'Allow creating new resources via apply_manifest',
-                  update: 'Allow modifying existing resources via apply_manifest',
-                  scale: 'Allow scaling workload replicas via scale_workload',
-                  restart: 'Allow rolling restarts of controllers via restart_workload',
-                  delete: 'Allow deleting resources via delete_resource',
-                };
-                const labels: Record<WriteOperation, string> = {
-                  create: 'Create',
-                  update: 'Update',
-                  scale: 'Scale',
-                  restart: 'Restart',
-                  delete: 'Delete',
-                };
-                const isPlanBlocked = activePhase === 'plan';
-                return (
-                  <CheckboxRow
-                    key={op}
-                    label={labels[op]}
-                    title={tooltips[op]}
-                    checked={!isPlanBlocked && !readOnly && policy.writes.includes(op)}
-                    disabled={disabled || isPlanBlocked}
-                    onChange={e => toggleWriteOp(op, e.target.checked)}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        </>
-      )}
+      <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium text-[var(--text-secondary)]">Allowed changes</span>
+          {activePhase === 'plan' && (
+            <span className="text-[10.5px] text-amber-400 font-medium" title="Planning phase is read-only by design">
+              Mutations disabled in Plan mode
+            </span>
+          )}
+        </div>
+        <div className="ai-permission-checks">
+          {WRITE_OPERATIONS.map(op => {
+            const tooltips: Record<WriteOperation, string> = {
+              create: 'Allow creating new resources via apply_manifest',
+              update: 'Allow modifying existing resources via apply_manifest',
+              scale: 'Allow scaling workload replicas via scale_workload',
+              restart: 'Allow rolling restarts of controllers via restart_workload',
+              delete: 'Allow deleting resources via delete_resource',
+            };
+            const labels: Record<WriteOperation, string> = {
+              create: 'Create',
+              update: 'Update',
+              scale: 'Scale',
+              restart: 'Restart',
+              delete: 'Delete',
+            };
+            const isPlanBlocked = activePhase === 'plan';
+            return (
+              <CheckboxRow
+                key={op}
+                label={labels[op]}
+                title={tooltips[op]}
+                checked={!isPlanBlocked && !readOnly && policy.writes.includes(op)}
+                disabled={disabled || isPlanBlocked}
+                onChange={e => toggleWriteOp(op, e.target.checked)}
+              />
+            );
+          })}
+        </div>
+      </div>
 
       <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -298,7 +287,6 @@ export function McpToolsPanel({
               <CheckboxRow
                 key={tool.id}
                 label={tool.label}
-                aria-label={toolAriaLabel?.(tool)}
                 title={tooltip}
                 checked={enabled}
                 disabled={disabled || blockedByPlan}

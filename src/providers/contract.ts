@@ -5,6 +5,11 @@ import type { KubeContextInfo, ResourceItem, ResourceKind } from '../types/k8s';
 import type { ResourceRef } from '../core/resources/resource_types';
 import type { BatchResult, BatchStep } from './mutations';
 
+export interface PartialNamespaceFailure {
+  namespace: string;
+  error: import('./errors').K8sRequestError;
+}
+
 export interface ReadResourceOptions {
   metadataOnly?: boolean;
   labelSelector?: string;
@@ -13,6 +18,7 @@ export interface ReadResourceOptions {
   projection?: 'search';
   priority?: ReadPriority;
   lane?: ReadLane;
+  onPartialError?: (failures: PartialNamespaceFailure[]) => void;
 }
 
 /** The transport must reject with K8sRequestError; reads never substitute demo data. */
