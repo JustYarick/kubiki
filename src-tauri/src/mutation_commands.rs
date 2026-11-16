@@ -335,9 +335,11 @@ pub async fn mutate_resource(
     pool: tauri::State<'_, ClusterClientPool>,
     nodes: tauri::State<'_, NodeDebugManager>,
     guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
+    read_cache: tauri::State<'_, crate::k8s_commands::ContextReadCache>,
 ) -> Result<Value, ApiError> {
     let resource = request.resource();
     let _gate = guard.acquire(&resource)?;
+    read_cache.invalidate(&resource.query.context);
     if let ChangeRequest::Batch { primary, steps } = request {
         return run_batch(window, &pool, primary, steps).await;
     }
@@ -429,6 +431,7 @@ pub async fn delete_resource(
     pool: tauri::State<'_, ClusterClientPool>,
     nodes: tauri::State<'_, NodeDebugManager>,
     guard: tauri::State<'_, crate::mutation_guard::MutationGuard>,
+    read_cache: tauri::State<'_, crate::k8s_commands::ContextReadCache>,
 ) -> Result<Value, ApiError> {
     let resource = match &request {
         DeleteRequest::Resource { resource, .. } | DeleteRequest::DebugPod { resource } => {
@@ -436,6 +439,7 @@ pub async fn delete_resource(
         }
     };
     let _gate = guard.acquire(&resource)?;
+    read_cache.invalidate(&resource.query.context);
     match request {
         DeleteRequest::Resource {
             resource,

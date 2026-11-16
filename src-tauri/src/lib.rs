@@ -77,7 +77,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(ClusterClientPool::new(KubeConfigManager::new()))
-        .manage(read_tasks::ReadTasks::default())
+        .manage(ContextReadCache::default())
+        .manage(read_tasks::ReadTasks::with_limits(32, 24))
         .manage(InformerManager::new(ResourceStore::disabled()))
         .manage(PodTerminalManager::default())
         .manage(NodeDebugManager::default())
@@ -155,11 +156,15 @@ pub fn run() {
             set_kubeconfig_path,
             ping_cluster,
             get_overview_metrics,
+            get_pod_metric,
             get_namespaces,
             get_resources,
+            get_resource,
             get_resource_counts,
             get_api_resources,
             get_custom_resources,
+            get_custom_resource,
+            get_custom_search_inventory,
             delete_resource,
             resolve_mutation_confirm,
             get_pod_logs,

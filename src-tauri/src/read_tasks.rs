@@ -27,19 +27,40 @@ struct Owner {
     permits: Arc<Semaphore>,
     contexts: HashMap<String, Weak<Semaphore>>,
 }
-impl Default for Owner {
-    fn default() -> Self {
+impl Owner {
+    fn with_permits(permits: usize) -> Self {
         Self {
             tasks: HashMap::new(),
             completed: VecDeque::new(),
-            permits: Arc::new(Semaphore::new(8)),
+            permits: Arc::new(Semaphore::new(permits)),
             contexts: HashMap::new(),
         }
     }
 }
-#[derive(Clone, Default)]
+impl Default for Owner {
+    fn default() -> Self {
+        Self::with_permits(8)
+    }
+}
+#[derive(Clone)]
 pub struct ReadTasks {
     owners: Arc<Mutex<HashMap<String, Owner>>>,
+    window_permits: usize,
+    context_permits: usize,
+}
+impl Default for ReadTasks {
+    fn default() -> Self {
+        Self::with_limits(8, 4)
+    }
+}
+impl ReadTasks {
+    pub fn with_limits(window_permits: usize, context_permits: usize) -> Self {
+        Self {
+            owners: Arc::new(Mutex::new(HashMap::new())),
+            window_permits,
+            context_permits,
+        }
+    }
 }
 struct ReadGuard {
     manager: ReadTasks,
@@ -95,7 +116,9 @@ impl ReadTasks {
         let (sender, mut cancellation) = oneshot::channel();
         let (window_permits, context_permits) = {
             let mut owners = self.owners.lock().unwrap();
-            let owner = owners.entry(owner.to_owned()).or_default();
+            let owner = owners
+                .entry(owner.to_owned())
+                .or_insert_with(|| Owner::with_permits(self.window_permits));
             match owner.tasks.get(&id) {
                 Some(Task::Cancelled) => {
                     owner.tasks.remove(&id);
@@ -129,7 +152,7 @@ impl ReadTasks {
                 .get(&key)
                 .and_then(Weak::upgrade)
                 .unwrap_or_else(|| {
-                    let permits = Arc::new(Semaphore::new(4));
+                    let permits = Arc::new(Semaphore::new(self.context_permits));
                     owner.contexts.insert(key, Arc::downgrade(&permits));
                     permits
                 });
@@ -168,7 +191,9 @@ impl ReadTasks {
             ));
         }
         let mut owners = self.owners.lock().unwrap();
-        let owner = owners.entry(owner.to_owned()).or_default();
+        let owner = owners
+            .entry(owner.to_owned())
+            .or_insert_with(|| Owner::with_permits(self.window_permits));
         // Keep pre-registration cancellations until the corresponding command
         // arrives; completed IDs make a late cancellation a no-op.
         if matches!(owner.tasks.get(id), Some(Task::Completed | Task::Cancelled)) {

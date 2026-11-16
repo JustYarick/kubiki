@@ -55,7 +55,7 @@ export class HttpReadTransport implements KubernetesReadTransport {
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
 }
-const MANAGED_READS = new Set(['ping_cluster', 'get_namespaces', 'get_resources', 'get_resource_counts', 'get_api_resources', 'get_custom_resources', 'get_overview_metrics', 'get_pod_logs', 'get_helm_inventory', 'get_helm_history', 'get_helm_content', 'list_helm_repositories', 'search_helm_charts']);
+const MANAGED_READS = new Set(['ping_cluster', 'get_namespaces', 'get_resources', 'get_resource', 'get_resource_counts', 'get_api_resources', 'get_custom_resources', 'get_custom_resource', 'get_custom_search_inventory', 'get_overview_metrics', 'get_pod_metric', 'get_pod_logs', 'get_helm_inventory', 'get_helm_history', 'get_helm_content', 'list_helm_repositories', 'search_helm_charts']);
 const tauri = new TauriReadTransport();
 const http = new HttpReadTransport();
 export const environmentReadTransport: KubernetesReadTransport = {

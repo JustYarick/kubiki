@@ -1,8 +1,8 @@
 import type { ResourceQuery } from '../core/resources/resource_types';
 import { normalizeK8sError } from './errors';
-import { sameQuery, type WatchBatch } from './watch_types';
+import { sameQuery, type WatchBatch, type WatchFilter } from './watch_types';
 
-export async function watchTauriResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, customResource?: {name: string; uid: string}): Promise<() => void> {
+export async function watchTauriResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, customResource?: {name: string; uid: string}, filter?: WatchFilter): Promise<() => void> {
   const { Channel, invoke } = await import('@tauri-apps/api/core');
   if (signal.aborted) return () => {};
   const id = crypto.randomUUID();
@@ -24,7 +24,14 @@ export async function watchTauriResources(query: ResourceQuery, onBatch: (batch:
   try {
     // Discovery definitions also carry presentation fields. The native contract
     // deliberately accepts only the CRD identity.
-    await invoke('watch_resources', { query, subscriptionId: id, onEvent: channel, ...(customResource ? {customResource: { name: customResource.name, uid: customResource.uid }} : {}) });
+    await invoke('watch_resources', {
+      query,
+      subscriptionId: id,
+      onEvent: channel,
+      ...(customResource ? { customResource: { name: customResource.name, uid: customResource.uid } } : {}),
+      ...(filter?.labelSelector ? { labelSelector: filter.labelSelector } : {}),
+      ...(filter?.fieldSelector ? { fieldSelector: filter.fieldSelector } : {}),
+    });
     // Cancellation can beat native registration: an idempotent second stop closes that race.
     if (closed) unwatch();
     return close;

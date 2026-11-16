@@ -5,7 +5,9 @@ export interface SearchDocument { id: string; fields: Record<string, string[]> }
 export interface SearchOptions { query: string; regex: boolean; caseSensitive: boolean }
 export interface SearchResult { hits: string[]; total: number; error?: string }
 const aliases: Record<string, string> = { namespace: 'ns', type: 'kind', labels: 'label', annotations: 'annotation', apiVersion: 'api' };
-const fields = new Set(['name', 'kind', 'ns', 'status', 'label', 'annotation', 'image', 'node', 'api', 'uid']);
+const FIELD_KEYS = ['name', 'kind', 'ns', 'status', 'label', 'annotation', 'image', 'node', 'api', 'uid'] as const;
+const fields = new Set<string>(FIELD_KEYS);
+const documentCache = new WeakMap<ResourceItem, SearchDocument>();
 export const searchId = (item: ResourceItem) => `${resourceKey(item)}/${item.uid}`;
 
 /** Metadata and selected diagnostic fields only; never Secret data, env values, or full YAML. */
@@ -22,6 +24,15 @@ export function searchDocument(item: ResourceItem): SearchDocument {
     image: [...(pod?.containers ?? []), ...(pod?.initContainers ?? [])].map((container: any) => String(container.image ?? '')),
     node: [String(raw.spec?.nodeName ?? item.node ?? '')],
   } };
+}
+
+export function searchDocumentCached(item: ResourceItem): SearchDocument {
+  let doc = documentCache.get(item);
+  if (!doc) {
+    doc = searchDocument(item);
+    documentCache.set(item, doc);
+  }
+  return doc;
 }
 function tokenize(query: string): string[] {
   const result: string[] = []; let token = ''; let quote = '';
@@ -58,13 +69,29 @@ export function searchResources(documents: SearchDocument[], options: SearchOpti
     for (const document of documents) {
       let score = 0; let matches = true;
       for (const term of compiled) {
-        const values = term.field ? document.fields[term.field] ?? [] : Object.values(document.fields).flat();
         let best = -1;
-        for (const source of values) {
-          if (term.pattern) { if (term.pattern.test(source)) best = Math.max(best, 100); continue; }
-          const text = normalize(source); const at = text.indexOf(term.value);
-          if (at >= 0) best = Math.max(best, (text === term.value ? 2000 : 1000) - Math.min(at, 500));
-          else if (!term.field) { let cursor = 0; for (const ch of term.value) { const index = text.indexOf(ch, cursor); if (index < 0) { cursor = -1; break; } cursor = index + 1; } if (cursor >= 0) best = Math.max(best, 1); }
+        if (term.field) {
+          const values = document.fields[term.field];
+          if (values) {
+            for (let i = 0; i < values.length; i++) {
+              const source = values[i];
+              if (term.pattern) { if (term.pattern.test(source)) best = Math.max(best, 100); continue; }
+              const text = normalize(source); const at = text.indexOf(term.value);
+              if (at >= 0) best = Math.max(best, (text === term.value ? 2000 : 1000) - Math.min(at, 500));
+            }
+          }
+        } else {
+          for (let k = 0; k < FIELD_KEYS.length; k++) {
+            const values = document.fields[FIELD_KEYS[k]];
+            if (!values) continue;
+            for (let i = 0; i < values.length; i++) {
+              const source = values[i];
+              if (term.pattern) { if (term.pattern.test(source)) best = Math.max(best, 100); continue; }
+              const text = normalize(source); const at = text.indexOf(term.value);
+              if (at >= 0) best = Math.max(best, (text === term.value ? 2000 : 1000) - Math.min(at, 500));
+              else { let cursor = 0; for (const ch of term.value) { const index = text.indexOf(ch, cursor); if (index < 0) { cursor = -1; break; } cursor = index + 1; } if (cursor >= 0) best = Math.max(best, 1); }
+            }
+          }
         }
         if (term.negative ? best >= 0 : best < 0) { matches = false; break; }
         if (!term.negative) score += best;

@@ -1,13 +1,22 @@
+export type ReadPriority = 'high' | 'normal' | 'low';
+
 /** Bound initial LISTs until their snapshots arrive, rather than only IPC registration. */
 export class InitialSyncQueue {
   private running = 0;
-  private pending: (() => void)[] = [];
-  constructor(private readonly concurrency = 4) {}
+  private high: (() => void)[] = [];
+  private normal: (() => void)[] = [];
+  private low: (() => void)[] = [];
+  private readonly lowCap: number;
+  constructor(private readonly concurrency = 4) {
+    this.lowCap = Math.max(1, concurrency - 1);
+  }
 
-  run(task: () => Promise<void>, signal: AbortSignal): Promise<void> {
+  run(task: () => Promise<void>, signal: AbortSignal, priority: ReadPriority = 'normal'): Promise<void> {
     return new Promise((resolve, reject) => {
+      const queue = priority === 'high' ? this.high : priority === 'low' ? this.low : this.normal;
       const cancel = () => {
-        this.pending = this.pending.filter(item => item !== start);
+        const idx = queue.indexOf(start);
+        if (idx >= 0) queue.splice(idx, 1);
         signal.removeEventListener('abort', cancel);
         resolve();
       };
@@ -22,12 +31,18 @@ export class InitialSyncQueue {
       };
       if (signal.aborted) { resolve(); return; }
       signal.addEventListener('abort', cancel, { once: true });
-      this.pending.push(start);
+      queue.push(start);
       this.drain();
     });
   }
 
   private drain() {
-    while (this.running < this.concurrency && this.pending.length) this.pending.shift()!();
+    while (this.running < this.concurrency) {
+      const next = this.high.shift()
+        ?? this.normal.shift()
+        ?? (this.running < this.lowCap ? this.low.shift() : undefined);
+      if (!next) break;
+      next();
+    }
   }
 }

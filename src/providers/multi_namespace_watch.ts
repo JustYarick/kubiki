@@ -1,13 +1,13 @@
 import type { ResourceQuery } from '../core/resources/resource_types';
 import { namespaceNames } from '../core/resources/namespace_scope';
 import { normalizeK8sError, type K8sErrorPayload } from './errors';
-import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchMessage, type WatchPhase } from './watch_types';
+import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchFilter, type WatchMessage, type WatchPhase } from './watch_types';
 import { InitialSyncQueue } from './initial_sync_queue';
 
 // This queue counts namespace streams, rather than their parent resource kinds.
 // A watch keeps running after its initial LIST releases the permit.
 const initialStreams = new InitialSyncQueue(4);
-function watchInitialStream(provider: ResourceWatchProvider, query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
+function watchInitialStream(provider: ResourceWatchProvider, query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void> {
   let registered!: (close: () => void) => void;
   let failed!: (error: unknown) => void;
   const registration = new Promise<() => void>((resolve, reject) => { registered = resolve; failed = reject; });
@@ -38,7 +38,7 @@ function watchInitialStream(provider: ResourceWatchProvider, query: ResourceQuer
         if (batch.messages.some(message => message.event.type === 'Delta' && message.event.payload.type === 'Restarted' || message.event.type === 'Status' && ['failed', 'stopped'].includes(message.event.payload.phase))) {
           clearTimeout(timer); finish();
         }
-      }, controller.signal).then(stop => {
+      }, controller.signal, filter).then(stop => {
         closeNative = stop;
         if (controller.signal.aborted) stop();
         registered(close);
@@ -50,7 +50,7 @@ function watchInitialStream(provider: ResourceWatchProvider, query: ResourceQuer
 }
 
 /** Merge independent namespace streams without ever requesting cluster-wide permissions. */
-export async function watchNamespaceSelection(provider: ResourceWatchProvider, query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
+export async function watchNamespaceSelection(provider: ResourceWatchProvider, query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void> {
   const names = namespaceNames(query.namespace ?? 'all');
   if (names?.length === 0) {
     if (!signal.aborted) onBatch({ query, subscription_id: 'empty-selection', messages: [
@@ -59,7 +59,7 @@ export async function watchNamespaceSelection(provider: ResourceWatchProvider, q
     ] });
     return () => {};
   }
-  if (!names || names.length <= 1) return watchInitialStream(provider, query, onBatch, signal);
+  if (!names || names.length <= 1) return watchInitialStream(provider, query, onBatch, signal, filter);
   const controller = new AbortController();
   const streams = names.map(namespace => ({ query: { ...query, namespace }, items: new Map<string, Record<string, any>>(), ready: false, phase: 'connecting' as WatchPhase, sequence: 0, error: null as K8sErrorPayload | null }));
   const closers: (() => void)[] = [];
@@ -121,7 +121,7 @@ export async function watchNamespaceSelection(provider: ResourceWatchProvider, q
             emit(events);
           }
         } catch (error) { emit([{ type: 'Status', payload: { phase: 'failed', error: normalizeK8sError(error, { operation: 'watch', resource: stream.query }) } }]); close(); }
-      }, controller.signal);
+      }, controller.signal, filter);
       if (stopped) stop(); else closers.push(stop);
     }));
     return close;

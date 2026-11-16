@@ -1,7 +1,7 @@
 import { memoryText, quantity } from '../../../../core/resources/quantities';
 import { Database } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
-import { useResourceStore } from '../../../../state/resource_store';
+import { useMergedDetailResources } from '../../../../state/detail_cache';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { UsedByList } from '../blocks/UsedByList';
 import { ConditionsTable } from '../blocks/ConditionsTable';
@@ -14,7 +14,7 @@ interface PvDetailsProps {
 }
 
 export function PvDetails({ item, onNavigate }: PvDetailsProps) {
-  const resources = useResourceStore((s) => s.resources);
+  const resources = useMergedDetailResources();
   const raw = item.raw ?? {};
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};

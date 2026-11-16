@@ -17,7 +17,7 @@ import { resourceType } from '../core/resources/resource_types';
 import { customResourcePlacement, customResourceType, type CustomResourceType } from '../core/resources/custom_resource_types';
 import { useCustomResources } from '../providers/use_custom_resources';
 import { defaultNamespace, namespaceNames } from '../core/resources/namespace_scope';
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowDown,
   ArrowRightLeft,
@@ -185,7 +185,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     }
   }, [effectiveKind, currentContext, customType, selectItem]);
 
-  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery: deferredSearchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
   useEffect(() => {
     if (!statusValues.length) return;
     setSorts(previous => {
@@ -196,9 +197,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   }, [statusValues]);
   const pending = !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
-  useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, searchQuery, columnFilters, sorts]);
+  useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, deferredSearchQuery, columnFilters, sorts]);
 
-  const virtualized = rows.list.length > 200;
+  const virtualized = rows.list.length > 80;
   const rowHeight = Math.ceil(Math.max((density === 'compact' ? 24 : 28) * uiFactor(uiScale), (11.5 * 1.45 + 7) * uiFactor(uiScale) + 1));
   const rowVirtualizer = useVirtualizer({ count: rows.list.length, getScrollElement: () => tableRef.current, estimateSize: () => rowHeight, overscan: 12,
     enabled: virtualized, getItemKey: index => rows.list[index]?.uid ?? index });

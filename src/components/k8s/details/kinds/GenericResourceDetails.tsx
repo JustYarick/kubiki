@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ResourceItem } from '../../../../types/k8s';
-import { useResourceStore } from '../../../../state/resource_store';
+import { useMergedDetailResources } from '../../../../state/detail_cache';
 import { resourceByRef } from '../../../../core/resources/detail_links';
 import { summaryTitle } from '../../../../core/resources/kind_labels';
 import { resourceIcon } from '../../../../core/resource_icons';
@@ -94,7 +94,7 @@ function genericSummary(
 
 /** Objects without a dedicated panel: the same skeleton, raw fields as the last resort. */
 export function GenericResourceDetails({ item, onNavigate }: GenericResourceDetailsProps) {
-  const resources = useResourceStore(state => state.resources);
+  const resources = useMergedDetailResources();
   const raw = item.raw ?? {};
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};

@@ -18,10 +18,14 @@ export interface WatchCommit {
   state: WatchState;
   error?: K8sErrorPayload;
 }
+export interface WatchFilter {
+  labelSelector?: string;
+  fieldSelector?: string;
+}
 export interface ResourceWatchProvider {
   /** The provider times actual initial reads after they acquire their queue slot. */
   readonly managesInitialSyncTimeout?: boolean;
-  watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void>;
+  watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void>;
 }
 
 export function sameQuery(a: ResourceQuery, b: ResourceQuery): boolean {

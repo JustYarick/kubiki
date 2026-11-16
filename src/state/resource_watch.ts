@@ -11,6 +11,7 @@ import type { ResourceWatchProvider } from '../providers/watch_types';
 import { useDockStore } from './dock_store';
 import { inNamespaceScope, mergeNamespaceScopes, namespaceScopeCovers, namespaceNames } from '../core/resources/namespace_scope';
 import { useResourceRequirements } from './resource_requirements';
+import { useDetailCache } from './detail_cache';
 
 let session: ResourceWatchSession | undefined;
 let unsubscribers: (() => void)[] = [];
@@ -50,12 +51,13 @@ export function syncResourceCounts(context: string, namespace: string): Promise<
 export function stopResourceWatches(): void { countsController?.abort(); countsController = undefined; unsubscribers.forEach(close => close()); unsubscribers = []; session?.stop(); session = undefined; }
 export async function startResourceWatches(context: string): Promise<PromiseSettledResult<void>[]> {
   stopResourceWatches();
+  useDetailCache.getState().clear(context);
   const provider: ResourceWatchProvider = k8s.supportsResourceWatch ? k8s : {
     managesInitialSyncTimeout: true,
     // Browser reads are also demand-driven. They refresh explicitly without
     // introducing background polling or contacting unopened collections.
-    async watchResources(query, emit, signal) {
-      const items = await k8s.getResources(query.context, query.kind as ResourceKind, query.namespace ?? 'all', signal);
+    async watchResources(query, emit, signal, filter) {
+      const items = await k8s.getResources(query.context, query.kind as ResourceKind, query.namespace ?? 'all', signal, filter?.fieldSelector || filter?.labelSelector ? filter : undefined);
       if (!signal.aborted) emit({ query, subscription_id: 'snapshot', messages: [
         { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: items.map(item => item.raw!) } } } },
         { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } },
@@ -103,7 +105,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     const snapshot = state.watchStates[query.kind as ResourceKind];
     if (!snapshot || snapshot.query.context !== query.context || !allowPartial && (!snapshot.hasSnapshot || !namespaceScopeCovers(snapshot.query.namespace ?? 'all', query.namespace ?? 'all'))) return;
     return [...state.resources[query.kind as ResourceKind].values()].filter(item => inNamespaceScope(query.namespace ?? 'all', item.namespace));
-  });
+  }, undefined, (kind) => kind === 'Event' && !eventsAreTargeted() ? { fieldSelector: 'type!=Normal' } : undefined);
   session = next;
   let demandKey = '';
   const synchronize = () => {
