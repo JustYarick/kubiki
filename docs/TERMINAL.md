@@ -44,10 +44,11 @@ and `TERM_PROGRAM=kubiki`. Parent Ghostty/Kitty/tmux/window hints and fixed
 `COLUMNS`/`LINES` are removed so a TUI does not assume another emulator's features.
 Shell configuration and ordinary inherited environment variables remain available.
 On Unix, external agents (OpenCode, Codex and Claude Code) start through the
-default shell in interactive login mode before replacing it with the CLI. This
-loads `.zshrc` for zsh, including exported provider tokens. Startup output stays
+default shell in interactive login mode before replacing it with the CLI (`cd -- "$1" && shift && exec "$@"`). This
+loads `.zshrc` for zsh, including exported provider tokens, while restoring Kubiki's workspace directory. Startup output stays
 in the PTY; Kubiki does not read or persist the token. CLI arguments are passed
 as positional arguments, including prompts containing shell punctuation.
+External agents can also be configured to launch in the system default terminal emulator (e.g. Ghostty, Kitty, Alacritty, WezTerm, `xdg-terminal-exec`) via `src-tauri/src/system_terminal.rs` using direct argv without shell string interpolation.
 Pod/Node shells set the same terminal capabilities with shell builtins before
 starting the selected interactive shell; minimal images need no extra env binary.
 

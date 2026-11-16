@@ -514,10 +514,11 @@ Kubiki provider/model/instructions/skills/confirmation settings are retained whi
 hidden and do not control external agents. Switching invalidates integrated sessions and
 stops attached processes; it never transfers approvals or replays tools.
 
-External agents use an installed executable, a real PTY, their own configuration
-and credentials. Each runtime has separate executable/workspace preferences.
-OpenCode requires its V2 CLI. Its pane uses the same terminal renderer and typography preferences
-as local/Pod/Node shells (see [Terminal rendering](TERMINAL.md)). A dedicated OpenCode workspace adds only our local MCP connection;
+External agents use an installed executable, a real PTY or the system default terminal emulator, their own configuration
+and credentials. Each runtime has separate executable, workspace, and terminal host preferences (`Embedded terminal (Kubiki)` or `System default terminal`).
+Executable discovery merges the user's interactive login shell `PATH` on Unix, and `through_shell` preserves Kubiki's workspace directory even if `.zprofile`/`.zshrc` executes `cd`.
+OpenCode requires its V2 CLI. Its embedded pane uses the same terminal renderer and typography preferences
+as local/Pod/Node shells (see [Terminal rendering](TERMINAL.md)). In system terminal mode, `src-tauri/src/system_terminal.rs` detects the OS default terminal (`$TERMINAL`, `xdg-terminal-exec`, GNOME/KDE settings, `ghostty`, `kitty`, `alacritty`, `wezterm`, macOS terminal apps, or Windows Terminal) and launches the shell-wrapped CLI via direct argv without shell string interpolation. A dedicated OpenCode workspace adds only our local MCP connection;
 existing project configuration is not overwritten. The desktop executable provides
 a headless `--kubiki-mcp-attach` bridge entrypoint, so desktop bundles do not need a
 separately installed CLI. Scope-specific workspace directories isolate windows and
@@ -547,6 +548,16 @@ creation prompt only after a typed native failure proves that no process was
 scheduled. Delivered tasks and ambiguous startup failures are never replayed.
 Normal TUI commands and model/provider choices belong to the selected CLI. Its shell runs
 under its own permissions and is outside MCP filtering.
+
+## Always-on Desktop MCP Server (Local HTTP)
+
+Under **Settings → AI assistant → Cluster tools (MCP)** (or by clicking the **MCP** indicator in the bottom status bar), **Keep MCP HTTP server running while Kubiki is open** (off by default) starts a loopback Streamable HTTP MCP endpoint (`http://127.0.0.1:<port>/mcp`, default port `3847`, valid `1024–65535`).
+When enabled, independent external sessions (such as OpenCode, Claude Code, Codex, or Cursor launched from Ghostty or another terminal) can connect directly to the running Kubiki application:
+
+- Bound strictly to `127.0.0.1:<port>` on `/mcp`; non-loopback `Host` headers and requests carrying browser `Origin` headers are always rejected (`403 Forbidden`).
+- Loopback authentication is zero-friction by default; **Require Bearer token (optional on 127.0.0.1)** enables constant-time `Authorization: Bearer <token>` checks (token stored in the OS keyring with a `0o600` `mcp-http.token` fallback in app config if the keyring is unavailable, rotatable via **Regenerate token**).
+- **1-Click Client Auto-Configure** safely merges the `kubiki` entry into `~/.config/opencode/opencode.json`, `~/.claude.json`, or `~/.cursor/mcp.json` without overwriting existing user settings.
+- Detailed `mcpPolicy` rules (allowed tools, Plan/Action phase, Secrets/ConfigMaps/CRDs data access, allowed contexts/namespaces, excluded paths, max replicas) and **MCP server phase** (`Plan / Action`) apply live across all connected HTTP MCP sessions; switching the active cluster context or namespace in Kubiki dynamically rebinds tool execution without disconnecting external clients.
 
 ## Standalone MCP server
 

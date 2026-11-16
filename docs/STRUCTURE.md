@@ -185,9 +185,9 @@ writing. Mode changes invalidate pending authorization; dispatched requests stil
 return operation receipts. Accepted UID/generation are retained per connection,
 so verification cannot silently switch to a replacement resource.
 
-`src-tauri/src/opencode.rs` launches installed external agent CLIs in a PTY and owns its attached
+`src-tauri/src/opencode.rs` launches installed external agent CLIs in a PTY or via `src-tauri/src/system_terminal.rs` in the system default terminal emulator and owns its attached
 MCP lifecycle. On Unix, the CLI inherits the default shell's interactive login
-startup environment through the shared host-terminal process builder. OpenCode owns its conversation and permissions; the MCP exposure
+startup environment through the shared host-terminal process builder while restoring Kubiki's workspace directory. `src-tauri/src/mcp_http.rs` and `crates/kubiki-mcp/src/http.rs` manage the optional persistent loopback Streamable HTTP MCP server (`127.0.0.1:<port>/mcp`). OpenCode owns its conversation and permissions; the MCP exposure
 profile still limits scope, data and operations. Pending startup can be stopped
 before the process is scheduled. Runtime selection lives in AI settings.
 

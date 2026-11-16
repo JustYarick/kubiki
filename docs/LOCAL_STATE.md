@@ -56,9 +56,9 @@ the actual machine; Linux/Chromium tests cannot establish its resulting FPS.
 
 AI conversation history and configuration are partitioned across three tiers:
 
-- **OS Keyring / Credential Store**: Provider API keys are stored exclusively in the
+- **OS Keyring / Credential Store**: Provider API keys and the optional persistent desktop MCP HTTP bearer token (when Bearer auth is enabled) are stored in the
   native OS credential manager (`keyring`), isolated per provider endpoint and
-  never saved in localStorage, config files, or SQLite transcripts.
+  never saved in localStorage, `ai.json`, or SQLite transcripts (with a `0o600` `mcp-http.token` file fallback in app config only when the OS keyring is unavailable for the MCP token).
 - **SQLite Database (`ai/history.sqlite3`)**: Sanitized conversation turns, titles,
   cluster/namespace metadata, timestamps, and an SQLite FTS5 search index are
   persisted in the app data directory. SQLite `secure_delete` is enabled. Tool bodies,
