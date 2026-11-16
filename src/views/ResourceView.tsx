@@ -698,7 +698,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
           onChange={setSearchQuery}
           isRegex={searchRegex}
           onToggleRegex={setSearchRegex}
-          placeholder={`Filter ${displayKind.toLowerCase()}s…`}
+          placeholder={`Filter ${customType?.plural ?? `${displayKind.toLowerCase()}s`}…`}
           className="resource-search-field"
         />
         {activeFilters > 0 && (
