@@ -450,6 +450,12 @@ mod tests {
     #[test]
     fn rejects_shell_metacharacters_and_relative_paths_in_terminal_override() {
         assert!(validate_executable_spec("ghostty").is_ok());
+        #[cfg(windows)]
+        {
+            assert!(validate_executable_spec(r"C:\Program Files\WezTerm\wezterm.exe").is_ok());
+            assert!(validate_executable_spec(r".\ghostty").is_err());
+        }
+        #[cfg(not(windows))]
         assert!(validate_executable_spec("/usr/bin/ghostty").is_ok());
         assert!(validate_executable_spec("ghostty; rm -rf /").is_err());
         assert!(validate_executable_spec("./ghostty").is_err());

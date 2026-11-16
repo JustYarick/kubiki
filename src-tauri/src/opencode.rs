@@ -427,6 +427,7 @@ pub async fn ai_test_external_agent(
     )
     .await
     .map_err(|_| "Agent version check timed out")?;
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut version = match direct {
         Ok(output) if output.status.success() => {
             parse_agent_version(runtime, &String::from_utf8_lossy(&output.stdout))
