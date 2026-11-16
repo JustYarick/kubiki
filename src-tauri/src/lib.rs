@@ -11,7 +11,9 @@ mod mutation_commands;
 mod agent_commands;
 mod ai_history;
 mod agent_tools;
+mod mcp_http;
 mod opencode;
+mod system_terminal;
 use mutation_commands::*;
 mod extension_commands;
 use extension_commands::{ExtensionManager, extension_cancel, extension_request};
@@ -85,14 +87,34 @@ pub fn run() {
         .manage(mutation_guard::MutationGuard::default())
         .manage(agent_commands::AgentManager::default())
         .manage(opencode::OpenCodeManager::default())
+        .manage(mcp_http::PersistentMcpManager::default())
         .manage(update_commands::DesktopUpdater::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(settings) = agent_commands::load(&handle).await {
+                    let _ = handle
+                        .state::<mcp_http::PersistentMcpManager>()
+                        .reconcile(&handle, &settings)
+                        .await;
+                }
+            });
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             opencode::ai_test_opencode,
             opencode::ai_test_external_agent,
+            opencode::ai_detect_system_terminal,
             opencode::start_opencode,
+            opencode::start_external_agent_system_terminal,
+            opencode::stop_external_agent_system_terminal,
+            mcp_http::ai_mcp_http_status,
+            mcp_http::ai_mcp_http_regenerate_token,
+            mcp_http::ai_mcp_set_scope,
+            mcp_http::ai_mcp_auto_configure,
             agent_commands::ai_get_settings,
             agent_commands::ai_preview_policy,
             agent_commands::ai_review_plan,
@@ -195,6 +217,12 @@ pub fn run() {
                 });
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                let persistent_mcp = app_handle.state::<mcp_http::PersistentMcpManager>().inner().clone();
+                tauri::async_runtime::block_on(persistent_mcp.stop());
+            }
+        });
 }

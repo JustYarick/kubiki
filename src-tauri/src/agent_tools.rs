@@ -149,3 +149,20 @@ impl kubiki_tools::kubernetes::Consent for DesktopHostConsent {
         Err("OpenCode owns permission prompts for this connection".into())
     }
 }
+
+/// App-wide host consent for persistent MCP connections without a pinned window.
+pub struct SharedHostConsent(pub crate::mutation_guard::MutationGuard);
+#[async_trait]
+impl kubiki_tools::kubernetes::Consent for SharedHostConsent {
+    fn acquire(&self, resource: &ResourceRef) -> Result<tokio::sync::OwnedMutexGuard<()>, String> {
+        self.0.acquire_owned(resource).map_err(|e| e.message)
+    }
+    async fn confirm(
+        &self,
+        _: &ResourceRef,
+        _: String,
+        _: Option<MutationReview>,
+    ) -> Result<bool, String> {
+        Err("External MCP host owns permission prompts for this connection".into())
+    }
+}

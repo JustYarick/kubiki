@@ -22,6 +22,7 @@ pub struct AiSettings {
     pub claude: crate::opencode::OpenCodeSettings,
     pub mcp_policy: AgentPolicy,
     pub mcp_phase: AgentPhase,
+    pub mcp_server: crate::mcp_http::McpServerSettings,
     pub providers: Vec<ProviderProfile>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
@@ -164,6 +165,7 @@ pub(crate) async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
             let settings: AiSettings = serde_json::from_slice(&bytes).map_err(|_| "AI settings are invalid; restore a valid ai.json in the app configuration directory".to_owned())?;
             settings.policy.validate()?;
             settings.mcp_policy.validate()?;
+            settings.mcp_server.validate()?;
             settings.opencode.validate()?;
             settings.codex.validate()?;
             settings.claude.validate()?;
@@ -176,7 +178,7 @@ pub(crate) async fn load(app: &tauri::AppHandle) -> Result<AiSettings, String> {
     }).await.map_err(|_| "AI settings task failed")?
 }
 
-async fn store(app: &tauri::AppHandle, settings: &AiSettings) -> Result<(), String> {
+pub(crate) async fn store(app: &tauri::AppHandle, settings: &AiSettings) -> Result<(), String> {
     let path = app
         .path()
         .app_config_dir()
@@ -283,6 +285,7 @@ pub async fn ai_save_settings(
 ) -> Result<(), String> {
     settings.policy.validate()?;
     settings.mcp_policy.validate()?;
+    settings.mcp_server.validate()?;
     settings.opencode.validate()?;
     settings.codex.validate()?;
     settings.claude.validate()?;
@@ -370,6 +373,10 @@ pub async fn ai_save_settings(
             .update_policy(&settings.mcp_policy, settings.mcp_phase)
             .await?;
     }
+    window
+        .state::<crate::mcp_http::PersistentMcpManager>()
+        .reconcile(window.app_handle(), &settings)
+        .await?;
     Ok(())
 }
 

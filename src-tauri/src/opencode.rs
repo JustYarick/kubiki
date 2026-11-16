@@ -15,7 +15,7 @@ use std::{
     sync::Arc,
 };
 use tauri::{Manager, ipc::Channel};
-#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRuntime {
     #[default]
@@ -49,11 +49,20 @@ impl AgentRuntime {
         }
     }
 }
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalTerminalMode {
+    #[default]
+    Embedded,
+    System,
+}
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct OpenCodeSettings {
     pub executable: String,
     pub working_directory: String,
+    pub terminal_mode: ExternalTerminalMode,
+    pub terminal_executable: String,
 }
 impl OpenCodeSettings {
     pub fn validate(&self) -> Result<(), String> {
@@ -67,15 +76,34 @@ impl OpenCodeSettings {
         if !self.working_directory.is_empty() && !Path::new(&self.working_directory).is_absolute() {
             return Err("Use an absolute workspace directory".into());
         }
+        crate::system_terminal::validate_executable_spec(&self.terminal_executable)?;
         Ok(())
     }
+}
+enum ActiveLaunch {
+    Pty(HostTerminalManager),
+    System(Arc<tokio::sync::Mutex<Option<tokio::process::Child>>>),
 }
 struct Active {
     id: String,
     owner: String,
-    terminals: HostTerminalManager,
-    server: kubiki_mcp::ClusterServer,
-    _endpoint: kubiki_mcp::attached::AttachedEndpoint,
+    launch: ActiveLaunch,
+    server: Option<kubiki_mcp::ClusterServer>,
+    _endpoint: Option<kubiki_mcp::attached::AttachedEndpoint>,
+}
+impl Active {
+    async fn stop(self) {
+        match self.launch {
+            ActiveLaunch::Pty(terminals) => {
+                terminals.stop(&self.owner, &self.id).await;
+            }
+            ActiveLaunch::System(child) => {
+                if let Some(mut child) = child.lock().await.take() {
+                    let _ = child.start_kill();
+                }
+            }
+        }
+    }
 }
 #[derive(Clone, Default)]
 pub struct OpenCodeManager(
@@ -212,13 +240,27 @@ impl OpenCodeManager {
         self.cancel_pending(None);
         let entries = std::mem::take(&mut *self.0.lock().await);
         for entry in entries.into_values() {
-            entry.terminals.stop(&entry.owner, &entry.id).await;
+            entry.stop().await;
         }
     }
     pub async fn stop_owner(&self, owner: &str) {
         self.cancel_pending(Some(owner));
         if let Some(entry) = self.0.lock().await.remove(owner) {
-            entry.terminals.stop(owner, &entry.id).await;
+            entry.stop().await;
+        }
+    }
+    pub async fn stop_session(&self, owner: &str, id: &str) {
+        self.cancel_start(owner, id);
+        let removed = {
+            let mut active = self.0.lock().await;
+            if active.get(owner).is_some_and(|entry| entry.id == id) {
+                active.remove(owner)
+            } else {
+                None
+            }
+        };
+        if let Some(entry) = removed {
+            entry.stop().await;
         }
     }
     pub async fn update_policy(&self, policy: &AgentPolicy, phase: AgentPhase) -> Result<(), String> {
@@ -228,7 +270,7 @@ impl OpenCodeManager {
             .lock()
             .await
             .values()
-            .map(|entry| entry.server.clone())
+            .filter_map(|entry| entry.server.clone())
             .collect::<Vec<_>>();
         for server in servers {
             server.update_access(sanitized.clone(), phase)?;
@@ -244,7 +286,11 @@ pub fn sanitize_mcp_policy(policy: &AgentPolicy) -> AgentPolicy {
     sanitized.rules.clear();
     sanitized
 }
-fn executable_for(runtime: AgentRuntime, value: &str) -> Result<PathBuf, String> {
+fn executable_for_with_path(
+    runtime: AgentRuntime,
+    value: &str,
+    search_path: &std::ffi::OsStr,
+) -> Result<PathBuf, String> {
     let default = format!(
         "{}{}",
         runtime.binary(),
@@ -262,9 +308,7 @@ fn executable_for(runtime: AgentRuntime, value: &str) -> Result<PathBuf, String>
     if path.components().count() > 1 {
         return Err("Use an absolute executable path".into());
     }
-    std::env::var_os("PATH")
-        .into_iter()
-        .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+    std::env::split_paths(search_path)
         .map(|p| p.join(value))
         .find(|p| p.is_file())
         .ok_or_else(|| {
@@ -274,15 +318,91 @@ fn executable_for(runtime: AgentRuntime, value: &str) -> Result<PathBuf, String>
             )
         })
 }
+
+#[cfg(test)]
+fn executable_for(runtime: AgentRuntime, value: &str) -> Result<PathBuf, String> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    executable_for_with_path(runtime, value, &path)
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Installation {
     executable: String,
     version: String,
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedSystemTerminal {
+    pub label: String,
+    pub executable: String,
+}
+#[tauri::command]
+pub async fn ai_detect_system_terminal(
+    override_executable: Option<String>,
+) -> Result<DetectedSystemTerminal, String> {
+    let search_path = crate::shell_environment::effective_path().await;
+    let detected = crate::system_terminal::detect_system_terminal(
+        override_executable.as_deref().unwrap_or(""),
+        &search_path,
+    )
+    .await?;
+    Ok(DetectedSystemTerminal {
+        label: detected.label,
+        executable: detected.executable.to_string_lossy().into_owned(),
+    })
+}
 #[tauri::command]
 pub async fn ai_test_opencode(settings: OpenCodeSettings) -> Result<Installation, String> {
     ai_test_external_agent(AgentRuntime::OpenCode, settings).await
+}
+fn parse_agent_version(runtime: AgentRuntime, raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let recognized = match runtime {
+        AgentRuntime::OpenCode => trimmed.starts_with("opencode v2."),
+        AgentRuntime::Codex => trimmed.starts_with("codex-cli "),
+        AgentRuntime::Claude => trimmed.contains("Claude Code"),
+        AgentRuntime::Kubiki => false,
+    };
+    recognized.then(|| trimmed.to_owned())
+}
+#[cfg(unix)]
+async fn probe_version_via_shell(path: &Path) -> Option<String> {
+    use std::process::Stdio;
+    let shell = kubiki_core::pod_ops::host_terminal::host_terminal_info()
+        .ok()
+        .map(|i| i.default_shell)
+        .filter(|s| Path::new(s).is_absolute() && Path::new(s).is_file())?;
+    let fish = Path::new(&shell).file_name().is_some_and(|n| n == "fish");
+    let script = if fish {
+        "printf '\\0KUBIKI_VER\\0'; and exec $argv"
+    } else {
+        "printf '\\0KUBIKI_VER\\0' && exec \"$@\""
+    };
+    let mut cmd = tokio::process::Command::new(&shell);
+    cmd.arg("-l").arg("-i").arg("-c").arg(script);
+    if !fish {
+        cmd.arg("kubiki-version");
+    }
+    cmd.arg(path).arg("--version");
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        cmd.stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    const MARKER: &[u8] = b"\0KUBIKI_VER\0";
+    let idx = output
+        .stdout
+        .windows(MARKER.len())
+        .position(|w| w == MARKER)?;
+    Some(String::from_utf8_lossy(&output.stdout[idx + MARKER.len()..]).into_owned())
 }
 #[tauri::command]
 pub async fn ai_test_external_agent(
@@ -293,30 +413,37 @@ pub async fn ai_test_external_agent(
         return Err("Select an external agent".into());
     }
     settings.validate()?;
-    let path = executable_for(runtime, &settings.executable)?;
-    let output = tokio::time::timeout(
+    let search_path = crate::shell_environment::effective_path().await;
+    let path = executable_for_with_path(runtime, &settings.executable, &search_path)?;
+    let direct = tokio::time::timeout(
         std::time::Duration::from_secs(8),
         tokio::process::Command::new(&path)
             .arg("--version")
+            .env("PATH", &search_path)
+            .stdin(std::process::Stdio::null())
             .kill_on_drop(true)
             .output(),
     )
     .await
-    .map_err(|_| "Agent version check timed out")?
-    .map_err(|e| e.to_string())?;
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let recognized = match runtime {
-        AgentRuntime::OpenCode => version.starts_with("opencode v2."),
-        AgentRuntime::Codex => version.starts_with("codex-cli "),
-        AgentRuntime::Claude => version.contains("Claude Code"),
-        AgentRuntime::Kubiki => false,
+    .map_err(|_| "Agent version check timed out")?;
+    let mut version = match direct {
+        Ok(output) if output.status.success() => {
+            parse_agent_version(runtime, &String::from_utf8_lossy(&output.stdout))
+        }
+        _ => None,
     };
-    if !output.status.success() || !recognized {
-        return Err(format!(
+    #[cfg(unix)]
+    if version.is_none() {
+        if let Some(raw) = probe_version_via_shell(&path).await {
+            version = parse_agent_version(runtime, &raw);
+        }
+    }
+    let version = version.ok_or_else(|| {
+        format!(
             "{} version check failed (OpenCode requires V2)",
             runtime.label()
-        ));
-    }
+        )
+    })?;
     Ok(Installation {
         executable: path.to_string_lossy().into(),
         version,
@@ -373,13 +500,20 @@ fn opencode_overlay(
     })
 }
 
-async fn start_opencode_inner(
-    session_id: String,
-    request: StartRequest,
-    on_event: Channel<ExecBatch>,
-    ack_timeout_secs: Option<u64>,
-    window: tauri::WebviewWindow,
-) -> Result<(), String> {
+struct PreparedExternalAgent {
+    external_settings: OpenCodeSettings,
+    server: kubiki_mcp::ClusterServer,
+    endpoint: kubiki_mcp::attached::AttachedEndpoint,
+    process: HostProcess,
+}
+
+async fn prepare_external_agent(
+    session_id: &str,
+    scope: AgentScope,
+    prompt: Option<&str>,
+    window: &tauri::WebviewWindow,
+    pending: &PendingStart,
+) -> Result<PreparedExternalAgent, String> {
     if session_id.is_empty()
         || session_id.len() > 128
         || !session_id
@@ -388,50 +522,48 @@ async fn start_opencode_inner(
     {
         return Err("Invalid external agent terminal session ID".into());
     }
-    let registry = window.state::<OpenCodeManager>().inner().clone();
-    let pending = registry.begin(window.label(), &session_id)?;
     let gate = window
         .state::<crate::agent_commands::AgentManager>()
         .settings_gate
         .clone();
     let _configuration = tokio::select! {biased;
-        _=pending.launch.cancelled()=>return Err("External agent startup was cancelled".into()),
-        guard=gate.lock()=>guard,
+        _ = pending.launch.cancelled() => return Err("External agent startup was cancelled".into()),
+        guard = gate.lock() => guard,
     };
     pending.launch.check()?;
     let settings = crate::agent_commands::load(window.app_handle()).await?;
     if settings.runtime == AgentRuntime::Kubiki {
         return Err("Select an external agent in AI settings first".into());
     }
-    if request.scope.context.is_empty() {
+    if scope.context.is_empty() {
         return Err("Select a cluster before starting the external agent".into());
     }
-    if request.prompt.as_ref().is_some_and(|p| p.len() > 24000) {
+    if prompt.is_some_and(|p| p.len() > 24000) {
         return Err("Initial request is too large".into());
     }
+    let external_settings = settings.runtime.settings(&settings).clone();
     let install = tokio::select! {biased;
-        _=pending.launch.cancelled()=>return Err("External agent startup was cancelled".into()),
-        install=ai_test_external_agent(settings.runtime, settings.runtime.settings(&settings).clone())=>install?,
+        _ = pending.launch.cancelled() => return Err("External agent startup was cancelled".into()),
+        install = ai_test_external_agent(settings.runtime, external_settings.clone()) => install?,
     };
     pending.launch.check()?;
     let pool = window.state::<ClusterClientPool>().inner().clone();
-    let external_settings = settings.runtime.settings(&settings).clone();
     let policy = sanitize_mcp_policy(&settings.mcp_policy);
     policy.validate()?;
     use std::hash::{Hash, Hasher};
     let mut key = std::collections::hash_map::DefaultHasher::new();
     (
         window.label(),
-        &request.scope.context,
-        &request.scope.namespaces,
-        request.scope.all_namespaces,
+        &scope.context,
+        &scope.namespaces,
+        scope.all_namespaces,
     )
         .hash(&mut key);
     let workspace_key = format!("{:016x}", key.finish());
     let session = Session::new(
         format!("opencode-{session_id}"),
         window.label().into(),
-        request.scope,
+        scope,
         policy.clone(),
         ClusterCapabilities {
             helm: true,
@@ -537,11 +669,41 @@ async fn start_opencode_inner(
         settings.runtime,
         &executable,
         &endpoint.bootstrap,
-        request.prompt.as_deref(),
+        prompt,
     )?;
+    Ok(PreparedExternalAgent {
+        external_settings,
+        server,
+        endpoint,
+        process: HostProcess {
+            program: install.executable.into(),
+            args,
+            cwd,
+            environment: vec![],
+        },
+    })
+}
+
+async fn start_opencode_inner(
+    session_id: String,
+    request: StartRequest,
+    on_event: Channel<ExecBatch>,
+    ack_timeout_secs: Option<u64>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let registry = window.state::<OpenCodeManager>().inner().clone();
+    let pending = registry.begin(window.label(), &session_id)?;
+    let prepared = prepare_external_agent(
+        &session_id,
+        request.scope,
+        request.prompt.as_deref(),
+        &window,
+        &pending,
+    )
+    .await?;
     let terminals = window.state::<HostTerminalManager>().inner().clone();
     if let Some(previous) = registry.0.lock().await.remove(window.label()) {
-        previous.terminals.stop(window.label(), &previous.id).await;
+        previous.stop().await;
     }
     pending.launch.check()?;
     let mut subscription = terminals
@@ -553,12 +715,7 @@ async fn start_opencode_inner(
                 cols: request.cols,
                 rows: request.rows,
             },
-            HostProcess {
-                program: install.executable.into(),
-                args,
-                cwd,
-                environment: vec![],
-            }.with_shell_environment().map_err(|e| e.message)?,
+            prepared.process.with_shell_environment().map_err(|e| e.message)?,
         )
         .await
         .map_err(|e| e.message)?;
@@ -573,9 +730,9 @@ async fn start_opencode_inner(
         Active {
             id: session_id.clone(),
             owner: owner.clone(),
-            terminals: terminals.clone(),
-            server,
-            _endpoint: endpoint,
+            launch: ActiveLaunch::Pty(terminals.clone()),
+            server: Some(prepared.server),
+            _endpoint: Some(prepared.endpoint),
         },
     );
     tauri::async_runtime::spawn(async move {
@@ -594,6 +751,206 @@ async fn start_opencode_inner(
             active.remove(&owner);
         }
     });
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemTerminalStartRequest {
+    pub scope: AgentScope,
+    pub prompt: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemTerminalLaunchResult {
+    pub session_id: String,
+    pub terminal: String,
+}
+
+#[tauri::command]
+pub async fn start_external_agent_system_terminal(
+    session_id: String,
+    request: SystemTerminalStartRequest,
+    window: tauri::WebviewWindow,
+) -> Result<SystemTerminalLaunchResult, OpenCodeStartFailure> {
+    start_external_agent_system_terminal_inner(session_id, request, window)
+        .await
+        .map_err(|message| OpenCodeStartFailure {
+            code: "opencode_start_failed",
+            message,
+            process_started: false,
+        })
+}
+
+fn direct_http_arguments(runtime: AgentRuntime, prompt: Option<&str>) -> Result<Vec<String>, String> {
+    let mut result = match runtime {
+        AgentRuntime::OpenCode | AgentRuntime::Codex | AgentRuntime::Claude => Vec::new(),
+        AgentRuntime::Kubiki => return Err("Not an external agent".into()),
+    };
+    if let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) {
+        result.push(
+            if runtime == AgentRuntime::OpenCode {
+                "--prompt"
+            } else {
+                "--"
+            }
+            .into(),
+        );
+        result.push(prompt.into());
+    }
+    Ok(result)
+}
+
+async fn start_external_agent_system_terminal_inner(
+    session_id: String,
+    request: SystemTerminalStartRequest,
+    window: tauri::WebviewWindow,
+) -> Result<SystemTerminalLaunchResult, String> {
+    let registry = window.state::<OpenCodeManager>().inner().clone();
+    let settings = crate::agent_commands::load(window.app_handle()).await?;
+    if settings.mcp_server.enabled {
+        if session_id.is_empty()
+            || session_id.len() > 128
+            || !session_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+        {
+            return Err("Invalid external agent terminal session ID".into());
+        }
+        if settings.runtime == AgentRuntime::Kubiki {
+            return Err("Select an external agent in AI settings first".into());
+        }
+        if request.scope.context.is_empty() {
+            return Err("Select a cluster before starting the external agent".into());
+        }
+        if request.prompt.as_ref().is_some_and(|p| p.len() > 24000) {
+            return Err("Initial request is too large".into());
+        }
+        let pending = registry.begin(window.label(), &session_id)?;
+        let external_settings = settings.runtime.settings(&settings).clone();
+        let install = ai_test_external_agent(settings.runtime, external_settings.clone()).await?;
+        let persistent = window
+            .state::<crate::mcp_http::PersistentMcpManager>()
+            .inner()
+            .clone();
+        persistent.set_scope(request.scope);
+        persistent.reconcile(window.app_handle(), &settings).await?;
+
+        let cwd = if external_settings.working_directory.is_empty() {
+            kubiki_core::pod_ops::host_terminal::host_terminal_info()
+                .map(|info| PathBuf::from(info.cwd))
+                .map_err(|_| "Home directory is unavailable".to_owned())?
+        } else {
+            let dir = PathBuf::from(&external_settings.working_directory);
+            if !dir.is_dir() {
+                return Err("Configured working directory does not exist".into());
+            }
+            dir
+        };
+        let search_path = crate::shell_environment::effective_path().await;
+        let terminal = crate::system_terminal::detect_system_terminal(
+            &external_settings.terminal_executable,
+            &search_path,
+        )
+        .await?;
+        let args = direct_http_arguments(settings.runtime, request.prompt.as_deref())?;
+        if let Some(previous) = registry.0.lock().await.remove(window.label()) {
+            previous.stop().await;
+        }
+        pending.launch.check()?;
+        let child = crate::system_terminal::spawn_in_system_terminal(
+            &terminal,
+            HostProcess {
+                program: install.executable.into(),
+                args,
+                cwd,
+                environment: vec![],
+            },
+        )?;
+        let child_holder = Arc::new(tokio::sync::Mutex::new(Some(child)));
+        if pending.launch.check().is_err() {
+            if let Some(mut child) = child_holder.lock().await.take() {
+                let _ = child.start_kill();
+            }
+            return Ok(SystemTerminalLaunchResult {
+                session_id,
+                terminal: terminal.label,
+            });
+        }
+        let owner = window.label().to_owned();
+        registry.0.lock().await.insert(
+            owner.clone(),
+            Active {
+                id: session_id.clone(),
+                owner,
+                launch: ActiveLaunch::System(child_holder),
+                server: None,
+                _endpoint: None,
+            },
+        );
+        return Ok(SystemTerminalLaunchResult {
+            session_id,
+            terminal: terminal.label,
+        });
+    }
+
+    let pending = registry.begin(window.label(), &session_id)?;
+    let prepared = prepare_external_agent(
+        &session_id,
+        request.scope,
+        request.prompt.as_deref(),
+        &window,
+        &pending,
+    )
+    .await?;
+    let search_path = crate::shell_environment::effective_path().await;
+    let terminal = crate::system_terminal::detect_system_terminal(
+        &prepared.external_settings.terminal_executable,
+        &search_path,
+    )
+    .await?;
+    if let Some(previous) = registry.0.lock().await.remove(window.label()) {
+        previous.stop().await;
+    }
+    pending.launch.check()?;
+    let child = crate::system_terminal::spawn_in_system_terminal(&terminal, prepared.process)?;
+    let child_holder = Arc::new(tokio::sync::Mutex::new(Some(child)));
+    if pending.launch.check().is_err() {
+        if let Some(mut child) = child_holder.lock().await.take() {
+            let _ = child.start_kill();
+        }
+        return Ok(SystemTerminalLaunchResult {
+            session_id,
+            terminal: terminal.label,
+        });
+    }
+    let owner = window.label().to_owned();
+    registry.0.lock().await.insert(
+        owner,
+        Active {
+            id: session_id.clone(),
+            owner: window.label().to_owned(),
+            launch: ActiveLaunch::System(child_holder),
+            server: Some(prepared.server),
+            _endpoint: Some(prepared.endpoint),
+        },
+    );
+    Ok(SystemTerminalLaunchResult {
+        session_id,
+        terminal: terminal.label,
+    })
+}
+
+#[tauri::command]
+pub async fn stop_external_agent_system_terminal(
+    session_id: String,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    window
+        .state::<OpenCodeManager>()
+        .stop_session(window.label(), &session_id)
+        .await;
     Ok(())
 }
 
@@ -770,10 +1127,23 @@ mod tests {
         assert!(
             OpenCodeSettings {
                 executable: "opencode\n--auto".into(),
-                working_directory: String::new()
+                working_directory: String::new(),
+                ..Default::default()
             }
             .validate()
             .is_err()
+        );
+        assert!(
+            OpenCodeSettings {
+                terminal_executable: "ghostty; rm -rf /".into(),
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert_eq!(
+            OpenCodeSettings::default().terminal_mode,
+            ExternalTerminalMode::Embedded
         );
     }
 }
