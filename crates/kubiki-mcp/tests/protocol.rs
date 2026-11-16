@@ -356,3 +356,66 @@ async fn live_policy_update_toggles_read_only_and_individual_tools_without_resta
     let _ = client.cancel().await;
     let _ = service.cancel().await;
 }
+
+#[tokio::test]
+async fn dynamic_scope_rebinds_live_mcp_session_without_disconnect() {
+    struct ScopeEcho;
+    #[async_trait::async_trait]
+    impl ToolExecutor for ScopeEcho {
+        async fn execute(
+            &self,
+            session: &Session,
+            _call: &ToolCall,
+            _emit: &EventSink,
+        ) -> Result<serde_json::Value, String> {
+            Ok(json!({
+                "context": session.scope.context,
+                "namespaces": session.scope.namespaces,
+            }))
+        }
+    }
+    let scope_ref = Arc::new(Mutex::new(AgentScope {
+        context: "cluster-a".into(),
+        namespaces: vec!["ns-a".into()],
+        all_namespaces: false,
+    }));
+    let session = Session::new(
+        "dyn".into(),
+        "desktop".into(),
+        scope_ref.lock().unwrap().clone(),
+        AgentPolicy::default(),
+        ClusterCapabilities::default(),
+    );
+    session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Plan).unwrap();
+    let server = ClusterServer::new(session, Arc::new(ScopeEcho), Arc::new(|_| {}), true)
+        .with_dynamic_scope(scope_ref.clone());
+    let (c, s) = tokio::io::duplex(65536);
+    let (client, service) = tokio::join!(().serve(c), server.clone().serve(s));
+    let client = client.unwrap();
+    let service = service.unwrap();
+
+    let first = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("get_resource"))
+        .await
+        .unwrap();
+    assert_eq!(first.structured_content.unwrap()["context"], "cluster-a");
+
+    let next_scope = AgentScope {
+        context: "cluster-b".into(),
+        namespaces: vec!["ns-b".into()],
+        all_namespaces: false,
+    };
+    *scope_ref.lock().unwrap() = next_scope.clone();
+    server.rebind_scope(&next_scope);
+
+    let second = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("get_resource"))
+        .await
+        .unwrap();
+    assert_eq!(second.structured_content.unwrap()["context"], "cluster-b");
+    let _ = client.cancel().await;
+    let _ = service.cancel().await;
+}
