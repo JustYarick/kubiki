@@ -123,6 +123,8 @@ The shared metrics subscription owns aggregate and per-node observation historie
 | `port_forward_commands.rs` | Starting, listing, and stopping TCP forwards. |
 | `extension_commands.rs` | Bundled extension runtime startup and brokered requests/cancellation. |
 | `update_commands.rs` | Stable/dev feed and version policy, signed package downloads, session cleanup and installation. |
+| `mcp_http.rs` | Persistent loopback HTTP MCP server, bearer token storage, and external client auto-configuration. |
+| `system_terminal.rs` | System terminal detection and external agent process launching. |
 | `graphics.rs` | Linux graphics runtime initialization and diagnostics. |
 
 The desktop shell owns transport and application lifecycle concerns. Kubernetes request logic and reusable session managers reside in `kubiki-core`. Native discovery and snapshot/CRD reads use `core/reads.rs`; node drain orchestration lives in `core/drain.rs`. Terminal command adapters share `exec_stream.rs` for IPC batching and acknowledgements.

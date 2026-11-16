@@ -23,8 +23,9 @@ The current investigation/result and execution format is specified in
    native OS credential store, separately from configuration and conversation data.
 3. Select **Load models** and choose an available model. **Use as default** saves
    the connection, model and optional generation settings for new conversations.
-4. Configure **Agent permissions**. Secret contents, ConfigMap contents, Pod
-   logs, inline environment values, container commands and annotations are
+4. Configure **Confirmations (Kubiki Agent)** under **Settings → AI assistant** and
+   access profiles under **Settings → MCP Server & Tools**. Secret contents, ConfigMap
+   contents, Pod logs, inline environment values, container commands and annotations are
    excluded by default. All write permissions start disabled.
 5. Start a conversation. Select **General chat · no cluster** for ordinary
    questions without requiring a cluster connection, or keep the selected
@@ -64,8 +65,8 @@ block directly. Raw HTML is sanitized before rendering; remote images are replac
 
 The composer has two independent controls: **Plan / Action** and **Ask / Auto accept**.
 New and restored conversations start in **Plan + Ask**. Plan forbids all writes.
-Ask requests consent for model tools; **Confirmations → Ask permission for reads**
-controls whether reads also prompt (enabled by default for existing settings).
+Ask requests consent for model tools; **Ask permission for reads (Kubiki Agent)**
+under **Confirmations (Kubiki Agent)** controls whether reads also prompt (enabled by default for existing settings).
 Turn it off to confirm changes only. Auto accept runs
 permitted tools automatically. The question tool is already an explicit user interaction.
 In settings, **Always ask** selects tools that must request consent in either mode.

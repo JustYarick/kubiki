@@ -53,8 +53,8 @@ that policy updates revoke evidence without reusing its IDs. MCP protocol tests
 cover direct phase-denied calls and late results after revocation. AI runtime
 tests reuse a session after policy changes without replaying old context; native
 tests verify session/scope retention and restrictive settings round trips.
-Browser AI scenarios change the external server phase without restarting its
-terminal and continue an integrated conversation after editing permissions.
+Browser AI scenarios switch MCP access profiles without restarting external
+terminals and continue an integrated conversation after editing permissions.
 `sidebar_navigation.spec.ts` checks whole-workspace switching, tree filters,
 topology scope and AI drafts. AI browser scenarios also verify that section
 navigation preserves a running conversation without stopping it.
