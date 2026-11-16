@@ -57,12 +57,29 @@ impl HostProcess {
     #[cfg(unix)]
     fn through_shell(self, shell: &str) -> Self {
         let fish = Path::new(shell).file_name().is_some_and(|name| name == "fish");
-        let mut args = vec!["-l".into(), "-i".into(), "-c".into(),
-            if fish { "exec $argv".into() } else { "exec \"$@\"".into() }];
-        if !fish { args.push("kubiki-agent".into()); }
+        // Restore cwd after startup files in case .zprofile/.zshrc changed directory.
+        let mut args = vec![
+            "-l".into(),
+            "-i".into(),
+            "-c".into(),
+            if fish {
+                "set -l d $argv[1]; set -e argv[1]; cd -- $d; and exec $argv".into()
+            } else {
+                "cd -- \"$1\" && shift && exec \"$@\"".into()
+            },
+        ];
+        if !fish {
+            args.push("kubiki-agent".into());
+        }
+        args.push(self.cwd.to_string_lossy().into_owned());
         args.push(self.program.to_string_lossy().into_owned());
         args.extend(self.args);
-        Self { program: shell.into(), args, cwd: self.cwd, environment: self.environment }
+        Self {
+            program: shell.into(),
+            args,
+            cwd: self.cwd,
+            environment: self.environment,
+        }
     }
 }
 fn error(status: u16, message: impl Into<String>) -> ApiError {
@@ -693,10 +710,11 @@ mod tests {
         let Some(shell) = ["/bin/zsh", "/usr/bin/zsh"].into_iter().find(|path| Path::new(path).is_file()) else { return; };
         let directory = std::env::temp_dir().join(format!("kubiki-shell-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir(&directory).unwrap();
-        std::fs::write(directory.join(".zshrc"), "export KUBIKI_STARTUP_TEST=synthetic-startup-value\n").unwrap();
+        std::fs::write(directory.join(".zshrc"), "cd /\nexport KUBIKI_STARTUP_TEST=synthetic-startup-value\n").unwrap();
+        let canonical = std::fs::canonicalize(&directory).unwrap();
         let process = HostProcess {
             program: "/bin/sh".into(), cwd: directory.clone(),
-            args: vec!["-c".into(), "printf '\\nSTARTUP:%s\\nARG:%s\\n' \"$KUBIKI_STARTUP_TEST\" \"$1\"".into(), "test".into(), "literal ; $(echo BAD) ' \"".into()],
+            args: vec!["-c".into(), "printf '\\nSTARTUP:%s\\nCWD:%s\\nARG:%s\\n' \"$KUBIKI_STARTUP_TEST\" \"$(pwd -P)\" \"$1\"".into(), "test".into(), "literal ; $(echo BAD) ' \"".into()],
             environment: vec![("ZDOTDIR".into(), directory.to_string_lossy().into_owned())],
         }.through_shell(shell);
         let manager = HostTerminalManager::default();
@@ -718,6 +736,7 @@ mod tests {
         assert_eq!(code, 0);
         let output = String::from_utf8_lossy(&bytes);
         assert!(output.contains("STARTUP:synthetic-startup-value"));
+        assert!(output.contains(&format!("CWD:{}", canonical.display())));
         assert!(output.contains("ARG:literal ; $(echo BAD) ' \""));
     }
 
