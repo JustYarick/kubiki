@@ -166,8 +166,8 @@ test.describe('system time zone for logs', () => {
     await expect(zone.getByRole('option', { name: 'Local time (America/New_York)', exact: true })).toBeAttached();
     await zone.selectOption('local');
     await expect(zone.locator('option').first()).toHaveValue('local');
-    await expect(before).toHaveText('2026-03-08T01:59:59.123456789-05:00');
-    await expect(after).toHaveText('2026-03-08T03:00:00.123456789-04:00');
+    await expect(before).toHaveText('2026-03-08 01:59:59.123');
+    await expect(after).toHaveText('2026-03-08 03:00:00.123');
     await expect(after).toHaveAttribute('datetime', '2026-03-08T07:00:00.123456789Z');
     expect(await page.evaluate(() => (window as any).__execHarness.logRequests.length)).toBe(reads);
     await page.keyboard.press('Escape');
@@ -179,7 +179,7 @@ test.describe('system time zone for logs', () => {
       const { useDockStore } = await import(/* @vite-ignore */ '/src/state/dock_store.ts' as string);
       useDockStore.getState().openLogs('pod-with-init-container-and-a-long-name-for-responsive-toolbar', 'backend', 'app');
     }, logText);
-    await expect(before).toHaveText('2026-03-08T01:59:59.123456789-05:00');
+    await expect(before).toHaveText('2026-03-08 01:59:59.123');
     await page.getByRole('banner').getByRole('button', { name: 'Settings', exact: true }).click();
     const settings = page.getByRole('dialog', { name: /Settings/ });
     await settings.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: 'Logs', exact: true }).click();
