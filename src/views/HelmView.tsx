@@ -151,7 +151,7 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
         { id: 'failed', label: 'Failed', value: result.data ? items.filter(item => item.status === 'failed').length : null, detail: 'Last operation failed', tone: 'warn', icon: deliveryIcons.attention },
         { id: 'progressing', label: 'In progress', value: result.data ? items.filter(item => item.status.startsWith('pending-') || item.status === 'uninstalling').length : null, detail: 'Install, upgrade or uninstall', tone: 'muted', icon: deliveryIcons.progressing },
       ]} />
-      <p className="helm-dashboard-caption">{namespaceScopeLabel(namespace ?? 'all')} · {result.error ? 'Last complete snapshot' : 'Complete release inventory'} · auto 30s</p>
+      <p className="helm-dashboard-caption">{namespaceScopeLabel(namespace ?? 'all')} · {result.error ? 'Last complete snapshot' : result.partialErrors.length ? 'Partial release inventory' : 'Complete release inventory'} · auto 30s</p>
     </div>
     <div className="helm-filterbar">
       <label className="helm-search"><Search size={13} aria-hidden="true" /><input aria-label="Search Helm releases by name or namespace" placeholder="Filter releases…" value={query} onChange={event => setQuery(event.target.value)} /></label>
@@ -165,6 +165,20 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
     </div>
     <p className="helm-scope">{k8s.demo ? 'Demo · ' : ''}{context} · {namespaceScopeLabel(namespace ?? 'all')} · {k8s.supportsHelmMutations ? 'Backend-confirmed changes' : 'Read only'}</p>
     {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}
+    {!!result.partialErrors.length && (
+      <details className="mx-3 mt-2 rounded border border-[var(--status-warn)]/40 p-2.5 text-xs">
+        <summary className="cursor-pointer text-[var(--status-warn)]">
+          Partial release data · {result.partialErrors.length} namespace{result.partialErrors.length === 1 ? '' : 's'} unavailable (loaded releases are shown below)
+        </summary>
+        <ul className="mt-2 space-y-1 text-[var(--text-secondary)]">
+          {result.partialErrors.map(entry => (
+            <li key={entry.scope} className="break-words">
+              <strong className="font-mono text-[var(--text-primary)]">{entry.scope}</strong>: {entry.error.message}
+            </li>
+          ))}
+        </ul>
+      </details>
+    )}
     {owners.error && <RequestErrorNotice error={owners.error} retainedData={!!owners.items.length} onRetry={owners.refresh} />}
     <div className="helm-content">
       <div className="helm-list">

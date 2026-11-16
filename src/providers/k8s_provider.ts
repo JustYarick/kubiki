@@ -1,5 +1,6 @@
 import { environmentReadTransport, type KubernetesReadTransport } from './read_transport';
-import { queuedRead } from './read_queue';
+import { queuedRead, type ReadLane } from './read_queue';
+import type { ReadPriority } from './initial_sync_queue';
 import { applyBatch as applyBatchRequest, changeResource, deleteObject, type BatchResult, type BatchStep } from './mutations';
 import { resourceRef } from '../core/resources/identity';
 import { namespaceNames, inNamespaceScope, namespaceScopeCovers } from '../core/resources/namespace_scope';
@@ -9,14 +10,14 @@ import { RESOURCE_TYPES } from '../core/resources/resource_types';
 import { pollResourceSnapshots } from './snapshot_watch';
 import { watchNamespaceSelection } from './multi_namespace_watch';
 import type { KubeContextInfo, ResourceItem, ResourceKind } from '../types/k8s';
-import { mapK8sResourceList } from '../core/utils/k8s_mapper';
+import { mapK8sResource, mapK8sResourceList } from '../core/utils/k8s_mapper';
 import { buildMockResources, MOCK_NAMESPACES } from './mock/mock_resources';
 import { buildMockMetrics } from './mock/mock_metrics';
 import { parseApiVersion, resourceQuery, resourceType } from '../core/resources/resource_types';
-import type { KubernetesProvider } from './contract';
+import type { KubernetesProvider, ReadResourceOptions } from './contract';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
 import type { ResourceQuery, ResourceRef } from '../core/resources/resource_types';
-import type { WatchBatch } from './watch_types';
+import type { WatchBatch, WatchFilter } from './watch_types';
 import { parseCustomResources, type CustomResourceInstance } from './custom_resources';
 import { resourceBucket } from '../core/resources/custom_resource_types';
 import { parseHelmReleases, parseHelmHistory, parseHelmRepositories, validateHelmTarget, validateHelmDocument, type HelmDocument } from './helm_types';
@@ -48,6 +49,8 @@ export class K8sProvider implements KubernetesProvider {
   }
   private mock: ReturnType<typeof buildMockResources> | undefined;
   get supportsResourceWatch(): boolean { return !this.demo && this.isTauriEnv(); }
+  get supportsSinglePodMetric(): boolean { return this.demo || this.isTauriEnv(); }
+  get supportsCustomSearchInventory(): boolean { return !this.demo && this.isTauriEnv(); }
   get supportsHelmMutations(): boolean { return !this.demo && this.isTauriEnv(); }
 
   async resetResourceWatches(): Promise<void> {
@@ -57,24 +60,24 @@ export class K8sProvider implements KubernetesProvider {
     catch (error) { throw normalizeK8sError(error, { operation: 'unwatch' }); }
   }
 
-  async watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
+  async watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void> {
     if (!this.supportsResourceWatch) throw requestError('unsupported', 'Resource watch is available in the desktop app. Browser mode uses snapshots.', { operation: 'watch', context: query.context, resource: query });
     if (resourceType(query.kind).watch === false) return watchNamespaceSelection({ watchResources: (scoped, receive, abort) => pollResourceSnapshots(scoped, () => this.request('get_resources', 'resources', { ...scoped }, undefined, undefined, abort), receive, abort) }, query, onBatch, signal);
     const { watchTauriResources } = await import('./tauri_watch');
-    return watchNamespaceSelection({ watchResources: watchTauriResources }, query, onBatch, signal);
+    return watchNamespaceSelection({ watchResources: (scoped, receive, abort, activeFilter) => watchTauriResources(scoped, receive, abort, undefined, activeFilter) }, query, onBatch, signal, filter);
   }
 
-  async watchCustomResources(query: ResourceQuery, definition: {name: string; uid: string}, onBatch: (batch: WatchBatch) => void, signal: AbortSignal): Promise<() => void> {
+  async watchCustomResources(query: ResourceQuery, definition: {name: string; uid: string}, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void> {
     if (!this.supportsResourceWatch) throw requestError('unsupported', 'Custom resource watch requires the desktop app', {operation:'watch', context:query.context, resource:query});
     const { watchTauriResources } = await import('./tauri_watch');
-    return watchNamespaceSelection({watchResources:(scoped, receive, abort) => watchTauriResources(scoped, receive, abort, definition)}, query, onBatch, signal);
+    return watchNamespaceSelection({watchResources:(scoped, receive, abort, activeFilter) => watchTauriResources(scoped, receive, abort, definition, activeFilter)}, query, onBatch, signal, filter);
   }
 
   private isTauriEnv(): boolean {
     return this.transport.native;
   }
 
-  private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown, nativeArgs?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  private async request<T>(command: string, path: string, args: Record<string, unknown> = {}, body?: unknown, nativeArgs?: Record<string, unknown>, signal?: AbortSignal, priority: ReadPriority = 'normal', lane: ReadLane = 'default'): Promise<T> {
     const info: RequestInfo = { operation: path, context: args.context as string | undefined,
       resource: args.kind ? { context: args.context as string, group: args.group as string ?? '', version: args.version as string ?? 'v1', kind: args.kind as string, namespace: args.namespace as string ?? null,
         ...(args.name ? { name: args.name as string, uid: null } : {}) } : undefined };
@@ -84,7 +87,7 @@ export class K8sProvider implements KubernetesProvider {
     for (const source of sources) { source.addEventListener('abort', abort, { once: true }); if (source.aborted) abort(); }
     try {
       if (path !== 'contexts' && path !== 'kubeconfig_path' && path !== 'set_kubeconfig_path' && path !== 'helm/repositories' && path !== 'helm/charts' && !(args.context as string | undefined)?.trim()) throw requestError('invalid_request', 'A Kubernetes context is required', info, 400);
-      return await queuedRead(() => this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, controller.signal), controller.signal);
+      return await queuedRead(() => this.transport.request<T>(command, path, this.transport.native ? nativeArgs ?? args : args, info, body, controller.signal), controller.signal, priority, lane);
     } catch (error) { throw normalizeK8sError(error, info); }
     finally { for (const source of sources) source.removeEventListener('abort', abort); }
   }
@@ -133,19 +136,61 @@ export class K8sProvider implements KubernetesProvider {
     return parseApiResources(await this.request('get_api_resources', 'api-resources', { context }));
   }
 
-  async getResources(context: string, kind: ResourceKind, namespace?: string, signal?: AbortSignal): Promise<ResourceItem[]> {
+  private buildListOptions(options?: ReadResourceOptions) {
+    if (!options) return { http: undefined, native: undefined };
+    const clean: Record<string, unknown> = {};
+    if (options.metadataOnly) clean.metadataOnly = true;
+    if (options.labelSelector) clean.labelSelector = options.labelSelector;
+    if (options.fieldSelector) clean.fieldSelector = options.fieldSelector;
+    if (options.limit != null) clean.limit = options.limit;
+    if (options.projection) clean.projection = options.projection;
+    if (!Object.keys(clean).length) return { http: undefined, native: undefined };
+    const http: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(clean)) http[k] = typeof v === 'boolean' || typeof v === 'number' ? String(v) : v;
+    return { http, native: { options: clean } };
+  }
+
+  async getResources(context: string, kind: ResourceKind, namespace?: string, signal?: AbortSignal, options?: ReadResourceOptions): Promise<ResourceItem[]> {
     if (this.demo) {
       this.mock ??= buildMockResources();
       return (this.mock[kind] ?? []).filter((item) => inNamespaceScope(namespace ?? 'all', item.namespace));
     }
     const names = namespaceNames(namespace ?? 'all');
-    if (names && names.length !== 1 && resourceType(kind).namespaced) return (await Promise.all(names.map(name => this.getResources(context, kind, name, signal)))).flat();
+    if (names && names.length !== 1 && resourceType(kind).namespaced) {
+      const settled = await Promise.allSettled(names.map(name => this.getResources(context, kind, name, signal, options)));
+      const items = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+      if (settled.every(result => result.status === 'rejected') && settled.length > 0) {
+        throw (settled[0] as PromiseRejectedResult).reason;
+      }
+      return items;
+    }
     const query = resourceQuery(context, kind, namespace);
-    const raw = await this.request<any>('get_resources', 'resources', { ...query }, undefined, undefined, signal);
-    if (!raw || !Array.isArray(raw.items) || raw.items.some((item: any) => !item || typeof item.metadata?.name !== 'string' || !item.metadata.name || item.kind && item.kind !== kind || item.apiVersion && (typeof item.apiVersion !== 'string' || parseApiVersion(item.apiVersion).group !== query.group))) {
+    const extra = this.buildListOptions(options);
+    const httpArgs = extra.http ? { ...query, ...extra.http } : { ...query };
+    const nativeArgs = extra.native ? { ...query, ...extra.native } : undefined;
+    const raw = await this.request<any>('get_resources', 'resources', httpArgs, undefined, nativeArgs, signal, options?.priority ?? 'normal', options?.lane ?? 'default');
+    if (!raw || !Array.isArray(raw.items) || raw.items.some((item: any) => !item || typeof item.metadata?.name !== 'string' || !item.metadata.name || item.kind && item.kind !== kind && !options?.metadataOnly || item.apiVersion && !options?.metadataOnly && (typeof item.apiVersion !== 'string' || parseApiVersion(item.apiVersion).group !== query.group))) {
       throw requestError('internal', 'Invalid resource list returned by Kubernetes bridge', { operation: 'resources', context, resource: query });
     }
     return mapK8sResourceList(raw, kind);
+  }
+
+  async getResource(context: string, kind: ResourceKind, name: string, namespace?: string, options?: { metadataOnly?: boolean; priority?: ReadPriority }, signal?: AbortSignal): Promise<ResourceItem> {
+    if (this.demo) {
+      this.mock ??= buildMockResources();
+      const found = (this.mock[kind] ?? []).find(item => item.name === name && (!resourceType(kind).namespaced || item.namespace === namespace));
+      if (!found) throw requestError('not_found', `${kind} "${name}" not found`, { operation: 'resource', context }, 404);
+      return found;
+    }
+    const query = resourceQuery(context, kind, resourceType(kind).namespaced ? namespace : undefined);
+    const meta = options?.metadataOnly ? { metadataOnly: true } : {};
+    const httpArgs = { ...query, name, ...(options?.metadataOnly ? { metadataOnly: 'true' } : {}) };
+    const nativeArgs = { ...query, name, ...meta };
+    const raw = await this.request<any>('get_resource', 'resource', httpArgs, undefined, nativeArgs, signal, options?.priority ?? 'high');
+    if (!raw || typeof raw.metadata?.name !== 'string' || !raw.metadata.name || (raw.kind && raw.kind !== kind && !options?.metadataOnly)) {
+      throw requestError('internal', 'Invalid resource returned by Kubernetes bridge', { operation: 'resource', context, resource: { ...query, name, uid: null } });
+    }
+    return mapK8sResource(raw, kind);
   }
 
   async getResourceCounts(context: string, kinds: ResourceKind[], namespace?: string, signal?: AbortSignal): Promise<Partial<Record<ResourceKind, number>>> {
@@ -195,14 +240,18 @@ export class K8sProvider implements KubernetesProvider {
     if (names && names.length !== 1 && !this.isTauriEnv()) {
       const namespaced = uncachedKinds.filter(kind => resourceType(kind).namespaced);
       const clusterKinds = uncachedKinds.filter(kind => !resourceType(kind).namespaced);
-      const [cluster, ...slices] = await Promise.all([
+      const [clusterResult, ...sliceResults] = await Promise.allSettled([
         this.getResourceCounts(context, clusterKinds, undefined, signal),
         ...names.map(name => this.getResourceCounts(context, namespaced, name, signal)),
       ]);
+      const cluster = clusterResult.status === 'fulfilled' ? clusterResult.value : {};
+      const slices = sliceResults.filter((r): r is PromiseFulfilledResult<Partial<Record<ResourceKind, number>>> => r.status === 'fulfilled').map(r => r.value);
       const totals: Partial<Record<ResourceKind, number>> = { ...cachedCounts, ...cluster };
-      for (const kind of namespaced) {
-        const counts = slices.map(slice => slice[kind]);
-        if (counts.every((count): count is number => typeof count === 'number')) totals[kind] = counts.reduce((sum, count) => sum + count, 0);
+      if (slices.length === names.length) {
+        for (const kind of namespaced) {
+          const counts = slices.map(slice => slice[kind]);
+          if (counts.every((count): count is number => typeof count === 'number')) totals[kind] = counts.reduce((sum, count) => sum + count, 0);
+        }
       }
       return totals;
     }
@@ -244,9 +293,16 @@ export class K8sProvider implements KubernetesProvider {
     return this.request('get_pod_logs', 'logs', { ...resourceQuery(context, 'Pod', namespace), name, container });
   }
 
-  async getCustomResources(context: string, name: string, uid: string, namespace: string | null, signal?: AbortSignal): Promise<CustomResourceInstance[]> {
+  async getCustomResources(context: string, name: string, uid: string, namespace: string | null, signal?: AbortSignal, options?: ReadResourceOptions): Promise<CustomResourceInstance[]> {
     const names = namespaceNames(namespace ?? 'all');
-    if (names && names.length !== 1) return (await Promise.all(names.map(namespace => this.getCustomResources(context, name, uid, namespace, signal)))).flat();
+    if (names && names.length !== 1) {
+      const settled = await Promise.allSettled(names.map(ns => this.getCustomResources(context, name, uid, ns, signal, options)));
+      const items = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+      if (settled.every(result => result.status === 'rejected') && settled.length > 0) {
+        throw (settled[0] as PromiseRejectedResult).reason;
+      }
+      return items;
+    }
     if (this.demo) {
       if (name === 'buckets.source.toolkit.fluxcd.io') {
         const rawItems = [
@@ -272,16 +328,87 @@ export class K8sProvider implements KubernetesProvider {
       const spec = definition?.raw?.spec;
       return spec ? (this.mock[resourceBucket({ kind: spec.names.kind, apiVersion: `${spec.group}/${spec.versions.find((version: any) => version.storage)?.name ?? 'v1'}` })] ?? []).filter(item => inNamespaceScope(namespace ?? 'all', item.namespace)) : [];
     }
-    return parseCustomResources(await this.request('get_custom_resources', 'custom-resources', { context, name, uid, namespace }, undefined, undefined, signal));
+    const extra = this.buildListOptions(options);
+    const httpArgs = extra.http ? { context, name, uid, namespace, ...extra.http } : { context, name, uid, namespace };
+    const nativeArgs = extra.native ? { context, name, uid, namespace, ...extra.native } : undefined;
+    return parseCustomResources(await this.request('get_custom_resources', 'custom-resources', httpArgs, undefined, nativeArgs, signal, options?.priority ?? 'normal', options?.lane ?? 'default'));
+  }
+
+  async getCustomResource(context: string, crdName: string, uid: string, namespace: string | null, name: string, options?: { metadataOnly?: boolean; priority?: ReadPriority }, signal?: AbortSignal): Promise<CustomResourceInstance> {
+    if (this.demo) {
+      const items = await this.getCustomResources(context, crdName, uid, namespace, signal);
+      const found = items.find(item => item.name === name && (!item.namespace || item.namespace === namespace));
+      if (!found) throw requestError('not_found', `Custom resource "${name}" not found`, { operation: 'custom-resource', context }, 404);
+      return found;
+    }
+    const httpArgs = { context, crdName, uid, namespace, name, ...(options?.metadataOnly ? { metadataOnly: 'true' } : {}) };
+    const nativeArgs = { context, crdName, uid, namespace, name, ...(options?.metadataOnly ? { metadataOnly: true } : {}) };
+    const raw = await this.request<any>('get_custom_resource', 'custom-resource', httpArgs, undefined, nativeArgs, signal, options?.priority ?? 'high');
+    const parsed = parseCustomResources({ items: [raw] });
+    if (!parsed.length) throw requestError('internal', 'Invalid custom resource returned by Kubernetes bridge', { operation: 'custom-resource', context });
+    return parsed[0];
+  }
+
+  async getCustomSearchInventory(context: string, namespace: string | null, signal?: AbortSignal): Promise<{ items: CustomResourceInstance[]; errors: string[] }> {
+    const names = namespaceNames(namespace ?? 'all');
+    if (names && names.length === 0) return { items: [], errors: [] };
+    if (names && names.length > 1) {
+      const settled = await Promise.allSettled(names.map(ns => this.getCustomSearchInventory(context, ns, signal)));
+      const byUid = new Map<string, CustomResourceInstance>();
+      const errors: string[] = [];
+      settled.forEach((result, idx) => {
+        if (result.status === 'fulfilled') {
+          for (const item of result.value.items) byUid.set(`${item.kind}/${item.uid}`, item);
+          errors.push(...result.value.errors);
+        } else {
+          errors.push(`${names[idx]}: ${normalizeK8sError(result.reason, { operation: 'custom-search', context }).message}`);
+        }
+      });
+      return { items: [...byUid.values()], errors: [...new Set(errors)] };
+    }
+    const scopedNs = names ? names[0] : (namespace && namespace !== 'all' ? namespace : null);
+    const raw = await this.request<{ items?: unknown[]; errors?: string[] }>(
+      'get_custom_search_inventory',
+      'custom-search',
+      { context, namespace: scopedNs },
+      undefined,
+      { context, namespace: scopedNs },
+      signal,
+      'low',
+      'search',
+    );
+    return {
+      items: parseCustomResources({ items: Array.isArray(raw?.items) ? raw.items : [] }),
+      errors: Array.isArray(raw?.errors) ? raw.errors : [],
+    };
+  }
+
+  async getPodMetric(context: string, namespace: string, name: string, signal?: AbortSignal): Promise<import('./overview_metrics').PodMetric> {
+    if (this.demo) {
+      this.mock ??= buildMockResources();
+      const metrics = buildMockMetrics(this.mock, context, namespace);
+      const found = metrics.pods.items?.find(item => item.name === name && item.namespace === namespace);
+      if (!found) throw requestError('not_found', `Metrics for Pod "${name}" not found`, { operation: 'pod-metric', context }, 404);
+      return found;
+    }
+    return this.request('get_pod_metric', 'pod-metric', { context, namespace, name }, undefined, { context, namespace, name }, signal, 'normal');
   }
 
   async getOverviewMetrics(context: string, namespace: string | null, signal?: AbortSignal): Promise<import('./overview_metrics').OverviewMetrics> {
     const { validateMetrics } = await import('./overview_metrics');
     const names = namespaceNames(namespace ?? 'all');
     if (names && names.length !== 1) {
-      const metrics = await Promise.all(names.map(namespace => this.getOverviewMetrics(context, namespace, signal)));
-      const error = metrics.find(result => result.pods.error)?.pods.error ?? null;
-      return { context, namespace, pods: { items: error ? null : metrics.flatMap(result => result.pods.items ?? []), error }, nodes: { items: null, error: null } };
+      const settled = await Promise.allSettled(names.map(ns => this.getOverviewMetrics(context, ns, signal)));
+      const fulfilled = settled
+        .filter((r): r is PromiseFulfilledResult<import('./overview_metrics').OverviewMetrics> => r.status === 'fulfilled')
+        .map(r => r.value);
+      const firstRejected = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      const error = fulfilled.find(result => result.pods.error)?.pods.error
+        ?? (firstRejected ? normalizeK8sError(firstRejected.reason, { operation: 'metrics', context }) : null);
+      const items = fulfilled.some(result => result.pods.items !== null)
+        ? fulfilled.flatMap(result => result.pods.items ?? [])
+        : null;
+      return { context, namespace, pods: { items, error }, nodes: { items: null, error: null } };
     }
     if (this.demo) {
       this.mock ??= buildMockResources();
