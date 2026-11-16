@@ -357,6 +357,12 @@ pub async fn resources_with_options(
     list_with_options(client, &query, &ar, &options).await
 }
 
+fn strip_managed_fields(item: &mut Value) {
+    if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.remove("managedFields");
+    }
+}
+
 pub async fn get_resource(
     client: Client,
     query: ResourceQuery,
@@ -374,9 +380,7 @@ pub async fn get_resource(
     let mut item = bounded(&query.context, "resource", access.get(&name, metadata_only))
         .await
         .map_err(|e| e.with_resource(&query))?;
-    if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
-        metadata.remove("managedFields");
-    }
+    strip_managed_fields(&mut item);
     Ok(item)
 }
 
@@ -490,9 +494,7 @@ pub async fn get_custom_resource(
     )
     .await
     .map_err(|e| e.with_resource(&query))?;
-    if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
-        metadata.remove("managedFields");
-    }
+    strip_managed_fields(&mut item);
     Ok(item)
 }
 
@@ -503,16 +505,11 @@ pub async fn custom_search_inventory(
     namespace: Option<String>,
 ) -> Result<Value, ApiError> {
     use futures::StreamExt;
-    let valid = |s: &str| {
-        !s.is_empty()
-            && s.len() <= 63
-            && !s.contains('.')
-            && s.bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-            && !s.starts_with('-')
-            && !s.ends_with('-')
-    };
-    if context.trim().is_empty() || namespace.as_deref().is_some_and(|ns| !valid(ns)) {
+    if context.trim().is_empty()
+        || namespace
+            .as_deref()
+            .is_some_and(|ns| !super::api::is_valid_namespace(ns))
+    {
         return Err(ApiError::from_status(
             400,
             "Context and a valid namespace are required",
