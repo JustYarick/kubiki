@@ -7,7 +7,7 @@ import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState, type React
 import { Cpu, MemoryStick, RefreshCw, ChevronDown, ArrowUpRight, Settings2 } from 'lucide-react';
 import type { ResourceItem } from '../../types/k8s';
 import { useOverviewMetrics } from '../../providers/use_overview_metrics';
-import { buildTelemetry, type Dimension, type HistoryPoint, type UsageRow } from '../../core/resources/telemetry';
+import { buildTelemetry, nodeMemoryAlerts, type Dimension, type HistoryPoint, type UsageRow } from '../../core/resources/telemetry';
 import { fastCompare } from '../../core/resources/resource_sort';
 import { cpuText, memoryText } from '../../core/resources/quantities';
 import { useWorkspaceStore } from '../../state/workspace_store';
@@ -31,6 +31,7 @@ export function ResourceTelemetry({ context, namespace, pods, nodes, children }:
   const maxima = useMemo(() => rows.reduce((max, row) => ({ cpu: Math.max(max.cpu, row.cpu), memory: Math.max(max.memory, row.memory) }), { cpu: 0, memory: 0 }), [rows]);
   const selection = rows.find(row => `${row.namespace ?? ''}/${row.name}` === selected);
   const errors = [state.error, state.data?.nodes.error?.message, state.data?.pods.error?.message].filter(Boolean);
+  const memoryAlerts = namespace || state.data?.nodes.error || state.error ? [] : nodeMemoryAlerts(telemetry.nodeRows);
   return <section aria-label="CPU and RAM telemetry" className="telemetry-section">
     <OverviewSection label="Compute and memory" title="Compute & memory" description={namespace ? `Pod usage · ${telemetry.coverage}` : `Node usage, including system processes · ${telemetry.coverage}`} actions={<>
       <Select aria-label="Metrics history range" className="ide-select" value={range} onChange={event => setRange(Number(event.target.value))}><option value={5}>Last 5 min</option><option value={15}>Last 15 min</option><option value={30}>Last 30 min</option></Select>
@@ -43,6 +44,11 @@ export function ResourceTelemetry({ context, namespace, pods, nodes, children }:
       </Popover>
     </>}>
     {(errors.length > 0 || telemetry.stale) && <div role="status" className="telemetry-notice"><strong>{state.data ? 'Metrics incomplete or stale' : 'Usage metrics unavailable'}</strong><span>{errors.length ? errors.join(' · ') : 'The source sample is older than 2 minutes or its clock is ahead.'}</span>{!state.data && <span>Check that Metrics Server is available and your account can read metrics.k8s.io.</span>}</div>}
+    {!!memoryAlerts.length && <div aria-label="Node memory alerts" className="telemetry-notice" role="status">
+      <strong>High Node memory usage</strong>
+      {memoryAlerts.map(row => <button key={row.name} className={row.severity === 'error' ? 'text-[var(--status-danger)] text-left' : 'text-[var(--status-warn)] text-left'} onClick={() => row.item && useWorkspaceStore.getState().openResourceDetail(row.item)}>{row.name}: {memoryText(row.memory)} · {row.percent.toFixed(1)}% of allocatable · {row.severity === 'error' ? 'critical ≥95%' : 'warning ≥85%'}</button>)}
+      <span>Current host usage · separate from the kubelet MemoryPressure condition.</span>
+    </div>}
     <div className="telemetry-metrics">{(['cpu', 'memory'] as const).map(dimension => {
       const budget = telemetry.budgets[dimension];
       const reference = namespace ? budget.limit : budget.allocatable;

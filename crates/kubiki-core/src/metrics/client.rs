@@ -34,68 +34,17 @@ pub struct MetricsService;
 impl MetricsService {
     /// Retrieve CPU/Memory metrics for all nodes via metrics.k8s.io
     pub async fn get_node_metrics(client: &Client) -> Result<Vec<NodeMetricsInfo>, KubikiError> {
-        let ar = ApiResource {
-            group: "metrics.k8s.io".into(),
-            version: "v1beta1".into(),
-            api_version: "metrics.k8s.io/v1beta1".into(),
-            kind: "NodeMetrics".into(),
-            plural: "nodes".into(),
-        };
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &node_metrics_resource());
+        api.list(&ListParams::default()).await.map_err(KubikiError::from)?
+            .into_iter().map(parse_node_metric).collect()
+    }
 
-        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .map_err(KubikiError::from)?;
-
-        let mut metrics = Vec::new();
-        for item in list {
-            let name = item.metadata.name.unwrap_or_default();
-            let timestamp = item
-                .data
-                .get("timestamp")
-                .and_then(|t| t.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let window = item
-                .data
-                .get("window")
-                .and_then(|w| w.as_str())
-                .unwrap_or_default()
-                .to_string();
-
-            let usage = item.data.get("usage");
-            let cpu = usage
-                .and_then(|u| u.get("cpu"))
-                .and_then(|c| c.as_str())
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| {
-                    KubikiError::Internal(
-                        "Metrics API returned a missing CPU or memory quantity".into(),
-                    )
-                })?
-                .to_string();
-            let memory = usage
-                .and_then(|u| u.get("memory"))
-                .and_then(|m| m.as_str())
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| {
-                    KubikiError::Internal(
-                        "Metrics API returned a missing CPU or memory quantity".into(),
-                    )
-                })?
-                .to_string();
-
-            metrics.push(NodeMetricsInfo {
-                name,
-                timestamp,
-                window,
-                cpu,
-                memory,
-            });
+    pub async fn get_node_metric(client: &Client, name: &str) -> Result<NodeMetricsInfo, KubikiError> {
+        if name.is_empty() || name.len() > 253 || !name.bytes().all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c)) {
+            return Err(KubikiError::Internal("Invalid Node metrics identity".into()));
         }
-
-        Ok(metrics)
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &node_metrics_resource());
+        parse_node_metric(api.get(name).await.map_err(KubikiError::from)?)
     }
 
     /// Retrieve CPU/Memory metrics for all pods in a namespace
@@ -211,4 +160,13 @@ fn parse_pod_metric(item: DynamicObject) -> Result<PodMetricsInfo, KubikiError> 
         window,
         containers,
     })
+}
+
+fn node_metrics_resource() -> ApiResource {
+    ApiResource { group: "metrics.k8s.io".into(), version: "v1beta1".into(), api_version: "metrics.k8s.io/v1beta1".into(), kind: "NodeMetrics".into(), plural: "nodes".into() }
+}
+fn parse_node_metric(item: DynamicObject) -> Result<NodeMetricsInfo, KubikiError> {
+    let value = |key: &str| item.data["usage"][key].as_str().filter(|v| !v.is_empty()).map(str::to_owned)
+        .ok_or_else(|| KubikiError::Internal("Metrics API returned a missing CPU or memory quantity".into()));
+    Ok(NodeMetricsInfo { name: item.metadata.name.clone().unwrap_or_default(), timestamp: item.data["timestamp"].as_str().unwrap_or_default().into(), window: item.data["window"].as_str().unwrap_or_default().into(), cpu: value("cpu")?, memory: value("memory")? })
 }

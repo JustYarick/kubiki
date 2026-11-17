@@ -850,10 +850,13 @@ impl KubernetesTools {
             };
             return timed_read(session, "Namespace discovery cancelled", "Namespace discovery timed out", read).await;
         }
+        if call.name == "get_metrics" {
+            let result = timed_read(session, "Metrics read cancelled", "Metrics read timed out", self.resource_metrics(session, call)).await?;
+            return bounded_result(result);
+        }
         if [
             "get_logs",
             "get_events",
-            "get_metrics",
             "get_events_timeline",
         ]
         .contains(&call.name.as_str())
@@ -1202,7 +1205,7 @@ impl KubernetesTools {
                     .as_ref()
                     .map_or_else(|| data.clone(), |fields| fields.apply(&data));
                 bounded_result(
-                    json!({"capturedAt":stamp(),"resource":data,"coverage":"Policy-filtered live Kubernetes read; omitted fields are not evidence of absence"}),
+                    json!({"capturedAt":stamp(),"resource":data,"fieldAccess":field_access_report(&state.policy, &target, builtin, fields.as_deref()),"coverage":"Policy-filtered live Kubernetes read; omitted fields are not evidence of absence"}),
                 )
             } else if call.name == "list_resources" {
                 if !target.name.is_empty() {
@@ -1243,7 +1246,9 @@ impl KubernetesTools {
                 let pending = pending.ok_or("Cursor has no remaining page")?;
                 let captured_at = pending.captured_at;
                 let omitted = pending.omitted;
-                let (items, mut tail) = split_page(pending, 48_000)?;
+                let field_access = field_access_report(&state.policy, &target, builtin, fields.as_deref());
+                let page_budget = 48_000.min(56_000usize.saturating_sub(field_access.to_string().len()));
+                let (items, mut tail) = split_page(pending, page_budget)?;
                 tail.omitted = 0;
                 let has_more = !tail.items.is_empty() || tail.continuation.is_some();
                 let cursor = if has_more {
@@ -1258,7 +1263,7 @@ impl KubernetesTools {
                     None
                 };
                 Ok(
-                    json!({"scope":{"namespace":target.namespace,"kind":target.kind,"labelSelector":args.label_selector,"fieldSelector":args.field_selector},"capturedAt":captured_at,"returned":items.len(),"items":items,"omittedByPolicy":omitted,"hasMore":has_more,"cursor":cursor,"completeness":if has_more || omitted > 0 {"partial"} else {"complete"},"coverage":"Policy-projected bounded page; cursor retains byte-limited tail before the next Kubernetes page"}),
+                    json!({"scope":{"namespace":target.namespace,"kind":target.kind,"labelSelector":args.label_selector,"fieldSelector":args.field_selector},"capturedAt":captured_at,"returned":items.len(),"items":items,"fieldAccess":field_access,"omittedByPolicy":omitted,"hasMore":has_more,"cursor":cursor,"completeness":if has_more || omitted > 0 {"partial"} else {"complete"},"coverage":"Policy-projected bounded page; cursor retains byte-limited tail before the next Kubernetes page"}),
                 )
             } else {
                 Err("Unknown AI tool".into())
@@ -1357,11 +1362,23 @@ fn permitted_owner(
 fn silent_events() -> EventSink {
     std::sync::Arc::new(|_| {})
 }
+fn event_in_window(item: &Value, since: Option<chrono::DateTime<chrono::FixedOffset>>, until: Option<chrono::DateTime<chrono::FixedOffset>>) -> bool {
+    if since.is_none() && until.is_none() { return true; }
+    let time = ["/series/lastObservedTime","/lastTimestamp","/eventTime","/firstTimestamp","/metadata/creationTimestamp"].iter()
+        .find_map(|path| item.pointer(path).and_then(Value::as_str).and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok()));
+    time.is_some_and(|time| since.is_none_or(|start| time >= start) && until.is_none_or(|end| time <= end))
+}
+fn field_access_report(policy: &AgentPolicy, target: &Target, builtin: bool, fields: Option<&[String]>) -> Value {
+    let requested = fields.unwrap_or_default();
+    let denied = policy.denied_fields(target, builtin, requested);
+    let per_resource = target.name.is_empty() && !policy.rules.is_empty();
+    json!({"requested":requested,"denied":if per_resource {None}else{Some(&denied)},"allRequestedFieldsDenied":if per_resource {None}else{Some(!requested.is_empty() && requested.len()==denied.len())},"perResourceRules":per_resource,"coverage":"Reported denials follow policy; per-resource rules require exact reads for field explanations. A permitted but omitted field may be absent or partially projected."})
+}
 fn flux_gvk(kind: &str) -> Result<(&'static str, &'static str), String> {
     match kind {
         "HelmRelease" => Ok(("helm.toolkit.fluxcd.io", "v2")),
         "Kustomization" => Ok(("kustomize.toolkit.fluxcd.io", "v1")),
-        "GitRepository" => Ok(("source.toolkit.fluxcd.io", "v1")),
+        "GitRepository" | "OCIRepository" | "HelmRepository" | "HelmChart" | "Bucket" => Ok(("source.toolkit.fluxcd.io", "v1")),
         _ => Err("Unsupported Flux kind".into()),
     }
 }
@@ -1471,7 +1488,8 @@ fn validate_query_filters(
                 path == *p
                     || path.starts_with(&format!("{p}/"))
                     || p.starts_with(&format!("{path}/"))
-            }) || (!key.starts_with("metadata.")
+            }) || !policy.denied_fields(target, builtin, &[key.to_owned()]).is_empty()
+                || (!key.starts_with("metadata.")
                 && !policy.collection_content_allowed(target, builtin))
             {
                 return Err("Field selector is outside the permitted query projection".into());
@@ -1686,19 +1704,33 @@ impl KubernetesTools {
             mode: Option<String>,
             contains: Option<String>,
             page_size: Option<usize>,
+            #[serde(rename = "type")]
+            event_type: Option<String>,
+            reason: Option<String>,
+            until_time: Option<String>,
         }
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid diagnostic arguments")?;
         if call.name != "get_logs"
             && (args.tail_lines.is_some()
                 || args.since_seconds.is_some()
-                || args.since_time.is_some()
                 || args.mode.is_some()
-                || args.contains.is_some()
-                || args.page_size.is_some())
+                || args.contains.is_some())
         {
             return Err("Log options only apply to get_logs".into());
         }
+        let events = matches!(call.name.as_str(), "get_events" | "get_events_timeline");
+        if !events && (args.event_type.is_some() || args.reason.is_some() || args.until_time.is_some()) {
+            return Err("Event filters only apply to Events".into());
+        }
+        if events && (args.event_type.as_ref().is_some_and(|v| !["Normal", "Warning"].contains(&v.as_str()))
+            || args.reason.as_ref().is_some_and(|v| v.is_empty() || v.len() > 253 || !v.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
+            || args.page_size.is_some_and(|n| !(1..=100).contains(&n))) {
+            return Err("Invalid Event type/reason/pageSize".into());
+        }
+        let since = if events { args.since_time.as_deref().map(chrono::DateTime::parse_from_rfc3339).transpose().map_err(|_| "Invalid Event sinceTime")? } else { None };
+        let until = args.until_time.as_deref().map(chrono::DateTime::parse_from_rfc3339).transpose().map_err(|_| "Invalid Event untilTime")?;
+        if since.zip(until).is_some_and(|(start,end)| start > end) { return Err("sinceTime must not be after untilTime".into()); }
         if call.name != "get_events" && call.name != "get_logs" && args.cursor.is_some() {
             return Err("Cursor only applies to get_events or get_logs".into());
         }
@@ -1862,6 +1894,8 @@ impl KubernetesTools {
                     }
                     filters.push(format!("involvedObject.uid={uid}"));
                 }
+                if let Some(value) = &args.event_type { filters.push(format!("type={value}")); }
+                if let Some(value) = &args.reason { filters.push(format!("reason={value}")); }
                 let selector = filters.join(",");
                 if !selector.is_empty() {
                     validate_query_filters(&state.policy, &target, true, None, Some(&selector))?;
@@ -1887,7 +1921,7 @@ impl KubernetesTools {
                     .as_ref()
                     .is_none_or(|page| page.items.is_empty() && page.continuation.is_some())
                 {
-                    let mut params = ListParams::default().limit(50);
+                    let mut params = ListParams::default().limit(args.page_size.unwrap_or(50) as u32);
                     if !selector.is_empty() {
                         params = params.fields(&selector);
                     }
@@ -1901,7 +1935,10 @@ impl KubernetesTools {
                         projected_page(&reader, &state.policy, &target, &params, false).await?,
                     );
                 }
-                let page = pending.ok_or("Cursor has no remaining page")?;
+                let mut page = pending.ok_or("Cursor has no remaining page")?;
+                let before_time_filter = page.items.len();
+                page.items.retain(|item| event_in_window(item, since, until));
+                let time_filter_omitted = before_time_filter - page.items.len();
                 let captured_at = page.captured_at;
                 let omitted = page.omitted;
                 let (items, mut tail) = split_page(page, 48_000)?;
@@ -1919,7 +1956,7 @@ impl KubernetesTools {
                     None
                 };
                 Ok(
-                    json!({"capturedAt":captured_at,"items":items,"hasMore":more,"cursor":cursor,"omittedByPolicy":omitted,"coverage":"Policy-projected Events in API order; no chronological or complete absence claim"}),
+                    json!({"capturedAt":captured_at,"items":items,"hasMore":more,"cursor":cursor,"omittedByPolicy":omitted,"timeFilterOmitted":time_filter_omitted,"coverage":"Policy-projected Events in API order. Time filters apply after each bounded page using latest occurrence (inclusive); unknown timestamps are omitted. Empty filtered pages may have a cursor; no chronological or complete absence claim"}),
                 )
             } else if call.name == "get_events_timeline" {
                 if !state.policy.events {
@@ -1952,6 +1989,8 @@ impl KubernetesTools {
                     }
                     filters.push(format!("involvedObject.uid={uid}"));
                 }
+                if let Some(value) = &args.event_type { filters.push(format!("type={value}")); }
+                if let Some(value) = &args.reason { filters.push(format!("reason={value}")); }
                 if !filters.is_empty() {
                     let selector = filters.join(",");
                     validate_query_filters(&state.policy, &target, true, None, Some(&selector))?;
@@ -1960,6 +1999,7 @@ impl KubernetesTools {
                 let page = projected_page(&reader, &state.policy, &target, &params, false).await?;
                 let mut timeline = Vec::new();
                 for value in page.items {
+                    if !event_in_window(&value, since, until) { continue; }
                     let item: DynamicObject = serde_json::from_value(value)
                         .map_err(|_| "Cannot decode projected Event")?;
                     if let Some(ref target_uid) = args.uid {
@@ -2050,62 +2090,7 @@ impl KubernetesTools {
                     "timeline": deduped,
                 }))
             } else {
-                if !state.policy.metrics
-                    || args.uid.is_some()
-                    || args.container.is_some()
-                    || args.previous.is_some()
-                    || args.limit.is_some()
-                {
-                    return Err("Metrics are disabled or arguments are invalid".into());
-                }
-                if state
-                    .policy
-                    .denied_paths
-                    .iter()
-                    .any(|p| p == "/status" || p == "/status/metrics")
-                {
-                    return Err("Metrics fields are disabled by policy".into());
-                }
-                let metrics = if !target.name.is_empty() {
-                    if state.policy.access(&target, true) != DataAccess::Content {
-                        return Err("Pod metrics require content access".into());
-                    }
-                    vec![
-                        kubiki_core::metrics::client::MetricsService::get_pod_metric(
-                            &client,
-                            &args.namespace,
-                            &target.name,
-                        )
-                        .await
-                        .map_err(|_| "Pod metrics unavailable or denied")?,
-                    ]
-                } else {
-                    if !state.policy.collection_content_allowed(&target, true) {
-                        return Err("Per-resource rules require an exact Pod name for metrics; query permitted identities first".into());
-                    }
-                    kubiki_core::metrics::client::MetricsService::get_pod_metrics(
-                        &client,
-                        Some(&args.namespace),
-                    )
-                    .await
-                    .map_err(|_| "Metrics API unavailable or denied")?
-                };
-                let more = metrics.len() > 50;
-                let mut items = Vec::new();
-                for metric in metrics.into_iter().take(50) {
-                    let target = Target {
-                        name: metric.name.clone(),
-                        ..target.clone()
-                    };
-                    let value = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":metric.name,"namespace":metric.namespace},"status":{"metrics":metric}});
-                    let projected = state.policy.project(&target, &value, true)?;
-                    if let Some(metric) = projected.pointer("/status/metrics") {
-                        items.push(metric.clone());
-                    }
-                }
-                Ok(
-                    json!({"capturedAt":stamp(),"metrics":items,"hasMore":more,"completeness":"partial","coverage":"Policy-projected current Pod metrics under /status/metrics; a single snapshot cannot justify historical rightsizing"}),
-                )
+                Err("Unsupported diagnostic read".into())
             }
         };
         timed_read(session, "Read cancelled", "Diagnostic read timed out", read).await
@@ -3043,7 +3028,7 @@ impl KubernetesTools {
             .or_else(|| session.working_scope.lock().ok()?.namespace.clone())
             .ok_or("Choose one namespace for Flux inspection")?;
         let kinds = match args.kind.as_deref() {
-            Some(kind @ ("HelmRelease" | "Kustomization" | "GitRepository")) => vec![kind],
+            Some(kind @ ("HelmRelease" | "Kustomization" | "GitRepository" | "OCIRepository" | "HelmRepository" | "HelmChart" | "Bucket")) => vec![kind],
             None => vec!["HelmRelease", "Kustomization", "GitRepository"],
             _ => return Err("Unsupported Flux kind".into()),
         };
@@ -3054,7 +3039,7 @@ impl KubernetesTools {
             let query = ToolCall {
                 id: call.id.clone(),
                 name: "list_resources".into(),
-                arguments: json!({"group":group,"version":version,"kind":kind,"namespace":namespace,"fields":["metadata.name","spec.suspend","status.conditions","status.lastAppliedRevision"]}),
+                arguments: json!({"group":group,"version":version,"kind":kind,"namespace":namespace,"fields":["metadata.name","spec.suspend","status.conditions","status.lastAppliedRevision","status.lastAttemptedRevision","status.artifact"]}),
             };
             match Box::pin(self.execute_inner(session, &query, &silent_events())).await {
                 Ok(page) => {
@@ -3065,7 +3050,7 @@ impl KubernetesTools {
                         let ready = item["status"]["conditions"]
                             .as_array()
                             .and_then(|cs| cs.iter().find(|c| c["type"] == "Ready"));
-                        items.push(json!({"kind":kind,"name":item["metadata"]["name"],"namespace":item["metadata"]["namespace"],"ready":ready.map(|c|&c["status"]),"message":ready.map(|c|&c["message"]),"suspended":item["spec"]["suspend"],"lastAppliedRevision":item["status"]["lastAppliedRevision"]}));
+                        items.push(json!({"kind":kind,"name":item["metadata"]["name"],"namespace":item["metadata"]["namespace"],"ready":ready.map(|c|&c["status"]),"message":ready.map(|c|&c["message"]),"suspended":item["spec"]["suspend"],"lastAppliedRevision":item["status"]["lastAppliedRevision"],"lastAttemptedRevision":item["status"]["lastAttemptedRevision"],"artifact":item["status"]["artifact"]}));
                     }
                 }
                 Err(_) => unavailable.push(format!("{kind}: unavailable or denied")),
@@ -3095,12 +3080,12 @@ impl KubernetesTools {
         let query = ToolCall {
             id: call.id.clone(),
             name: "get_resource".into(),
-            arguments: json!({"group":group,"version":version,"kind":args.kind,"namespace":args.namespace,"name":args.name,"fields":["spec.suspend","spec.sourceRef","status.conditions","status.lastAppliedRevision","status.lastAttemptedRevision","status.inventory"]}),
+            arguments: json!({"group":group,"version":version,"kind":args.kind,"namespace":args.namespace,"name":args.name,"fields":["spec.suspend","spec.sourceRef","status.conditions","status.lastAppliedRevision","status.lastAttemptedRevision","status.inventory","status.artifact","spec.dependsOn","spec.path","status.failures","status.installFailures","status.upgradeFailures","status.lastHandledReconcileAt","status.lastHandledResetAt"]}),
         };
         let page = Box::pin(self.execute_inner(session, &query, &silent_events())).await?;
         let item = &page["resource"];
         bounded_result(
-            json!({"kind":args.kind,"name":args.name,"namespace":args.namespace,"suspended":item["spec"]["suspend"],"sourceRef":item["spec"]["sourceRef"],"conditions":item["status"]["conditions"],"lastAppliedRevision":item["status"]["lastAppliedRevision"],"lastAttemptedRevision":item["status"]["lastAttemptedRevision"],"inventory":item["status"]["inventory"],"evidence":{"capturedAt":page["capturedAt"],"completeness":"partial","coverage":"Policy-projected GitOps resource; omitted fields are unknown"}}),
+            json!({"kind":args.kind,"name":args.name,"namespace":args.namespace,"suspended":item["spec"]["suspend"],"sourceRef":item["spec"]["sourceRef"],"conditions":item["status"]["conditions"],"lastAppliedRevision":item["status"]["lastAppliedRevision"],"lastAttemptedRevision":item["status"]["lastAttemptedRevision"],"inventory":item["status"]["inventory"],"artifact":item["status"]["artifact"],"dependsOn":item["spec"]["dependsOn"],"path":item["spec"]["path"],"failures":item["status"]["failures"],"installFailures":item["status"]["installFailures"],"upgradeFailures":item["status"]["upgradeFailures"],"lastHandledReconcileAt":item["status"]["lastHandledReconcileAt"],"lastHandledResetAt":item["status"]["lastHandledResetAt"],"fieldAccess":page["fieldAccess"],"evidence":{"capturedAt":page["capturedAt"],"completeness":"partial","coverage":"Policy-projected GitOps resource; omitted fields are unknown"}}),
         )
     }
 
@@ -3695,6 +3680,9 @@ mod tests {
             )
             .is_err()
         );
+        let crd = Target { group:"helm.toolkit.fluxcd.io".into(),version:"v2".into(),kind:"HelmRelease".into(), ..target.clone() };
+        assert!(validate_query_filters(&AgentPolicy::default(), &crd, false, None, Some("spec.values.private=guess")).is_err());
+        assert!(validate_query_filters(&AgentPolicy::default(), &crd, false, None, Some("metadata.name=web")).is_ok());
     }
 
     #[test]

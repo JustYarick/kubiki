@@ -26,7 +26,11 @@ async fn event_pages_are_bound_to_the_query_and_resume_the_server_snapshot() {
             let query = request.uri().query().unwrap_or("");
             assert!(query.contains("involvedObject.uid"), "{query}");
             let second = query.contains("continue=next");
-            let body = json!({"apiVersion":"v1","kind":"EventList","metadata":if second {json!({})} else {json!({"continue":"next"})},"items":[{"apiVersion":"v1","kind":"Event","metadata":{"name":if second {"second"} else {"first"},"namespace":"apps","uid":"event-id"},"involvedObject":{"uid":"pod-id"},"message":"fixture"}]});
+            if query.contains("reason") {
+                assert!(query.contains("type") && query.contains("Warning") && query.contains("Failed"));
+                assert!(query.contains("limit=1"));
+            }
+            let body = json!({"apiVersion":"v1","kind":"EventList","metadata":if second {json!({})} else {json!({"continue":"next"})},"items":[{"apiVersion":"v1","kind":"Event","metadata":{"name":if second {"second"} else {"first"},"namespace":"apps","uid":"event-id"},"involvedObject":{"uid":"pod-id"},"lastTimestamp":if second {"2026-11-17T10:01:00Z"} else {"2026-11-17T09:00:00Z"},"message":"fixture"}]});
             Ok::<_, std::convert::Infallible>(
                 http::Response::builder()
                     .header("content-type", "application/json")
@@ -86,4 +90,13 @@ async fn event_pages_are_bound_to_the_query_and_resume_the_server_snapshot() {
         .unwrap();
     assert_eq!(next["items"][0]["metadata"]["name"], "second");
     assert_eq!(next["hasMore"], false);
+    let mut filtered_args = json!({"namespace":"apps","uid":"pod-id","type":"Warning","reason":"Failed","pageSize":1,"sinceTime":"2026-11-17T10:00:00Z"});
+    let empty = tools.execute(&session, &call(filtered_args.clone()), &emit).await.unwrap();
+    assert_eq!(empty["items"], json!([]));
+    assert_eq!(empty["hasMore"], true);
+    assert_eq!(empty["timeFilterOmitted"], 1);
+    filtered_args["cursor"] = empty["cursor"].clone();
+    let later = tools.execute(&session, &call(filtered_args), &emit).await.unwrap();
+    assert_eq!(later["items"][0]["metadata"]["name"], "second");
+    assert_eq!(later["hasMore"], false);
 }

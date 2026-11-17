@@ -576,8 +576,10 @@ export function DataSelect({
   value,
   onChange,
   title,
+  diagnostic = false,
 }: {
   label: string;
+  diagnostic?: boolean;
   value: DataAccess;
   onChange: (value: DataAccess) => void;
   title?: string;
@@ -588,6 +590,7 @@ export function DataSelect({
       <Select aria-label={label} className="ide-select" value={value} onChange={e => onChange(e.target.value as DataAccess)}>
         <option value="none" title="No access: hidden from agent">No access</option>
         <option value="metadata" title="Metadata only: names, labels and annotations, no values">Metadata only</option>
+        {diagnostic && <option value="diagnostic">Diagnostic fields</option>}
         <option value="content" title="Full content: configuration and payload readable">Contents</option>
       </Select>
     </label>
@@ -1066,6 +1069,7 @@ function PolicySettings({
                     <div className="w-44">
                       <DataSelect
                         label={`Rule ${index + 1} read access`}
+                        diagnostic
                         value={rule.read}
                         onChange={read => patch({ rules: policy.rules.map((r, i) => i === index ? { ...r, read } : r) })}
                       />

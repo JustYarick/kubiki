@@ -19,6 +19,7 @@ pub enum ResourceAction {
         hard: bool,
     },
     FluxRetry,
+    FluxReconcile,
     RunCronJob {
         name: String,
     },
@@ -149,6 +150,16 @@ impl PreparedMutation {
                     ),
                     vec![],
                 )
+            }
+            ResourceAction::FluxReconcile
+                if (resource.query.group == "helm.toolkit.fluxcd.io" && resource.query.kind == "HelmRelease")
+                    || (resource.query.group == "kustomize.toolkit.fluxcd.io" && resource.query.kind == "Kustomization") =>
+            {
+                if before.data.pointer("/spec/suspend") == Some(&json!(true)) || before.metadata.deletion_timestamp.is_some() {
+                    return Err(error(&resource, 409, "Suspended or deleting resources cannot be reconciled"));
+                }
+                after["metadata"]["annotations"]["reconcile.fluxcd.io/requestedAt"] = json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true));
+                ("FLUX_RECONCILE", "Request Flux reconciliation. Failure counters are unchanged; completion is reported by the controller.".into(), vec![])
             }
             ResourceAction::FluxRetry
                 if resource.query.group == "helm.toolkit.fluxcd.io"

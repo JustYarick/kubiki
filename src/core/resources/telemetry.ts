@@ -6,6 +6,16 @@ export type Dimension = 'cpu' | 'memory';
 export interface Budget { request: number | null; limit: number | null }
 export interface UsageRow { name: string; namespace?: string; item?: ResourceItem; cpu: number; memory: number; timestamp: number; window: string; containers: { name: string; cpu: number; memory: number }[] }
 export interface HistoryPoint { at: number; cpu: number | null; memory: number | null }
+
+/** Fresh host measurements only; Pod sums do not establish Node memory pressure. */
+export function nodeMemoryAlerts(rows: UsageRow[], now = Date.now()) {
+  return rows.flatMap(row => {
+    const allocatable = quantity(row.item?.raw?.status?.allocatable?.memory);
+    if (!allocatable || now - row.timestamp > 120000 || row.timestamp > now + 30000) return [];
+    const percent = row.memory / allocatable * 100;
+    return percent >= 85 ? [{ ...row, percent, severity: percent >= 95 ? 'error' as const : 'warning' as const }] : [];
+  }).sort((a, b) => b.percent - a.percent);
+}
 const dimensions: Dimension[] = ['cpu', 'memory'];
 const active = (pod: ResourceItem) => !['Succeeded', 'Completed', 'Complete', 'Failed'].includes(pod.raw?.status?.phase ?? pod.status ?? '');
 const add = (a: number | null, b: number | null) => a === null || b === null ? null : a + b;

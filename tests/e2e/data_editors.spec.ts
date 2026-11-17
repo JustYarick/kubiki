@@ -50,7 +50,7 @@ async function setup(page: Page, withFlux = false) {
           const intent = args.request; w.__dataIntents.push(intent);
           if (w.__cancelMutation) throw { code: 'cancelled', message: 'Operation cancelled', retryable: false };
           if (intent.operation === 'secret') { secret.data = intent.request.data; secret.metadata.resourceVersion = '2'; return secret; }
-          if (intent.operation === 'action') { if (intent.action.type === 'flux_retry') return flux; config.data = intent.action.data; return config; }
+          if (intent.operation === 'action') { if (intent.action.type === 'flux_retry' || intent.action.type === 'flux_reconcile') return flux; config.data = intent.action.data; return config; }
           if (intent.operation === 'manifest') return { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'new-editor-config', uid: 'new-uid', namespace: 'apps' }, data: { key: 'new value' } };
           return {};
         }
@@ -254,6 +254,11 @@ test('RetriesExceeded resets Flux through the backend from both Helm ownership a
   await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
   await page.getByRole('row', { name: 'Inspect Helm release web in apps', exact: true }).click();
   const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
+  await expect(details.getByRole('button', { name: 'Upgrade', exact: true })).toBeEnabled();
+  await details.getByRole('button', { name: 'More release actions', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Uninstall', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Roll back', exact: true })).toBeEnabled();
+  await page.keyboard.press('Escape');
   const retry = details.getByRole('button', { name: 'Retry Helm release', exact: true });
   await expect(retry).toBeEnabled();
   await page.evaluate(() => { (window as any).__cancelMutation = true; });
@@ -285,4 +290,18 @@ test('deleting from the table reports one receipt only after backend execution, 
   await expect(receipt).toContainText('Resource deletion accepted');
   await expect(receipt).toContainText('ConfigMap apps/editor-config');
   await expect(receipt).toContainText('Cluster: test');
+});
+
+test('Flux Reconcile requests a controller run separately from resetting exhausted retries', async ({ page }) => {
+  await setup(page, true);
+  await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
+  await page.getByRole('row', { name: 'Inspect Helm release web in apps', exact: true }).click();
+  const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
+  await details.getByRole('button', { name: 'apps/flux-owner', exact: true }).click();
+  await details.getByRole('button', { name: 'Reconcile', exact: true }).click();
+  await expect(details.getByRole('button', { name: 'Reconcile requested', exact: true })).toBeDisabled();
+  await expect(details.getByRole('button', { name: 'Retry Helm release', exact: true })).toBeEnabled();
+  const intents = await page.evaluate(() => (window as any).__dataIntents);
+  expect(intents).toHaveLength(1);
+  expect(intents[0].action).toEqual({ type: 'flux_reconcile' });
 });

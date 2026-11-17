@@ -45,6 +45,8 @@ fn fixture(initial: Option<Value>, write_status: u16) -> Fixture {
                     200,
                     json!({"apiVersion":"v1","kind":"APIResourceList","groupVersion":"helm.toolkit.fluxcd.io/v2","resources":[{"name":"helmreleases","singularName":"helmrelease","kind":"HelmRelease","namespaced":true,"verbs":["get","create","update","delete"]}]}),
                 )
+            } else if method == "GET" && uri == "/apis/kustomize.toolkit.fluxcd.io/v1" {
+                (200, json!({"apiVersion":"v1","kind":"APIResourceList","groupVersion":"kustomize.toolkit.fluxcd.io/v1","resources":[{"name":"kustomizations","singularName":"kustomization","kind":"Kustomization","namespaced":true,"verbs":["get","update"]}]}))
             } else if method == "GET" {
                 match state.lock().unwrap().clone() {
                     Some(value) => (200, value),
@@ -463,6 +465,29 @@ fn flux_retry(value: &Value) -> MutationIntent {
         resource: target.resource,
         resource_version: target.resource_version,
         action: ResourceAction::FluxRetry,
+    }
+}
+#[tokio::test]
+async fn flux_reconcile_requires_consent_and_changes_only_requested_at() {
+    for (api, kind) in [("helm.toolkit.fluxcd.io/v2", "HelmRelease"), ("kustomize.toolkit.fluxcd.io/v1", "Kustomization")] {
+        for approve in [false, true] {
+            let mut initial = exhausted_helm_release();
+            initial["apiVersion"] = json!(api); initial["kind"] = json!(kind);
+            let f = fixture(Some(initial.clone()), 200);
+            let identity = target(&initial);
+            let plan = PreparedMutation::prepare(f.client, MutationIntent::Action { resource:identity.resource,resource_version:identity.resource_version,action:ResourceAction::FluxReconcile }).await.unwrap();
+            assert!(!plan.review().contains("do-not-expose"));
+            let result = plan.confirm_and_commit(|_| async move { Ok(approve) }).await;
+            let saved = writes(&f.requests);
+            assert_eq!(result.is_ok(),approve);
+            assert_eq!(saved.len(),usize::from(approve));
+            if approve {
+                assert!(saved[0].2["metadata"]["annotations"]["reconcile.fluxcd.io/requestedAt"].is_string());
+                assert!(saved[0].2["metadata"]["annotations"].get("reconcile.fluxcd.io/resetAt").is_none());
+                assert!(saved[0].2["metadata"]["annotations"].get("reconcile.fluxcd.io/forceAt").is_none());
+                assert_eq!(saved[0].2["spec"], initial["spec"]);
+            }
+        }
     }
 }
 #[tokio::test]

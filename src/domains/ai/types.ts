@@ -1,7 +1,7 @@
 export type AgentMode = 'read_only' | 'ask' | 'accept';
 export type AgentPhase = 'plan' | 'tooling' | 'action';
 export type ProviderProtocol = 'responses' | 'openai_compatible' | 'anthropic' | 'ollama';
-export type DataAccess = 'none' | 'metadata' | 'content';
+export type DataAccess = 'none' | 'metadata' | 'diagnostic' | 'content';
 export type WriteOperation = 'create' | 'update' | 'delete' | 'scale' | 'restart';
 export type OptionalToolMode = 'auto' | 'enabled' | 'disabled';
 
@@ -189,7 +189,7 @@ export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'Ac
 export function defaultPolicy(): AgentPolicy {
   return { confirmReads: false, readOnly: false, disabledTools: [], planDisabledTools: [], actionDisabledTools: [], resources: true, events: true, logs: false, metrics: true, clusterResources: false,
     secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false,
-    customResources: 'metadata', helm: 'auto', argocd: 'auto', flux: 'auto', contexts: ['*'], namespaces: ['*'],
+    customResources: 'diagnostic', helm: 'auto', argocd: 'auto', flux: 'auto', contexts: ['*'], namespaces: ['*'],
     writes: [], maxReplicas: 10,
     rules: [], deniedPaths: [] };
 }
@@ -594,7 +594,7 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
   { id: 'get_events', label: 'Get events', group: 'read', description: 'Fetch recent Kubernetes warning and informational events in a namespace' },
   { id: 'get_events_timeline', label: 'Events timeline', group: 'read', description: 'Chronological timeline of events with deduplication and frequency counts' },
   { id: 'get_logs', label: 'Pod logs', group: 'read', description: 'Stream container logs with support for tail lines, timestamps, and previous crash logs' },
-  { id: 'get_metrics', label: 'Pod metrics', group: 'read', description: 'Read real-time CPU and memory usage statistics for pods and containers' },
+  { id: 'get_metrics', label: 'Pod and Node metrics', group: 'read', description: 'Read CPU/RAM usage, requests, limits and bounded Node allocations' },
   { id: 'list_helm_releases', label: 'List Helm releases', group: 'read', description: 'List deployed Helm releases across permitted namespaces' },
   { id: 'get_helm_release', label: 'Get Helm release', group: 'read', description: 'Inspect Helm release values, revision history, release manifest, and chart metadata' },
   { id: 'list_argocd_apps', label: 'List Argo CD apps', group: 'read', description: 'List Argo CD applications, sync status, and destination clusters' },

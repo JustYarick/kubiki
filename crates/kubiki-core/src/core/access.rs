@@ -38,7 +38,7 @@ pub async fn resolve_api(
                 .find(|g| g.name() == query.group)
                 .ok_or("Unknown API group")?;
             group
-                .resources_by_stability()
+                .versioned_resources(&query.version)
                 .into_iter()
                 .find(|(r, _)| r.kind == query.kind && r.version == query.version)
                 .map(|(r, c)| (r, c.scope == Scope::Namespaced))
@@ -70,7 +70,7 @@ pub async fn resolve_api(
             .find(|g| g.name() == query.group)
             .ok_or("Unknown API group")?;
         group
-            .resources_by_stability()
+            .versioned_resources(&query.version)
             .into_iter()
             .find(|(r, _)| r.kind == query.kind && r.version == query.version)
             .map(|(r, c)| (r, c.scope == Scope::Namespaced))
@@ -226,6 +226,22 @@ mod tests {
         for name in [".", "..", "../secrets", "a?watch=true", "a/b", ""] {
             assert!(validate_name(name).is_err());
         }
+    }
+    #[tokio::test]
+    async fn exact_served_crd_version_is_available_even_when_a_more_stable_version_exists() {
+        let client = Client::new(tower::service_fn(|request: http::Request<Body>| async move {
+            let path = request.uri().path();
+            let body = if path == "/apis" {
+                json!({"apiVersion":"v1","kind":"APIGroupList","groups":[{"name":"external-secrets.io","versions":[{"groupVersion":"external-secrets.io/v1","version":"v1"},{"groupVersion":"external-secrets.io/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"external-secrets.io/v1","version":"v1"}}]})
+            } else if path == "/apis/external-secrets.io/v1" || path == "/apis/external-secrets.io/v1beta1" {
+                json!({"apiVersion":"v1","kind":"APIResourceList","groupVersion":path.trim_start_matches("/apis/"),"resources":[{"name":"clustersecretstores","singularName":"clustersecretstore","kind":"ClusterSecretStore","namespaced":false,"verbs":["get","list"]}]})
+            } else { panic!("Unexpected API discovery: {path}"); };
+            Ok::<_,std::convert::Infallible>(http::Response::builder().header("content-type","application/json").body(Body::from(body.to_string().into_bytes())).unwrap())
+        }), "apps");
+        let query = ResourceQuery {context:"fixture".into(),group:"external-secrets.io".into(),version:"v1beta1".into(),kind:"ClusterSecretStore".into(),namespace:None};
+        let (_, builtin, resource) = resolve_api(client,&query,false).await.unwrap();
+        assert!(!builtin);
+        assert_eq!(resource.version,"v1beta1");
     }
     #[tokio::test]
     async fn metadata_and_full_reads_share_transport_without_body_fallback_or_extra_gets() {

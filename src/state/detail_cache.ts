@@ -7,12 +7,15 @@ import { useResourceStore } from './resource_store';
 
 const MAX_CACHE_ITEMS = 96;
 const MAX_EVENT_ENTRIES = 16;
+export const detailReadKey = (kind: string, name: string, namespace?: string) => JSON.stringify([kind, namespace ?? null, name]);
 
 interface DetailCacheState {
   context: string | null;
   items: Map<string, ResourceItem>;
   byKind: Partial<Record<ResourceKind, Map<string, ResourceItem>>>;
   eventsByUid: Map<string, ResourceItem[]>;
+  readStates: Map<string, 'notFound' | 'unavailable'>;
+  setReadState: (context: string, key: string, state: 'notFound' | 'unavailable') => void;
   upsert: (context: string, item: ResourceItem) => void;
   upsertMany: (context: string, list: ResourceItem[]) => void;
   setEvents: (context: string, uid: string, events: ResourceItem[]) => void;
@@ -37,6 +40,13 @@ export const useDetailCache = create<DetailCacheState>((set) => ({
   items: new Map(),
   byKind: {},
   eventsByUid: new Map(),
+  readStates: new Map(),
+  setReadState: (context, key, value) => set(state => {
+    const readStates = state.context === context ? new Map(state.readStates) : new Map();
+    readStates.delete(key); readStates.set(key, value);
+    while (readStates.size > MAX_CACHE_ITEMS) readStates.delete(readStates.keys().next().value!);
+    return { context, readStates, ...(state.context === context ? {} : { items: new Map(), byKind: {}, eventsByUid: new Map() }) };
+  }),
 
   upsert: (context, item) => set((state) => {
     const items = state.context === context ? new Map(state.items) : new Map<string, ResourceItem>();
@@ -45,7 +55,9 @@ export const useDetailCache = create<DetailCacheState>((set) => ({
     items.delete(key);
     items.set(key, item);
     while (items.size > MAX_CACHE_ITEMS) items.delete(items.keys().next().value!);
-    return { context, items, byKind: rebuildByKind(items), eventsByUid };
+    const readStates = state.context === context ? new Map(state.readStates) : new Map();
+    readStates.delete(detailReadKey(item.kind, item.name, item.namespace));
+    return { context, items, byKind: rebuildByKind(items), eventsByUid, readStates };
   }),
 
   upsertMany: (context, list) => {
@@ -59,7 +71,9 @@ export const useDetailCache = create<DetailCacheState>((set) => ({
         items.set(key, item);
       }
       while (items.size > MAX_CACHE_ITEMS) items.delete(items.keys().next().value!);
-      return { context, items, byKind: rebuildByKind(items), eventsByUid };
+      const readStates = state.context === context ? new Map(state.readStates) : new Map();
+      for (const item of list) readStates.delete(detailReadKey(item.kind, item.name, item.namespace));
+      return { context, items, byKind: rebuildByKind(items), eventsByUid, readStates };
     });
   },
 
@@ -71,7 +85,7 @@ export const useDetailCache = create<DetailCacheState>((set) => ({
     eventsByUid.delete(key);
     eventsByUid.set(key, events);
     while (eventsByUid.size > MAX_EVENT_ENTRIES) eventsByUid.delete(eventsByUid.keys().next().value!);
-    return { context, items, byKind, eventsByUid };
+    return { context, items, byKind, eventsByUid, readStates: state.context === context ? state.readStates : new Map() };
   }),
 
   clear: (context) => set(() => ({
@@ -79,6 +93,7 @@ export const useDetailCache = create<DetailCacheState>((set) => ({
     items: new Map(),
     byKind: {},
     eventsByUid: new Map(),
+    readStates: new Map(),
   })),
 }));
 
