@@ -9,6 +9,27 @@ const MAX_CACHE_ITEMS = 96;
 const MAX_EVENT_ENTRIES = 16;
 export const detailReadKey = (kind: string, name: string, namespace?: string) => JSON.stringify([kind, namespace ?? null, name]);
 
+export function referenceAvailabilityNote(
+  kind: string,
+  name: string,
+  namespace: string | undefined,
+  target: ResourceItem | undefined,
+  reads: ReadonlyMap<string, 'notFound' | 'unavailable'> | undefined,
+): 'Exists · contents unavailable' | 'Not found' | 'Existence unknown · access unavailable' | undefined {
+  if (target) return kind === 'Secret' && target.readProjection === 'metadata' ? 'Exists · contents unavailable' : undefined;
+  const observed = reads?.get(detailReadKey(kind, name, namespace));
+  if (observed === 'notFound') return 'Not found';
+  if (observed === 'unavailable') return 'Existence unknown · access unavailable';
+  return undefined;
+}
+
+export function useDetailReadStates(): ReadonlyMap<string, 'notFound' | 'unavailable'> | undefined {
+  const currentContext = useClusterStore((s) => s.currentContext);
+  const cacheContext = useDetailCache((s) => s.context);
+  const readStates = useDetailCache((s) => s.readStates);
+  return currentContext && cacheContext === currentContext ? readStates : undefined;
+}
+
 interface DetailCacheState {
   context: string | null;
   items: Map<string, ResourceItem>;

@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Limit Pod Environment tab Secret status notices to unresolved or restricted `env`/`envFrom` references while moving volume Secret availability indicators to Pod `Overview` and `Related`.
 - Allow direct Helm upgrade, rollback and uninstall for Flux-managed releases while preserving backend confirmation.
 - Resolve explicitly requested served CRD API versions even when a more stable version exists, and match Flux Helm storage namespaces correctly.
 

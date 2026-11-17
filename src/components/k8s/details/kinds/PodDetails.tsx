@@ -1,7 +1,7 @@
 import { HardDrive, ShieldCheck } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { ownerMatches } from '../../../../core/resources/owner_references';
-import { useMergedDetailResources } from '../../../../state/detail_cache';
+import { referenceAvailabilityNote, useDetailReadStates, useMergedDetailResources } from '../../../../state/detail_cache';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { PodRuntimeBlock } from '../blocks/PodRuntimeBlock';
 import { ConditionsTable } from '../blocks/ConditionsTable';
@@ -17,6 +17,7 @@ interface PodDetailsProps {
 
 export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProps) {
   const resources = useMergedDetailResources();
+  const reads = useDetailReadStates();
   const raw = item.raw ?? {};
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};
@@ -159,17 +160,24 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
 
               let linkedTarget: ResourceItem | undefined;
               let targetName = '';
+              let targetKind: 'PersistentVolumeClaim' | 'Secret' | 'ConfigMap' | undefined;
 
               if (volType === 'persistentVolumeClaim') {
                 targetName = volData?.claimName;
+                targetKind = 'PersistentVolumeClaim';
                 linkedTarget = findPvc(targetName);
               } else if (volType === 'secret') {
                 targetName = volData?.secretName;
+                targetKind = 'Secret';
                 linkedTarget = findSecret(targetName);
               } else if (volType === 'configMap') {
                 targetName = volData?.name;
+                targetKind = 'ConfigMap';
                 linkedTarget = findConfigMap(targetName);
               }
+              const availability = targetKind && targetName
+                ? referenceAvailabilityNote(targetKind, targetName, item.namespace, linkedTarget, reads)
+                : undefined;
 
               return (
                 <div key={i} className="py-2 text-xs flex items-center justify-between gap-2">
@@ -180,19 +188,26 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
                     </span>
                   </div>
                   {targetName ? (
-                    linkedTarget ? (
-                      <button
-                        type="button"
-                        onClick={() => onNavigate(linkedTarget!)}
-                        className="font-mono text-[length:calc(11px*var(--ui-factor))] text-[var(--accent)] hover:underline truncate"
-                      >
-                        {targetName}
-                      </button>
-                    ) : (
-                      <span className="font-mono text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] truncate">
-                        {targetName}
-                      </span>
-                    )
+                    <div className="min-w-0 flex items-center gap-1.5 justify-end">
+                      {linkedTarget ? (
+                        <button
+                          type="button"
+                          onClick={() => onNavigate(linkedTarget!)}
+                          className="font-mono text-[length:calc(11px*var(--ui-factor))] text-[var(--accent)] hover:underline truncate"
+                        >
+                          {targetName}
+                        </button>
+                      ) : (
+                        <span className="font-mono text-[length:calc(11px*var(--ui-factor))] text-[var(--text-secondary)] truncate">
+                          {targetName}
+                        </span>
+                      )}
+                      {availability && (
+                        <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] shrink-0">
+                          {availability}
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] truncate max-w-[200px]">
                       {typeof volData === 'object' ? JSON.stringify(volData) : String(volData ?? '')}

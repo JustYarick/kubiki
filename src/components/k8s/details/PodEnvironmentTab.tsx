@@ -14,15 +14,63 @@ import {
 } from 'lucide-react';
 import type { ResourceItem } from '../../../types/k8s';
 import { podContainers } from '../../../core/resources/containers';
-import { resolveContainerEnv, findResourceInMap } from '../../../core/resources/pod_env';
-import { useMergedDetailResources } from '../../../state/detail_cache';
+import { resolveContainerEnv, findResourceInMap, type PodEnvEntry } from '../../../core/resources/pod_env';
+import { referenceAvailabilityNote, useDetailReadStates, useMergedDetailResources } from '../../../state/detail_cache';
 import { useUiStore } from '../../../state/ui_store';
 import { Button } from '../../ui/Button';
 import { toast } from '../../../state/notifications_store';
 import { ContainerSelect } from '../ContainerSelect';
 import { cx } from '../../../core/utils/cx';
-import { extractForwardRefs } from '../../../providers/detail_prefetch';
 import { ReferenceRows } from './blocks/ReferenceRows';
+
+/** Return container `envFrom` Secret/ConfigMap references whose environment keys cannot be resolved. */
+export function collectUnresolvedEnvFromRefs(
+  item: ResourceItem,
+  containerName: string,
+  secrets: Map<string, ResourceItem> | undefined,
+  configMaps: Map<string, ResourceItem> | undefined,
+  reads: ReadonlyMap<string, 'notFound' | 'unavailable'> | undefined,
+): { kind: 'Secret' | 'ConfigMap'; name: string; namespace?: string; item?: ResourceItem }[] {
+  const spec = item.raw?.spec ?? item.spec ?? {};
+  const allDefs = [
+    ...(spec.containers ?? []),
+    ...(spec.initContainers ?? []),
+    ...(spec.ephemeralContainers ?? []),
+  ];
+  const container = allDefs.find((c: any) => c.name === containerName) ?? allDefs[0];
+  const seen = new Set<string>();
+  const notices: { kind: 'Secret' | 'ConfigMap'; name: string; namespace?: string; item?: ResourceItem }[] = [];
+  for (const ef of container?.envFrom ?? []) {
+    const ref = ef?.secretRef?.name
+      ? { kind: 'Secret' as const, name: ef.secretRef.name, map: secrets }
+      : ef?.configMapRef?.name
+        ? { kind: 'ConfigMap' as const, name: ef.configMapRef.name, map: configMaps }
+        : null;
+    if (!ref) continue;
+    const key = `${ref.kind}/${ref.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const target = findResourceInMap(ref.map, ref.name, item.namespace);
+    if (referenceAvailabilityNote(ref.kind, ref.name, item.namespace, target, reads)) {
+      notices.push({ kind: ref.kind, name: ref.name, namespace: item.namespace, item: target });
+    }
+  }
+  return notices;
+}
+
+/** Resolve why a referenced Secret/ConfigMap environment entry has no value. */
+export function unresolvedEnvEntryReason(
+  entry: Pick<PodEnvEntry, 'sourceType' | 'sourceName'>,
+  namespace: string | undefined,
+  secrets: Map<string, ResourceItem> | undefined,
+  configMaps: Map<string, ResourceItem> | undefined,
+  reads: ReadonlyMap<string, 'notFound' | 'unavailable'> | undefined,
+): string | undefined {
+  if ((entry.sourceType !== 'secret' && entry.sourceType !== 'configMap') || !entry.sourceName) return undefined;
+  const kind = entry.sourceType === 'secret' ? 'Secret' : 'ConfigMap';
+  const target = findResourceInMap(kind === 'Secret' ? secrets : configMaps, entry.sourceName, namespace);
+  return referenceAvailabilityNote(kind, entry.sourceName, namespace, target, reads);
+}
 
 interface PodEnvironmentTabProps {
   item: ResourceItem;
@@ -34,8 +82,8 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
   const isCompact = density === 'compact';
 
   const resources = useMergedDetailResources();
+  const reads = useDetailReadStates();
   const containers = useMemo(() => podContainers(item), [item]);
-  const secretRefs = useMemo(() => extractForwardRefs(item).filter(ref => ref.kind === 'Secret').map(ref => ({ ...ref, item: findResourceInMap(resources.Secret, ref.name, ref.namespace) })), [item, resources.Secret]);
 
   const [selectedContainer, setSelectedContainer] = useState<string>(() => {
     return containers[0]?.name ?? '';
@@ -95,6 +143,11 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
       Secret: resources.Secret,
     });
   }, [item, selectedContainer, resources.ConfigMap, resources.Secret]);
+
+  const unresolvedEnvFromSecrets = useMemo(
+    () => collectUnresolvedEnvFromRefs(item, selectedContainer, resources.Secret, resources.ConfigMap, reads),
+    [item, selectedContainer, resources.Secret, resources.ConfigMap, reads],
+  );
 
   const colWidths = useMemo(() => {
     const entries = envData.entries;
@@ -196,7 +249,6 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
 
   return (
     <div className="h-full flex flex-col bg-[var(--bg-canvas)] overflow-hidden text-xs">
-      {!!secretRefs.length && <div className="shrink-0 px-3 py-2 border-b border-[var(--border-subtle)]" aria-label="Referenced Secrets"><ReferenceRows entries={secretRefs} onNavigate={onNavigate} /></div>}
       {/* Top Controls Toolbar */}
       <div className="px-3 py-2 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-secondary)]/30">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -265,6 +317,16 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
         </div>
       </div>
 
+      {/* Restricted/Missing envFrom Secret Notice */}
+      {unresolvedEnvFromSecrets.length > 0 && (
+        <div className="shrink-0 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]/30" aria-label="Unavailable envFrom Secrets">
+          <div className="text-[10.5px] text-[var(--text-secondary)] mb-1">
+            Env variables from referenced Secret{unresolvedEnvFromSecrets.length === 1 ? '' : 's'} cannot be resolved:
+          </div>
+          <ReferenceRows entries={unresolvedEnvFromSecrets} onNavigate={onNavigate} />
+        </div>
+      )}
+
       {/* Drift Warning Banner (if ConfigMap/Secret changed since Pod start) */}
       {envData.hasDrift && (
         <div className="px-3 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-300 flex items-start gap-2 text-[10.5px]">
@@ -316,7 +378,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
                 {filteredEntries.map((entry) => {
-                  const isMasked = entry.isSecret && !revealedSecrets.has(entry.name);
+                  const isMasked = entry.isSecret && entry.value !== undefined && !revealedSecrets.has(entry.name);
                   const isNameCopied = copiedKey === `name-${entry.name}`;
                   const isValCopied = copiedKey === `val-${entry.name}`;
 
@@ -427,7 +489,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
                           </div>
                         ) : (
                           <span className="text-[var(--text-muted)] italic text-[11px] font-sans">
-                            (empty or unresolved)
+                            {unresolvedEnvEntryReason(entry, item.namespace, resources.Secret, resources.ConfigMap, reads) ?? '(empty or unresolved)'}
                           </span>
                         )}
                       </td>
