@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - MCP Event reads can filter by involved resource UID and continue through bounded pages.
 - MCP logs support exact-line snapshot pages, literal substring filtering and RFC3339 time windows alongside the existing diagnostic output.
+- React project website with a pipeline that builds static assets, commits them to `gh-pages` and deploys them to GitHub Pages.
+- Dark website with recorded WebM/MP4 workspace animations, interactive diagnostics/topology/YAML/MCP policy previews, responsive WebP posters and platform-aware direct downloads from the latest stable GitHub release.
 
 ## [1.4.0] - 2026-11-17
 

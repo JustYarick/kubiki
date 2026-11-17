@@ -38,6 +38,7 @@ Kubiki is a desktop application for inspecting and managing Kubernetes clusters.
   - [Verification commands](#verification-commands)
 - [Publishing releases](#publishing-releases)
 - [Documentation](#documentation)
+- [Project website development](docs/WEBSITE.md)
 - [Repository structure](#repository-structure)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [License](#license)

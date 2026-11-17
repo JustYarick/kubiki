@@ -25,6 +25,8 @@ Argo CD и Flux. GitOps и Helm операции записи через аге�
 Реализованные контракты: [AI agent](../AI_AGENT.md#tools-and-execution-limits).
 Выбор снимка логов и его ограничения описаны в
 [ADR-012](../decisions/012-bounded-log-snapshot-pages.md).
+React-сайт в `website/` и workflow сборки/сохранения в `gh-pages` подготовлены.
+Публикация ещё не подтверждена; см. [Website](../WEBSITE.md).
 Остальные пункты ниже остаются планом.
 
 ## Предлагаемая архитектура

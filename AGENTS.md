@@ -45,6 +45,10 @@ pnpm tauri dev
 
 For browser-only demo development, run `pnpm dev` and open
 `http://localhost:1420/?demo=1`. Native operations require the desktop backend.
+To regenerate demo screenshots and recordings against `?demo=1`, use
+`pnpm docs:media` (`scripts/capture-readme.mjs`, see [Media](docs/MEDIA.md)) or
+`pnpm website:media` (`scripts/capture-website-media.mjs`, see
+[Website](docs/WEBSITE.md)).
 On a clean checkout, run `pnpm extensions:build` before standalone type checks.
 Before direct desktop Cargo checks, also run `pnpm desktop:prepare` to create
 bundled resources. Tauri hooks perform preparation for normal desktop startup.
@@ -72,6 +76,7 @@ when dependencies, failures or unresolved risks justify it.
 | Change | Relevant checks |
 | --- | --- |
 | Frontend types and logic | `pnpm typecheck`; `pnpm exec vitest run <test-file>` |
+| Project website | `pnpm website:build`; `pnpm exec vitest run tests/unit/website_downloads.test.ts` |
 | Browser interaction or layout | `pnpm test:e2e <spec-file>` |
 | Release scripts or workflow | `pnpm test:desktop` |
 | Extension contracts or runtime | `pnpm test:extensions` |

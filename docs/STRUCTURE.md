@@ -35,6 +35,7 @@ kubiki/
 ├── server/                     Local frontend development and test bridges
 ├── tests/                      Frontend unit, contract, and interface tests
 ├── docs/                       Documentation, GIF demos and screenshots
+├── website/                    React public project landing page
 ├── public/licenses/            Bundled font and icon license notices
 └── .github/workflows/          Verification and release packaging
 ```
@@ -273,11 +274,21 @@ for preparation and verification commands.
 [architecture decisions](decisions/README.md) and [development plans](plans/README.md).
 ADRs preserve rationale and supersession; plans label unimplemented capabilities.
 
-`docs/media/` contains the GIF demonstrations and static PNG alternatives used by the README: overview, resources, YAML, topology, and Helm. Run `pnpm docs:media` to regenerate them; see [README recordings](MEDIA.md). Native application icons are stored in `src-tauri/icons/`.
+`docs/media/` contains the GIF demonstrations and static PNG alternatives used by the README: overview, resources, YAML, topology, Helm, and AI agent. Run `pnpm docs:media` (`scripts/capture-readme.mjs`) to regenerate them; see [Application media & recordings](MEDIA.md). Native application icons are stored in `src-tauri/icons/`.
 
 Font and Redis/Kafka icon license notices are stored in `public/licenses/`.
 `docs/DESKTOP_RENDERING.md` describes graphics settings and rendering diagnostics. The project's own license is defined
 in the root `LICENSE` file.
+
+`website/` is a React/Vite app independent of the desktop frontend.
+`pnpm website:media` (`scripts/capture-website-media.mjs`) records the WebM/MP4
+loops and WebP posters in `website/media/` against `?demo=1` (with
+`scripts/prepare-website-images.mjs` available for standalone PNG → WebP
+re-encoding). `pnpm website:build` (`scripts/build-website.mjs`) checks its
+types and bundles HTML, JS, CSS, fonts, media and referenced public assets into
+`dist/website/`. The Pages workflow commits this output to `gh-pages` and
+explicitly deploys the same build from `main`; see
+[Project website](WEBSITE.md) for setup and recovery.
 
 ## Workspace extension points
 
