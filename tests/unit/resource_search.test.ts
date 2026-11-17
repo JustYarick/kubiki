@@ -61,3 +61,52 @@ it('cancels an inventory without publishing late reads or starting additional co
   await pending;
   expect(snapshots).toEqual(['0']);
 });
+it('reuses liveKinds and completedBuckets without redundant API requests', async () => {
+  const reads: string[] = [];
+  const reader = {
+    getResources: async (_context: string, kind: string) => { reads.push(kind); return [item(`${kind}-fetched`)]; },
+    getCustomResources: async () => [],
+    getHelmInventory: async () => [],
+  };
+  const seeds = [item('live-pod', 'default', 'Pod'), item('resumed-cm', 'default', 'ConfigMap')];
+  const result = await loadSearchInventory(
+    reader,
+    'test',
+    'all',
+    seeds,
+    ['Pod', 'ConfigMap', 'Service'],
+    new AbortController().signal,
+    () => {},
+    { liveKinds: new Set(['Pod']), completedBuckets: new Set(['ConfigMap']) },
+  );
+  expect(reads).toEqual(['Service']);
+  expect(result.items.map(i => i.name)).toEqual(expect.arrayContaining(['live-pod', 'resumed-cm', 'Service-fetched']));
+  expect(result.completed).toBe(result.total);
+});
+it('skips zeroKinds and prefers batch getCustomSearchInventory when available', async () => {
+  const reads: string[] = [];
+  let customBatchCalls = 0;
+  let individualCustomCalls = 0;
+  const widget = { ...item('widget-1', 'prod', 'Widget'), apiVersion: 'example.io/v1' };
+  const reader = {
+    getResources: async (_context: string, kind: string) => { reads.push(kind); return kind === 'Pod' ? [item('web')] : []; },
+    getCustomResources: async () => { individualCustomCalls++; return []; },
+    getCustomSearchInventory: async () => { customBatchCalls++; return { items: [widget], errors: [] }; },
+    getHelmInventory: async () => [],
+  };
+  const result = await loadSearchInventory(
+    reader,
+    'test',
+    'all',
+    [],
+    ['Pod', 'CronJob', 'CustomResourceDefinition'],
+    new AbortController().signal,
+    () => {},
+    { zeroKinds: new Set(['CronJob']) },
+  );
+  expect(reads).not.toContain('CronJob');
+  expect(reads).toContain('Pod');
+  expect(customBatchCalls).toBe(1);
+  expect(individualCustomCalls).toBe(0);
+  expect(result.items.map(i => i.name)).toEqual(expect.arrayContaining(['web', 'widget-1']));
+});

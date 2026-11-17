@@ -1,7 +1,7 @@
 # README recordings
 
-The README embeds five looping GIFs captured from the actual interface in the
-built-in demo cluster: overview, Pod diagnostics, YAML, topology, and Helm.
+The README embeds six looping GIFs captured from the actual interface in the
+built-in demo cluster: overview, Pod diagnostics, YAML, topology, Helm, and AI agent.
 Matching PNGs provide static alternatives. All files live in `docs/media/`.
 
 ## Regenerate
@@ -26,7 +26,8 @@ Record only selected scenes when iterating:
 pnpm docs:media --scene resources --scene yaml
 ```
 
-Other scene names are `overview`, `topology`, and `helm`. Set
+Other scene names are `overview`, `topology`, `helm`, and `agent` (which uses an
+in-page mock IPC harness to stream representative tool calls and diagnostics). Set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use a different Chromium executable.
 
 The script starts its own Vite server on `127.0.0.1:1431` with an empty

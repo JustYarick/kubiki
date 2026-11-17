@@ -18,14 +18,17 @@ export function FullManifest({ item, children }: { item: ResourceItem; children:
     if (!required || !context) return;
     const controller = new AbortController();
     setError(undefined);
-    k8s.getResources(context, item.kind, 'all', controller.signal).then((items) => {
+    const read = k8s.getResource
+      ? k8s.getResource(context, item.kind, item.name, item.namespace, { priority: 'high' }, controller.signal).then((full) => [full])
+      : k8s.getResources(context, item.kind, 'all', controller.signal);
+    read.then((items) => {
       if (controller.signal.aborted) return;
       const full = items.find((entry) => entry.uid === item.uid);
       if (full) setLoaded({ uid: item.uid, item: full });
       else setError('The resource no longer exists in the cluster.');
     }).catch((reason) => { if (!controller.signal.aborted) setError(String(reason?.message ?? reason)); });
     return () => controller.abort();
-  }, [required, context, item.kind, item.uid]);
+  }, [required, context, item.kind, item.name, item.namespace, item.uid]);
 
   if (!required) return <>{children(item)}</>;
   if (loaded?.uid === item.uid) return <>{children(loaded.item)}</>;

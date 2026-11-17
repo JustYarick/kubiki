@@ -23,16 +23,29 @@ export async function syncResourceSnapshot(context: string, kind: ResourceKind, 
   useResourceStore.getState().setKindLoading(kind, true);
   try {
     let items: Awaited<ReturnType<typeof k8s.getResources>>;
+    let partialFailures: import('./contract').PartialNamespaceFailure[] = [];
+    const onPartialError = (failures: import('./contract').PartialNamespaceFailure[]) => {
+      partialFailures = failures;
+    };
     try {
-      items = await k8s.getResources(context, kind, effectiveScope, controller.signal);
+      items = await k8s.getResources(context, kind, effectiveScope, controller.signal, { onPartialError });
     } catch (error) {
       // Cluster-wide access can be denied by RBAC: keep the namespace-scoped read.
       if (scope === 'all' || !namespaceFallback(kind, effectiveScope, scope, normalizeK8sError(error).code)) throw error;
       scopedFallback = true;
-      items = await k8s.getResources(context, kind, scope, controller.signal);
+      partialFailures = [];
+      items = await k8s.getResources(context, kind, scope, controller.signal, { onPartialError });
     }
     if (!current()) return false;
     useResourceStore.getState().setResourcesForKind(kind, items);
+    if (partialFailures.length) {
+      const sample = partialFailures[0].error;
+      const scopes = partialFailures.map(f => f.namespace).join(', ');
+      useResourceStore.getState().setLoadError(kind, {
+        ...sample,
+        message: `Partial read: unavailable in ${scopes} (${sample.message})`,
+      });
+    }
     return true;
   } catch (error) {
     if (!current()) return false;

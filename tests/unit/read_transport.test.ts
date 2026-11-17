@@ -62,6 +62,47 @@ it('does not sum successful namespace counts when another namespace count is unk
   expect(await provider.getResourceCounts('prod', ['Pod', 'Node'], '["one","two"]')).toEqual({ Node: 3 });
 });
 
+it('reports partial namespace failures without dropping fulfilled items', async () => {
+  const provider = new K8sProvider({
+    native: false,
+    request: async <T>(_command: string, _path: string, args: Record<string, unknown>) => {
+      if (args.namespace === 'forbidden-ns') {
+        throw { code: 'forbidden', status: 403, message: 'Forbidden in forbidden-ns' };
+      }
+      return {
+        items: [{ metadata: { name: 'ok-pod', namespace: args.namespace, uid: 'uid-1' } }],
+      } as T;
+    },
+  });
+  let failures: Array<{ namespace: string; error: { status?: number; message: string } }> = [];
+  const items = await provider.getResources('prod', 'Pod', JSON.stringify(['default', 'forbidden-ns']), undefined, {
+    onPartialError: f => { failures = f; },
+  });
+  expect(items.map(i => i.name)).toEqual(['ok-pod']);
+  expect(failures).toHaveLength(1);
+  expect(failures[0].namespace).toBe('forbidden-ns');
+  expect(failures[0].error.status).toBe(403);
+});
+
+it('rethrows AbortError instead of returning partial namespace results', async () => {
+  const controller = new AbortController();
+  const provider = new K8sProvider({
+    native: false,
+    request: async <T>(_command: string, _path: string, args: Record<string, unknown>) => {
+      if (args.namespace === 'slow-ns') {
+        controller.abort();
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }
+      return {
+        items: [{ metadata: { name: 'ok-pod', namespace: args.namespace, uid: 'uid-1' } }],
+      } as T;
+    },
+  });
+  await expect(
+    provider.getResources('prod', 'Pod', JSON.stringify(['default', 'slow-ns']), controller.signal),
+  ).rejects.toMatchObject({ code: 'cancelled' });
+});
+
 it('computes resource counts from locally cached snapshots when scope covers request', async () => {
   const { useResourceStore } = await import('../../src/state/resource_store');
   useResourceStore.setState({

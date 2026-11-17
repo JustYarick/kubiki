@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { createTerminalView, type TerminalView } from '../../../core/terminal_view';
 import { Button } from '../../../components/ui/Button';
-import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { Select } from '../../../components/ui/Select';
 import { connectOpenCode, OpenCodeNotStartedError, type ExecConnection } from '../../../providers/tauri_exec';
 import { useTerminalAppearance } from '../../../components/k8s/useTerminalAppearance';
@@ -10,14 +9,34 @@ import { useUiStore } from '../../../state/ui_store';
 import { useClusterStore } from '../../../state/cluster_store';
 import { currentAgentScope } from '../navigation';
 import { useAiStore } from '../store';
-import { normalizeMcpPolicy, syncSharedPolicyFields, isToolActiveInPolicy, toggleReadOnlyMcpPolicy, externalAgentName, MCP_TOOL_CATALOG, type AgentPolicy } from '../types';
-import { agentError, desktopAiAvailable } from '../transport';
+import {
+  ensureMcpProfiles,
+  externalAgentName,
+  resolveEffectiveMcpPolicy,
+  summarizeMcpPolicy,
+  updateAiMcpSettings,
+  type ExternalTerminalMode,
+} from '../types';
+import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 
 export function OpenCodePane({ visible = true }: { visible?: boolean }) {
-  const runtime = useAiStore(s => s.settings.runtime);
-  const mcpPolicy = normalizeMcpPolicy(useAiStore(s => s.settings.mcpPolicy));
-  const savedMcpPhase = useAiStore(s => s.settings.mcpPhase);
-  const mcpPhase = !savedMcpPhase || savedMcpPhase === 'plan' ? 'plan' : 'action';
+  const settings = useAiStore(s => s.settings);
+  const runtime = settings.runtime;
+  const runtimeKey = runtime === 'codex' ? 'codex' : runtime === 'claude' ? 'claude' : 'opencode';
+  const terminalMode: ExternalTerminalMode = settings[runtimeKey]?.terminalMode ?? 'embedded';
+  const httpMcpEnabled = Boolean(settings.mcpServer?.enabled);
+  const httpMcpPort = settings.mcpServer?.port ?? 3847;
+  const { profiles, activeId: storeActiveId, activeProfile: storeActiveProfile } = ensureMcpProfiles(settings);
+  const [optimisticActiveId, setOptimisticActiveId] = useState<string | null>(null);
+  useEffect(() => { setOptimisticActiveId(null); }, [storeActiveId]);
+  const activeId = optimisticActiveId ?? storeActiveId;
+  const activeProfile = profiles.find(p => p.id === activeId) ?? storeActiveProfile;
+  const effectivePolicy = resolveEffectiveMcpPolicy({
+    ...settings,
+    activeMcpProfileId: activeId,
+    mcpServer: { enabled: httpMcpEnabled, port: httpMcpPort, ...settings.mcpServer },
+  }, activeProfile);
+  const summary = summarizeMcpPolicy(effectivePolicy);
   const saving = useAiStore(s => s.saving);
   const name = externalAgentName(runtime);
   const request = useAiStore(s => s.openCodeRequest);
@@ -25,34 +44,38 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState('Starting');
   const [scopeLabel, setScopeLabel] = useState(context ?? 'No cluster selected');
+  const [launchedTerminal, setLaunchedTerminal] = useState('');
   const [error, setError] = useState('');
   const box = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const connection = useRef<ExecConnection | null>(null);
+  const systemSessionId = useRef<string | null>(null);
   const fit = useRef<TerminalView | null>(null);
   const startup = useRef<AbortController | null>(null);
   const pinnedContext = useRef<string | null>(context);
 
-  const readOnly = Boolean(mcpPolicy.readOnly);
-  const activeToolCount = MCP_TOOL_CATALOG.filter(tool => isToolActiveInPolicy(tool.id, mcpPolicy, mcpPhase)).length;
+  async function updateMcpLive(patch: Parameters<typeof updateAiMcpSettings>[1]) {
+    if (!desktopAiAvailable()) return;
+    setError('');
+    if (patch.activeProfileId !== undefined) setOptimisticActiveId(patch.activeProfileId);
+    try {
+      const current = useAiStore.getState().settings;
+      await useAiStore.getState().save(updateAiMcpSettings(current, patch));
+    } catch (e) {
+      setOptimisticActiveId(null);
+      setError(agentError(e));
+    }
+  }
 
-  async function updateMcpPolicyLive(patch: Partial<AgentPolicy>) {
+  async function switchTerminalMode(nextMode: ExternalTerminalMode) {
     if (!desktopAiAvailable()) return;
     setError('');
     const current = useAiStore.getState().settings;
-    const base = normalizeMcpPolicy(current.mcpPolicy);
-    const nextMcp: AgentPolicy = {
-      ...base,
-      ...patch,
-      alwaysAsk: [],
-      confirmReads: false,
-      rules: [],
-    };
+    const prevRuntime = current[runtimeKey] ?? { executable: '', workingDirectory: '' };
     try {
       await useAiStore.getState().save({
         ...current,
-        mcpPolicy: nextMcp,
-        policy: syncSharedPolicyFields(nextMcp, current.policy),
+        [runtimeKey]: { ...prevRuntime, terminalMode: nextMode },
       });
     } catch (e) {
       setError(agentError(e));
@@ -62,19 +85,65 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
   function stop() {
     startup.current?.abort();
     connection.current?.close();
+    if (systemSessionId.current) {
+      const id = systemSessionId.current;
+      systemSessionId.current = null;
+      void agentTransport.stopExternalAgentSystemTerminal(id).catch(() => {});
+    }
     if (terminal.current) terminal.current.options.disableStdin = true;
+    setLaunchedTerminal('');
     setStatus('Stopped');
   }
 
   useEffect(() => {
-    if (!box.current) return;
-    const appearance = useUiStore.getState();
     const cancel = new AbortController();
     startup.current = cancel;
-    let acknowledged = false; let started = false; let finished = false;
     const scope = request && request.scope.context === context ? request.scope : currentAgentScope();
     setScopeLabel(`${scope.context || 'No cluster selected'} / ${scope.allNamespaces ? 'All namespaces' : scope.namespaces.join(', ') || 'No namespaces'}`);
     pinnedContext.current = context;
+
+    if (terminalMode === 'system') {
+      setError('');
+      setStatus('Launching system terminal');
+      setLaunchedTerminal('');
+      let reservation: string | undefined;
+      const sessionId = crypto.randomUUID();
+      systemSessionId.current = sessionId;
+      void (async () => {
+        try {
+          const prompt = request?.scope.context === scope.context && useAiStore.getState().openCodeRequestConsumed !== request.id ? request.prompt : null;
+          if (request && prompt) {
+            reservation = crypto.randomUUID();
+            useAiStore.setState({ openCodeRequestConsumed: request.id, openCodeRequestReservation: reservation });
+          }
+          const result = await agentTransport.startExternalAgentSystemTerminal(sessionId, { scope, prompt });
+          if (cancel.signal.aborted) {
+            void agentTransport.stopExternalAgentSystemTerminal(sessionId).catch(() => {});
+            return;
+          }
+          setLaunchedTerminal(result.terminal);
+          setStatus(`Running in ${result.terminal}`);
+        } catch (e) {
+          if (e instanceof OpenCodeNotStartedError && request && reservation && useAiStore.getState().openCodeRequestReservation === reservation) {
+            useAiStore.setState({ openCodeRequestConsumed: undefined, openCodeRequestReservation: undefined });
+          }
+          if (systemSessionId.current === sessionId) systemSessionId.current = null;
+          if (!cancel.signal.aborted) { setError(agentError(e)); setStatus('Failed'); }
+        }
+      })();
+      return () => {
+        cancel.abort();
+        if (systemSessionId.current === sessionId) {
+          systemSessionId.current = null;
+          void agentTransport.stopExternalAgentSystemTerminal(sessionId).catch(() => {});
+        }
+        if (startup.current === cancel) startup.current = null;
+      };
+    }
+
+    if (!box.current) return;
+    const appearance = useUiStore.getState();
+    let acknowledged = false; let started = false; let finished = false;
     const view = createTerminalView(box.current, appearance, (cols, rows) => {
       if (!cancel.signal.aborted) connection.current?.resize(cols, rows);
     });
@@ -136,47 +205,99 @@ export function OpenCodePane({ visible = true }: { visible?: boolean }) {
       data.dispose(); view.dispose(); terminal.current = null; fit.current = null;
       if (startup.current === cancel) startup.current = null;
     };
-  }, [attempt, request?.id, runtime]);
+  }, [attempt, request?.id, runtime, terminalMode]);
 
   useEffect(() => {
     if (pinnedContext.current !== context) { stop(); setStatus('Cluster changed · Restart to reconnect'); }
   }, [context]);
   useTerminalAppearance(fit, () => {
     fit.current?.fit(); const t = terminal.current; if (t) connection.current?.resize(t.cols, t.rows);
-  }, visible, String(attempt));
+  }, visible && terminalMode === 'embedded', `${attempt}:${terminalMode}`);
   useEffect(() => {
-    if (visible) { fit.current?.fit(); const t = terminal.current; if (t) { connection.current?.resize(t.cols, t.rows); t.focus(); } }
-  }, [visible]);
+    if (visible && terminalMode === 'embedded') {
+      fit.current?.fit();
+      const t = terminal.current;
+      if (t) { connection.current?.resize(t.cols, t.rows); t.focus(); }
+    }
+  }, [visible, terminalMode]);
 
-  return <div className="ai-workspace" data-testid="opencode-pane"><div className="ai-chat">
-    <div className="ai-form-line px-3 py-2 border-b border-[var(--border-default)]">
-      <strong>{name}</strong><span className="ai-help ai-grow">{scopeLabel} · {status}</span>
-      <label className="flex items-center gap-1.5 text-xs" title="Enforced by the Kubiki MCP server. The external agent's own mode is independent.">
-        MCP phase
-        <Select aria-label="MCP server phase" value={mcpPhase} disabled={saving} onChange={e => {
-          const current = useAiStore.getState().settings;
-          void useAiStore.getState().save({ ...current, mcpPhase: e.target.value as 'plan' | 'action' }).catch(e => setError(agentError(e)));
-        }}><option value="plan">Plan</option><option value="action">Action</option></Select>
-      </label>
-      <CheckboxRow
-        label="Read-only MCP"
-        checked={readOnly}
-        disabled={saving}
-        onChange={e => void updateMcpPolicyLive(toggleReadOnlyMcpPolicy(e.target.checked, mcpPolicy))}
-      />
-      <Button
-        size="sm"
-        variant="secondary"
-        aria-label="Live MCP tools"
-        onClick={() => useAiStore.getState().openSettings('mcp')}
-      >
-        MCP Tools ({activeToolCount}/{MCP_TOOL_CATALOG.length})
-      </Button>
-      <Button size="sm" onClick={stop}>Stop</Button>
-      <Button size="sm" onClick={() => setAttempt(v => v + 1)}>Restart</Button>
-      <Button size="sm" onClick={() => useAiStore.getState().openSettings('agent')}>Settings</Button>
+  return (
+    <div className="ai-workspace" data-testid="opencode-pane">
+      <div className="ai-chat">
+        <div className="ai-form-line px-3 py-2 border-b border-[var(--border-default)]">
+          <strong>{name}</strong>
+          <span className="ai-help ai-grow">{scopeLabel} · {status}</span>
+          <label className="flex items-center gap-1.5 text-xs" title="Active MCP access profile enforced for external agents">
+            MCP profile
+            <Select
+              aria-label="MCP profile"
+              value={activeId}
+              disabled={saving}
+              onChange={e => void updateMcpLive({ activeProfileId: e.target.value })}
+            >
+              {profiles.map(p => {
+                const eff = resolveEffectiveMcpPolicy(settings, p);
+                const s = summarizeMcpPolicy(eff);
+                return (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({s.isReadOnly ? 'RO' : 'RW'})
+                  </option>
+                );
+              })}
+            </Select>
+          </label>
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="Live MCP tools"
+            onClick={() => useAiStore.getState().openSettings('mcp')}
+          >
+            MCP Tools ({summary.activeToolCount}/{summary.totalToolCount}) · {summary.isReadOnly ? 'RO' : 'RW'}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={saving || !desktopAiAvailable()}
+            onClick={() => void switchTerminalMode(terminalMode === 'system' ? 'embedded' : 'system')}
+          >
+            {terminalMode === 'system' ? 'Use embedded terminal' : 'Open in system terminal'}
+          </Button>
+          <Button size="sm" onClick={stop}>Stop</Button>
+          <Button size="sm" onClick={() => setAttempt(v => v + 1)}>Restart</Button>
+          <Button size="sm" onClick={() => useAiStore.getState().openSettings('agent')}>Settings</Button>
+        </div>
+        {error && <div role="alert" className="ai-error px-3 py-2">{error}</div>}
+        {terminalMode === 'system' ? (
+          <div className="p-6 flex flex-col gap-3 max-w-xl" data-testid="opencode-system-terminal">
+            <div className="ai-settings-card">
+              <h3 className="text-sm font-semibold mb-1">
+                {launchedTerminal ? `${name} launched in ${launchedTerminal}` : `${name} · System terminal`}
+              </h3>
+              <p className="ai-help">
+                Scope: <code>{scopeLabel}</code> · MCP profile: <strong>{activeProfile.name}</strong> ({summary.isReadOnly ? 'RO' : 'RW'})
+              </p>
+              {httpMcpEnabled ? (
+                <p className="ai-help mt-1">
+                  Desktop HTTP MCP: <code>http://127.0.0.1:{httpMcpPort}/mcp</code>
+                </p>
+              ) : null}
+              <p className="ai-help mt-2">
+                {httpMcpEnabled
+                  ? <>{name} runs inside your system default terminal with your shell init scripts (e.g. zsh <code>.zshrc</code>) and connects to Kubiki&apos;s Desktop HTTP MCP server. Shared Permissions and your active MCP profile apply live; switch MCP profiles or toggle HTTP MCP anytime from the top bar or status bar.</>
+                  : <>{name} runs inside your system default terminal with your shell init scripts (e.g. zsh <code>.zshrc</code>) and connects back to Kubiki&apos;s attached MCP bridge. Click <strong>Stop</strong> in the toolbar to terminate the launched process and revoke this attached session, or enable <strong>Desktop HTTP MCP</strong> to connect from any terminal session.</>}
+              </p>
+              <div className="ai-form-line mt-3">
+                <Button size="sm" onClick={() => setAttempt(v => v + 1)}>Relaunch in system terminal</Button>
+                <Button size="sm" variant="secondary" onClick={() => useAiStore.getState().openSettings('mcp')}>
+                  {httpMcpEnabled ? 'Cluster tools (MCP)' : 'Enable Desktop HTTP MCP'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="terminal-frame"><div ref={box} className="terminal-surface" /></div>
+        )}
+      </div>
     </div>
-    {error && <div role="alert" className="ai-error px-3 py-2">{error}</div>}
-    <div className="terminal-frame"><div ref={box} className="terminal-surface" /></div>
-  </div></div>;
+  );
 }

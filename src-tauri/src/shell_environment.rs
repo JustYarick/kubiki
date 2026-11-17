@@ -1,8 +1,8 @@
 //! Finder-launched applications do not inherit the user's terminal PATH.
 //! Recover it before Tauri (and its worker threads) starts, including kubeconfig
 //! credential helpers as well as Helm. Never execute Helm through a shell.
-#[cfg(any(target_os = "macos", all(test, unix)))]
-mod recovery {
+#[cfg(unix)]
+pub(crate) mod recovery {
     use std::{
         ffi::{OsStr, OsString},
         path::Path,
@@ -52,8 +52,14 @@ mod recovery {
     }
 
     pub async fn shell_path(shell: &Path, timeout: Duration) -> Option<OsString> {
+        let fish = shell.file_name().is_some_and(|name| name == "fish");
+        let script = if fish {
+            "printf '\\0KUBIKI_PATH\\0%s\\0' (string join : $PATH)"
+        } else {
+            "printf '\\0KUBIKI_PATH\\0%s\\0' \"$PATH\""
+        };
         let mut child = Command::new(shell)
-            .args(["-ilc", "printf '\\0KUBIKI_PATH\\0%s\\0' \"$PATH\""])
+            .args(["-ilc", script])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -73,6 +79,30 @@ mod recovery {
         };
         tokio::time::timeout(timeout, task).await.ok().flatten()
     }
+}
+
+#[cfg(unix)]
+pub(crate) async fn effective_path() -> std::ffi::OsString {
+    use std::{path::PathBuf, time::Duration};
+    let shell = kubiki_core::pod_ops::host_terminal::host_terminal_info()
+        .ok()
+        .map(|info| PathBuf::from(info.default_shell))
+        .filter(|path| path.is_absolute() && path.is_file())
+        .or_else(|| {
+            std::env::var_os("SHELL")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute() && path.is_file())
+        });
+    let discovered = match shell {
+        Some(shell) => recovery::shell_path(&shell, Duration::from_secs(2)).await,
+        None => None,
+    };
+    recovery::merge_path(discovered.as_deref(), std::env::var_os("PATH").as_deref())
+}
+
+#[cfg(not(unix))]
+pub(crate) async fn effective_path() -> std::ffi::OsString {
+    std::env::var_os("PATH").unwrap_or_default()
 }
 
 /// Call on the main thread, before initializing the application runtime.

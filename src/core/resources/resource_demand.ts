@@ -11,20 +11,15 @@ export const OVERVIEW_KINDS: readonly ResourceKind[] = ['Pod', 'Deployment', 'St
 const WORKLOADS = new Set(['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController', 'Job', 'CronJob']);
 export const structuralKinds = RESOURCE_TYPES.filter(type => type.kind !== 'Event').map(type => type.kind as ResourceKind);
 const details: Partial<Record<ResourceKind, ResourceKind[]>> = {
-  Pod: ['Node', 'ReplicaSet', 'Deployment', 'Job', 'CronJob', 'ServiceAccount', 'PersistentVolumeClaim', 'ConfigMap', 'Secret'],
+  Pod: ['Node', 'Deployment', 'CronJob'],
   Service: ['Pod', 'EndpointSlice', 'Endpoints'],
-  Ingress: ['Service', 'IngressClass', 'Secret'],
-  PersistentVolumeClaim: ['PersistentVolume', 'StorageClass', 'Pod'],
-  PersistentVolume: ['PersistentVolumeClaim', 'StorageClass'],
+  PersistentVolumeClaim: ['Pod'],
   Role: ['RoleBinding', 'ClusterRoleBinding'],
   ClusterRole: ['RoleBinding', 'ClusterRoleBinding'],
-  RoleBinding: ['Role', 'ClusterRole', 'ServiceAccount'],
-  ClusterRoleBinding: ['ClusterRole', 'ServiceAccount'],
   ServiceAccount: ['RoleBinding', 'ClusterRoleBinding', 'Role', 'ClusterRole', 'Pod'],
   ConfigMap: ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Pod'],
   Secret: ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Pod', 'ServiceAccount', 'Ingress'],
   Namespace: ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Service', 'ConfigMap', 'Secret', 'Pod'],
-  HorizontalPodAutoscaler: ['Deployment', 'StatefulSet', 'ReplicaSet'],
   VerticalPodAutoscaler: ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet'],
   PodDisruptionBudget: ['Pod'],
   NetworkPolicy: ['Pod'],

@@ -80,6 +80,7 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | --- | --- |
 | `src/state/cluster_store.ts` | Available contexts, active context, namespace scope, and discovered resource availability. |
 | `src/state/resource_store.ts` | Resource cache and synchronization state consumed by views. |
+| `src/state/detail_cache.ts` | Bounded per-context cache for targeted single-resource and per-UID event prefetches. |
 | `src/state/resource_watch.ts` | Starting, stopping, refreshing, and rescoping resource watch sessions. |
 | `src/state/workspace_store.ts` | Workspace sections, remembered documents/splits per section, and resource navigation. |
 | `src/state/dock_store.ts` | Bottom-panel sessions and selection. |
@@ -95,9 +96,9 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 
 `src/providers/contract.ts` defines the common resource access interface. `k8s_provider.ts` selects the transport, and the desktop application calls native commands through Tauri. Dedicated transports handle watches, logs, exec sessions, and forwarding.
 
-Master search uses a private on-demand inventory in `search_inventory.ts`, rather than replacing active watch snapshots. `use_resource_search.ts` runs metadata filtering and regex in a disposable worker with a time bound. Search-created detail tabs pin their namespace through `WorkspaceTab.namespacePinned`; normal list scope remains independent. See [master search and resource performance](MASTER_SEARCH.md) for query syntax and coverage.
+Master search uses a private on-demand inventory in `search_inventory.ts` (reusing live snapshots, lightweight native search/metadata projections, and resumable partial buckets) rather than replacing active watch snapshots. `detail_prefetch.ts` resolves direct forward references and object-scoped events into `detail_cache.ts` via low-priority single-object reads so detail views avoid full collection watches. `use_resource_search.ts` runs metadata filtering and regex in a Web Worker with a time bound. Search-created detail tabs pin their namespace through `WorkspaceTab.namespacePinned`; normal list scope remains independent. See [master search and resource performance](MASTER_SEARCH.md) for query syntax and coverage.
 
-The shared metrics subscription owns aggregate and per-node observation histories. Node performance uses the cluster-scoped read and the selected node's own samples; it shares transport polling with Overview and never derives host usage by summing only currently loaded Pods. `use_pod_metrics.ts` shares namespace reads and retains bounded history only for viewed Pods through `pod_metrics_history.ts`, isolating context, namespace and UID. The shared `HistoryChart` measures its viewport to keep markers circular and pointer selection accurate at every pane width. First-sample horizontal chart previews do not add synthetic samples to history.
+The shared metrics subscription owns aggregate and per-node observation histories. Node performance uses the cluster-scoped read and the selected node's own samples; it shares transport polling with Overview and never derives host usage by summing only currently loaded Pods. `use_pod_metrics.ts` polls single-Pod metrics in native mode (`get_pod_metric`) or shares namespace reads in browser mode, and retains bounded history only for viewed Pods through `pod_metrics_history.ts`, isolating context, namespace and UID. The shared `HistoryChart` measures its viewport to keep markers circular and pointer selection accurate at every pane width. First-sample horizontal chart previews do not add synthetic samples to history.
 
 `resource_watch_session.ts` manages frontend subscription state. `multi_namespace_watch.ts` bounds actual initial namespace snapshots before releasing their long-lived watches. `tauri_watch.ts` creates Tauri channels, checks subscription identity, and requests native cleanup when a watch closes. `read_queue.ts` bounds ordinary reads, and `read_transport.ts` forwards cancellation to native read tasks or the HTTP bridge. `errors.ts` normalizes backend failures for the interface.
 
@@ -122,6 +123,8 @@ The shared metrics subscription owns aggregate and per-node observation historie
 | `port_forward_commands.rs` | Starting, listing, and stopping TCP forwards. |
 | `extension_commands.rs` | Bundled extension runtime startup and brokered requests/cancellation. |
 | `update_commands.rs` | Stable/dev feed and version policy, signed package downloads, session cleanup and installation. |
+| `mcp_http.rs` | Persistent loopback HTTP MCP server, bearer token storage, and external client auto-configuration. |
+| `system_terminal.rs` | System terminal detection and external agent process launching. |
 | `graphics.rs` | Linux graphics runtime initialization and diagnostics. |
 
 The desktop shell owns transport and application lifecycle concerns. Kubernetes request logic and reusable session managers reside in `kubiki-core`. Native discovery and snapshot/CRD reads use `core/reads.rs`; node drain orchestration lives in `core/drain.rs`. Terminal command adapters share `exec_stream.rs` for IPC batching and acknowledgements.
@@ -185,8 +188,9 @@ writing. Mode changes invalidate pending authorization; dispatched requests stil
 return operation receipts. Accepted UID/generation are retained per connection,
 so verification cannot silently switch to a replacement resource.
 
-`src-tauri/src/opencode.rs` launches installed external agent CLIs in a PTY and owns its attached
-MCP lifecycle. OpenCode owns its conversation and permissions; the MCP exposure
+`src-tauri/src/opencode.rs` launches installed external agent CLIs in a PTY or via `src-tauri/src/system_terminal.rs` in the system default terminal emulator and owns its attached
+MCP lifecycle. On Unix, the CLI inherits the default shell's interactive login
+startup environment through the shared host-terminal process builder while restoring Kubiki's workspace directory. `src-tauri/src/mcp_http.rs` and `crates/kubiki-mcp/src/http.rs` manage the optional persistent loopback Streamable HTTP MCP server (`127.0.0.1:<port>/mcp`). OpenCode owns its conversation and permissions; the MCP exposure
 profile still limits scope, data and operations. Pending startup can be stopped
 before the process is scheduled. Runtime selection lives in AI settings.
 

@@ -1,3 +1,4 @@
+import { sandboxDocument } from './panel_document';
 import { useEffect, useRef, useState } from 'react';
 import { extensionRequest } from '../providers/extensions';
 import { useUiStore } from '../state/ui_store';
@@ -30,11 +31,6 @@ export function extensionTheme() {
   return Object.fromEntries(
     TOKENS.map((key) => [key, style.getPropertyValue(key).trim()]),
   );
-}
-export function sandboxDocument(html: string): string {
-  // CSP precedes every publisher-supplied element. Inline bundles only; no external
-  // scripts, fetch, frames, forms or objects. The iframe has an opaque origin.
-  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">${html}`;
 }
 export function ExtensionPanel({
   extensionId,

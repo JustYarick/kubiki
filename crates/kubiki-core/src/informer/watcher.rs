@@ -22,6 +22,12 @@ pub const WATCH_TIMEOUT_SECONDS: u32 = 290;
 // The expanded API catalog fans out namespaced collections for selected namespaces.
 const MAX_WATCHERS: usize = 512;
 
+#[derive(Debug, Clone, Default)]
+pub struct WatchFilter {
+    pub label_selector: Option<String>,
+    pub field_selector: Option<String>,
+}
+
 struct ActiveWatch {
     owner: String,
     scope: WatchScope,
@@ -89,8 +95,23 @@ impl InformerManager {
     where
         F: Future<Output = Result<Client, ApiError>> + Send + 'static,
     {
+        self.start_watch_filtered(owner, id, query, WatchFilter::default(), client)
+            .await
+    }
+
+    pub async fn start_watch_filtered<F>(
+        &self,
+        owner: &str,
+        id: &str,
+        query: ResourceQuery,
+        filter: WatchFilter,
+        client: F,
+    ) -> Result<mpsc::Receiver<WatchMessage>, ApiError>
+    where
+        F: Future<Output = Result<Client, ApiError>> + Send + 'static,
+    {
         validate_query(&query)?;
-        self.start_resolved_watch(owner, id, query, async move {
+        self.start_resolved_watch_filtered(owner, id, query, filter, async move {
             client.await.map(|client| (client, None))
         })
         .await
@@ -103,6 +124,23 @@ impl InformerManager {
         owner: &str,
         id: &str,
         query: ResourceQuery,
+        client: F,
+    ) -> Result<mpsc::Receiver<WatchMessage>, ApiError>
+    where
+        F: Future<Output = Result<(Client, Option<(ApiResource, bool)>), ApiError>>
+            + Send
+            + 'static,
+    {
+        self.start_resolved_watch_filtered(owner, id, query, WatchFilter::default(), client)
+            .await
+    }
+
+    pub async fn start_resolved_watch_filtered<F>(
+        &self,
+        owner: &str,
+        id: &str,
+        query: ResourceQuery,
+        filter: WatchFilter,
         client: F,
     ) -> Result<mpsc::Receiver<WatchMessage>, ApiError>
     where
@@ -147,7 +185,7 @@ impl InformerManager {
         let (tx, rx) = mpsc::channel(WATCH_QUEUE_CAPACITY);
         let task_scope = scope.clone();
         let handle = tokio::spawn(async move {
-            run_watch(store, task_scope, client, tx).await;
+            run_watch(store, task_scope, filter, client, tx).await;
         });
         active.insert(
             key,
@@ -285,6 +323,7 @@ fn strip_crd_schemas(obj: &mut DynamicObject) {
 async fn run_watch<F>(
     store: ResourceStore,
     scope: WatchScope,
+    filter: WatchFilter,
     client: F,
     tx: mpsc::Sender<WatchMessage>,
 ) where
@@ -362,11 +401,24 @@ async fn run_watch<F>(
             return;
         }
     };
-    let stream = watcher::watcher(
-        api,
-        watcher::Config::default().timeout(WATCH_TIMEOUT_SECONDS),
-    )
-    .default_backoff();
+    let mut config = watcher::Config::default().timeout(WATCH_TIMEOUT_SECONDS);
+    if let Some(labels) = filter
+        .label_selector
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        config = config.labels(labels);
+    }
+    if let Some(fields) = filter
+        .field_selector
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        config = config.fields(fields);
+    }
+    let stream = watcher::watcher(api, config).default_backoff();
     tokio::pin!(stream);
     let mut reconcile = Reconciler::with_scope(scope.query.clone(), namespaced);
     let mut phase = WatchPhase::Connecting;

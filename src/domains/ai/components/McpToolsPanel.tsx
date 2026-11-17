@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Button } from '../../../components/ui/Button';
 import { CheckboxRow } from '../../../components/ui/Checkbox';
+import { SearchInput } from '../../../components/ui/Input';
 import {
   isToolActiveInPolicy,
   patchToolInPolicy,
-  toggleReadOnlyMcpPolicy,
+  summarizeMcpPolicy,
   MCP_TOOL_CATALOG,
   WRITE_OPERATIONS,
   type AgentPhase,
@@ -16,6 +17,7 @@ interface McpToolsPanelProps {
   policy: AgentPolicy;
   onChange: (next: AgentPolicy) => void | Promise<void>;
   currentPhase?: AgentPhase;
+  modeScope?: 'phased' | 'general';
   onClose?: () => void;
   title?: string;
   subtitle?: string;
@@ -26,20 +28,25 @@ interface McpToolsPanelProps {
 export function McpToolsPanel({
   policy,
   onChange,
-  currentPhase = 'action',
+  modeScope = 'phased',
   onClose,
-  title = 'MCP Cluster Tools & Permissions',
-  subtitle = 'Changes apply live to active sessions without restarting',
+  title = 'Cluster Tools & Permissions',
+  subtitle = 'Changes apply live across active sessions without restarting',
   className,
   disabled = false,
 }: McpToolsPanelProps) {
-  const [selectedTab, setSelectedTab] = useState<'current' | 'plan' | 'action' | 'global'>('current');
+  const [selectedTab, setSelectedTab] = useState<'global' | 'plan' | 'action'>('global');
   const [search, setSearch] = useState('');
 
   const activePhase: AgentPhase | undefined =
-    selectedTab === 'current' ? (currentPhase === 'plan' ? 'plan' : 'action') : selectedTab === 'global' ? undefined : selectedTab;
+    modeScope === 'general' ? undefined : (selectedTab === 'global' ? undefined : selectedTab);
 
   const readOnly = Boolean(policy.readOnly);
+  const summary = summarizeMcpPolicy(
+    activePhase === 'plan'
+      ? { ...policy, readOnly: true }
+      : policy,
+  );
   const activeCount = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, policy, activePhase)).length;
   const totalAvailable = activePhase === 'plan' ? MCP_TOOL_CATALOG.filter(t => t.group !== 'write').length : MCP_TOOL_CATALOG.length;
 
@@ -109,99 +116,70 @@ export function McpToolsPanel({
 
   return (
     <div
-      className={`p-3 bg-[var(--bg-secondary)] space-y-3 max-h-[56vh] overflow-y-auto kubiki-scrollbar ${className ?? ''}`}
+      className={`ai-settings-card flex flex-col gap-3 ${className ?? ''}`}
       role="region"
       aria-label="MCP tools and permissions control"
     >
-      {/* Header with Title and Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 border-b border-[var(--border-subtle)]">
-        <div>
-          <div className="flex items-center gap-2">
-            <h4 className="text-xs font-semibold text-[var(--text-primary)] m-0">{title}</h4>
+      <div className="ai-card-header mb-0 pb-2.5 border-b border-[var(--border-subtle)]">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h4>{title}</h4>
             <span
-              className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
-                activeCount > 0
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                  : 'bg-[var(--bg-card)] border-[var(--border-default)] text-[var(--text-muted)]'
-              }`}
-              title="Active tools available to the agent in this mode"
+              className={`ai-status-pill font-mono ${activeCount > 0 ? 'is-active' : ''}`}
+              title="Active tools available in this mode"
             >
               {activeCount}/{totalAvailable} active
             </span>
+            <span
+              className={`ai-status-pill font-mono ${summary.isReadOnly ? 'is-active' : 'is-warn'}`}
+              title={
+                summary.isReadOnly
+                  ? 'No mutation tools active (Read-only)'
+                  : `Mutations permitted: ${summary.allowedWrites.join(', ')}`
+              }
+            >
+              {summary.isReadOnly ? 'RO' : 'RW'}
+            </span>
           </div>
-          <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{subtitle}</p>
+          <p className="ai-help mt-0.5">{subtitle}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Segmented Phase Switcher */}
-          <div className="inline-flex rounded-md border border-[var(--border-default)] bg-[var(--bg-card)] p-0.5 text-xs">
-            <button
-              type="button"
-              className={`px-2.5 py-1 rounded text-[11px] transition-colors ${
-                selectedTab === 'current'
-                  ? 'bg-[var(--accent)] text-white font-medium shadow-xs'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-              onClick={() => setSelectedTab('current')}
-              title={`View tools active in the current phase (${currentPhase})`}
-            >
-              Current ({currentPhase})
-            </button>
-            <button
-              type="button"
-              className={`px-2.5 py-1 rounded text-[11px] transition-colors ${
-                selectedTab === 'plan'
-                  ? 'bg-[var(--accent)] text-white font-medium shadow-xs'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-              onClick={() => setSelectedTab('plan')}
-              title="Configure tools available during the investigation and planning phase"
-            >
-              Plan Mode
-            </button>
-            <button
-              type="button"
-              className={`px-2.5 py-1 rounded text-[11px] transition-colors ${
-                selectedTab === 'action'
-                  ? 'bg-[var(--accent)] text-white font-medium shadow-xs'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-              onClick={() => setSelectedTab('action')}
-              title="Configure tools and write permissions during execution and changes"
-            >
-              Action Mode
-            </button>
-            <button
-              type="button"
-              className={`px-2.5 py-1 rounded text-[11px] transition-colors ${
-                selectedTab === 'global'
-                  ? 'bg-[var(--accent)] text-white font-medium shadow-xs'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-              onClick={() => setSelectedTab('global')}
-              title="Configure baseline permissions and global data access"
-            >
-              Global
-            </button>
-          </div>
+          {modeScope === 'phased' && (
+            <div className="inline-flex items-center rounded-[var(--radius-sm)] border border-[var(--border-default)] bg-[var(--bg-canvas)] p-0.5">
+              {([
+                { id: 'global', label: 'Common', title: 'Configure shared baseline tool permissions across Kubiki Agent and MCP Action profile' },
+                { id: 'plan', label: 'Plan (Kubiki)', title: 'Configure tools available during Kubiki Agent Plan phase' },
+                { id: 'action', label: 'Action (Kubiki)', title: 'Configure tools available during Kubiki Agent Action phase' },
+              ] as const).map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`h-[var(--control-h-xs)] px-2 rounded-[3px] text-[11px] transition-colors ${
+                    selectedTab === tab.id
+                      ? 'bg-[var(--accent)] text-white font-medium'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                  onClick={() => setSelectedTab(tab.id)}
+                  title={tab.title}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
 
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={disabled}
-            onClick={handleEnableAll}
-            title="Enable all permitted tools and categories for this mode"
-          >
+          <Button size="sm" variant="secondary" disabled={disabled} onClick={handleEnableAll} title="Enable all permitted tools and categories for this view">
             Enable all
           </Button>
           <Button
             size="sm"
-            variant={readOnly ? 'primary' : 'ghost'}
+            variant="secondary"
             disabled={disabled}
-            onClick={() => void onChange(toggleReadOnlyMcpPolicy(!readOnly, policy))}
-            title={readOnly ? 'Disable read-only mode to allow resource changes' : 'Lock the agent into read-only mode (blocks all mutations)'}
+            onClick={() => void onChange({ ...policy, readOnly: false, writes: [] })}
+            title="Disable all cluster mutations in this profile while keeping customizations"
           >
-            {readOnly ? 'Read-only ON' : 'Read-only OFF'}
+            Clear writes
           </Button>
           {onClose && (
             <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close MCP tools panel" title="Close panel">
@@ -211,36 +189,35 @@ export function McpToolsPanel({
         </div>
       </div>
 
-      {/* Mode Note / Sub-Status Bar */}
-      <div className="flex items-center justify-between text-[11px] text-[var(--text-muted)] py-0.5">
-        <span>
-          {activePhase === 'plan' && 'Plan Phase: mutation tools are blocked by safety contract. Read and diagnostic tools only.'}
-          {activePhase === 'action' && 'Action Phase: write operations and verifications enabled according to policy.'}
-          {!activePhase && 'Global Policy: baseline permissions applied across all phases.'}
-        </span>
-        {readOnly && (
-          <span className="text-amber-400 font-medium text-[10px] px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20" title="All mutations are blocked globally">
-            Read-only active
-          </span>
-        )}
-      </div>
+      {modeScope === 'phased' ? (
+        <p className="ai-help">
+          {activePhase === 'plan' && 'Plan phase (Kubiki Agent only): mutation tools stay blocked by the planning safety contract.'}
+          {activePhase === 'action' && 'Action phase (Kubiki Agent only): configure which tools are restricted specifically during Kubiki Action.'}
+          {!activePhase && 'Common (Shared): baseline permissions shared across Kubiki Agent and the MCP Action profile.'}
+        </p>
+      ) : (
+        <p className="ai-help">
+          External clients manage their own modes, so tools here apply globally without Plan/Action gating.
+        </p>
+      )}
 
-      {/* Data Categories Master Toggles */}
-      <div className="pt-2 border-t border-[var(--border-subtle)] space-y-1.5">
-        <span className="text-xs font-medium text-[var(--text-secondary)]">Data access:</span>
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-1.5">
+        <span className="text-[11px] font-medium text-[var(--text-secondary)]">Data access</span>
+        <div className="ai-permission-checks">
           {([
             { key: 'resources', label: 'Resources', title: 'Allow reading Kubernetes workload, config and network objects' },
             { key: 'events', label: 'Events', title: 'Allow reading cluster and namespace warning and informational events' },
             { key: 'logs', label: 'Logs', title: 'Allow streaming container and previous crash logs' },
             { key: 'metrics', label: 'Metrics', title: 'Allow querying CPU and memory usage statistics' },
             { key: 'clusterResources', label: 'Cluster resources', title: 'Allow reading non-namespaced resources (Nodes, Namespaces, StorageClasses)' },
-          ] as const).map(({ key, label, title }) => (
+            { key: 'workloadConfiguration', label: 'Inline env & commands', title: 'Expose Pod container environment variables and startup commands' },
+            { key: 'annotations', label: 'Annotations', title: 'Include Kubernetes object annotations in responses' },
+          ] as const).map(({ key, label, title: tip }) => (
             <CheckboxRow
               key={key}
               label={label}
-              title={title}
-              checked={policy[key]}
+              title={tip}
+              checked={Boolean(policy[key])}
               disabled={disabled}
               onChange={e => void onChange({ ...policy, [key]: e.target.checked })}
             />
@@ -248,17 +225,16 @@ export function McpToolsPanel({
         </div>
       </div>
 
-      {/* Allowed Changes (Writes) */}
-      <div className="pt-2 border-t border-[var(--border-subtle)] space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-[var(--text-secondary)]">Allowed changes:</span>
+      <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium text-[var(--text-secondary)]">Allowed changes</span>
           {activePhase === 'plan' && (
-            <span className="text-[10px] text-amber-400 font-medium" title="Planning phase is read-only by design">
+            <span className="text-[10.5px] text-amber-400 font-medium" title="Planning phase is read-only by design">
               Mutations disabled in Plan mode
             </span>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="ai-permission-checks">
           {WRITE_OPERATIONS.map(op => {
             const tooltips: Record<WriteOperation, string> = {
               create: 'Allow creating new resources via apply_manifest',
@@ -274,14 +250,14 @@ export function McpToolsPanel({
               restart: 'Restart',
               delete: 'Delete',
             };
-            const isBlocked = readOnly || activePhase === 'plan';
+            const isPlanBlocked = activePhase === 'plan';
             return (
               <CheckboxRow
                 key={op}
                 label={labels[op]}
                 title={tooltips[op]}
-                checked={!isBlocked && policy.writes.includes(op)}
-                disabled={disabled || isBlocked}
+                checked={!isPlanBlocked && !readOnly && policy.writes.includes(op)}
+                disabled={disabled || isPlanBlocked}
                 onChange={e => toggleWriteOp(op, e.target.checked)}
               />
             );
@@ -289,52 +265,33 @@ export function McpToolsPanel({
         </div>
       </div>
 
-      {/* Individual MCP tools */}
-      <div className="pt-2 border-t border-[var(--border-subtle)] space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-xs font-medium text-[var(--text-secondary)]">
-            Tools catalog ({filteredTools.length}):
-          </div>
-          <div className="relative">
-            <input
-              type="search"
-              placeholder="Search tools..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="text-xs pl-2 pr-6 py-1 rounded bg-[var(--bg-card)] border border-[var(--border-default)] text-[var(--text-primary)] w-48 placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)]"
-              title="Search by tool name or ID"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch('')}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                title="Clear search"
-              >
-                ✕
-              </button>
-            )}
-          </div>
+      <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-[11px] font-medium text-[var(--text-secondary)]">
+            Tools catalog ({filteredTools.length})
+          </span>
+          <SearchInput
+            size="sm"
+            className="w-52 max-w-full"
+            placeholder="Search tools..."
+            value={search}
+            onChange={setSearch}
+          />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto kubiki-scrollbar pr-1">
+        <div className="ai-permission-checks max-h-60 overflow-y-auto kubiki-scrollbar pr-1">
           {filteredTools.map(tool => {
-            const blockedByReadOnly = (readOnly || activePhase === 'plan') && tool.group === 'write';
+            const blockedByPlan = activePhase === 'plan' && tool.group === 'write';
             const enabled = isToolActiveInPolicy(tool.id, policy, activePhase);
-            const tooltip = `${tool.id}\n${tool.description}${blockedByReadOnly ? '\n(Blocked: mutation tool in read-only / plan phase)' : ''}`;
+            const tooltip = `${tool.id}\n${tool.description}${blockedByPlan ? '\n(Blocked: mutation tool in Plan mode)' : ''}`;
             return (
-              <div
+              <CheckboxRow
                 key={tool.id}
-                className="flex items-center px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors min-w-0"
+                label={tool.label}
                 title={tooltip}
-              >
-                <CheckboxRow
-                  label={tool.label}
-                  title={tooltip}
-                  checked={enabled}
-                  disabled={disabled || blockedByReadOnly}
-                  onChange={e => void onChange(patchToolInPolicy(tool.id, e.target.checked, policy, activePhase))}
-                />
-              </div>
+                checked={enabled}
+                disabled={disabled || blockedByPlan}
+                onChange={e => void onChange(patchToolInPolicy(tool.id, e.target.checked, policy, activePhase))}
+              />
             );
           })}
         </div>

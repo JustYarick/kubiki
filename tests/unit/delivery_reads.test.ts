@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReadSubscriptions, type ReadSnapshot, type ReadVisibility } from '../../src/providers/read_subscriptions';
-import { loadHelmInventory } from '../../src/providers/helm_inventory';
+import { loadHelmInventory, loadPartialHelmInventory } from '../../src/providers/helm_inventory';
 import type { HelmRelease } from '../../src/providers/helm_types';
 
 const release = (name: string, namespace = 'backend'): HelmRelease => ({ name, namespace, revision: '1', chart: 'web-1', app_version: '1', updated: '', status: 'deployed' });
@@ -92,5 +92,23 @@ describe('complete Helm inventory', () => {
     abort.abort();reader.mockClear();
     await expect(loadHelmInventory(reader, 'prod', null, abort.signal)).rejects.toMatchObject({ code: 'cancelled' });
     expect(reader).not.toHaveBeenCalled();
+  });
+  it('retains accessible Helm releases when secrets are forbidden cluster-wide or in one namespace', async () => {
+    const { requestError } = await import('../../src/providers/errors');
+    const reader = vi.fn(async (context: string, namespace: string | null) => {
+      if (namespace === null) throw requestError('forbidden', 'secrets is forbidden at cluster scope', { operation: 'helm', context }, 403);
+      if (namespace === 'kube-system') throw requestError('forbidden', 'secrets is forbidden in kube-system', { operation: 'helm', context }, 403);
+      return [release('web', namespace)];
+    });
+
+    const clusterPartial = await loadPartialHelmInventory(reader, 'prod', null, new AbortController().signal, ['apps', 'kube-system']);
+    expect(clusterPartial.items.map(item => `${item.namespace}/${item.name}`)).toEqual(['apps/web']);
+    expect(clusterPartial.partialErrors).toHaveLength(1);
+    expect(clusterPartial.partialErrors[0].scope).toBe('kube-system');
+    expect(clusterPartial.partialErrors[0].error.code).toBe('forbidden');
+
+    const scopedPartial = await loadPartialHelmInventory(reader, 'prod', JSON.stringify(['apps', 'kube-system']), new AbortController().signal);
+    expect(scopedPartial.items.map(item => `${item.namespace}/${item.name}`)).toEqual(['apps/web']);
+    expect(scopedPartial.partialErrors).toHaveLength(1);
   });
 });

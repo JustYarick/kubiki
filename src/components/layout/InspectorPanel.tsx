@@ -3,6 +3,8 @@ import { resourceBucket } from '../../core/resources/custom_resource_types';
 import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, Boxes, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react';
 import { useResourceStore } from '../../state/resource_store';
+import { useMergedDetailEvents, useMergedDetailResources } from '../../state/detail_cache';
+import { useDetailPrefetch } from '../../providers/detail_prefetch';
 import { useClusterStore } from '../../state/cluster_store';
 import type { RightTab } from '../../state/ui_store';
 import { useUiStore } from '../../state/ui_store';
@@ -162,7 +164,7 @@ function KubernetesResourceDetails({
   const rightTab = inspector ? inspectorTab : localTab;
   const helm = useHelmGraph(item?.namespace, rightTab === 'related');
   const setTab = inspector ? useUiStore.getState().setRightTab : setLocalTab;
-  const resources = useResourceStore((s) => s.resources);
+  const resources = useMergedDetailResources();
   const [relatedQuery, setRelatedQuery] = useState('');
   const [relatedLimits, setRelatedLimits] = useState<Record<string, number>>({});
 
@@ -191,6 +193,7 @@ function KubernetesResourceDetails({
   );
   const currentContext = useClusterStore((s) => s.currentContext);
   const selectedNamespace = useClusterStore((s) => s.selectedNamespace);
+  useDetailPrefetch(currentContext, item, !!item && rightTab !== 'yaml', { includeSecretPayloads: rightTab === 'env' });
   useEffect(() => {
     if (!inspector && item && currentContext && rightTab === 'related') {
       return retainResourceKinds(currentContext, relatedResourceKinds(item), item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? selectedNamespace);
@@ -617,12 +620,12 @@ function KubernetesResourceDetails({
 }
 
 function ResourceEvents({ item }: { item: ResourceItem }) {
-  const events = useResourceStore((s) => s.resources.Event);
+  const events = useMergedDetailEvents(item.uid);
   const error = useResourceStore((s) => s.loadErrors.Event);
   const watchState = useResourceStore((s) => s.watchStates.Event);
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(50);
-  const related = useMemo(() => resourceEvents(events.values(), item), [events, item]);
+  const related = useMemo(() => resourceEvents(events, item), [events, item]);
   const filtered = related.filter((entry) =>
     [entry.reason, entry.message, entry.warning ? 'Warning' : 'Normal', entry.reporter]
       .join(' ')

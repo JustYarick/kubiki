@@ -1,7 +1,7 @@
 import { HardDrive, ShieldCheck } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { ownerMatches } from '../../../../core/resources/owner_references';
-import { useResourceStore } from '../../../../state/resource_store';
+import { useMergedDetailResources } from '../../../../state/detail_cache';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { PodRuntimeBlock } from '../blocks/PodRuntimeBlock';
 import { ConditionsTable } from '../blocks/ConditionsTable';
@@ -16,7 +16,7 @@ interface PodDetailsProps {
 }
 
 export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProps) {
-  const resources = useResourceStore((s) => s.resources);
+  const resources = useMergedDetailResources();
   const raw = item.raw ?? {};
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};

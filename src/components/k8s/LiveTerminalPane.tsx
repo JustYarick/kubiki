@@ -31,6 +31,11 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
   const box = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | null>(null); const fit = useRef<TerminalView | null>(null);
   const connection = useRef<ExecConnection | null>(null); const live = useRef(false); const cancellation = useRef<AbortController | null>(null);
   const selectedShell = nodeShell || nodeDebug?.shell || (shell || hostInfo?.default_shell || '');
+  const disconnect = () => {
+    live.current = false; cancellation.current?.abort(); connection.current?.close();
+    if (terminal.current) terminal.current.options.disableStdin = true;
+    setPhase('Disconnected');
+  };
   useEffect(() => {
     if (!local) return;
     let cancelled = false; setHostError('');
@@ -46,7 +51,21 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
       if (!abort.signal.aborted) connection.current?.resize(cols, rows);
     });
     const term = view.terminal; terminal.current = term; fit.current = view;
+    let detachPending = false;
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (isAttach && event.type === 'keydown' && !['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)) {
+        const control = event.ctrlKey && !event.altKey && !event.metaKey;
+        if (detachPending) {
+          detachPending = false;
+          if (control && event.key.toLowerCase() === 'q') {
+            event.preventDefault(); event.stopPropagation(); disconnect(); return false;
+          }
+          connection.current?.write('\u0010');
+        }
+        if (control && event.key.toLowerCase() === 'p') {
+          detachPending = true; event.preventDefault(); event.stopPropagation(); return false;
+        }
+      }
       if (event.key === 'Tab' && event.type === 'keydown') {
         event.stopPropagation();
         return true;
@@ -134,10 +153,11 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
       <div className="flex gap-1 ml-auto">
         <IconButton icon={Search} size="sm" aria-label="Find in terminal (Ctrl+F)" tooltip="Find in terminal (Ctrl+F)" onClick={() => setShowSearch((s) => !s)} />
         <IconButton icon={RotateCw} size="sm" aria-label={isAttach ? "Reconnect attach" : "Reconnect shell"} tooltip={isAttach ? "Reconnect attach" : "Reconnect shell"} onClick={() => setAttempt((n) => n + 1)} />
-        <IconButton icon={Unplug} size="sm" aria-label={isAttach ? "Disconnect attach" : "Disconnect shell"} tooltip={isAttach ? "Disconnect attach" : "Disconnect shell"} onClick={() => { live.current = false; cancellation.current?.abort(); connection.current?.close(); if (terminal.current) terminal.current.options.disableStdin = true; setPhase('Disconnected'); }} />
+        <IconButton icon={Unplug} size="sm" aria-label={isAttach ? "Disconnect attach" : "Disconnect shell"} tooltip={isAttach ? "Disconnect attach" : "Disconnect shell"} onClick={disconnect} />
         <IconButton icon={Eraser} size="sm" aria-label="Clear terminal" tooltip="Clear terminal" onClick={() => terminal.current?.clear()} />
       </div>
     </div>
+    {isAttach && <p role="note" className="shrink-0 px-3 py-2 text-xs text-[var(--status-warn)] border-b border-[var(--border-default)]">Attach controls the container's main process (PID 1). Ctrl+C or exit can stop it and trigger a container restart. To detach, use Disconnect attach or press Ctrl+P then Ctrl+Q. Use Shell to run a separate command.</p>}
     {error && <div role="alert" className="shrink-0 px-3 py-2 text-xs text-[var(--status-danger)] break-words">{error}</div>}
     <div className="terminal-frame relative">
       {showSearch && (

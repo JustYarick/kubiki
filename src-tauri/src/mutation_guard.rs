@@ -73,7 +73,7 @@ pub async fn resolve_mutation_confirm(id: String, approved: bool) -> Result<bool
     Ok(false)
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct MutationGuard(std::sync::Arc<tokio::sync::Mutex<()>>);
 impl MutationGuard {
     pub fn acquire_owned(

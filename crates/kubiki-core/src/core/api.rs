@@ -188,6 +188,16 @@ impl ApiError {
     }
 }
 
+pub fn is_valid_namespace(namespace: &str) -> bool {
+    !namespace.is_empty()
+        && namespace.len() <= 63
+        && namespace
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        && !namespace.starts_with('-')
+        && !namespace.ends_with('-')
+}
+
 pub fn validate_query(query: &ResourceQuery) -> Result<&'static ResourceType, ApiError> {
     let fail = |code, message| {
         ApiError::new(code, message, "resources", Some(&query.context), Some(400))
@@ -234,14 +244,7 @@ pub fn validate_query(query: &ResourceQuery) -> Result<&'static ResourceType, Ap
         ));
     }
     if let Some(namespace) = &query.namespace {
-        if namespace.is_empty()
-            || namespace.len() > 63
-            || !namespace
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-            || namespace.starts_with('-')
-            || namespace.ends_with('-')
-        {
+        if !is_valid_namespace(namespace) {
             return Err(fail(
                 ApiErrorCode::InvalidRequest,
                 "Invalid namespace name".to_owned(),

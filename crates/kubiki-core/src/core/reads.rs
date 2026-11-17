@@ -6,9 +6,238 @@ use kube::{
     api::{ApiResource, ListParams},
     discovery::{Discovery, Scope},
 };
-use serde::Serialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 use std::{future::Future, time::Duration};
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadListOptions {
+    #[serde(default)]
+    pub metadata_only: bool,
+    pub label_selector: Option<String>,
+    pub field_selector: Option<String>,
+    pub limit: Option<u32>,
+    pub projection: Option<String>,
+}
+
+fn validate_object_name(name: &str, operation: &str, context: &str) -> Result<(), ApiError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed != name
+        || trimmed.len() > 253
+        || trimmed.bytes().any(|b| b <= 0x20 || matches!(b, b'/' | b'\\' | b'?' | b'#'))
+    {
+        return Err(ApiError::from_status(
+            400,
+            "Invalid resource name",
+            operation,
+            Some(context),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn strip_crd_schemas_json(item: &mut Value) {
+    if let Some(spec) = item.get_mut("spec").and_then(Value::as_object_mut) {
+        spec.remove("validation");
+        if let Some(versions) = spec.get_mut("versions").and_then(Value::as_array_mut) {
+            for version in versions {
+                if let Some(version_obj) = version.as_object_mut() {
+                    version_obj.remove("schema");
+                }
+            }
+        }
+    }
+}
+
+fn clean_list_item(mut item: Value, is_crd: bool) -> Value {
+    if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.remove("managedFields");
+    }
+    if is_crd {
+        strip_crd_schemas_json(&mut item);
+    }
+    item
+}
+
+fn project_containers(list: Option<&Value>) -> Option<Value> {
+    let items = list?.as_array()?;
+    let projected: Vec<Value> = items
+        .iter()
+        .filter_map(|entry| {
+            let obj = entry.as_object()?;
+            let mut out = Map::new();
+            if let Some(name) = obj.get("name") {
+                out.insert("name".into(), name.clone());
+            }
+            if let Some(image) = obj.get("image") {
+                out.insert("image".into(), image.clone());
+            }
+            Some(Value::Object(out))
+        })
+        .collect();
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Array(projected))
+    }
+}
+
+fn project_pod_spec(spec: &Map<String, Value>) -> Map<String, Value> {
+    let mut out = Map::new();
+    for key in [
+        "replicas",
+        "suspend",
+        "nodeName",
+        "serviceAccountName",
+        "clusterIP",
+        "type",
+        "ingressClassName",
+        "storageClassName",
+        "volumeName",
+        "accessModes",
+        "capacity",
+    ] {
+        if let Some(v) = spec.get(key) {
+            out.insert(key.into(), v.clone());
+        }
+    }
+    for key in ["containers", "initContainers", "ephemeralContainers"] {
+        if let Some(projected) = project_containers(spec.get(key)) {
+            out.insert(key.into(), projected);
+        }
+    }
+    out
+}
+
+fn project_search_item(mut item: Value, ar: &ApiResource) -> Value {
+    let Some(root) = item.as_object_mut() else {
+        return item;
+    };
+    let mut projected = Map::new();
+    for key in ["apiVersion", "kind"] {
+        if let Some(v) = root.remove(key) {
+            projected.insert(key.into(), v);
+        }
+    }
+    if projected.get("kind").is_none() {
+        projected.insert("kind".into(), Value::String(ar.kind.clone()));
+    }
+    if let Some(Value::Object(mut meta)) = root.remove("metadata") {
+        meta.remove("managedFields");
+        if let Some(Value::Object(annotations)) = meta.get_mut("annotations") {
+            annotations.remove("kubectl.kubernetes.io/last-applied-configuration");
+            if annotations.is_empty() {
+                meta.remove("annotations");
+            }
+        }
+        projected.insert("metadata".into(), Value::Object(meta));
+    }
+
+    if let Some(Value::Object(spec)) = root.get("spec") {
+        let mut kept_spec = project_pod_spec(spec);
+        if let Some(rules) = spec.get("rules").and_then(Value::as_array) {
+            let hosts: Vec<Value> = rules
+                .iter()
+                .filter_map(|r| r.get("host").map(|h| json!({ "host": h })))
+                .collect();
+            if !hosts.is_empty() {
+                kept_spec.insert("rules".into(), Value::Array(hosts));
+            }
+        }
+        if let Some(tmpl) = spec.get("template").and_then(Value::as_object) {
+            let mut kept_tmpl = Map::new();
+            if let Some(tspec) = tmpl.get("spec").and_then(Value::as_object) {
+                let pts = project_pod_spec(tspec);
+                if !pts.is_empty() {
+                    kept_tmpl.insert("spec".into(), Value::Object(pts));
+                }
+            }
+            if !kept_tmpl.is_empty() {
+                kept_spec.insert("template".into(), Value::Object(kept_tmpl));
+            }
+        }
+        if let Some(jtmpl) = spec
+            .get("jobTemplate")
+            .and_then(|v| v.get("spec"))
+            .and_then(|v| v.get("template"))
+            .and_then(|v| v.get("spec"))
+            .and_then(Value::as_object)
+        {
+            let pjs = project_pod_spec(jtmpl);
+            if !pjs.is_empty() {
+                kept_spec.insert(
+                    "jobTemplate".into(),
+                    json!({ "spec": { "template": { "spec": Value::Object(pjs) } } }),
+                );
+            }
+        }
+        if !kept_spec.is_empty() {
+            projected.insert("spec".into(), Value::Object(kept_spec));
+        }
+    }
+
+    if let Some(Value::Object(status)) = root.get("status") {
+        let mut kept_status = Map::new();
+        for key in [
+            "phase",
+            "reason",
+            "message",
+            "podIP",
+            "podIPs",
+            "hostIP",
+            "conditions",
+            "replicas",
+            "readyReplicas",
+            "availableReplicas",
+            "updatedReplicas",
+            "unavailableReplicas",
+            "currentReplicas",
+            "desiredNumberScheduled",
+            "numberReady",
+            "succeeded",
+            "failed",
+            "active",
+            "loadBalancer",
+            "addresses",
+            "nodeInfo",
+            "capacity",
+            "allocatable",
+        ] {
+            if let Some(v) = status.get(key) {
+                kept_status.insert(key.into(), v.clone());
+            }
+        }
+        // Preserve only the container state fields consumed by status/readiness mapping.
+        for key in ["containerStatuses", "initContainerStatuses", "ephemeralContainerStatuses"] {
+            if let Some(entries) = status.get(key).and_then(Value::as_array) {
+                let entries: Vec<Value> = entries.iter().map(|entry| {
+                    let mut fields = Map::new();
+                    for field in ["name", "ready", "restartCount", "state"] {
+                        if let Some(value) = entry.get(field) {
+                            fields.insert(field.into(), value.clone());
+                        }
+                    }
+                    Value::Object(fields)
+                }).collect();
+                kept_status.insert(key.into(), Value::Array(entries));
+            }
+        }
+        if !kept_status.is_empty() {
+            projected.insert("status".into(), Value::Object(kept_status));
+        }
+    }
+
+    // Preserve Event fields used for issue/search mapping when listing Events with projection
+    for key in ["type", "reason", "message", "involvedObject", "count", "lastTimestamp"] {
+        if let Some(v) = root.remove(key) {
+            projected.insert(key.into(), v);
+        }
+    }
+
+    Value::Object(projected)
+}
 
 pub async fn bounded<T>(
     context: &str,
@@ -74,19 +303,50 @@ pub async fn discover(
     Ok(result)
 }
 
-async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result<Value, ApiError> {
+async fn list_with_options(
+    client: Client,
+    query: &ResourceQuery,
+    ar: &ApiResource,
+    options: &ReadListOptions,
+) -> Result<Value, ApiError> {
     let access = super::access::ResourceAccess::from_resource(client, query, ar.clone());
-    let mut params = ListParams::default().limit(500);
+    let limit = options.limit.unwrap_or(500).clamp(1, 1000);
+    let mut params = ListParams::default().limit(limit);
+    if let Some(labels) = options
+        .label_selector
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        params = params.labels(labels);
+    }
+    if let Some(fields) = options
+        .field_selector
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        params = params.fields(fields);
+    }
+    let is_crd =
+        ar.kind == "CustomResourceDefinition" && ar.group == "apiextensions.k8s.io";
+    let search_projection =
+        !options.metadata_only && options.projection.as_deref() == Some("search");
     let mut items = Vec::new();
     loop {
-        let page = bounded(&query.context, "resources", access.page(&params, false))
-            .await
-            .map_err(|e| e.with_resource(query))?;
-        items.extend(page.items.into_iter().map(|mut item| {
-            if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
-                metadata.remove("managedFields");
+        let page = bounded(
+            &query.context,
+            "resources",
+            access.page(&params, options.metadata_only),
+        )
+        .await
+        .map_err(|e| e.with_resource(query))?;
+        items.extend(page.items.into_iter().map(|item| {
+            if search_projection {
+                project_search_item(item, ar)
+            } else {
+                clean_list_item(item, is_crd)
             }
-            item
         }));
         match page.continuation {
             Some(token) => params = params.continue_token(&token),
@@ -95,14 +355,50 @@ async fn list(client: Client, query: &ResourceQuery, ar: &ApiResource) -> Result
     }
     Ok(json!({"items": items}))
 }
+
 pub async fn resources(client: Client, query: ResourceQuery) -> Result<Value, ApiError> {
+    resources_with_options(client, query, ReadListOptions::default()).await
+}
+
+pub async fn resources_with_options(
+    client: Client,
+    query: ResourceQuery,
+    options: ReadListOptions,
+) -> Result<Value, ApiError> {
     validate_query(&query)?;
     let (_, _, ar) = super::access::resolve_api(client.clone(), &query, true)
         .await
         .map_err(|message| {
             ApiError::from_status(400, message, "resources", Some(&query.context))
         })?;
-    list(client, &query, &ar).await
+    list_with_options(client, &query, &ar, &options).await
+}
+
+fn strip_managed_fields(item: &mut Value) {
+    if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.remove("managedFields");
+    }
+}
+
+pub async fn get_resource(
+    client: Client,
+    query: ResourceQuery,
+    name: String,
+    metadata_only: bool,
+) -> Result<Value, ApiError> {
+    validate_query(&query)?;
+    validate_object_name(&name, "resource", &query.context)?;
+    let (_, _, ar) = super::access::resolve_api(client.clone(), &query, true)
+        .await
+        .map_err(|message| {
+            ApiError::from_status(400, message, "resource", Some(&query.context))
+        })?;
+    let access = super::access::ResourceAccess::from_resource(client, &query, ar);
+    let mut item = bounded(&query.context, "resource", access.get(&name, metadata_only))
+        .await
+        .map_err(|e| e.with_resource(&query))?;
+    strip_managed_fields(&mut item);
+    Ok(item)
 }
 
 pub async fn resource_count(client: Client, query: ResourceQuery) -> Result<usize, ApiError> {
@@ -147,7 +443,7 @@ pub async fn resource_counts(
             let kind = query.kind.clone();
             async move { (kind, resource_count(client, query).await) }
         })
-        .buffer_unordered(12)
+        .buffer_unordered(24)
         .collect()
         .await;
     let mut counts = std::collections::HashMap::new();
@@ -171,8 +467,163 @@ pub async fn custom_resources(
     uid: String,
     namespace: Option<String>,
 ) -> Result<Value, ApiError> {
-    let (query, ar, _) = resolve_custom_resource(client.clone(), context, name, uid, namespace).await?;
-    list(client, &query, &ar).await
+    custom_resources_with_options(
+        client,
+        context,
+        name,
+        uid,
+        namespace,
+        ReadListOptions::default(),
+    )
+    .await
+}
+
+pub async fn custom_resources_with_options(
+    client: Client,
+    context: String,
+    name: String,
+    uid: String,
+    namespace: Option<String>,
+    options: ReadListOptions,
+) -> Result<Value, ApiError> {
+    let (query, ar, _) =
+        resolve_custom_resource(client.clone(), context, name, uid, namespace).await?;
+    list_with_options(client, &query, &ar, &options).await
+}
+
+pub async fn get_custom_resource(
+    client: Client,
+    context: String,
+    crd_name: String,
+    uid: String,
+    namespace: Option<String>,
+    name: String,
+    metadata_only: bool,
+) -> Result<Value, ApiError> {
+    validate_object_name(&name, "custom-resource", &context)?;
+    let (query, ar, _) =
+        resolve_custom_resource(client.clone(), context, crd_name, uid, namespace).await?;
+    let access = super::access::ResourceAccess::from_resource(client, &query, ar);
+    let mut item = bounded(
+        &query.context,
+        "custom-resource",
+        access.get(&name, metadata_only),
+    )
+    .await
+    .map_err(|e| e.with_resource(&query))?;
+    strip_managed_fields(&mut item);
+    Ok(item)
+}
+
+/// Discover all CRDs once and concurrently probe each (`limit=1` metadata) so only non-empty CRs are listed.
+pub async fn custom_search_inventory(
+    client: Client,
+    context: String,
+    namespace: Option<String>,
+) -> Result<Value, ApiError> {
+    use futures::StreamExt;
+    if context.trim().is_empty()
+        || namespace
+            .as_deref()
+            .is_some_and(|ns| !super::api::is_valid_namespace(ns))
+    {
+        return Err(ApiError::from_status(
+            400,
+            "Context and a valid namespace are required",
+            "custom-search",
+            Some(&context),
+        ));
+    }
+
+    let definitions: Api<CustomResourceDefinition> = Api::all(client.clone());
+    let mut crd_params = ListParams::default().limit(500);
+    let mut targets = Vec::new();
+    loop {
+        let page = bounded(&context, "custom-search", definitions.list(&crd_params)).await?;
+        for crd in page.items {
+            let Some(version) = crd
+                .spec
+                .versions
+                .iter()
+                .find(|v| v.served && v.storage)
+                .or_else(|| crd.spec.versions.iter().find(|v| v.served))
+            else {
+                continue;
+            };
+            let ar = ApiResource {
+                group: crd.spec.group.clone(),
+                version: version.name.clone(),
+                api_version: format!("{}/{}", crd.spec.group, version.name),
+                kind: crd.spec.names.kind.clone(),
+                plural: crd.spec.names.plural.clone(),
+            };
+            let namespaced = crd.spec.scope == "Namespaced";
+            let query = ResourceQuery {
+                context: context.clone(),
+                group: ar.group.clone(),
+                version: ar.version.clone(),
+                kind: ar.kind.clone(),
+                namespace: if namespaced { namespace.clone() } else { None },
+            };
+            targets.push((query, ar));
+        }
+        match page.metadata.continue_.as_deref().filter(|t| !t.is_empty()) {
+            Some(token) => crd_params = crd_params.continue_token(token),
+            None => break,
+        }
+    }
+
+    let results: Vec<Result<Vec<Value>, String>> = futures::stream::iter(targets)
+        .map(|(query, ar)| {
+            let client = client.clone();
+            async move {
+                let label = format!("{} ({})", ar.kind, ar.group);
+                let access = super::access::ResourceAccess::from_resource(
+                    client.clone(),
+                    &query,
+                    ar.clone(),
+                );
+                let probe = ListParams::default().limit(1);
+                let page = bounded(&query.context, "custom-search", access.page(&probe, true))
+                    .await
+                    .map_err(|e| format!("{label}: {}", e.message))?;
+                if page.items.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let list = list_with_options(
+                    client,
+                    &query,
+                    &ar,
+                    &ReadListOptions {
+                        metadata_only: false,
+                        label_selector: None,
+                        field_selector: None,
+                        limit: None,
+                        projection: Some("search".into()),
+                    },
+                )
+                .await
+                .map_err(|e| format!("{label}: {}", e.message))?;
+                Ok(list
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default())
+            }
+        })
+        .buffer_unordered(24)
+        .collect()
+        .await;
+
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for res in results {
+        match res {
+            Ok(batch) => items.extend(batch),
+            Err(err) => errors.push(err),
+        }
+    }
+    Ok(json!({ "items": items, "errors": errors }))
 }
 
 /// Resolve a CRD against the live definition, including its UID and served version.
@@ -242,6 +693,25 @@ pub async fn resolve_custom_resource(
 mod tests {
     use super::*;
     use kube::client::Body;
+
+    #[test]
+    fn search_projection_retains_status_inputs_without_container_payloads() {
+        let ar = ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&());
+        for reason in ["CrashLoopBackOff", "ImagePullBackOff"] {
+            let projected = project_search_item(json!({
+                "apiVersion": "v1", "kind": "Pod", "metadata": { "name": "web" },
+                "spec": { "containers": [{ "name": "web", "image": "example/web", "env": [{ "name": "PRIVATE", "value": "synthetic" }] }] },
+                "status": { "phase": "Running", "containerStatuses": [{ "name": "web", "ready": false, "restartCount": 3,
+                    "containerID": "runtime://unneeded", "state": { "waiting": { "reason": reason } } }] }
+            }), &ar);
+            assert_eq!(projected["status"]["containerStatuses"][0]["state"]["waiting"]["reason"], reason);
+            assert_eq!(projected["status"]["containerStatuses"][0]["restartCount"], 3);
+            assert!(projected["status"]["containerStatuses"][0].get("containerID").is_none());
+            assert!(projected["spec"]["containers"][0].get("env").is_none());
+        }
+        let projected = project_search_item(json!({ "kind": "Deployment", "spec": { "replicas": 0 }, "status": { "readyReplicas": 0 } }), &ar);
+        assert_eq!(projected["spec"]["replicas"], 0);
+    }
 
     #[tokio::test]
     async fn discovery_does_not_query_unrelated_custom_api_groups() {
@@ -381,5 +851,266 @@ mod tests {
             None,
             "a forbidden namespace must not produce a partial total"
         );
+    }
+
+    #[tokio::test]
+    async fn list_strips_crd_schemas_and_applies_search_projection_and_selectors() {
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        let service = tower::service_fn(move |request: http::Request<Body>| {
+            let path = request.uri().path().to_owned();
+            let query = request.uri().query().unwrap_or("").to_owned();
+            let accept = request
+                .headers()
+                .get(http::header::ACCEPT)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_owned();
+            seen.lock().unwrap().push((path.clone(), query, accept));
+            async move {
+                let body = match path.as_str() {
+                    "/apis/apiextensions.k8s.io/v1/customresourcedefinitions" => json!({
+                        "apiVersion": "apiextensions.k8s.io/v1",
+                        "kind": "CustomResourceDefinitionList",
+                        "metadata": {},
+                        "items": [{
+                            "apiVersion": "apiextensions.k8s.io/v1",
+                            "kind": "CustomResourceDefinition",
+                            "metadata": { "name": "widgets.example.io", "managedFields": [{"manager": "kubectl"}] },
+                            "spec": {
+                                "group": "example.io",
+                                "names": { "kind": "Widget", "plural": "widgets" },
+                                "scope": "Namespaced",
+                                "validation": { "openAPIV3Schema": { "type": "object" } },
+                                "versions": [{ "name": "v1", "served": true, "storage": true, "schema": { "openAPIV3Schema": { "type": "object" } } }]
+                            }
+                        }]
+                    }),
+                    "/api/v1/namespaces/prod/pods" => json!({
+                        "apiVersion": "v1",
+                        "kind": "PodList",
+                        "metadata": {},
+                        "items": [{
+                            "apiVersion": "v1",
+                            "kind": "Pod",
+                            "metadata": {
+                                "name": "api-1",
+                                "namespace": "prod",
+                                "uid": "pod-1",
+                                "labels": { "app": "api" },
+                                "annotations": { "kubectl.kubernetes.io/last-applied-configuration": "huge-json", "note": "keep" },
+                                "managedFields": [{"manager": "kubelet"}]
+                            },
+                            "spec": {
+                                "nodeName": "node-1",
+                                "containers": [{ "name": "api", "image": "ghcr.io/api:v1", "env": [{ "name": "SECRET", "value": "huge" }] }],
+                                "volumes": [{ "name": "data" }]
+                            },
+                            "status": {
+                                "phase": "Running",
+                                "podIP": "10.0.0.5",
+                                "containerStatuses": [{ "name": "api", "ready": true }]
+                            }
+                        }]
+                    }),
+                    "/api/v1/namespaces/prod/pods/api-1" => json!({
+                        "apiVersion": "v1",
+                        "kind": "Pod",
+                        "metadata": { "name": "api-1", "namespace": "prod", "uid": "pod-1", "managedFields": [{"manager": "kubelet"}] },
+                        "spec": { "nodeName": "node-1" }
+                    }),
+                    _ => json!({ "apiVersion": "v1", "kind": "List", "items": [] }),
+                };
+                Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .status(200)
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                )
+            }
+        });
+        let client = Client::new(service, "default");
+
+        let crds = resources(
+            client.clone(),
+            ResourceQuery {
+                context: "prod".into(),
+                group: "apiextensions.k8s.io".into(),
+                version: "v1".into(),
+                kind: "CustomResourceDefinition".into(),
+                namespace: None,
+            },
+        )
+        .await
+        .unwrap();
+        let crd = &crds["items"][0];
+        assert!(crd["metadata"].get("managedFields").is_none());
+        assert!(crd["spec"].get("validation").is_none());
+        assert!(crd["spec"]["versions"][0].get("schema").is_none());
+
+        let projected = resources_with_options(
+            client.clone(),
+            ResourceQuery {
+                context: "prod".into(),
+                group: "".into(),
+                version: "v1".into(),
+                kind: "Pod".into(),
+                namespace: Some("prod".into()),
+            },
+            ReadListOptions {
+                metadata_only: false,
+                label_selector: Some("app=api".into()),
+                field_selector: Some("status.phase=Running".into()),
+                limit: Some(250),
+                projection: Some("search".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let pod = &projected["items"][0];
+        assert_eq!(pod["spec"]["containers"][0]["image"], "ghcr.io/api:v1");
+        assert!(pod["spec"]["containers"][0].get("env").is_none());
+        assert!(pod["spec"].get("volumes").is_none());
+        assert_eq!(pod["status"]["phase"], "Running");
+        assert_eq!(pod["metadata"]["annotations"]["note"], "keep");
+        assert!(pod["metadata"]["annotations"]
+            .get("kubectl.kubernetes.io/last-applied-configuration")
+            .is_none());
+
+        let single = get_resource(
+            client.clone(),
+            ResourceQuery {
+                context: "prod".into(),
+                group: "".into(),
+                version: "v1".into(),
+                kind: "Pod".into(),
+                namespace: Some("prod".into()),
+            },
+            "api-1".into(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(single["metadata"]["name"], "api-1");
+        assert!(single["metadata"].get("managedFields").is_none());
+
+        let err = get_resource(
+            client,
+            ResourceQuery {
+                context: "prod".into(),
+                group: "".into(),
+                version: "v1".into(),
+                kind: "Pod".into(),
+                namespace: Some("prod".into()),
+            },
+            "bad/name".into(),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, Some(400));
+
+        let recorded = requests.lock().unwrap();
+        assert!(recorded.iter().any(|(path, q, _)| {
+            path == "/api/v1/namespaces/prod/pods"
+                && q.contains("limit=250")
+                && q.contains("labelSelector=app%3Dapi")
+                && q.contains("fieldSelector=status.phase%3DRunning")
+        }));
+        assert!(recorded.iter().any(|(path, _, accept)| {
+            path == "/api/v1/namespaces/prod/pods/api-1"
+                && accept.contains("PartialObjectMetadata")
+        }));
+    }
+
+    #[tokio::test]
+    async fn custom_search_inventory_skips_empty_crds_without_individual_crd_gets() {
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        let service = tower::service_fn(move |request: http::Request<Body>| {
+            let path = request.uri().path().to_owned();
+            let query = request.uri().query().unwrap_or("").to_owned();
+            let accept = request
+                .headers()
+                .get(http::header::ACCEPT)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_owned();
+            seen.lock().unwrap().push((path.clone(), query.clone(), accept));
+            async move {
+                let body = match path.as_str() {
+                    "/apis/apiextensions.k8s.io/v1/customresourcedefinitions" => json!({
+                        "apiVersion": "apiextensions.k8s.io/v1",
+                        "kind": "CustomResourceDefinitionList",
+                        "metadata": {},
+                        "items": [
+                            {
+                                "apiVersion": "apiextensions.k8s.io/v1",
+                                "kind": "CustomResourceDefinition",
+                                "metadata": { "name": "widgets.example.io", "uid": "crd-1" },
+                                "spec": {
+                                    "group": "example.io",
+                                    "names": { "kind": "Widget", "plural": "widgets" },
+                                    "scope": "Namespaced",
+                                    "versions": [{ "name": "v1", "served": true, "storage": true }]
+                                }
+                            },
+                            {
+                                "apiVersion": "apiextensions.k8s.io/v1",
+                                "kind": "CustomResourceDefinition",
+                                "metadata": { "name": "emptythings.example.io", "uid": "crd-2" },
+                                "spec": {
+                                    "group": "example.io",
+                                    "names": { "kind": "EmptyThing", "plural": "emptythings" },
+                                    "scope": "Namespaced",
+                                    "versions": [{ "name": "v1", "served": true, "storage": true }]
+                                }
+                            }
+                        ]
+                    }),
+                    "/apis/example.io/v1/widgets" if query.contains("limit=1") => json!({
+                        "apiVersion": "meta.k8s.io/v1",
+                        "kind": "PartialObjectMetadataList",
+                        "metadata": {},
+                        "items": [{ "metadata": { "name": "w1", "namespace": "prod", "uid": "w1" } }]
+                    }),
+                    "/apis/example.io/v1/widgets" => json!({
+                        "apiVersion": "example.io/v1",
+                        "kind": "WidgetList",
+                        "metadata": {},
+                        "items": [{
+                            "apiVersion": "example.io/v1",
+                            "kind": "Widget",
+                            "metadata": { "name": "w1", "namespace": "prod", "uid": "w1" },
+                            "spec": { "huge": "blob" },
+                            "status": { "phase": "Ready" }
+                        }]
+                    }),
+                    "/apis/example.io/v1/emptythings" => json!({
+                        "apiVersion": "meta.k8s.io/v1",
+                        "kind": "PartialObjectMetadataList",
+                        "metadata": {},
+                        "items": []
+                    }),
+                    _ => json!({ "apiVersion": "v1", "kind": "List", "items": [] }),
+                };
+                Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .status(200)
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                )
+            }
+        });
+        let client = Client::new(service, "default");
+        let res = custom_search_inventory(client, "prod".into(), None).await.unwrap();
+        assert_eq!(res["items"].as_array().unwrap().len(), 1);
+        assert_eq!(res["items"][0]["metadata"]["name"], "w1");
+        assert!(res["items"][0].get("spec").is_none());
+        assert_eq!(res["errors"].as_array().unwrap().len(), 0);
+
+        let recorded = requests.lock().unwrap();
+        assert!(!recorded.iter().any(|(p, _, _)| p.contains("customresourcedefinitions/")));
+        assert_eq!(recorded.iter().filter(|(p, _, _)| p == "/apis/example.io/v1/emptythings").count(), 1);
     }
 }

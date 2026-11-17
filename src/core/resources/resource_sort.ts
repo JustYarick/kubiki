@@ -64,14 +64,16 @@ export function compareCreation(a: ResourceItem, b: ResourceItem, direction: 1 |
   return fastCompare(a.name, b.name) || fastCompare(a.uid, b.uid);
 }
 
+const valueCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const NUMERIC_PATTERN = /^-?\d+(\.\d+)?$/;
+
 /** Compare two cell values: numbers numerically, everything else as text. */
 export function compareValues(left: string, right: string): number {
-  const numeric = /^-?\d+(\.\d+)?$/.test(left) && /^-?\d+(\.\d+)?$/.test(right);
-  if (numeric) {
+  if (NUMERIC_PATTERN.test(left) && NUMERIC_PATTERN.test(right)) {
     const a = Number(left); const b = Number(right);
     return a === b ? 0 : a < b ? -1 : 1;
   }
-  return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+  return valueCollator.compare(left, right);
 }
 
 /**

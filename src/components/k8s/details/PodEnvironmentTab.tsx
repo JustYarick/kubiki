@@ -15,7 +15,7 @@ import {
 import type { ResourceItem } from '../../../types/k8s';
 import { podContainers } from '../../../core/resources/containers';
 import { resolveContainerEnv, findResourceInMap } from '../../../core/resources/pod_env';
-import { useResourceStore } from '../../../state/resource_store';
+import { useMergedDetailResources } from '../../../state/detail_cache';
 import { useUiStore } from '../../../state/ui_store';
 import { Button } from '../../ui/Button';
 import { toast } from '../../../state/notifications_store';
@@ -31,7 +31,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
   const density = useUiStore((s) => s.density);
   const isCompact = density === 'compact';
 
-  const resources = useResourceStore((s) => s.resources);
+  const resources = useMergedDetailResources();
   const containers = useMemo(() => podContainers(item), [item]);
 
   const [selectedContainer, setSelectedContainer] = useState<string>(() => {

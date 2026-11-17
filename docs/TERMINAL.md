@@ -43,6 +43,13 @@ Local PTYs and OpenCode advertise `TERM=xterm-256color`, `COLORTERM=truecolor`
 and `TERM_PROGRAM=kubiki`. Parent Ghostty/Kitty/tmux/window hints and fixed
 `COLUMNS`/`LINES` are removed so a TUI does not assume another emulator's features.
 Shell configuration and ordinary inherited environment variables remain available.
+On Unix, external agents (OpenCode, Codex and Claude Code) start through the
+default shell in interactive login mode before replacing it with the CLI (`cd -- "$1" && shift && exec "$@"`). This
+loads `.zshrc` for zsh, including exported provider tokens, while restoring Kubiki's workspace directory. Startup output stays
+in the PTY; Kubiki does not read or persist the token. CLI arguments are passed
+as positional arguments, including prompts containing shell punctuation.
+External agents can also be configured to launch in the system default terminal emulator (e.g. Ghostty, Kitty, Alacritty, WezTerm, `xdg-terminal-exec`) via `src-tauri/src/system_terminal.rs` using direct argv without shell string interpolation.
+On Windows, the shell fallback launches the agent directly in a new native console; prompts never pass through `cmd.exe /C start`. Windows Terminal remains available when installed.
 Pod/Node shells set the same terminal capabilities with shell builtins before
 starting the selected interactive shell; minimal images need no extra env binary.
 
@@ -51,11 +58,25 @@ Started, their responses are buffered until the native connection is acknowledge
 then flushed. Stop/exit discards pending data; it cannot reach a later session.
 The OpenCode intent-delivery and permission rules are unchanged.
 
+## Pod Shell and Attach
+
+**Shell** creates a separate exec process. **Attach** connects to the container's
+main process (PID 1), with backend confirmation and a persistent notice in the
+pane. Ctrl+C and `exit` in Attach can stop that process and trigger the Pod's
+container restart policy. Use Shell for independent scripts. To leave Attach,
+use **Disconnect attach** or **Ctrl+P, Ctrl+Q**; these detach keys are consumed
+locally. Disconnecting closes the session without sending an interrupt or a
+Kubernetes restart/delete operation. Shell commands themselves can still affect
+the workload, and closing an exec connection does not guarantee background jobs
+have stopped.
+
 ## Verification
 
 `terminal_rendering.spec.ts` checks grid bounds, Unicode widths, renderer fallback,
 context loss, hidden panes and font readiness. AI/exec scenarios cover early device
 queries, resizing, appearance changes without reconnecting, and retained logs.
 Core tests cover real host PTYs and removal of inherited terminal capabilities.
+They also verify interactive zsh startup with a synthetic `.zshrc` and literal
+CLI arguments. Browser exec coverage checks Attach's notice and detach keys.
 The opt-in `terminal_smoke` example checks remote TTY resize, advertised capabilities,
 stdin/stdout and exit against an explicitly selected disposable Pod.

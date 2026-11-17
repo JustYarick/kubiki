@@ -17,6 +17,7 @@
 - [Architecture decisions](decisions/README.md): context, alternatives and reasons for the chosen architecture.
 - [Development plans](plans/README.md): proposed and deferred capabilities, with current boundaries.
 - [Documentation conventions](DOCUMENTATION.md): organization, ADR lifecycle and verification.
+- [Changelog](CHANGELOG.md): unreleased changes and release history following Keep a Changelog.
 - [Testing](TESTING.md): test suites and commands.
 - [Releasing](RELEASING.md): builds, publication, updater signing and antivirus reports.
 - [Desktop rendering](DESKTOP_RENDERING.md): graphics settings and diagnostic probes.

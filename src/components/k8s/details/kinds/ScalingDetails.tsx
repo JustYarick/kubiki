@@ -2,7 +2,7 @@ import { ResourceReferences } from '../blocks/ResourceReferences';
 import { type ReactNode } from 'react';
 import { Gauge, TrendingUp } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
-import { useResourceStore } from '../../../../state/resource_store';
+import { useMergedDetailResources } from '../../../../state/detail_cache';
 import { resourceByRef } from '../../../../core/resources/detail_links';
 import { summaryTitle } from '../../../../core/resources/kind_labels';
 import { DetailsSection } from '../DetailsSection';
@@ -38,7 +38,7 @@ function targetLabel(metric: any): string {
 
 /** Horizontal and vertical autoscalers: targets, metrics and scaling behaviour. */
 export function ScalingDetails({ item, onNavigate }: ScalingDetailsProps) {
-  const resources = useResourceStore(state => state.resources);
+  const resources = useMergedDetailResources();
   const raw = item.raw ?? { spec: item.spec, status: item.statusRaw };
   const spec = raw.spec ?? {};
   const status = raw.status ?? {};

@@ -65,7 +65,7 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
       resources: map === state.resources[kind] ? state.resources : { ...state.resources, [kind]: map },
       selectedItem: state.selectedItem && resourceBucket(state.selectedItem) === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
       // Scope changes must not leave navigation history pointing to stale, unloaded objects.
-      selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => resourceBucket(item) !== kind) : state.selectionHistory,
+      selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => resourceBucket(item) !== kind || map.has(item.uid)) : state.selectionHistory,
       watchStates: sameWatch ? state.watchStates : { ...state.watchStates, [kind]: update.state },
       loadingKinds: sameLoading ? state.loadingKinds : { ...state.loadingKinds, [kind]: isLoading },
       loadErrors: sameError ? state.loadErrors : { ...state.loadErrors, [kind]: nextError },

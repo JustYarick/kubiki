@@ -23,8 +23,9 @@ The current investigation/result and execution format is specified in
    native OS credential store, separately from configuration and conversation data.
 3. Select **Load models** and choose an available model. **Use as default** saves
    the connection, model and optional generation settings for new conversations.
-4. Configure **Agent permissions**. Secret contents, ConfigMap contents, Pod
-   logs, inline environment values, container commands and annotations are
+4. Configure **Confirmations (Kubiki Agent)** under **Settings → AI assistant** and
+   access profiles under **Settings → MCP Server & Tools**. Secret contents, ConfigMap
+   contents, Pod logs, inline environment values, container commands and annotations are
    excluded by default. All write permissions start disabled.
 5. Start a conversation. Select **General chat · no cluster** for ordinary
    questions without requiring a cluster connection, or keep the selected
@@ -64,8 +65,8 @@ block directly. Raw HTML is sanitized before rendering; remote images are replac
 
 The composer has two independent controls: **Plan / Action** and **Ask / Auto accept**.
 New and restored conversations start in **Plan + Ask**. Plan forbids all writes.
-Ask requests consent for model tools; **Confirmations → Ask permission for reads**
-controls whether reads also prompt (enabled by default for existing settings).
+Ask requests consent for model tools; **Ask permission for reads (Kubiki Agent)**
+under **Confirmations (Kubiki Agent)** controls whether reads also prompt (enabled by default for existing settings).
 Turn it off to confirm changes only. Auto accept runs
 permitted tools automatically. The question tool is already an explicit user interaction.
 In settings, **Always ask** selects tools that must request consent in either mode.
@@ -509,44 +510,47 @@ catalog; the settings list has a Refresh button.
 
 Choose **Kubiki / OpenCode / Codex / Claude Code** under **Settings → AI assistant → Agent**. Missing
 runtime preferences default to Kubiki. The selection is application-wide, with
-separate histories. Only settings that affect the selected runtime are displayed.
-Kubiki provider/model/instructions/skills/confirmation settings are retained while
-hidden and do not control external agents. Switching invalidates integrated sessions and
+separate histories. All AI settings sections (`Agent`, `Connections & models`, `Permissions`,
+`Scope & rules`) remain accessible regardless of the selected runtime, alongside the top-level
+**Settings → MCP Server & Tools** category.
+In **AI assistant → Permissions**, Kubiki Agent's **Plan** and **Action** phases bind to
+MCP access profiles (`kubikiPlanProfileId`, defaulting to **Read-only**, and
+`kubikiActionProfileId`, defaulting to **Action**), alongside Kubiki-only **Confirmations**
+(`confirmReads`, `alwaysAsk`). Tool and data access permissions themselves are configured in
+one place under **Settings → MCP Server & Tools** (or **Cluster tools (MCP)** inside the
+**AI Agent settings** modal).
+Switching runtimes invalidates integrated sessions and
 stops attached processes; it never transfers approvals or replays tools.
 
-External agents use an installed executable, a real PTY, their own configuration
-and credentials. Each runtime has separate executable/workspace preferences.
-OpenCode requires its V2 CLI. Its pane uses the same terminal renderer and typography preferences
-as local/Pod/Node shells (see [Terminal rendering](TERMINAL.md)). A dedicated OpenCode workspace adds only our local MCP connection;
+External agents use an installed executable, a real PTY or the system default terminal emulator, their own configuration
+and credentials. Each runtime has separate executable, workspace, and terminal host preferences (`Embedded terminal (Kubiki)` or `System default terminal`).
+Executable discovery merges the user's interactive login shell `PATH` on Unix, and `through_shell` preserves Kubiki's workspace directory even if `.zprofile`/`.zshrc` executes `cd`.
+OpenCode requires its V2 CLI. Its embedded pane uses the same terminal renderer and typography preferences
+as local/Pod/Node shells (see [Terminal rendering](TERMINAL.md)). In system terminal mode, `src-tauri/src/system_terminal.rs` detects the OS default terminal (`$TERMINAL`, `xdg-terminal-exec`, GNOME/KDE settings, `ghostty`, `kitty`, `alacritty`, `wezterm`, macOS terminal apps, or Windows Terminal) and launches the shell-wrapped CLI via direct argv without shell string interpolation. A dedicated OpenCode workspace adds only our local MCP connection;
 existing project configuration is not overwritten. The desktop executable provides
 a headless `--kubiki-mcp-attach` bridge entrypoint, so desktop bundles do not need a
 separately installed CLI. Scope-specific workspace directories isolate windows and
 connections. Custom workspace roots must be absolute; the default lives in app data.
 
 The external CLI owns its permissions, planning mode and confirmation prompts. No additional
-Kubiki Ask/Auto/alwaysAsk confirmation is applied to host-owned calls. A separate
-`mcpPolicy` controls what data and operations the application exposes: it is not
-inherited from the hidden Kubiki policy. Defaults expose filtered reads and no
-writes. Kubernetes RBAC, pinned connection generation, projection, bounds,
-mutation preconditions and receipts remain enforced by the server.
+Kubiki `Ask`/`Auto accept`/`confirmReads`/`alwaysAsk` confirmation is applied to host-owned calls.
+External MCP connections do **not** use Kubiki's `Plan`/`Action` phase gating: they expose
+the active **MCP Profile** (`mcpProfiles`, defaulting safely to **Read-only** which blocks all
+writes unless customized per-operation such as allowing `Restart` only, alongside **Action**
+which inherits shared **Permissions & Scope** including resource `rules`). New Read-only profiles clear write grants in both defaults and resource rules. A one-time migration also repairs existing profiles that exactly match the old generated Read-only preset; customized profiles retain their grants. Changes apply live
+via MCP `notifications/tools/list_changed` without restarting external terminals. Kubernetes RBAC,
+pinned connection generation, projection, bounds, mutation preconditions and receipts remain
+enforced by the server.
 
-Attached external clients have an explicit **MCP server phase** control in the
-terminal toolbar and MCP settings. It defaults to Plan. This server phase is
-independent of the external client's own Plan/Build mode: Kubiki does not infer
-that mode from terminal output or model arguments. Phase changes apply live to
-the MCP catalog and dispatcher without restarting the process. Policy and phase
-updates are atomic; Plan blocks mutation calls and applies `planDisabledTools`,
-while Action applies `actionDisabledTools`. Switching to Action still requires
-explicit write grants. Standalone `kubiki-mcp serve` continues to use its explicit
-host-owned profile in Action; the attached desktop control does not manage it.
+## Always-on Desktop MCP Server (Local HTTP)
 
-Global context changes disconnect the panel until an explicit restart; they never
-silently retarget a running connection. Stop also cancels pending startup, including
-font loading and native version checks. Restart preserves an initial Analyze or
-creation prompt only after a typed native failure proves that no process was
-scheduled. Delivered tasks and ambiguous startup failures are never replayed.
-Normal TUI commands and model/provider choices belong to the selected CLI. Its shell runs
-under its own permissions and is outside MCP filtering.
+Under **Settings → MCP Server & Tools** — or directly from the quick **MCP** popover in the top-right **TitleBar** (where you can toggle HTTP MCP, edit its port, switch profiles, jump to profile editing, or open **Permissions…**) — **Keep MCP HTTP server running while Kubiki is open** (off by default) starts a loopback Streamable HTTP MCP endpoint (`http://127.0.0.1:<port>/mcp`, default port `3847`, valid `1024–65535`).
+When enabled, independent external sessions (such as OpenCode, Claude Code, Codex, or Cursor launched from Ghostty or another terminal) can connect directly to the running Kubiki application:
+
+- Bound strictly to `127.0.0.1:<port>` on `/mcp`; non-loopback `Host` headers and requests carrying browser `Origin` headers are always rejected (`403 Forbidden`).
+- Loopback authentication is zero-friction by default; **Require Bearer token (optional on 127.0.0.1)** enables constant-time `Authorization: Bearer <token>` checks (token stored in the OS keyring with a `0o600` `mcp-http.token` fallback in app config if the keyring is unavailable, rotatable via **Regenerate token**).
+- **1-Click Client Auto-Configure** writes the OpenCode V2 `disabled: false` setting and safely merges the `kubiki` entry into `~/.config/opencode/opencode.json`, `~/.claude.json`, or `~/.cursor/mcp.json` without overwriting existing user settings. On Unix, replacement files are private (`0600`, or stricter existing owner permissions), including when a bearer token is enabled.
+- The active **MCP profile**, shared **Permissions & Scope** (when the profile follows shared permissions), and cluster/namespace switching in Kubiki apply live across all connected HTTP MCP sessions without disconnecting external clients.
 
 ## Standalone MCP server
 

@@ -60,7 +60,8 @@ it('keeps Related namespace-local with All Namespaces and unions only independen
   for (const kind of detail.kinds) if (RESOURCE_TYPES.find(type => type.kind === kind)?.namespaced) expect(detail.scopes.get(kind)).toBe('backend');
   const split = resourceDemand({ ...input, tabs: [pinned, { ...pinned, id: 'other', namespace: 'other' }], activeTabId: 'detail', splitTabId: 'other', inspectorCollapsed: true });
   expect(split.scopes.get('Pod')).toBe('["backend","other"]');
-  expect(split.scopes.get('Secret')).toBe('["backend","other"]');
+  expect(split.scopes.get('Event')).toBe('["backend","other"]');
+  expect(split.scopes.get('Secret')).toBeUndefined();
 });
 it('scopes Namespace members to the Namespace name even when the global selection is all', () => {
   const result = resourceDemand({ context: 'test', tabs: [], activeTabId: '', splitTabId: null, selectedNamespace: 'all', selectedItem: { uid: 'ns', kind: 'Namespace', apiVersion: 'v1', name: 'backend' }, inspectorCollapsed: false, rightTab: 'related' });

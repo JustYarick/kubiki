@@ -40,6 +40,7 @@ impl HelmKubeconfig {
                 .as_nanos(),
             NEXT.fetch_add(1, Ordering::Relaxed),
         ));
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = DirBuilder::new();
         #[cfg(unix)]
         {

@@ -60,6 +60,27 @@ impl NamespaceService {
         Ok(result)
     }
 
+    /// List namespace names with metadata-only pagination so large clusters avoid buffering full specs.
+    pub async fn list_namespace_names(client: &Client) -> Result<Vec<String>, KubikiError> {
+        let api: Api<Namespace> = Api::all(client.clone());
+        let mut params = ListParams::default().limit(500);
+        let mut names = Vec::new();
+        loop {
+            let page = api.list_metadata(&params).await.map_err(KubikiError::from)?;
+            names.extend(
+                page.items
+                    .into_iter()
+                    .filter_map(|item| item.metadata.name)
+                    .filter(|name| !name.is_empty()),
+            );
+            match page.metadata.continue_.as_deref().filter(|t| !t.is_empty()) {
+                Some(token) => params = params.continue_token(token),
+                None => break,
+            }
+        }
+        Ok(names)
+    }
+
     /// Check if the current user has permission to perform an action (kubectl auth can-i)
     pub async fn can_i(
         client: &Client,

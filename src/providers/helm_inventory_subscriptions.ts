@@ -1,12 +1,18 @@
 import { namespaceNames } from '../core/resources/namespace_scope';
+import { useResourceStore } from '../state/resource_store';
 import { k8s } from './k8s_provider';
-import { loadHelmInventory } from './helm_inventory';
+import { loadPartialHelmInventory, type PartialScopeError } from './helm_inventory';
 import { ReadSubscriptions, type ReadSnapshot } from './read_subscriptions';
 import type { HelmRelease } from './helm_types';
 
+const partialErrorsByKey = new Map<string, PartialScopeError[]>();
+
 const subscriptions = new ReadSubscriptions<HelmRelease[]>(async (key, signal) => {
   const [context, namespace] = JSON.parse(key) as [string, string | null];
-  return loadHelmInventory((...args) => k8s.getHelmInventory(...args), context, namespace, signal);
+  const fallbackNamespaces = [...useResourceStore.getState().resources.Namespace.values()].map(ns => ns.name);
+  const result = await loadPartialHelmInventory((...args) => k8s.getHelmInventory(...args), context, namespace, signal, fallbackNamespaces);
+  partialErrorsByKey.set(key, result.partialErrors);
+  return result.items;
 }, 30000);
 const active = new Map<string, number>();
 const changes = new Set<() => void>();
@@ -15,6 +21,10 @@ export function helmInventoryKey(context: string, namespace: string | null): str
   const names = namespaceNames(namespace ?? 'all');
   const scope = names ? names.length === 1 ? names[0] : JSON.stringify([...names].sort()) : null;
   return JSON.stringify([context, scope]);
+}
+
+export function getHelmPartialErrors(context: string, namespace: string | null): PartialScopeError[] {
+  return partialErrorsByKey.get(helmInventoryKey(context, namespace)) ?? [];
 }
 
 /** Tables and diagrams share the same native snapshot and release its last reader. */

@@ -5,6 +5,8 @@ import { useTableViewStore } from '../state/table_view_store';
 import { namespaceScopeLabel } from '../core/resources/namespace_scope';
 import { shortcutLabel } from '../core/shortcuts';
 import { customResourceType, resourceBucket } from '../core/resources/custom_resource_types';
+import { isSearchProjectedItem } from '../providers/search_inventory';
+import { k8s } from '../providers/k8s_provider';
 import { useSearchInventory } from './use_search_inventory';
 import { useResourceSearch } from './use_resource_search';
 import { Select } from '../components/ui/Select';
@@ -110,8 +112,8 @@ export const CommandPalette: React.FC = () => {
     return () => { document.removeEventListener('keydown', trap); if (previous?.isConnected) previous.focus(); };
   }, [open]);
 
-  const { grouped, flat, matched } = useMemo(() => {
-    if (!open || !resources) return { grouped: [] as Array<{ section: string; items: Command[] }>, flat: [] as Command[], matched: 0 };
+  const { grouped, flat, flatIndexMap, matched } = useMemo(() => {
+    if (!open || !resources) return { grouped: [] as Array<{ section: string; items: Command[] }>, flat: [] as Command[], flatIndexMap: new Map<string, number>(), matched: 0 };
     const st = useResourceStore.getState();
     const ui = useUiStore.getState();
     const cluster = useClusterStore.getState();
@@ -222,6 +224,14 @@ export const CommandPalette: React.FC = () => {
       if (s >= 0) scored.push({ c, s });
     }
 
+    const definitionByGroupKind = new Map<string, ResourceItem>();
+    for (const candidate of inventory.items) {
+      if (candidate.kind !== 'CustomResourceDefinition') continue;
+      const group = candidate.raw?.spec?.group;
+      const kind = candidate.raw?.spec?.names?.kind;
+      if (group && kind) definitionByGroupKind.set(`${group}/${kind}`, candidate);
+    }
+
     for (const [index, item] of search.items.entries()) {
       scored.push({ s: 1500 - index, c: {
         id: `res-${item.apiVersion}-${item.uid}`, label: item.name,
@@ -230,24 +240,51 @@ export const CommandPalette: React.FC = () => {
         run: () => {
           if (useClusterStore.getState().currentContext !== currentContext) return;
           const store = useResourceStore.getState();
-          const definition = inventory.items.find(candidate => candidate.kind === 'CustomResourceDefinition' && candidate.raw?.spec?.names?.kind === item.kind && item.apiVersion.startsWith(`${candidate.raw?.spec?.group}/`));
+          const group = item.apiVersion.includes('/') ? item.apiVersion.split('/')[0] : '';
+          const definition = group ? definitionByGroupKind.get(`${group}/${item.kind}`) : undefined;
           if (definition && !store.resources.CustomResourceDefinition.has(definition.uid)) store.setResourcesForKind('CustomResourceDefinition', [...store.resources.CustomResourceDefinition.values(), definition]);
           const bucket = resourceBucket(item);
           if (!store.resources[bucket]?.has(item.uid)) store.setResourcesForKind(bucket, [...(store.resources[bucket]?.values() ?? []), item]);
           // A resource detail tab pins its own namespace, including matches outside the list scope.
           useWorkspaceStore.getState().openResourceDetail(item, { namespacePinned: true });
+          // Hydrate metadata-only / search-projected resources in the background so YAML and spec blocks populate immediately.
+          if (currentContext && isSearchProjectedItem(item) && item.kind !== 'HelmRelease') {
+            void (async () => {
+              try {
+                const full = definition
+                  ? await k8s.getCustomResource(currentContext, definition.name, definition.uid, item.namespace ?? null, item.name, { priority: 'high' })
+                  : await k8s.getResource(currentContext, item.kind, item.name, item.namespace, { priority: 'high' });
+                if (useClusterStore.getState().currentContext !== currentContext) return;
+                if (full.uid !== item.uid) return;
+                const latestStore = useResourceStore.getState();
+                const current = latestStore.resources[bucket];
+                if (current) {
+                  const next = new Map(current);
+                  next.set(full.uid, full);
+                  latestStore.setResourcesForKind(bucket, [...next.values()]);
+                }
+              } catch { /* Non-fatal when running against simple HTTP fixtures or restricted RBAC. */ }
+            })();
+          }
         },
       } });
     }
 
     scored.sort((a, b) => b.s - a.s);
     const top = scored.slice(0, limit);
-    const grouped: Array<{ section: string; items: Command[] }> = [];
+    const groupMap = new Map<string, Command[]>();
     for (const { c } of top) {
-      const group = grouped.find(entry => entry.section === c.section);
-      if (group) group.items.push(c); else grouped.push({ section: c.section, items: [c] });
+      let group = groupMap.get(c.section);
+      if (!group) {
+        group = [];
+        groupMap.set(c.section, group);
+      }
+      group.push(c);
     }
-    return { grouped, flat: grouped.flatMap((g) => g.items), matched: search.total + (scored.length - search.items.length) };
+    const grouped = [...groupMap.entries()].map(([section, items]) => ({ section, items }));
+    const flat = grouped.flatMap((g) => g.items);
+    const flatIndexMap = new Map(flat.map((item, idx) => [item.id, idx]));
+    return { grouped, flat, flatIndexMap, matched: search.total + (scored.length - search.items.length) };
   }, [open, query, resources, selectedItem, activeKind, selectedNamespace, currentContext, activePerspective, density, rightTab, inspectorCollapsed, pfCount, panels, extensions, search.items, search.total, mode, regex, caseSensitive, limit, inventory.items]);
 
   useEffect(() => { setSel(previous => previous < flat.length ? previous : 0); }, [flat.length]);
@@ -319,7 +356,7 @@ export const CommandPalette: React.FC = () => {
             <div key={g.section}>
               <div className="px-3 pt-1.5 pb-1 text-[length:calc(10px*var(--ui-factor))] font-semibold uppercase tracking-[0.07em] text-[var(--text-muted)]">{g.section}</div>
               {g.items.map((c) => {
-                const idx = flat.indexOf(c);
+                const idx = flatIndexMap.get(c.id) ?? -1;
                 const isActive = idx === sel;
                 const Icon = c.icon;
                 return (

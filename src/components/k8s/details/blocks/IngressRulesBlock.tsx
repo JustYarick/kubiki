@@ -1,6 +1,6 @@
 import { Globe, Shield, ExternalLink, ArrowRight, Lock, Server } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
-import { useResourceStore } from '../../../../state/resource_store';
+import { useMergedDetailResources } from '../../../../state/detail_cache';
 
 interface IngressRulesBlockProps {
   item: ResourceItem;
@@ -18,7 +18,7 @@ interface IngressPathRule {
 }
 
 export function IngressRulesBlock({ item, onNavigate }: IngressRulesBlockProps) {
-  const resources = useResourceStore((s) => s.resources);
+  const resources = useMergedDetailResources();
   const raw = item.raw ?? {};
   const spec = raw.spec ?? item.spec ?? {};
   const status = raw.status ?? item.statusRaw ?? {};

@@ -23,5 +23,8 @@ export function useHelmGraph(namespace: string | undefined, enabled: boolean) {
   // Track this snapshot's commit, rather than object identities in the shared
   // store: another diagram or Helm details may replace equivalent release items.
   const committed = projection?.context === context && projection?.namespace === namespace && projection?.items === items;
-  return { ready: !active || !!state.error || !state.loading && committed, loading: active && state.loading, error: active ? state.error?.message ?? '' : '' };
+  const partialMessage = state.partialErrors.length
+    ? `Unavailable in ${state.partialErrors.length} namespace${state.partialErrors.length === 1 ? '' : 's'} (${state.partialErrors.map(entry => entry.scope).join(', ')}).`
+    : '';
+  return { ready: !active || !!state.error || !state.loading && committed, loading: active && state.loading, error: active ? (state.error?.message ?? partialMessage) : '' };
 }

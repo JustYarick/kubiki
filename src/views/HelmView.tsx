@@ -16,6 +16,7 @@ import { toast } from '../state/notifications_store';
 import { HelmActionDialog, type HelmAction } from '../components/dialogs/HelmActionDialog';
 import { FixedMenu, MenuList, Popover, type MenuItem } from '../components/ui/Dropdown';
 import { useResourceStore } from '../state/resource_store';
+import { retainResourceKinds } from '../state/resource_requirements';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { helmResource } from '../core/resources/helm';
 import type { ResourceItem } from '../types/k8s';
@@ -30,7 +31,8 @@ import { subscribeHelmChanges } from '../providers/use_helm_graph';
 import { useUiStore } from '../state/ui_store';
 import { useHelmInventory } from '../providers/use_helm_inventory';
 import { useFluxHelmOwners } from '../providers/use_flux_helm_owners';
-import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseHealth, releaseObjects } from '../core/resources/helm_diagnostics';
+import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseDiagnosticObjects, releaseHealth, releaseObjects } from '../core/resources/helm_diagnostics';
+import { deliveryActivity } from '../core/resources/delivery_activity';
 import { resourceIssues } from '../core/resources/diagnostics';
 import { resourceEvents } from '../core/resources/resource_events';
 import './helm.css';
@@ -149,7 +151,7 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
         { id: 'failed', label: 'Failed', value: result.data ? items.filter(item => item.status === 'failed').length : null, detail: 'Last operation failed', tone: 'warn', icon: deliveryIcons.attention },
         { id: 'progressing', label: 'In progress', value: result.data ? items.filter(item => item.status.startsWith('pending-') || item.status === 'uninstalling').length : null, detail: 'Install, upgrade or uninstall', tone: 'muted', icon: deliveryIcons.progressing },
       ]} />
-      <p className="helm-dashboard-caption">{namespaceScopeLabel(namespace ?? 'all')} · {result.error ? 'Last complete snapshot' : 'Complete release inventory'} · auto 30s</p>
+      <p className="helm-dashboard-caption">{namespaceScopeLabel(namespace ?? 'all')} · {result.error ? 'Last complete snapshot' : result.partialErrors.length ? 'Partial release inventory' : 'Complete release inventory'} · auto 30s</p>
     </div>
     <div className="helm-filterbar">
       <label className="helm-search"><Search size={13} aria-hidden="true" /><input aria-label="Search Helm releases by name or namespace" placeholder="Filter releases…" value={query} onChange={event => setQuery(event.target.value)} /></label>
@@ -163,6 +165,20 @@ function HelmReleases({ context, namespace }: { context: string; namespace: stri
     </div>
     <p className="helm-scope">{k8s.demo ? 'Demo · ' : ''}{context} · {namespaceScopeLabel(namespace ?? 'all')} · {k8s.supportsHelmMutations ? 'Backend-confirmed changes' : 'Read only'}</p>
     {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}
+    {!!result.partialErrors.length && (
+      <details className="mx-3 mt-2 rounded border border-[var(--status-warn)]/40 p-2.5 text-xs">
+        <summary className="cursor-pointer text-[var(--status-warn)]">
+          Partial release data · {result.partialErrors.length} namespace{result.partialErrors.length === 1 ? '' : 's'} unavailable (loaded releases are shown below)
+        </summary>
+        <ul className="mt-2 space-y-1 text-[var(--text-secondary)]">
+          {result.partialErrors.map(entry => (
+            <li key={entry.scope} className="break-words">
+              <strong className="font-mono text-[var(--text-primary)]">{entry.scope}</strong>: {entry.error.message}
+            </li>
+          ))}
+        </ul>
+      </details>
+    )}
     {owners.error && <RequestErrorNotice error={owners.error} retainedData={!!owners.items.length} onRetry={owners.refresh} />}
     <div className="helm-content">
       <div className="helm-list">
@@ -200,6 +216,7 @@ const helmDetailTabs = [
 
 export function HelmReleaseDetails({ item, inspector, onClose, onBack, backTarget, onNavigate }: ResourceDetailsProps & { item: ResourceItem }) {
   const context = useClusterStore(state => state.currentContext)!;
+  useEffect(() => item.namespace ? retainResourceKinds(context, ['Pod', 'ReplicaSet', 'Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'Service', 'Ingress', 'PersistentVolumeClaim'], item.namespace) : undefined, [context, item.namespace]);
   const resources = useResourceStore(state => state.resources);
   const history = useHelmRead(JSON.stringify([context, item.namespace, item.name, 'history']), signal => k8s.getHelmHistory(context, item.namespace!, item.name, signal));
   const latest = history.data?.reduce<HelmHistory | undefined>((current, row) => !current || row.revision > current.revision ? row : current, undefined);
@@ -355,8 +372,25 @@ function ReleaseEvidence({ context, release, history, resources, events, onNavig
   });
   const health = useMemo(() => releaseHealth(result.data?.objects ?? [], resources), [result.data?.objects, resources]);
   const hooks = useMemo(() => releaseHealth(result.data?.hooks ?? [], resources), [result.data?.hooks, resources]);
+  const targets = useMemo(() => releaseDiagnosticObjects(release, [...(result.data?.objects ?? []), ...(result.data?.hooks ?? [])], resources), [release, result.data, resources]);
+  const eventNamespaces = useMemo(() => [...new Set([release.namespace, ...targets.flatMap(item => item.namespace ? [item.namespace] : [])])].sort(), [release.namespace, targets]);
+  const activity = useHelmRead(JSON.stringify([context, releaseKey(release), 'events', eventNamespaces]), async signal => {
+    const results = await Promise.allSettled(eventNamespaces.map(namespace => k8s.getResources(context, 'Event', namespace, signal)));
+    return { events: results.flatMap(result => result.status === 'fulfilled' ? result.value : []), errors: results.flatMap((result, index) => result.status === 'rejected' ? [{ namespace: eventNamespaces[index], error: normalizeK8sError(result.reason) }] : []) };
+  });
+  const relatedEvents = useMemo(() => deliveryActivity(activity.data?.events ?? events, targets), [activity.data, events, targets]);
   return <>
-    {(operation.pending || operation.failed) && <DetailsSection title={operation.label}><p className="details-caption">{operation.message}</p>{operation.started > 0 && <p className="details-caption">Started {new Date(operation.started).toLocaleString()}{operation.longRunning ? ' · Pending for over 10 minutes' : ''}</p>}</DetailsSection>}
+    {(operation.pending || operation.failed) && <DetailsSection title={operation.label}><p role={operation.failed ? 'alert' : 'status'} className="details-caption whitespace-pre-wrap break-words">{operation.message}</p>{operation.started > 0 && <p className="details-caption">Started {new Date(operation.started).toLocaleString()}{operation.longRunning ? ' · Pending for over 10 minutes' : ''}</p>}</DetailsSection>}
+    <DetailsSection title={`Release events (${relatedEvents.length})`}>
+      <p className="details-caption">Events for observed release objects, hooks and their loaded descendants. Unloaded objects and expired events may leave gaps.</p>
+      <Button size="sm" disabled={activity.loading} onClick={activity.refresh}>Refresh release events</Button>
+      {activity.loading && <ResourceLoading compact label="Loading release events…" />}
+      {activity.error && <RequestErrorNotice error={activity.error} onRetry={activity.refresh} retainedData={!!activity.data} />}
+      {activity.data?.errors.map(({ namespace, error }) => <div key={namespace}><p className="details-caption">Events unavailable in {namespace}.</p><RequestErrorNotice error={error} onRetry={activity.refresh} /></div>)}
+      {!activity.loading && !relatedEvents.length && <p className="details-caption">No matching events observed.</p>}
+      {relatedEvents.slice(0, 100).map(event => <div key={event.event.uid} className="helm-hook"><button className="details-resource-row" onClick={() => onNavigate(event.item)}><ResourceKindBadge kind={event.item.kind} apiVersion={event.item.apiVersion} /><span>{event.item.name}</span><span className={event.warning ? 'text-[var(--status-warn)]' : 'details-caption'}>{event.reason}</span></button><p className="details-caption whitespace-pre-wrap break-words">{event.message}</p><p className="details-caption">{event.timestamp ? new Date(event.time).toLocaleString() : 'Time unavailable'} · {event.count} occurrence(s)</p></div>)}
+      {relatedEvents.length > 100 && <p className="details-caption">First 100 events shown.</p>}
+    </DetailsSection>
     {!active ? <DetailsSection title="Rendered objects & hooks"><p className="details-caption mb-2">Load the revision manifest and hooks on demand to compare rendered templates against loaded cluster resources.</p><Button size="sm" onClick={() => setRequested(true)}>Check rendered objects & hooks</Button></DetailsSection> : <>
       {result.loading && !result.data && <ResourceLoading label="Checking rendered objects and hooks…" />}
       {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}

@@ -5,18 +5,22 @@ import { parseCustomResources } from './custom_resources';
 import type { ResourceType } from '../core/resources/resource_types';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { normalizeK8sError, requestError, type K8sRequestError } from './errors';
-import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchPhase } from './watch_types';
+import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchFilter, type WatchPhase } from './watch_types';
 
 export const WATCH_FLUSH_MS = 50;
 export const FIRST_SYNC_TIMEOUT_MS = 30000;
 const MAX_PENDING_CHANGES = 5000;
 const PHASES: WatchPhase[] = ['connecting', 'syncing', 'live', 'reconnecting', 'failed', 'stopped'];
 interface Subscription {
-  query: ResourceQuery; abort: AbortController; close?: () => void; sequence: number;
+  query: ResourceQuery; filter?: WatchFilter; abort: AbortController; close?: () => void; sequence: number;
   changes: Map<string, WatchDelta>; snapshot?: Record<string, any>[];
   phase: WatchPhase; error?: K8sRequestError; hasSnapshot: boolean;
   flushTimer?: ReturnType<typeof setTimeout>; firstTimer?: ReturnType<typeof setTimeout>;
   settle: (error?: K8sRequestError) => void;
+}
+
+function sameFilter(a?: WatchFilter, b?: WatchFilter): boolean {
+  return (a?.fieldSelector ?? '') === (b?.fieldSelector ?? '') && (a?.labelSelector ?? '') === (b?.labelSelector ?? '');
 }
 
 /** One UI generation owns its subscriptions. A late callback/ack cannot write into the next generation. */
@@ -26,7 +30,7 @@ export class ResourceWatchSession {
   /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
   private scopedFallback = new Set<ResourceKind>();
   private kindScopes: ReadonlyMap<ResourceKind, string> = new Map();
-  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery) => ResourceItem[] | undefined, private customType?: ResourceType) {}
+  constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery, allowPartial?: boolean) => ResourceItem[] | undefined, private customType?: ResourceType, private kindFilter?: (kind: ResourceKind) => WatchFilter | undefined) {}
 
   private query(kind: ResourceKind, scope: string): ResourceQuery {
     if (!this.customType) return resourceQuery(this.context, kind, scope);
@@ -56,7 +60,7 @@ export class ResourceWatchSession {
     }
     return Promise.allSettled([...wanted].filter(kind => {
       const previous = this.subscriptions.get(kind);
-      return !previous || !sameQuery(previous.query, this.query(kind, this.scope(kind)));
+      return !previous || !sameQuery(previous.query, this.query(kind, this.scope(kind))) || !sameFilter(previous.filter, this.kindFilter?.(kind));
     }).map(kind => this.refresh(kind)));
   }
 
@@ -71,21 +75,25 @@ export class ResourceWatchSession {
     if (previous) this.closeSubscription(previous);
     const scope = forcedScope ?? this.scope(kind);
     const query = this.query(kind, scope);
-    const sameScope = previous && sameQuery(previous.query, query);
+    const filter = this.kindFilter?.(kind);
+    const sameScope = previous && sameQuery(previous.query, query) && sameFilter(previous.filter, filter);
     const cached = !sameScope ? this.cachedSnapshot?.(query) : undefined;
+    // Keep overlapping observations while a broader scope initializes, without
+    // claiming that these rows form a complete snapshot of the new scope.
+    const retained = cached ?? (!sameScope ? this.cachedSnapshot?.(query, true) : undefined);
     let resolve!: () => void; let reject!: (error: K8sRequestError) => void;
     const ready = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     let settled = false;
-    const subscription: Subscription = { query, abort: new AbortController(), sequence: 0, changes: new Map(), phase: 'connecting', hasSnapshot: sameScope ? previous.hasSnapshot : cached !== undefined,
+    const subscription: Subscription = { query, filter, abort: new AbortController(), sequence: 0, changes: new Map(), phase: 'connecting', hasSnapshot: sameScope ? previous.hasSnapshot : cached !== undefined,
       settle: (error) => { if (settled) return; settled = true; clearTimeout(subscription.firstTimer); if (error) reject(error); else resolve(); } };
     this.subscriptions.set(kind, subscription);
-    this.commit(kind, { ...(!sameScope ? { snapshot: cached ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
+    this.commit(kind, { ...(!sameScope ? { snapshot: retained ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
     void (async () => {
       if (!this.current(kind, subscription)) return;
       if (!this.provider.managesInitialSyncTimeout) subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
       void Promise.resolve().then(() => {
         if (!this.current(kind, subscription)) return;
-        return this.provider.watchResources(query, (batch) => this.receive(kind, subscription, batch), subscription.abort.signal);
+        return this.provider.watchResources(query, (batch) => this.receive(kind, subscription, batch), subscription.abort.signal, filter);
       }).then((close) => {
         subscription.close = close;
         if (!this.current(kind, subscription)) close?.();

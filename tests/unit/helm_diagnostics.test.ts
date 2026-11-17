@@ -1,11 +1,18 @@
 import { expect, it } from 'vitest';
-import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseHealth } from '../../src/core/resources/helm_diagnostics';
+import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseDiagnosticObjects, releaseHealth } from '../../src/core/resources/helm_diagnostics';
 import type { HelmRelease } from '../../src/providers/helm_types';
 import type { ResourceItem } from '../../src/types/k8s';
 import { deliveryActivity } from '../../src/core/resources/delivery_activity';
 import { argoHealth, argoSync, deliveryTimestamp } from '../../src/core/resources/delivery';
 
 const release: HelmRelease = { name: 'redis', namespace: 'storage', chart: 'redis-1', revision: '2', app_version: '1', updated: '2026-10-20T10:00:00Z', status: 'pending-upgrade' };
+it('includes release descendants for events without admitting unrelated or replaced owners', () => {
+  const deployment: ResourceItem = { kind: 'Deployment', apiVersion: 'apps/v1', uid: 'current', name: 'redis', namespace: 'storage' };
+  const child = (uid: string, owner: string, namespace = 'storage'): ResourceItem => ({ kind: 'Pod', apiVersion: 'v1', name: uid, uid, namespace, raw: { metadata: { ownerReferences: [{ uid: owner }] } } });
+  const replica = child('replica', 'current'); const pod = child('pod', 'replica');
+  const targets = releaseDiagnosticObjects(release, [deployment], [pod, child('old', 'previous'), child('wrong-ns', 'current', 'other'), replica, deployment]);
+  expect(targets.map(item => item.uid).sort()).toEqual(['current', 'pod', 'replica']);
+});
 it('times pending operations but never infers uninstall start time from an old deployment', () => {
   const now = Date.parse('2026-10-20T11:00:00Z');
   expect(helmOperation(release, [], now)).toMatchObject({ longRunning: true, pending: true });

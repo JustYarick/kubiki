@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { ArrowRight, Link2, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
+import { useMergedDetailResources } from '../../../../state/detail_cache';
 import { useClusterStore } from '../../../../state/cluster_store';
 import { k8s } from '../../../../providers/k8s_provider';
 import { resourceConsumers } from '../../../../core/resources/consumers';
@@ -17,7 +18,7 @@ interface UsedByListProps {
 }
 
 export function UsedByList({ item, onNavigate }: UsedByListProps) {
-  const resources = useResourceStore((s) => s.resources);
+  const resources = useMergedDetailResources();
   const consumers = useMemo(() => resourceConsumers(resources, item), [resources, item]);
   const isBinding = item.kind === 'RoleBinding' || item.kind === 'ClusterRoleBinding';
   const [limit, setLimit] = useState(100);

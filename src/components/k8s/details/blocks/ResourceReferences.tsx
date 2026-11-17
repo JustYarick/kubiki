@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { buildResourceGraph } from '../../../../core/resources/relationships';
 import { resourceKey } from '../../../../core/resources/identity';
-import { useResourceStore } from '../../../../state/resource_store';
+import { useMergedDetailResources } from '../../../../state/detail_cache';
 import { DetailsSection } from '../DetailsSection';
 import { Button } from '../../../ui/Button';
 
 export function ResourceReferences({ item, onNavigate }: { item: ResourceItem; onNavigate: (item: ResourceItem) => void }) {
-  const resources = useResourceStore(state => state.resources);
+  const resources = useMergedDetailResources();
   const [limit, setLimit] = useState(30);
   const targets = useMemo(() => {
     const key = resourceKey(item);

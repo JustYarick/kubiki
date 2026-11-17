@@ -18,6 +18,10 @@ pub struct ReadCache {
     entries: Mutex<VecDeque<(String, Arc<AsyncMutex<Option<Cached>>>)>>,
 }
 impl ReadCache {
+    pub fn clear(&self) {
+        self.entries.lock().unwrap().clear();
+    }
+
     pub fn wrap(self: &Arc<Self>, client: Client) -> Client {
         let namespace = client.default_namespace().to_owned();
         let cache = self.clone();

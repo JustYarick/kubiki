@@ -1,7 +1,7 @@
 import { Select } from '../ui/Select';
 import './settings.css';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, Search, X } from 'lucide-react';
+import { RotateCcw, Save, Search, X } from 'lucide-react';
 import packageJson from '../../../package.json';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -29,6 +29,8 @@ import { TOPOLOGY_UPDATE_INTERVALS } from '../../core/resources/topology_renderi
 import { cx } from '../../core/utils/cx';
 import { useAiStore } from '../../domains/ai/store';
 import { AgentSettings, availableAiSettingsPages, type AgentSettingsPage } from '../../domains/ai/components/AgentSettings';
+import { McpAccessSettings } from '../../domains/ai/components/McpAccessSettings';
+import type { AgentSettingsResetAction, AgentSettingsSaveAction } from '../../domains/ai/types';
 import { fuzzyRanges } from '../../core/utils/fuzzy';
 import {
   entryMatches, filterPages, findEntry, findPage, firstMatchingPage,
@@ -166,8 +168,9 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
   const setUiScale = useUiStore((s) => s.setUiScale);
   const setDefaultRightTab = useUiStore((s) => s.setDefaultRightTab);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row
         entry={findEntry('appearance.ui-scale')}
         below={
@@ -222,7 +225,7 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
       </Row>
       <Row entry={findEntry('appearance.reset-tables')}>
         <Button
-          size="sm"
+          size="md"
           onClick={() => {
             useUiStore.getState().resetAllTableLayouts();
             useTableViewStore.getState().resetAll();
@@ -232,6 +235,7 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
           <RotateCcw size="calc(12px * var(--ui-factor))" /> Reset table columns & filters
         </Button>
       </Row>
+      </div>
     </div>
   );
 }
@@ -239,14 +243,16 @@ function AppearancePage({ sectionTitle }: { sectionTitle: string }) {
 function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
   const ui = useUiStore();
   const fast = ui.topologyPerformanceMode === 'performance';
-  return <div>
+  return <div className="settings-page-stack">
     <SectionTitle>{sectionTitle}</SectionTitle>
+    <div className="settings-card">
     <Row entry={findEntry('topology.performance')} below={<p className="settings-hint">{fast
       ? 'Uses compact nodes and straight connections. Turns off shadows, animations, labels, grid and minimap.'
       : ui.topologyPerformanceMode === 'quality' ? 'Shows node shadows.' : 'Hides node shadows.'}</p>}>
       <Segmented ariaLabel="Topology rendering profile" value={ui.topologyPerformanceMode} onChange={ui.setTopologyPerformanceMode}
         options={[{ value: 'quality', label: 'Quality' }, { value: 'balanced', label: 'Balanced' }, { value: 'performance', label: 'Performance' }]} />
     </Row>
+    </div>
     <SettingsGroup title="Layout" entries={['topology.grouping', 'topology.edges']}>
     <Row entry={findEntry('topology.grouping')}>
       <Segmented ariaLabel="Cluster layout grouping" value={ui.topologyGrouping} onChange={ui.setTopologyGrouping}
@@ -272,11 +278,13 @@ function TopologyPage({ sectionTitle }: { sectionTitle: string }) {
       <Checkbox aria-label="Topology background grid" disabled={fast} checked={!fast && ui.topologyShowBackground} onChange={event => ui.setTopologyShowBackground(event.target.checked)} />
     </Row>
     </SettingsGroup>
+    <div className="settings-card">
     <Row entry={findEntry('topology.updates')}>
       <Select aria-label="Topology live redraw interval" className="ide-select" value={fast ? Math.max(3000, ui.topologyUpdateIntervalMs) : ui.topologyUpdateIntervalMs} onChange={event => ui.setTopologyUpdateIntervalMs(Number(event.target.value))}>
         {TOPOLOGY_UPDATE_INTERVALS.filter(value => !fast || value >= 3000).map(value => <option key={value} value={value}>{value < 1000 ? `${value} ms` : `${value / 1000} s`}</option>)}
       </Select>
     </Row>
+    </div>
   </div>;
 }
 
@@ -288,8 +296,9 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
   const yamlHideManagedFields = useUiStore((s) => s.yamlHideManagedFields);
   const setYamlHideManagedFields = useUiStore((s) => s.setYamlHideManagedFields);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('editor.font-size')}>
         <NumberField label="YAML editor font size" value={editorFontSize} min={10} max={24} onCommit={setEditorFontSize} />
       </Row>
@@ -308,6 +317,7 @@ function EditorPage({ sectionTitle }: { sectionTitle: string }) {
           onChange={(event) => setYamlHideManagedFields(event.target.checked)}
         />
       </Row>
+      </div>
     </div>
   );
 }
@@ -328,8 +338,9 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
     (p) => p.value.toLowerCase() === terminalBackground.toLowerCase()
   );
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('terminal.font-size')}>
         <NumberField label="Terminal font size" value={terminalFontSize} min={10} max={24} onCommit={setTerminalFontSize} />
       </Row>
@@ -352,7 +363,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
             ))}
             <option value="custom">Custom color…</option>
           </Select>
-          <div className="flex items-center gap-1.5 border border-[var(--border-default)] rounded px-2 py-1 bg-[var(--bg-canvas)]">
+          <div className="flex items-center gap-1.5 h-[var(--control-h-md)] border border-[var(--border-default)] rounded-[var(--radius-sm)] px-2 bg-[var(--bg-canvas)]">
             <input
               type="color"
               aria-label="Pick terminal background color"
@@ -410,6 +421,7 @@ function TerminalPage({ sectionTitle }: { sectionTitle: string }) {
           ))}
         </Select>
       </Row>
+      </div>
     </div>
   );
 }
@@ -434,9 +446,9 @@ function LogsPage({ sectionTitle }: { sectionTitle: string }) {
   const logsScrollStickiness = useUiStore((s) => s.logsScrollStickiness);
   const setLogsScrollStickiness = useUiStore((s) => s.setLogsScrollStickiness);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
-      <p className="settings-hint">Changes apply to all log panes.</p>
+      <p className="settings-hint -mt-2">Changes apply to all log panes.</p>
       <SettingsGroup title="Updates" entries={['logs.mode', 'logs.poll-interval']}>
       <Row entry={findEntry('logs.mode')}>
         <Segmented
@@ -566,8 +578,9 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   };
 
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('kubernetes.remember-context')}>
         <Checkbox aria-label="Reopen last selected cluster" checked={rememberLastContext} onChange={event => setRememberLastContext(event.target.checked)} />
       </Row>
@@ -588,10 +601,10 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
               placeholder="~/.kube/config"
               className="flex-1"
             />
-            <Button size="sm" variant="primary" loading={loading} disabled={loading} onClick={handleSavePath}>
+            <Button size="md" variant="primary" loading={loading} disabled={loading} onClick={handleSavePath}>
               Apply
             </Button>
-            <Button size="sm" variant="secondary" disabled={loading} onClick={handleReset} title="Reset to standard ~/.kube/config or $KUBECONFIG">
+            <Button size="md" variant="secondary" disabled={loading} onClick={handleReset} title="Reset to standard ~/.kube/config or $KUBECONFIG">
               Reset
             </Button>
           </div>
@@ -616,6 +629,7 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
           onChange={(event) => setPortForwardAutoOpen(event.target.checked)}
         />
       </Row>
+      </div>
     </div>
   );
 }
@@ -624,8 +638,9 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
   const currentContext = useClusterStore((s) => s.currentContext);
   const clusterVersion = useClusterStore((s) => s.clusterVersion);
   return (
-    <div>
+    <div className="settings-page-stack">
       <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
       <Row entry={findEntry('about.kubiki')} wide>
         <div className="p-3 rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-surface)]">
           <div className="min-w-0">
@@ -661,27 +676,49 @@ function AboutPage({ sectionTitle }: { sectionTitle: string }) {
           <Input aria-label="Server version" value={clusterVersion ? `v${clusterVersion.replace(/^v?/, '')}` : '—'} readOnly className="w-20" />
         </div>
       </Row>
+      </div>
     </div>
   );
 }
 
-function AiPage({ page }: { page: AgentSettingsPage }) {
-  return <AgentSettings page={page} hideNavigation />;
+function AiPage({
+  page,
+  onSaveActionChange,
+  onResetActionChange,
+}: {
+  page: AgentSettingsPage;
+  onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void;
+  onResetActionChange?: (action: AgentSettingsResetAction | null) => void;
+}) {
+  return <AgentSettings page={page} hideNavigation onSaveActionChange={onSaveActionChange} onResetActionChange={onResetActionChange} />;
 }
 
 function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
   const enabled = useUiStore(state => state.developerMode);
   const setEnabled = useUiStore(state => state.setDeveloperMode);
-  return <div><SectionTitle>{sectionTitle}</SectionTitle>
-    <Row entry={findEntry('developer.mode')}><Checkbox aria-label="Developer mode" checked={enabled} onChange={event => setEnabled(event.target.checked)} /></Row>
-  </div>;
+  return (
+    <div className="settings-page-stack">
+      <SectionTitle>{sectionTitle}</SectionTitle>
+      <div className="settings-card">
+        <Row entry={findEntry('developer.mode')}>
+          <Checkbox aria-label="Developer mode" checked={enabled} onChange={event => setEnabled(event.target.checked)} />
+        </Row>
+      </div>
+    </div>
+  );
 }
 
-function pageContent(page: SettingsPageDef, aiPage: AgentSettingsPage): React.ReactElement {
+function pageContent(
+  page: SettingsPageDef,
+  aiPage: AgentSettingsPage,
+  onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void,
+  onResetActionChange?: (action: AgentSettingsResetAction | null) => void,
+): React.ReactElement {
   switch (page.id) {
     case 'topology': return <TopologyPage sectionTitle={page.sectionTitle} />;
     case 'developer': return <DeveloperPage sectionTitle={page.sectionTitle} />;
-    case 'ai': return <AiPage page={aiPage} />;
+    case 'ai': return <AiPage page={aiPage} onSaveActionChange={onSaveActionChange} onResetActionChange={onResetActionChange} />;
+    case 'mcp': return <McpAccessSettings onSaveActionChange={onSaveActionChange} onResetActionChange={onResetActionChange} />;
     case 'appearance': return <AppearancePage sectionTitle={page.sectionTitle} />;
     case 'editor': return <EditorPage sectionTitle={page.sectionTitle} />;
     case 'terminal': return <TerminalPage sectionTitle={page.sectionTitle} />;
@@ -796,20 +833,49 @@ function SettingsSearch({ value, onChange, onKeyDown }: {
 
 export const SettingsDialog: React.FC = () => {
   const open = useUiStore((s) => s.settingsOpen);
+  const settingsSection = useUiStore((s) => s.settingsSection);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const [query, setQuery] = useState('');
   const [aiPage, setAiPage] = useState<AgentSettingsPage>('agent');
+  const [aiSaveAction, setAiSaveAction] = useState<AgentSettingsSaveAction | null>(null);
+  const [aiResetAction, setAiResetAction] = useState<AgentSettingsResetAction | null>(null);
   const [pageId, setPageId] = useState<SettingsPageId>('appearance');
   const contentRef = useRef<HTMLElement>(null);
 
+  useEffect(() => {
+    if (!open || !settingsSection) return;
+    if (settingsSection === 'ai.mcp' || settingsSection === 'ai.mcp.profiles') {
+      setQuery('');
+      setPageId('mcp');
+      if (settingsSection === 'ai.mcp.profiles') {
+        requestAnimationFrame(() => {
+          document.getElementById('mcp-profiles-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+    } else if (settingsSection === 'ai.access') {
+      setQuery('');
+      setPageId('ai');
+      setAiPage('access');
+    } else if (settingsSection === 'ai.scope') {
+      setQuery('');
+      setPageId('ai');
+      setAiPage('scope');
+    } else if (settingsSection === 'ai.agent') {
+      setQuery('');
+      setPageId('ai');
+      setAiPage('agent');
+    }
+  }, [open, settingsSection]);
+
   const aiSettings=useAiStore(s=>s.settings);
-  const aiPages=availableAiSettingsPages(aiSettings);
+  const aiPages=availableAiSettingsPages(aiSettings).filter(item => item.id !== 'mcp');
   const aiMode=aiSettings.runtime;
   const pages = useMemo(() => filterPages(query).map(page=>page.id==='ai'?{...page,entries:page.entries.filter(entry=>availableAiSettingsPages({runtime:aiMode}).some(item=>entry.id===`ai.${item.id}`))}:page).filter(page=>page.entries.length>0 && (page.id!=='ai' || !query.trim() || page.entries.some(entry=>entryMatches(entry,query)) || /^(ai|agent|assistant)$/i.test(query.trim()))), [query,aiMode]);
   const activePage = pages.find((page) => page.id === pageId) ?? pages[0];
   const requestedAiPage = query.trim() ? aiPages.find(item => entryMatches(findEntry(`ai.${item.id}`), query))?.id ?? aiPage : aiPage;
   const selectedAiPage = aiPages.some(item=>item.id===requestedAiPage) ? requestedAiPage : 'agent';
   const resetHandler = activePage ? RESET_HANDLERS[activePage.id] : undefined;
+  const showFooterActions = activePage?.id === 'ai' || activePage?.id === 'mcp';
   useEffect(() => { contentRef.current?.scrollTo({top: 0}); }, [activePage?.id, selectedAiPage]);
 
   const close = () => setOpen(false);
@@ -831,8 +897,34 @@ export const SettingsDialog: React.FC = () => {
                 <RotateCcw size="calc(12px * var(--ui-factor))" /> {activePage.resetLabel}
               </Button>
             )}
+            {showFooterActions && aiResetAction && (
+              <Button
+                size="sm"
+                aria-label={aiResetAction.ariaLabel}
+                disabled={aiResetAction.disabled}
+                onClick={aiResetAction.onReset}
+              >
+                <RotateCcw size="calc(12px * var(--ui-factor))" /> {aiResetAction.label}
+              </Button>
+            )}
             <span className="flex-1" />
-            <Button size="sm" variant="primary" onClick={close}>Done</Button>
+            {showFooterActions && aiSaveAction && (
+              <>
+                {aiSaveAction.dirty && <span className="ai-status-pill is-warn">Unsaved changes</span>}
+                <Button
+                  size="sm"
+                  variant="primary"
+                  aria-label={aiSaveAction.ariaLabel}
+                  disabled={aiSaveAction.disabled}
+                  loading={aiSaveAction.loading}
+                  onClick={aiSaveAction.onSave}
+                >
+                  <Save size="calc(12px * var(--ui-factor))" aria-hidden="true" />
+                  {aiSaveAction.label}
+                </Button>
+              </>
+            )}
+            <Button size="sm" variant={showFooterActions && aiSaveAction ? 'secondary' : 'primary'} onClick={close}>Done</Button>
           </>
         }
       >
@@ -864,7 +956,7 @@ export const SettingsDialog: React.FC = () => {
                     aria-current={selected && page.id !== 'ai' ? 'page' : undefined}
                     aria-expanded={page.id === 'ai' ? selected : undefined}
                     className={cx(
-                      'w-full flex items-center gap-2 px-2.5 h-[calc(27px*var(--ui-factor))] rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] text-left transition-colors',
+                      'w-full flex items-center gap-2 px-2.5 h-[calc(30px*var(--ui-factor))] rounded-[calc(4px*var(--ui-factor))] text-[length:calc(12px*var(--ui-factor))] text-left transition-colors',
                       selected && page.id !== 'ai'
                         ? 'bg-[var(--bg-selection)] text-white'
                         : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
@@ -893,7 +985,7 @@ export const SettingsDialog: React.FC = () => {
               className="settings-content flex-1 min-w-0 overflow-y-auto kubiki-scrollbar px-4 pb-4"
             >
               {activePage ? (
-                pageContent(activePage, selectedAiPage)
+                pageContent(activePage, selectedAiPage, setAiSaveAction, setAiResetAction)
               ) : (
                 <div className="h-full flex flex-col items-center justify-center gap-1 text-center px-6">
                   <Search size="calc(22px * var(--ui-factor))" className="text-[var(--text-muted)] mb-1" />

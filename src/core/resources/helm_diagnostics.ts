@@ -5,6 +5,24 @@ import { resourceKey } from './identity';
 import type { HelmHistory, HelmRelease } from '../../providers/helm_types';
 import { helmUpdatedAt } from '../../providers/helm_types';
 
+/** Include workload descendants such as ReplicaSets, Pods and hook Job Pods. */
+export function releaseDiagnosticObjects(release: HelmRelease, rendered: ResourceItem[], loaded: ResourceItem[]) {
+  const targets = new Map(releaseObjects(release, loaded).map(item => [item.uid, item]));
+  for (const row of releaseHealth(rendered, loaded)) if (row.item) targets.set(row.item.uid, row.item);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const item of loaded) {
+      if (targets.has(item.uid)) continue;
+      const owners = item.raw?.metadata?.ownerReferences ?? item.metadata?.ownerReferences ?? [];
+      if (owners.some((owner: { uid?: string }) => owner.uid && targets.get(owner.uid)?.namespace === item.namespace)) {
+        targets.set(item.uid, item); changed = true;
+      }
+    }
+  }
+  return [...targets.values()];
+}
+
 export function releaseObjects(release: Pick<HelmRelease, 'name' | 'namespace'>, resources: Iterable<ResourceItem>): ResourceItem[] {
   return [...resources].filter(item => {
     const metadata = item.raw?.metadata ?? item.metadata ?? {};
