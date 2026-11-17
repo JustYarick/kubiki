@@ -4,6 +4,7 @@ import path from 'node:path';
 import { desktopRelease, reconcileUpdateManifest, updateChannel, validateUpdateManifest } from './desktop-release.mjs';
 import { compareStableTags, verifyDesktopArtifacts } from './desktop-pipeline.mjs';
 import { publishDevUpdateFeed } from './dev-update-feed.mjs';
+import { loadReleaseNotes } from './release-notes.mjs';
 
 function verifyUploadedArtifacts(assets, uploaded) {
   for (const asset of assets) {
@@ -12,9 +13,10 @@ function verifyUploadedArtifacts(assets, uploaded) {
 }
 
 /** Only the final job writes release assets and latest.json. */
-export async function publishDesktopRelease({ github, context, core }, { tag, sha, dir }) {
+export async function publishDesktopRelease({ github, context, core }, { tag, sha, dir, root = process.cwd() }) {
   const release = desktopRelease(tag);
   const repo = { owner: context.repo.owner, repo: context.repo.repo };
+  const releaseBody = await loadReleaseNotes(tag, root);
   const assets = await verifyDesktopArtifacts(dir, tag, sha);
   const releaseAssets = [...assets];
   const signatures = {};
@@ -60,7 +62,8 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
   if (!draft) {
     draft = (await github.rest.repos.createRelease({
       ...repo, tag_name: tag, target_commitish: sha, name: `Kubiki ${tag}`,
-      draft: true, prerelease: release.prerelease, make_latest: 'false', generate_release_notes: true,
+      draft: true, prerelease: release.prerelease, make_latest: 'false',
+      ...(releaseBody ? { body: releaseBody, generate_release_notes: false } : { generate_release_notes: true }),
     })).data;
   }
   const release_id = draft.id;
@@ -87,6 +90,7 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
   }
   const published = (await github.rest.repos.updateRelease({ ...repo, release_id,
     draft: false, prerelease: release.prerelease, make_latest: makeLatest ? 'true' : 'false',
+    ...(releaseBody ? { body: releaseBody } : {}),
   })).data;
   core.info(`Published ${tag}: ${published.html_url}`);
   if (updateChannel(tag) === 'dev') {

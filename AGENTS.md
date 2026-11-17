@@ -124,8 +124,11 @@ not an application rebuild unless executable examples or generated assets change
   prereleases stay under `## [Unreleased]`). When preparing a stable `vX.Y.Z`
   release, promote `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, leave a fresh
   empty `## [Unreleased]` section at the top, and update the comparison links at
-  the bottom. Updater signing is separate from OS code signing; VirusTotal
-  reports are advisory and must retain detections.
+  the bottom; `scripts/publish-desktop-release.mjs` uses that section via
+  `scripts/release-notes.mjs` as the standard GitHub Release summary (preview
+  with `node scripts/release-notes.mjs vX.Y.Z`). Updater signing is separate
+  from OS code signing; VirusTotal reports are advisory and must retain
+  detections.
 - Before finishing, inspect the diff, run `git diff --check`, and summarize the
   behavior change, documentation updates, verification and remaining limitations.
   Use focused `type(scope): description` commit messages when a commit is requested.

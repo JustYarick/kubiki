@@ -256,6 +256,7 @@ function githubMock({ exists = true, draft = true, latest = 'v1.0.0', failUpload
         }
         if (releaseExists) throw new Error('Existing draft should be reused');
         events.push('create-draft');
+        events.push({ create: options });
         assert.equal(options.draft, true);
         assert.equal(options.target_commitish, 'a'.repeat(40));
         releaseExists = true; releaseDraft = true;
@@ -353,7 +354,20 @@ test('published releases are never overwritten and older stable releases do not 
     const newer = githubMock({ exists: false });
     await publishDesktopRelease(newer, fixture);
     assert.ok(newer.events.includes('create-draft'));
+    assert.equal(newer.events.find(e => e?.create)?.create.generate_release_notes, true);
     assert.equal(newer.events.at(-1).make_latest, 'true');
+
+    const withNotes = githubMock({ exists: false });
+    await mkdir(path.join(fixture.root, 'docs'));
+    await writeFile(
+      path.join(fixture.root, 'docs/CHANGELOG.md'),
+      '## [9876.1.0] - 2026-11-17\n\n### Added\n- Standard release notes.\n\n[9876.1.0]: https://example.test/compare/v9876.0.0...v9876.1.0\n',
+    );
+    await publishDesktopRelease(withNotes, { ...fixture, root: fixture.root });
+    const created = withNotes.events.find(e => e?.create)?.create;
+    assert.equal(created.generate_release_notes, false);
+    assert.match(created.body, /^## Kubiki 9876\.1\.0\n\n### Added\n- Standard release notes\./);
+    assert.match(withNotes.events.at(-1).body, /\*\*Full Changelog\*\*: https:\/\/example\.test\/compare\/v9876\.0\.0\.\.\.v9876\.1\.0\n$/);
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 

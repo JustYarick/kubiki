@@ -80,6 +80,31 @@ as separate releases and stay under `## [Unreleased]`. Before tagging a stable
 a fresh empty `## [Unreleased]` section at the top, and update the comparison
 links at the bottom of the file.
 
+### GitHub Release summary template
+
+Stable GitHub Releases use one standard summary layout generated from
+[CHANGELOG.md](CHANGELOG.md) by `scripts/release-notes.mjs` during
+publication (`scripts/publish-desktop-release.mjs`), and previewable locally with
+`node scripts/release-notes.mjs vX.Y.Z`:
+
+```markdown
+## Kubiki X.Y.Z
+
+### Added / Changed / Deprecated / Removed / Fixed / Security
+
+- Entries promoted from `## [X.Y.Z]` in `docs/CHANGELOG.md` (empty categories omitted).
+
+### Release Artifacts
+
+- Desktop packages: Linux (DEB, RPM, AppImage), macOS (ARM64/x64 DMG and updater `.app.tar.gz`), Windows (NSIS EXE, MSI), and standalone `kubiki-cli` binaries.
+- Verification & updates: `SHA256SUMS`, signed updater manifest `latest.json`, and advisory `VIRUSTOTAL-REPORT.md` / `VIRUSTOTAL-REPORT.json`.
+
+**Full Changelog**: https://github.com/JustYarick/kubiki/compare/vPREV...vX.Y.Z
+```
+
+Prerelease builds (`-dev.NUMBER`, `-rc.N`) have no `CHANGELOG.md` version
+section, so publication falls back to GitHub's generated release notes.
+
 An explicit tag selects the channel regardless of branch. Plain `vX.Y.Z` tags
 are stable. Tags with prerelease suffixes or build metadata are prereleases and
 never become Latest. An older stable release does not replace a newer Latest.

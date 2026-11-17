@@ -48,7 +48,9 @@ Record user-facing changes in [CHANGELOG.md](CHANGELOG.md) using
   `Security`, omitting empty sections.
 - On a stable release (`vX.Y.Z`), move `## [Unreleased]` entries into
   `## [X.Y.Z] - YYYY-MM-DD`, leave an empty `## [Unreleased]` heading at the
-  top, and update the bottom comparison links.
+  top, and update the bottom comparison links. GitHub Release summaries for
+  stable tags follow the canonical template generated from that section by
+  `scripts/release-notes.mjs`; see [Releasing](RELEASING.md#github-release-summary-template).
 
 ## Architecture decision records
 
