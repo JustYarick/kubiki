@@ -87,11 +87,23 @@ import { cx } from '../core/utils/cx';
 interface ResourceViewProps {
   explicitKind?: ResourceKind;
   customType?: CustomResourceType;
+  /** Inventories such as Helm reuse the table without Kubernetes YAML actions. */
+  source?: {
+    items: ResourceItem[];
+    loading: boolean;
+    error?: import('../providers/errors').K8sRequestError | null;
+    label: string;
+    refresh: () => void;
+    toolbar?: React.ReactNode;
+    notice?: React.ReactNode;
+    rowLabel?: (item: ResourceItem) => string;
+    rowMenu: (item: ResourceItem) => MenuItem[];
+  };
 }
 
 const EMPTY_RESOURCE_MAP = new Map<string, ResourceItem>();
 
-export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, customType }) => {
+export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, customType, source }) => {
   const activeKind = useResourceStore(s => s.activeKind);
   const effectiveKind = explicitKind || activeKind;
   const needsWorkloadPods = !customType && hasWorkloadPodColumn(effectiveKind);
@@ -154,7 +166,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const [scaleFor, setScaleFor] = useState<ResourceItem | null>(null);
 
   const [newOpen, setNewOpen] = useState(false);
-  const canCreate = !!currentContext && (k8s.demo || '__TAURI_INTERNALS__' in window);
+  const canCreate = !source && !!currentContext && (k8s.demo || '__TAURI_INTERNALS__' in window);
   useEffect(() => setNewOpen(false), [currentContext, selectedNamespace, effectiveKind]);
   const [spinning, setSpinning] = useState(false);
   useEffect(() => setSpinning(false), [currentContext, selectedNamespace, effectiveKind]);
@@ -186,7 +198,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   }, [effectiveKind, currentContext, customType, selectItem]);
 
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources, effectiveKind, tableColumns, selectedNamespace, searchQuery: deferredSearchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
+  const tableResources = useMemo(() => source ? { ...resources, [effectiveKind]: new Map(source.items.map(item => [item.uid, item])) } : resources, [resources, effectiveKind, source?.items]);
+  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources: tableResources, effectiveKind, tableColumns, selectedNamespace, searchQuery: deferredSearchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
   useEffect(() => {
     if (!statusValues.length) return;
     setSorts(previous => {
@@ -195,7 +208,8 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       return previous.map(key => key === current ? { ...key, statusFirst: statusValues[0] } : key);
     });
   }, [statusValues]);
-  const pending = !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
+  const tableError = source ? source.error : loadError;
+  const pending = source ? source.loading : !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, deferredSearchQuery, columnFilters, sorts]);
 
@@ -381,6 +395,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   };
 
   const openYamlTab = (item: ResourceItem) => {
+    if (source) { openResourceDetail(item); return; }
     openYamlEditor(item);
   };
 
@@ -391,6 +406,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   };
 
   const refresh = async () => {
+    if (source) { source.refresh(); return; }
     if (!currentContext) return;
     if (customType) { custom.refresh(); return; }
     setSpinning(true);
@@ -405,6 +421,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const { doDelete, doScale, doRestart, doToggleCordon, doDrain, doEvictPod, doToggleCronJobSuspend, doTriggerCronJob, doArgoSync, doArgoRefresh, doShare } = useResourceActions(currentContext, refresh);
 
   const buildRowMenu = (item: ResourceItem): MenuItem[] => {
+    if (source) return source.rowMenu(item);
     const crdType = item.kind === 'CustomResourceDefinition' ? customResourceType(item) : undefined;
     const items: MenuItem[] = [
       ...(crdType ? [{
@@ -614,7 +631,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       {/* JetBrains DataGrip-Grade Toolbar */}
       <div className="h-9 shrink-0 flex items-center gap-2 pl-3 border-b border-[var(--border-default)] bg-[var(--bg-canvas)] workspace-toolbar-safe">
         <KindIcon size="calc(15px * var(--ui-factor))" strokeWidth={1.75} className="text-blue-400 shrink-0" />
-        <span title={listLabel} className="truncate text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">{listLabel}</span>
+        <span title={source?.label ?? listLabel} className="truncate text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">{source?.label ?? listLabel}</span>
 
         {selectedUids.size > 0 && (
           <span className="text-[length:calc(11px*var(--ui-factor))] font-mono text-[var(--accent)] px-2 py-[1px] rounded bg-[var(--accent-subtle)] font-medium">
@@ -686,11 +703,11 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
           <IconButton icon={RefreshCw} size="sm" onClick={refresh} className={cx(spinning && 'animate-[spin_0.7s_linear_infinite]')} aria-label="Refresh" />
         </Tooltip>
 
-        <Button size="sm" onClick={() => openAiChat({ create: true, kind: displayKind, namespace: namespaceNames(selectedNamespace)?.length === 1 ? namespaceNames(selectedNamespace)![0] : undefined })}><WandSparkles size={13} aria-hidden="true" />Create with AI</Button>
+        {source ? source.toolbar : <><Button size="sm" onClick={() => openAiChat({ create: true, kind: displayKind, namespace: namespaceNames(selectedNamespace)?.length === 1 ? namespaceNames(selectedNamespace)![0] : undefined })}><WandSparkles size={13} aria-hidden="true" />Create with AI</Button>
         <Button variant="primary" size="sm" disabled={!canCreate} title={canCreate ? `Create ${displayKind}` : 'Open the desktop application to create resources'} onClick={() => setNewOpen(true)}>
           <Plus size="calc(13px * var(--ui-factor))" />
           New
-        </Button>
+        </Button></>}
       </div>
 
       <div className="resource-search-row border-b border-[var(--border-default)] workspace-toolbar-safe" data-testid="resource-search-toolbar">
@@ -723,12 +740,13 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
 
       {/* JetBrains DataGrip Data Table */}
       <div ref={tableRef} tabIndex={0} aria-label={`${displayKind} resource table`} aria-busy={pending || spinning} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-none resource-table-scroll" data-testid="resource-table">
-        {k8s.supportsResourceWatch && !customType && resourceType(effectiveKind).watch === false && <p className="px-3 py-1 text-xs text-[var(--text-secondary)]">This API supports snapshots only · refreshed every 30 seconds</p>}
-        {loadError && <RequestErrorNotice error={loadError} onRetry={() => void refresh()} retainedData={allItems.length > 0 || watchState?.hasSnapshot === true} />}
+        {source?.notice}
+        {!source && k8s.supportsResourceWatch && !customType && resourceType(effectiveKind).watch === false && <p className="px-3 py-1 text-xs text-[var(--text-secondary)]">This API supports snapshots only · refreshed every 30 seconds</p>}
+        {tableError && <RequestErrorNotice error={tableError} onRetry={() => void refresh()} retainedData={allItems.length > 0 || !source && watchState?.hasSnapshot === true} />}
         {initialLoading && <ResourceLoading label={`Loading ${displayKind} resources…`} description={watchState ? 'Waiting for the first complete snapshot from Kubernetes.' : 'Waiting for Kubernetes to respond.'} />}
         {!initialLoading && (pending || spinning) && <div className="resource-loading-overlay"><ResourceLoading compact label={`Refreshing ${displayKind} resources…`} /></div>}
-        {watchState?.phase === 'reconnecting' && !loadError && <ResourceLoading compact label="Reconnecting… Showing the last complete snapshot." />}
-        {rows.list.length === 0 ? !initialLoading && !loadError && (
+        {!source && watchState?.phase === 'reconnecting' && !loadError && <ResourceLoading compact label="Reconnecting… Showing the last complete snapshot." />}
+        {rows.list.length === 0 ? !initialLoading && !tableError && (
           <EmptyState
             kind={displayKind}
             iconKind={effectiveKind}
@@ -742,7 +760,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
             style={{ width: uiPixels(widthFor('__index') + rows.cols.reduce((sum, col) => sum + widthFor(col.id), 0)) }}
             aria-rowcount={rows.list.length + 1}
             className="datagrip-grid table-fixed"
-            onClick={() => tableRef.current?.focus({ preventScroll: true })}
+            onClick={() => !source && tableRef.current?.focus({ preventScroll: true })}
           >
             <colgroup>
               <col style={{ width: uiPixels(widthFor('__index')) }} />
@@ -882,6 +900,9 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                 return (
                   <tr
                     key={item.uid}
+                    aria-label={source?.rowLabel?.(item)}
+                    tabIndex={source ? 0 : undefined}
+                    onFocus={source ? () => setFocusedIndex(idx) : undefined}
                     data-index={idx} data-row-index={idx} data-resource-uid={item.uid} aria-rowindex={idx + 2}
                     ref={virtualized ? rowVirtualizer.measureElement : undefined}
                     style={virtualized ? { height: rowHeight } : undefined}
@@ -970,7 +991,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
       {/* Action Dialogs */}
       <PFDialog item={pfFor} onClose={() => setPfFor(null)} />
       <ScaleDialog item={scaleFor} onClose={() => setScaleFor(null)} onApply={(n) => scaleFor && doScale(scaleFor, n)} />
-      <NewResourceDialog
+      {!source && <NewResourceDialog
         open={newOpen}
         type={customType ?? resourceType(effectiveKind)}
         context={currentContext}
@@ -993,7 +1014,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
             catch { toast.warn('Resource created; view refresh failed', 'Refresh the resource list to load the created resource.'); }
           }
         }}
-      />
+      />}
     </div>
   );
 };

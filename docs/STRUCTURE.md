@@ -55,7 +55,7 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 | `src/views/YamlEditor.tsx` | Manifest editing, formatting, full and clean document views, and apply actions. |
 | `src/views/TopologyView.tsx` | Topology data preparation and workspace integration. |
 | `src/views/TopologyCanvas.tsx` | Interactive graph presentation. |
-| `src/views/HelmView.tsx` | Release and repository navigation, release inspection, and action entry points. |
+| `src/views/HelmView.tsx`, `HelmOverview.tsx` | Cluster-wide Helm summary, shared typed release table, repository navigation, release inspection, and action entry points. |
 | `src/views/ExtensionsView.tsx` | Package installation, enable/disable, manual updates, rollback and logs. |
 | `src/components/updates/AppUpdates.tsx` | Startup update offer, download/install actions and About settings. |
 | `src/navigation/CommandPalette.tsx` | Search and navigation across commands and resource types. |
@@ -70,6 +70,11 @@ to `main` and below the tab/breadcrumb header; opening or resizing it does not
 resize document panes.
 The bottom dock shares the foreground and ends at the inspector's left edge.
 There are no per-document margins reserving inspector space.
+
+`ResourceView` accepts an inventory source for virtual resources such as Helm.
+The source owns live inventory, errors, refresh, creation and row actions; the
+shared view owns typed columns, sorting/filtering, layout, virtualization and
+inspection. Helm inventory does not use Kubernetes YAML/create/delete actions.
 
 Resource table column geometry lives in `src/components/k8s/table/useColumnLayout.ts`. Actual table width is the sum of its columns, so the browser does not redistribute saved widths. Automatic fitting observes the scroll viewport and does not rerun just because the order changed. Resizing anchors its guide to the rendered header and accounts for UI scale and scrolling. `useColumnReorder.ts` uses pointer gestures with a movement threshold, before/after drop indicators and horizontal edge scrolling; resize handles and menu buttons do not initiate reordering. Escape, pointer cancellation, lost capture and unmount release the gesture without saving unfinished changes. Header menus and keyboard resizing remain available as drag alternatives.
 

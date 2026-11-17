@@ -166,6 +166,8 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
         for (const { key, column } of resolvedSorts) {
           if (key.columnId === '__issues') {
             sortValues.push(issueRanks.get(item.uid) ?? 0);
+          } else if (column?.sortValue) {
+            sortValues.push(column.sortValue(item) ?? NaN);
           } else if (key.columnId === '__created' || key.columnId === 'age') {
             const rawTime = item.creationTimestamp ?? item.raw?.metadata?.creationTimestamp ?? item.metadata?.creationTimestamp;
             const parsed = typeof rawTime === 'string' ? Date.parse(rawTime) : NaN;
@@ -211,6 +213,12 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
           if (key.statusFirst !== undefined) {
             const order = (valA as number) - (valB as number);
             if (order !== 0) return order;
+            continue;
+          }
+          if (typeof valA === 'number' && typeof valB === 'number') {
+            if (Number.isNaN(valA) || Number.isNaN(valB)) {
+              if (Number.isNaN(valA) !== Number.isNaN(valB)) return Number.isNaN(valA) ? 1 : -1;
+            } else if (valA !== valB) return (valA - valB) * (key.direction === 'asc' ? 1 : -1);
             continue;
           }
           if (valA === valB) continue;

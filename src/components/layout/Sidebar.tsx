@@ -42,7 +42,7 @@ export const Sidebar: React.FC = () => {
   const activeTab = tabs.find(tab => tab.id === activeTabId);
   const overviewActive = activeTab?.type === 'overview';
   const activeKind = activeTab?.kind ? resourceBucket({ kind: activeTab.kind, apiVersion: activeTab.apiVersion }) : undefined;
-  const activeHelmSection = activeTab?.type === 'helm-repositories' ? 'repositories' : activeTab?.type === 'helm-releases' || activeKind === 'HelmRelease' ? 'releases' : undefined;
+  const activeHelmSection = activeTab?.type === 'helm-overview' ? 'overview' : activeTab?.type === 'helm-repositories' ? 'repositories' : activeTab?.type === 'helm-releases' || activeKind === 'HelmRelease' ? 'releases' : undefined;
 
   const [filter, setFilter] = useState('');
   const [contextMenu, setContextMenu] = useState<{ kind: ResourceKind; x: number; y: number } | null>(null);
@@ -377,7 +377,7 @@ export const Sidebar: React.FC = () => {
                             </button>
                           );
                         })}
-                        {g.helmViews?.map(section => <button key={section} aria-label={`Open Helm ${HELM_VIEWS[section]}`} aria-current={activeHelmSection === section ? 'page' : undefined} onClick={() => openHelm(section)} className={cx('relative w-full flex items-center gap-2 pl-[calc(34px*var(--ui-factor))] pr-2 py-1 text-xs hover:bg-[var(--bg-hover)]', activeHelmSection === section ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}><Anchor size={14} aria-hidden="true" /><span>{HELM_VIEWS[section]}</span></button>)}
+                        {g.helmViews?.map(section => <button key={section} aria-label={`Open Helm ${HELM_VIEWS[section]}`} aria-current={activeHelmSection === section ? 'page' : undefined} onClick={() => openHelm(section)} className={cx('relative w-full flex items-center gap-2 pl-[calc(34px*var(--ui-factor))] pr-2 py-1 text-xs hover:bg-[var(--bg-hover)]', activeHelmSection === section ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}>{section === 'overview' ? <LayoutDashboard size={14} aria-hidden="true" /> : <Anchor size={14} aria-hidden="true" />}<span>{HELM_VIEWS[section]}</span></button>)}
                       </div>
                     )}
                   </div>

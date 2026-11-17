@@ -41,6 +41,7 @@ release uses `Anchor`, while a Flux `HelmRelease` uses `PackageCheck`.
 | Argo CD | Workflow | Application delivery |
 | Custom Resources | Blocks | API extensions |
 | Helm | Anchor | Release management |
+| Overview (including Helm) | LayoutDashboard | Summary dashboard |
 | Admission Policies | ClipboardCheck | Admission checks |
 | Gateway API | Waypoints | Traffic routing |
 | Device Resources | Cpu | Allocatable devices |

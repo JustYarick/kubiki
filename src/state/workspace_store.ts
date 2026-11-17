@@ -28,6 +28,7 @@ export type WorkspaceTabType =
   | 'overview'        // Follows the global cluster and namespace selection
   | 'flux-dashboard'
   | 'argocd-dashboard'
+  | 'helm-overview'
   | 'helm-releases'
   | 'helm-repositories'
   | 'resource-list'   // DataGrip-grade resource table (e.g. Pods, Deployments)
@@ -183,7 +184,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set(state => ({ tabs: [...state.tabs, tab], ...selectArea({ ...state, tabs: [...state.tabs, tab] }, 'explorer', id) }));
       },
       openGitOpsDashboard: (family) => get().openTab({ id: `tab-${family}-dashboard`, type: `${family}-dashboard`, title: `${family === 'flux' ? 'Flux' : 'Argo CD'} Overview` }),
-      openHelm: (section) => get().openTab({ id: `tab-helm-${section}`, type: `helm-${section}`, title: section === 'releases' ? 'Helm Releases' : 'Helm Repositories' }),
+      openHelm: (section) => get().openTab({ id: `tab-helm-${section}`, type: `helm-${section}`, title: section === 'overview' ? 'Helm Overview' : section === 'releases' ? 'Helm Releases' : 'Helm Repositories' }),
 
       openResourceList: (kind, namespace) => {
         const { tabs } = get();
