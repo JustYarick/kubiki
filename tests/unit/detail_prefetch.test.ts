@@ -1,7 +1,7 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { InitialSyncQueue } from '../../src/providers/initial_sync_queue';
 import { queuedRead } from '../../src/providers/read_queue';
-import { extractForwardRefs } from '../../src/providers/detail_prefetch';
+import { extractForwardRefs, prefetchDetailDependencies } from '../../src/providers/detail_prefetch';
 import { useDetailCache } from '../../src/state/detail_cache';
 import { mapK8sResource } from '../../src/core/utils/k8s_mapper';
 
@@ -91,4 +91,37 @@ it('runs search lane requests concurrently without stalling at default table que
   expect(maxActive).toBe(12);
   release();
   await Promise.all(jobs);
+});
+
+it('hydrates metadata-only Secrets on Environment access and reuses full empty Secrets', async () => {
+  const { k8s, K8sProvider } = await import('../../src/providers/k8s_provider');
+  const { useResourceStore } = await import('../../src/state/resource_store');
+  const previous = useResourceStore.getState();
+  useResourceStore.setState({ resources: { ...previous.resources, Secret: new Map() }, watchStates: {} });
+  useDetailCache.getState().clear();
+  const reads: Record<string, unknown>[] = [];
+  const provider = new K8sProvider({ native: false, request: async <T>(_command: string, _path: string, args: Record<string, unknown>) => {
+    if (args.kind === 'Secret') reads.push(args);
+    // Both metadata-only and full empty Secret responses have kind Secret and no data.
+    return { apiVersion: 'v1', kind: args.kind, metadata: { name: args.name, namespace: args.namespace, uid: args.kind === 'Secret' ? 'secret' : 'dependency' } } as T;
+  } });
+  const read = vi.spyOn(k8s, 'getResource').mockImplementation(provider.getResource.bind(provider));
+  const events = vi.spyOn(k8s, 'getResources').mockResolvedValue([]);
+  const pod = mapK8sResource({ apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'pod', name: 'web', namespace: 'prod' },
+    spec: { containers: [{ name: 'web', envFrom: [{ secretRef: { name: 'config' } }] }] } }, 'Pod');
+  try {
+    const signal = new AbortController().signal;
+    await prefetchDetailDependencies('test', pod, signal);
+    expect(reads).toHaveLength(1);
+    expect(useDetailCache.getState().byKind.Secret?.get('secret')?.readProjection).toBe('metadata');
+    await prefetchDetailDependencies('test', pod, signal, { includeSecretPayloads: true });
+    expect(reads).toHaveLength(2);
+    expect(reads[1].metadataOnly).toBeUndefined();
+    expect(useDetailCache.getState().byKind.Secret?.get('secret')?.readProjection).toBeUndefined();
+    await prefetchDetailDependencies('test', pod, signal, { includeSecretPayloads: true });
+    expect(reads).toHaveLength(2);
+  } finally {
+    read.mockRestore(); events.mockRestore();
+    useDetailCache.getState().clear(); useResourceStore.setState(previous);
+  }
 });

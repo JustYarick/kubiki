@@ -87,6 +87,8 @@ fn project_containers(list: Option<&Value>) -> Option<Value> {
 fn project_pod_spec(spec: &Map<String, Value>) -> Map<String, Value> {
     let mut out = Map::new();
     for key in [
+        "replicas",
+        "suspend",
         "nodeName",
         "serviceAccountName",
         "clusterIP",
@@ -205,6 +207,21 @@ fn project_search_item(mut item: Value, ar: &ApiResource) -> Value {
         ] {
             if let Some(v) = status.get(key) {
                 kept_status.insert(key.into(), v.clone());
+            }
+        }
+        // Preserve only the container state fields consumed by status/readiness mapping.
+        for key in ["containerStatuses", "initContainerStatuses", "ephemeralContainerStatuses"] {
+            if let Some(entries) = status.get(key).and_then(Value::as_array) {
+                let entries: Vec<Value> = entries.iter().map(|entry| {
+                    let mut fields = Map::new();
+                    for field in ["name", "ready", "restartCount", "state"] {
+                        if let Some(value) = entry.get(field) {
+                            fields.insert(field.into(), value.clone());
+                        }
+                    }
+                    Value::Object(fields)
+                }).collect();
+                kept_status.insert(key.into(), Value::Array(entries));
             }
         }
         if !kept_status.is_empty() {
@@ -676,6 +693,25 @@ pub async fn resolve_custom_resource(
 mod tests {
     use super::*;
     use kube::client::Body;
+
+    #[test]
+    fn search_projection_retains_status_inputs_without_container_payloads() {
+        let ar = ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&());
+        for reason in ["CrashLoopBackOff", "ImagePullBackOff"] {
+            let projected = project_search_item(json!({
+                "apiVersion": "v1", "kind": "Pod", "metadata": { "name": "web" },
+                "spec": { "containers": [{ "name": "web", "image": "example/web", "env": [{ "name": "PRIVATE", "value": "synthetic" }] }] },
+                "status": { "phase": "Running", "containerStatuses": [{ "name": "web", "ready": false, "restartCount": 3,
+                    "containerID": "runtime://unneeded", "state": { "waiting": { "reason": reason } } }] }
+            }), &ar);
+            assert_eq!(projected["status"]["containerStatuses"][0]["state"]["waiting"]["reason"], reason);
+            assert_eq!(projected["status"]["containerStatuses"][0]["restartCount"], 3);
+            assert!(projected["status"]["containerStatuses"][0].get("containerID").is_none());
+            assert!(projected["spec"]["containers"][0].get("env").is_none());
+        }
+        let projected = project_search_item(json!({ "kind": "Deployment", "spec": { "replicas": 0 }, "status": { "readyReplicas": 0 } }), &ar);
+        assert_eq!(projected["spec"]["replicas"], 0);
+    }
 
     #[tokio::test]
     async fn discovery_does_not_query_unrelated_custom_api_groups() {

@@ -63,6 +63,7 @@ pub struct AiSettings {
     pub mcp_policy: AgentPolicy,
     pub mcp_phase: Option<AgentPhase>,
     pub mcp_profiles: Vec<McpProfile>,
+    pub mcp_profiles_version: u32,
     pub active_mcp_profile_id: Option<String>,
     pub kubiki_plan_profile_id: Option<String>,
     pub kubiki_action_profile_id: Option<String>,
@@ -81,21 +82,24 @@ impl AiSettings {
         if self.policy.read_only && !self.policy.writes.is_empty() {
             self.policy.read_only = false;
         }
+        let mut readonly_policy = self.policy.clone();
+        readonly_policy.writes.clear();
+        for rule in &mut readonly_policy.rules {
+            rule.writes.clear();
+        }
+        readonly_policy.read_only = false;
+        readonly_policy.confirm_reads = false;
+        readonly_policy.always_ask.clear();
+        readonly_policy.plan_disabled_tools.clear();
+        readonly_policy.action_disabled_tools.clear();
         if self.mcp_profiles.is_empty() {
             let action_policy = self.policy.clone();
-            let mut readonly_policy = self.policy.clone();
-            readonly_policy.writes.clear();
-            readonly_policy.read_only = false;
-            readonly_policy.confirm_reads = false;
-            readonly_policy.always_ask.clear();
-            readonly_policy.plan_disabled_tools.clear();
-            readonly_policy.action_disabled_tools.clear();
             self.mcp_profiles = vec![
                 McpProfile {
                     id: "read-only".into(),
                     name: "Read-only".into(),
                     inherit_shared: false,
-                    policy: readonly_policy,
+                    policy: readonly_policy.clone(),
                 },
                 McpProfile {
                     id: "action".into(),
@@ -119,6 +123,19 @@ impl AiSettings {
                     self.active_mcp_profile_id = Some("action".into());
                 }
             }
+        }
+        if self.mcp_profiles_version < 1 {
+            // Repair only the old generated preset. Preserve explicitly customized profiles.
+            let mut legacy_default = readonly_policy;
+            legacy_default.rules = self.policy.rules.clone();
+            for profile in &mut self.mcp_profiles {
+                if profile.id == "read-only" && profile.name == "Read-only" && !profile.inherit_shared
+                    && serde_json::to_value(&profile.policy).ok() == serde_json::to_value(&legacy_default).ok()
+                {
+                    for rule in &mut profile.policy.rules { rule.writes.clear(); }
+                }
+            }
+            self.mcp_profiles_version = 1;
         }
         if self.mcp_server.read_only {
             if self.mcp_profiles.iter().any(|p| p.id == "read-only") {
@@ -186,6 +203,7 @@ impl AiSettings {
             None => {
                 let mut p = self.policy.clone();
                 p.writes.clear();
+                for rule in &mut p.rules { rule.writes.clear(); }
                 p
             }
         };
@@ -263,6 +281,10 @@ mod live_policy_tests {
         let mut settings = AiSettings::default();
         settings.policy.logs = true;
         settings.policy.writes = vec![WriteOperation::Restart];
+        settings.policy.rules = serde_json::from_value(serde_json::json!([{
+            "group": "apps", "kind": "Deployment", "namespace": "prod", "name": "web",
+            "read": "content", "writes": ["restart"]
+        }])).unwrap();
         settings.ensure_mcp_profiles();
         assert_eq!(settings.active_mcp_profile_id.as_deref(), Some("read-only"));
         assert_eq!(
@@ -272,11 +294,19 @@ mod live_policy_tests {
         let default_effective = settings.effective_mcp_policy();
         assert!(default_effective.logs);
         assert!(default_effective.writes.is_empty());
+        assert!(default_effective.rules[0].writes.is_empty());
+        let target = Target { group: "apps".into(), version: "v1".into(),
+            kind: "Deployment".into(), namespace: Some("prod".into()), name: "web".into() };
+        let scope = AgentScope { context: "test".into(), namespaces: vec!["prod".into()], all_namespaces: false };
+        assert!(default_effective.check_write(AgentMode::Ask, &scope, &target, WriteOperation::Restart).is_err());
+        assert_eq!(settings.policy.rules[0].writes, vec![WriteOperation::Restart]);
 
         // Switching to Action inherits Shared Permissions writes.
         settings.active_mcp_profile_id = Some("action".into());
         let effective = settings.effective_mcp_policy();
         assert_eq!(effective.writes, vec![WriteOperation::Restart]);
+        assert_eq!(effective.rules[0].writes, vec![WriteOperation::Restart]);
+        assert!(effective.check_write(AgentMode::Ask, &scope, &target, WriteOperation::Restart).is_ok());
         assert!(!effective.read_only);
 
         // Legacy mcp_server.read_only migrates safely to read-only profile and stops persisting readOnly.
@@ -300,6 +330,28 @@ mod live_policy_tests {
             settings.effective_kubiki_policy(AgentPhase::Action).writes,
             vec![WriteOperation::Restart]
         );
+    }
+
+    #[test]
+    fn repairs_old_generated_profiles_once_without_erasing_later_custom_rules() {
+        let mut settings = AiSettings::default();
+        settings.policy.rules = serde_json::from_value(serde_json::json!([{
+            "group": "apps", "kind": "Deployment", "namespace": "prod", "name": "web",
+            "read": "content", "writes": ["restart"]
+        }])).unwrap();
+        settings.ensure_mcp_profiles();
+        settings.mcp_profiles_version = 0;
+        settings.mcp_profiles[0].policy.rules = settings.policy.rules.clone();
+        settings.ensure_mcp_profiles();
+        assert!(settings.mcp_profiles[0].policy.rules[0].writes.is_empty());
+        assert_eq!(settings.mcp_profiles_version, 1);
+        settings.mcp_profiles[0].policy.rules = settings.policy.rules.clone();
+        settings.ensure_mcp_profiles();
+        assert_eq!(settings.mcp_profiles[0].policy.rules[0].writes, vec![WriteOperation::Restart]);
+        settings.mcp_profiles_version = 0;
+        settings.mcp_profiles[0].name = "Custom restart".into();
+        settings.ensure_mcp_profiles();
+        assert_eq!(settings.mcp_profiles[0].policy.rules[0].writes, vec![WriteOperation::Restart]);
     }
 
     #[test]

@@ -32,7 +32,7 @@ Panel assets are loaded from validated package paths. Each panel has an explicit
 CSP and no direct Tauri IPC, parent DOM access or direct network access.
 The host binds its message channel to the installed extension and panel instance.
 `ExtensionPanel.tsx` inserts a panel-specific CSP into the iframe document, including
-`connect-src 'none'`, and uses an opaque origin. Node backends remain trusted code
+`connect-src 'none'`, and uses an opaque origin. Inline bundles receive the parent document's per-load Tauri script nonce so they can run under the inherited desktop CSP. The panel's own CSP still blocks external scripts, including scripts carrying that nonce; the main window continues to reject unapproved inline scripts. Node backends remain trusted code
 with the user's OS privileges.
 
 The backend bootstrap loads the package entry point and provides `activate(context)`

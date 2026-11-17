@@ -537,7 +537,7 @@ Kubiki `Ask`/`Auto accept`/`confirmReads`/`alwaysAsk` confirmation is applied to
 External MCP connections do **not** use Kubiki's `Plan`/`Action` phase gating: they expose
 the active **MCP Profile** (`mcpProfiles`, defaulting safely to **Read-only** which blocks all
 writes unless customized per-operation such as allowing `Restart` only, alongside **Action**
-which inherits shared **Permissions & Scope** including resource `rules`). Changes apply live
+which inherits shared **Permissions & Scope** including resource `rules`). New Read-only profiles clear write grants in both defaults and resource rules. A one-time migration also repairs existing profiles that exactly match the old generated Read-only preset; customized profiles retain their grants. Changes apply live
 via MCP `notifications/tools/list_changed` without restarting external terminals. Kubernetes RBAC,
 pinned connection generation, projection, bounds, mutation preconditions and receipts remain
 enforced by the server.
@@ -549,7 +549,7 @@ When enabled, independent external sessions (such as OpenCode, Claude Code, Code
 
 - Bound strictly to `127.0.0.1:<port>` on `/mcp`; non-loopback `Host` headers and requests carrying browser `Origin` headers are always rejected (`403 Forbidden`).
 - Loopback authentication is zero-friction by default; **Require Bearer token (optional on 127.0.0.1)** enables constant-time `Authorization: Bearer <token>` checks (token stored in the OS keyring with a `0o600` `mcp-http.token` fallback in app config if the keyring is unavailable, rotatable via **Regenerate token**).
-- **1-Click Client Auto-Configure** safely merges the `kubiki` entry into `~/.config/opencode/opencode.json`, `~/.claude.json`, or `~/.cursor/mcp.json` without overwriting existing user settings.
+- **1-Click Client Auto-Configure** writes the OpenCode V2 `disabled: false` setting and safely merges the `kubiki` entry into `~/.config/opencode/opencode.json`, `~/.claude.json`, or `~/.cursor/mcp.json` without overwriting existing user settings. On Unix, replacement files are private (`0600`, or stricter existing owner permissions), including when a bearer token is enabled.
 - The active **MCP profile**, shared **Permissions & Scope** (when the profile follows shared permissions), and cluster/namespace switching in Kubiki apply live across all connected HTTP MCP sessions without disconnecting external clients.
 
 ## Standalone MCP server

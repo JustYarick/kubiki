@@ -510,7 +510,7 @@ pub fn merge_client_mcp_config(
             let mut entry = json!({
                 "type": "remote",
                 "url": url,
-                "enabled": true,
+                "disabled": false,
             });
             if let Some(token) = token {
                 entry["headers"] = json!({ "Authorization": format!("Bearer {token}") });
@@ -552,6 +552,41 @@ fn client_config_path(client: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// Replace client credentials without exposing either the new or old contents.
+fn write_private_client_config(path: &Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let temp = path.with_extension(format!(
+        "kubiki-{}-{}.tmp", std::process::id(), NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mode = match std::fs::metadata(path) {
+            Ok(meta) => meta.permissions().mode() & 0o600,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0o600,
+            Err(e) => return Err(format!("Cannot inspect {}: {e}", path.display())),
+        };
+        options.mode(mode);
+    }
+    let mut file = options.open(&temp)
+        .map_err(|e| format!("Cannot create private config {}: {e}", temp.display()))?;
+    let result = (|| {
+        file.write_all(content.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result.map_err(|e| format!("Cannot persist {}: {e}", path.display()))
+}
+
 pub(crate) async fn configure_client_file(
     client: &str,
     url: &str,
@@ -563,7 +598,6 @@ pub(crate) async fn configure_client_file(
     let token = token.map(str::to_owned);
     let target_path = path.clone();
     tokio::task::spawn_blocking(move || {
-        use std::io::Write;
         let existing = match std::fs::read_to_string(&target_path) {
             Ok(content) => Some(content),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -575,20 +609,7 @@ pub(crate) async fn configure_client_file(
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
         }
-        let temp = target_path.with_extension("kubiki.tmp");
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&temp)
-            .map_err(|e| format!("Cannot write {}: {e}", temp.display()))?;
-        file.write_all(updated.as_bytes())
-            .and_then(|_| file.write_all(b"\n"))
-            .and_then(|_| file.sync_all())
-            .map_err(|e| format!("Cannot persist {}: {e}", temp.display()))?;
-        drop(file);
-        std::fs::rename(&temp, &target_path)
-            .map_err(|e| format!("Cannot replace {}: {e}", target_path.display()))?;
+        write_private_client_config(&target_path, &updated)?;
         Ok(target_path)
     })
     .await
@@ -681,6 +702,9 @@ mod tests {
             "http://127.0.0.1:3847/mcp"
         );
         assert!(parsed["mcp"]["servers"]["kubiki"].get("headers").is_none());
+        let entry = parsed["mcp"]["servers"]["kubiki"].as_object().unwrap();
+        assert_eq!(entry["disabled"], false);
+        assert!(entry.keys().all(|key| ["type", "url", "disabled", "headers", "oauth"].contains(&key.as_str())));
 
         let with_auth = merge_client_mcp_config(
             "opencode",
@@ -703,6 +727,27 @@ mod tests {
             parsed_claude["mcpServers"]["kubiki"]["url"],
             "http://127.0.0.1:3847/mcp"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_config_replacement_keeps_credentials_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("kubiki-config-permissions-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("client.json");
+        for old_mode in [None, Some(0o600), Some(0o400), Some(0o644)] {
+            if let Some(mode) = old_mode {
+                std::fs::write(&path, "old synthetic credentials").unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            write_private_client_config(&path, "new synthetic credentials").unwrap();
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, old_mode.unwrap_or(0o600) & 0o600);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "new synthetic credentials\n");
+            std::fs::remove_file(&path).unwrap();
+        }
+        std::fs::remove_dir(&dir).unwrap();
     }
 
     #[test]

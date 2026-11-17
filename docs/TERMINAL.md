@@ -49,6 +49,7 @@ loads `.zshrc` for zsh, including exported provider tokens, while restoring Kubi
 in the PTY; Kubiki does not read or persist the token. CLI arguments are passed
 as positional arguments, including prompts containing shell punctuation.
 External agents can also be configured to launch in the system default terminal emulator (e.g. Ghostty, Kitty, Alacritty, WezTerm, `xdg-terminal-exec`) via `src-tauri/src/system_terminal.rs` using direct argv without shell string interpolation.
+On Windows, the shell fallback launches the agent directly in a new native console; prompts never pass through `cmd.exe /C start`. Windows Terminal remains available when installed.
 Pod/Node shells set the same terminal capabilities with shell builtins before
 starting the selected interactive shell; minimal images need no extra env binary.
 

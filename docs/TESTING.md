@@ -94,6 +94,8 @@ not prove live-cluster transport, installed native applications or macOS GPU FPS
 server startup. Some scenarios import `/src` modules, so the entire suite still
 requires Vite; production-preview runs must select compatible scenarios.
 
+`extension_csp.spec.ts` uses the desktop CSP with a synthetic per-document Tauri nonce to verify that extension inline bundles run while parent inline scripts, panel network access and external scripts remain blocked. This browser fixture does not replace an installed WebView check. Native and frontend profile tests cover resource-rule write grants during Read-only migration; detail prefetch tests cover metadata-to-content Secret upgrades.
+
 ## Native Kubernetes TLS regression
 
 `src-tauri/src/kubernetes_tls_tests.rs` constructs real HTTPS clients with the

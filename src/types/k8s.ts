@@ -51,6 +51,8 @@ export interface ResourceIdentity {
 }
 
 export interface ResourceItem extends ResourceIdentity {
+  /** Projection of a built-in read; metadata does not establish payload availability. */
+  readProjection?: 'metadata' | 'search';
   creationTimestamp?: string;
   status?: string;
   /** Readiness/completion ratio for Pods and workloads only. */

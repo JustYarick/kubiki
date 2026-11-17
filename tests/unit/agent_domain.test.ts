@@ -662,6 +662,7 @@ it('defaults to read-only MCP profile, resolves shared permissions for action, a
       ...defaultPolicy(),
       logs: true,
       writes: ['restart', 'scale'] as import('../../src/domains/ai/types').WriteOperation[],
+      rules: [{ group: 'apps', kind: 'Deployment', namespace: 'prod', name: 'web', read: 'content' as const, writes: ['restart'] as import('../../src/domains/ai/types').WriteOperation[] }],
       alwaysAsk: ['scale_workload'],
       confirmReads: true,
       planDisabledTools: ['get_logs'],
@@ -684,6 +685,8 @@ it('defaults to read-only MCP profile, resolves shared permissions for action, a
   const defaultEffective = resolveEffectiveMcpPolicy(baseSettings);
   expect(defaultEffective.logs).toBe(true);
   expect(defaultEffective.writes).toEqual([]);
+  expect(defaultEffective.rules[0]).toMatchObject({ read: 'content', writes: [] });
+  expect(baseSettings.policy.rules[0].writes).toEqual(['restart']);
   expect(defaultEffective.alwaysAsk).toEqual([]);
   expect(defaultEffective.confirmReads).toBe(false);
   expect(defaultEffective.planDisabledTools).toEqual([]);
@@ -691,11 +694,21 @@ it('defaults to read-only MCP profile, resolves shared permissions for action, a
   expect(defaultSummary.isReadOnly).toBe(true);
   expect(defaultSummary.allowedWrites).toEqual([]);
 
+  // Previously saved generated presets are repaired once; later explicit edits survive.
+  const legacyProfiles = ensured.profiles.map(p => p.id === 'read-only'
+    ? { ...p, policy: { ...p.policy, rules: baseSettings.policy.rules } } : p);
+  const repaired = updateAiMcpSettings({ ...baseSettings, mcpProfiles: legacyProfiles }, {});
+  expect(repaired.mcpProfilesVersion).toBe(1);
+  expect(summarizeMcpPolicy(resolveEffectiveMcpPolicy(repaired)).allowedWrites).toEqual([]);
+  const explicitRuleGrant = { ...repaired, mcpProfiles: legacyProfiles };
+  expect(summarizeMcpPolicy(resolveEffectiveMcpPolicy(explicitRuleGrant)).allowedWrites).toEqual(['restart']);
+
   // Switching to Action inherits shared permissions & rules while stripping Kubiki-specific Plan/Action & confirmation prompts
   const actionSettings = updateAiMcpSettings(baseSettings, { activeProfileId: 'action' });
   const actionEffective = resolveEffectiveMcpPolicy(actionSettings);
   expect(actionEffective.logs).toBe(true);
   expect(actionEffective.writes).toEqual(['restart', 'scale']);
+  expect(actionEffective.rules[0].writes).toEqual(['restart']);
   const actionSummary = summarizeMcpPolicy(actionEffective);
   expect(actionSummary.isReadOnly).toBe(false);
   expect(actionSummary.allowedWrites).toEqual(['scale', 'restart']);

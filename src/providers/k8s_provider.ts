@@ -204,7 +204,11 @@ export class K8sProvider implements KubernetesProvider {
     if (!raw || !Array.isArray(raw.items) || raw.items.some((item: any) => !item || typeof item.metadata?.name !== 'string' || !item.metadata.name || item.kind && item.kind !== kind && !options?.metadataOnly || item.apiVersion && !options?.metadataOnly && (typeof item.apiVersion !== 'string' || parseApiVersion(item.apiVersion).group !== query.group))) {
       throw requestError('internal', 'Invalid resource list returned by Kubernetes bridge', { operation: 'resources', context, resource: query });
     }
-    return mapK8sResourceList(raw, kind);
+    const items = mapK8sResourceList(raw, kind);
+    if (options?.metadataOnly || options?.projection === 'search') {
+      for (const item of items) item.readProjection = options.metadataOnly ? 'metadata' : 'search';
+    }
+    return items;
   }
 
   async getResource(context: string, kind: ResourceKind, name: string, namespace?: string, options?: { metadataOnly?: boolean; priority?: ReadPriority }, signal?: AbortSignal): Promise<ResourceItem> {
@@ -222,7 +226,9 @@ export class K8sProvider implements KubernetesProvider {
     if (!raw || typeof raw.metadata?.name !== 'string' || !raw.metadata.name || (raw.kind && raw.kind !== kind && !options?.metadataOnly)) {
       throw requestError('internal', 'Invalid resource returned by Kubernetes bridge', { operation: 'resource', context, resource: { ...query, name, uid: null } });
     }
-    return mapK8sResource(raw, kind);
+    const item = mapK8sResource(raw, kind);
+    if (options?.metadataOnly) item.readProjection = 'metadata';
+    return item;
   }
 
   async getResourceCounts(context: string, kinds: ResourceKind[], namespace?: string, signal?: AbortSignal): Promise<Partial<Record<ResourceKind, number>>> {

@@ -361,6 +361,18 @@ pub fn posix_shell_quote(value: &str) -> String {
     quoted
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_console_command(process: &HostProcess) -> Command {
+    let mut cmd = Command::new(&process.program);
+    cmd.current_dir(&process.cwd).args(&process.args);
+    for (key, value) in &process.environment {
+        cmd.env(key, value);
+    }
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE
+    cmd
+}
+
 pub fn spawn_in_system_terminal(
     terminal: &SystemTerminal,
     process: HostProcess,
@@ -418,14 +430,8 @@ pub fn spawn_in_system_terminal(
 
     #[cfg(target_os = "windows")]
     if terminal.kind == TerminalKind::WindowsShell {
-        let mut cmd = Command::new("cmd.exe");
-        cmd.args(["/C", "start", "", "/D"])
-            .arg(&cwd)
-            .arg(&wrapped.program)
-            .args(&wrapped.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        // A console host is enough for a CLI; never put its arguments through cmd /C.
+        let mut cmd = windows_console_command(&wrapped);
         return cmd
             .spawn()
             .map_err(|e| format!("Failed to launch {}: {e}", terminal.label));
@@ -496,6 +502,22 @@ mod tests {
         let foot = terminal_argv(TerminalKind::Foot, cwd, prog, &args);
         assert_eq!(foot[0], "--working-directory=/tmp/kubiki workspace");
         assert_eq!(foot[1], "/usr/bin/zsh");
+    }
+
+    #[test]
+    fn windows_fallback_launches_the_program_directly_with_literal_arguments() {
+        let process = HostProcess {
+            program: PathBuf::from("agent.exe"),
+            cwd: PathBuf::from("workspace"),
+            args: vec!["hello&calc.exe".into(), "%PATH% | > output".into(), "a\"b\nc".into()],
+            environment: vec![("KUBIKI_ARGV_TEST".into(), "value".into())],
+        };
+        let command = windows_console_command(&process);
+        let command = command.as_std();
+        assert_eq!(command.get_program(), OsStr::new("agent.exe"));
+        assert_eq!(command.get_args().collect::<Vec<_>>(), process.args.iter().map(OsStr::new).collect::<Vec<_>>());
+        assert_eq!(command.get_current_dir(), Some(process.cwd.as_path()));
+        assert!(command.get_envs().any(|(key, value)| key == "KUBIKI_ARGV_TEST" && value == Some(OsStr::new("value"))));
     }
 
     #[test]

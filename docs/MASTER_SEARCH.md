@@ -14,6 +14,8 @@ image:registry.example/web node:worker-a
 annotation:owner=platform name:backend
 ```
 
+Native search projections retain container waiting/termination states and desired replica counts so status filters also work before a resource table has been opened.
+
 Supported fields: `name`, `kind` (`type`), `ns` (`namespace`), `status`, `label` (`labels`), `annotation` (`annotations`), `image`, `node`, `api`, `uid`.
 
 Use `.*` or `Alt+R` for regex; **Aa** controls case sensitivity. Expressions are applied to individual searchable fields, so name anchors behave as expected. A regex without field prefixes is treated as one expression, including any spaces or alternation. With field prefixes, use one expression per term and quote expressions that contain spaces.
@@ -42,7 +44,7 @@ inspected object (such as a Pod's `Node`, owner chain, `ServiceAccount`, `PVC`, 
 and `Secret` metadata, or object-scoped Events) are prefetched via targeted single-object reads
 into the detail cache without opening full collection watches.
 
-Overview fetches warning/non-normal Events with a server-side `type!=Normal` field selector and expands to an unfiltered Event watch when a specific object or Events pane is inspected. Native Pod details poll single-Pod metrics directly (`get_pod_metric`) instead of loading all namespace Pod metrics.
+Overview fetches warning/non-normal Events with a server-side `type!=Normal` field selector and expands to an unfiltered Event watch when a specific object or Events pane is inspected. Metadata-only reads carry an explicit projection marker; opening Pod Environment upgrades cached Secret metadata to a full read, including for an empty Secret. Native Pod details poll single-Pod metrics directly (`get_pod_metric`) instead of loading all namespace Pod metrics.
 
 Metrics Server supplies CPU and memory, not disk/network performance rates or historical data from before the application collected it. Missing or denied usage is shown as unavailable. Unknown capacities and system fields remain unknown.
 

@@ -98,6 +98,7 @@ export interface AiSettings {
   mcpPolicy?: AgentPolicy;
   mcpPhase?: AgentPhase;
   mcpProfiles?: McpProfile[];
+  mcpProfilesVersion?: number;
   activeMcpProfileId?: string;
   kubikiPlanProfileId?: string;
   kubikiActionProfileId?: string;
@@ -297,6 +298,21 @@ export function ensureMcpProfiles(settings: AiSettings): {
   const shared = rawShared.readOnly && rawShared.writes.length > 0
     ? { ...rawShared, readOnly: false }
     : rawShared;
+  const readOnlyProfile: McpProfile = {
+    id: 'read-only',
+    name: 'Read-only',
+    inheritShared: false,
+    policy: {
+      ...shared,
+      writes: [],
+      rules: shared.rules.map(rule => ({ ...rule, writes: [] })),
+      readOnly: false,
+      confirmReads: false,
+      alwaysAsk: [],
+      planDisabledTools: [],
+      actionDisabledTools: [],
+    },
+  };
   let profiles: McpProfile[];
   let migratedActiveFromGeneral = false;
   if (settings.mcpProfiles && settings.mcpProfiles.length > 0) {
@@ -312,20 +328,6 @@ export function ensureMcpProfiles(settings: AiSettings): {
       };
     });
   } else {
-    const readOnlyProfile: McpProfile = {
-      id: 'read-only',
-      name: 'Read-only',
-      inheritShared: false,
-      policy: {
-        ...shared,
-        writes: [],
-        readOnly: false,
-        confirmReads: false,
-        alwaysAsk: [],
-        planDisabledTools: [],
-        actionDisabledTools: [],
-      },
-    };
     const actionProfile: McpProfile = {
       id: 'action',
       name: 'Action',
@@ -333,6 +335,22 @@ export function ensureMcpProfiles(settings: AiSettings): {
       policy: shared,
     };
     profiles = [readOnlyProfile, actionProfile];
+  }
+  if ((settings.mcpProfilesVersion ?? 0) < 1) {
+    const legacy = { ...readOnlyProfile.policy, rules: shared.rules };
+    profiles = profiles.map(profile => {
+      const matchesRules = profile.policy.rules.length === legacy.rules.length && profile.policy.rules.every((rule, i) => {
+        const old = legacy.rules[i];
+        return rule.group === old.group && rule.kind === old.kind && rule.namespace === old.namespace
+          && rule.name === old.name && rule.read === old.read && JSON.stringify(rule.writes) === JSON.stringify(old.writes);
+      });
+      const matchesDefaults = Object.keys(profile.policy).length === Object.keys(legacy).length
+        && Object.entries(legacy).every(([key, value]) => key === 'rules'
+          || JSON.stringify(profile.policy[key as keyof AgentPolicy]) === JSON.stringify(value));
+      return profile.id === 'read-only' && profile.name === 'Read-only' && !profile.inheritShared && matchesRules && matchesDefaults
+        ? { ...profile, policy: { ...profile.policy, rules: profile.policy.rules.map(rule => ({ ...rule, writes: [] })) } }
+        : profile;
+    });
   }
   const legacyLockedReadOnly = Boolean((settings.mcpServer as { readOnly?: boolean } | undefined)?.readOnly);
   const rawCandidate = migratedActiveFromGeneral && settings.activeMcpProfileId === 'general'
@@ -457,6 +475,7 @@ export function updateAiMcpSettings(
     ...current,
     policy: nextShared,
     mcpProfiles: nextProfiles,
+    mcpProfilesVersion: 1,
     activeMcpProfileId: activeExists ? requestedActive : defaultNextActive,
     kubikiPlanProfileId: nextProfiles.some(p => p.id === requestedPlan) ? requestedPlan : defaultNextActive,
     kubikiActionProfileId: nextProfiles.some(p => p.id === requestedAction)

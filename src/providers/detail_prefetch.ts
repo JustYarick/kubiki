@@ -93,7 +93,7 @@ export async function prefetchDetailDependencies(
     if (cache.context !== context) return false;
     return [...(cache.byKind[target.kind]?.values() ?? [])].some(
       r => r.name === target.name && (!target.namespace || r.namespace === target.namespace)
-        && (options.includeSecretPayloads ? !(r.raw?.kind === 'PartialObjectMetadata') : true),
+        && (options.includeSecretPayloads ? !r.readProjection : true),
     );
   };
 
