@@ -21,6 +21,8 @@ import { Button } from '../../ui/Button';
 import { toast } from '../../../state/notifications_store';
 import { ContainerSelect } from '../ContainerSelect';
 import { cx } from '../../../core/utils/cx';
+import { extractForwardRefs } from '../../../providers/detail_prefetch';
+import { ReferenceRows } from './blocks/ReferenceRows';
 
 interface PodEnvironmentTabProps {
   item: ResourceItem;
@@ -33,6 +35,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
 
   const resources = useMergedDetailResources();
   const containers = useMemo(() => podContainers(item), [item]);
+  const secretRefs = useMemo(() => extractForwardRefs(item).filter(ref => ref.kind === 'Secret').map(ref => ({ ...ref, item: findResourceInMap(resources.Secret, ref.name, ref.namespace) })), [item, resources.Secret]);
 
   const [selectedContainer, setSelectedContainer] = useState<string>(() => {
     return containers[0]?.name ?? '';
@@ -193,6 +196,7 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
 
   return (
     <div className="h-full flex flex-col bg-[var(--bg-canvas)] overflow-hidden text-xs">
+      {!!secretRefs.length && <div className="shrink-0 px-3 py-2 border-b border-[var(--border-subtle)]" aria-label="Referenced Secrets"><ReferenceRows entries={secretRefs} onNavigate={onNavigate} /></div>}
       {/* Top Controls Toolbar */}
       <div className="px-3 py-2 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2 bg-[var(--bg-secondary)]/30">
         <div className="flex items-center gap-1.5 flex-wrap">

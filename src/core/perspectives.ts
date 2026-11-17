@@ -6,7 +6,7 @@ import type { ResourceKind } from '../types/k8s';
 import type { HelmSection } from '../providers/helm_types';
 import { GROUP_BASE, NEUTRAL_TONE, familyBase, groupTone, lookupTone, registerTone, shade, toneOf, type GroupId, type Tone } from './palette';
 
-export const HELM_VIEWS: Record<HelmSection, string> = { releases: 'Releases', repositories: 'Repositories' };
+export const HELM_VIEWS: Record<HelmSection, string> = { overview: 'Overview', releases: 'Releases', repositories: 'Repositories' };
 
 export type Perspective =
   | 'workloads'
@@ -84,7 +84,7 @@ export const SIDEBAR_TREE: TreeCategory[] = [
   ] }] },
   { id: 'namespaces', label: 'Namespaces', icon: CATEGORY_ICONS.namespaces, directKind: 'Namespace', groups: [{ id: 'namespaces', kinds: [k('Namespace', 'Namespaces', 'namespaces')] }] },
   { id: 'events', label: 'Events', icon: CATEGORY_ICONS.events, directKind: 'Event', groups: [{ id: 'events', kinds: [k('Event', 'Events', 'events')] }] },
-  { id: 'helm', label: 'Helm', icon: CATEGORY_ICONS.helm, groups: [{ id: 'helm', kinds: [], helmViews: ['releases', 'repositories'] }] },
+  { id: 'helm', label: 'Helm', icon: CATEGORY_ICONS.helm, groups: [{ id: 'helm', kinds: [], helmViews: ['overview', 'releases', 'repositories'] }] },
   { id: 'access', label: 'Access Control', icon: CATEGORY_ICONS.access, groups: [{ id: 'access', kinds: [
     k('ServiceAccount', 'Service Accounts', 'access'),
     k('ClusterRole', 'Cluster Roles', 'access'),

@@ -662,6 +662,7 @@ export function McpAccessSettings({
           />
           <DataSelect
             label="Custom resources"
+            diagnostic
             title="Control access permissions for installed Custom Resource Definitions (CRDs)"
             value={policyDraft.customResources}
             onChange={customResources => void persistProfilePolicy({ ...policyDraft, customResources })}

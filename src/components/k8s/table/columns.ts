@@ -3,6 +3,7 @@ import { presentationFor, fieldText, fieldValue } from '../../../core/resources/
 import { resourceType, apiVersionFor as typeApiVersion } from '../../../core/resources/resource_types';
 import { memoryText, quantity } from '../../../core/resources/quantities';
 import type { WorkloadPodActivity } from '../../../core/resources/workload_pod_activity';
+import { helmUpdatedAt } from '../../../providers/helm_types';
 
 export interface ColumnDef {
   id: string;
@@ -14,6 +15,7 @@ export interface ColumnDef {
   /** Tooltip shown on the cell — explains where the value comes from. */
   hint?: string;
   get: (i: ResourceItem) => string | undefined;
+  sortValue?: (i: ResourceItem) => number | null;
   podActivity?: (i: ResourceItem) => WorkloadPodActivity | undefined;
 }
 
@@ -162,6 +164,16 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
         { id: 'provisioner', label: 'Provisioner', get: (i) => i.provisioner },
         { id: 'reclaim', label: 'Reclaim', get: (i) => i.reclaimPolicy },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
+      ];
+    case 'HelmRelease':
+      return [
+        ...BASE_COLUMNS,
+        { id: 'status', label: 'Status', get: i => i.status },
+        { id: 'observed-health', label: 'Observed health', size: 210, hint: 'Health of loaded Helm-owned objects; not a complete release check', get: i => i.raw?.observedHealth },
+        { id: 'chart', label: 'Chart', size: 220, get: i => i.raw?.release?.chart },
+        { id: 'revision', label: 'Revision', align: 'right', mono: true, get: i => i.raw?.release?.revision },
+        { id: 'app-version', label: 'App version', get: i => i.raw?.release?.app_version },
+        { id: 'updated', label: 'Updated', size: 230, get: i => i.raw?.release?.updated, sortValue: i => helmUpdatedAt(i.raw?.release?.updated ?? '') || null },
       ];
     case 'Node':
       return [

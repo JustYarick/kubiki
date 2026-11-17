@@ -47,6 +47,12 @@ The exec scenario checks that Escape reaches the PTY when search is closed.
 dispatched operation receipts during Stop. Native manifest tests exercise both
 Secret volume schemas, including misleading unknown fields; runtime tests cover
 redirecting unoffered plan tools to Markdown without dispatch and isolation across turns.
+`kubiki-tools/tests/resource_metrics.rs` separates host/Pod usage from configured
+budgets, excludes completed Pods from Node allocations, and checks scope/policy
+fail-closed behavior. Core budget tests cover init sidecars, overhead and unknown
+limits; API discovery tests cover explicitly requested served CRD versions.
+Flux mutation fixtures distinguish reconcile from reset and verify confirmation.
+
 `kubiki-tools/tests/data_permissions.rs` blocks generic Event/Metrics reads and
 lists before any HTTP call, including with broad content rules, and verifies
 that policy updates revoke evidence without reusing its IDs. MCP protocol tests

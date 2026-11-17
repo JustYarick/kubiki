@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { InitialSyncQueue } from '../../src/providers/initial_sync_queue';
 import { queuedRead } from '../../src/providers/read_queue';
 import { extractForwardRefs, prefetchDetailDependencies } from '../../src/providers/detail_prefetch';
-import { useDetailCache } from '../../src/state/detail_cache';
+import { useDetailCache, detailReadKey } from '../../src/state/detail_cache';
 import { mapK8sResource } from '../../src/core/utils/k8s_mapper';
 
 it('prioritizes high/normal reads ahead of low background reads without starvation', async () => {
@@ -124,4 +124,35 @@ it('hydrates metadata-only Secrets on Environment access and reuses full empty S
     read.mockRestore(); events.mockRestore();
     useDetailCache.getState().clear(); useResourceStore.setState(previous);
   }
+});
+
+
+it('keeps Secret existence separate from contents and distinguishes 404 from denied reads', async () => {
+  const { k8s, K8sProvider } = await import('../../src/providers/k8s_provider');
+  const { useResourceStore } = await import('../../src/state/resource_store');
+  const { requestError } = await import('../../src/providers/errors');
+  const previous = useResourceStore.getState();
+  useResourceStore.setState({ resources: { ...previous.resources, Secret: new Map() }, watchStates: {} });
+  const pod = mapK8sResource({ apiVersion: 'v1', kind: 'Pod', metadata: { uid: 'pod', name: 'web', namespace: 'prod' }, spec: { containers: [{ name: 'web', envFrom: [{ secretRef: { name: 'config' } }] }] } }, 'Pod');
+  let mode: 'metadata' | 'missing' | 'denied' = 'metadata';
+  const provider = new K8sProvider({ native: false, request: async <T>(_command: string, _path: string, args: Record<string, unknown>) => {
+    if (mode === 'missing') throw requestError('not_found', 'Not found', { operation: 'get' }, 404);
+    if (mode === 'denied' || !args.metadataOnly) throw requestError('forbidden', 'Forbidden', { operation: 'get' }, 403);
+    return { apiVersion: 'v1', kind: 'Secret', metadata: { name: 'config', namespace: 'prod', uid: 'secret' } } as T;
+  } });
+  const read = vi.spyOn(k8s, 'getResource').mockImplementation(provider.getResource.bind(provider));
+  const events = vi.spyOn(k8s, 'getResources').mockResolvedValue([]);
+  try {
+    useDetailCache.getState().clear('test');
+    await prefetchDetailDependencies('test', pod, new AbortController().signal, { includeSecretPayloads: true });
+    expect(useDetailCache.getState().byKind.Secret?.get('secret')?.readProjection).toBe('metadata');
+    for (const [next, expected] of [['missing', 'notFound'], ['denied', 'unavailable']] as const) {
+      mode = next; useDetailCache.getState().clear('test');
+      await prefetchDetailDependencies('test', pod, new AbortController().signal);
+      expect(useDetailCache.getState().readStates.get(detailReadKey('Secret', 'config', 'prod'))).toBe(expected);
+      expect(useDetailCache.getState().byKind.Secret).toBeUndefined();
+    }
+    useDetailCache.getState().clear('other');
+    expect(useDetailCache.getState().readStates.size).toBe(0);
+  } finally { read.mockRestore(); events.mockRestore(); useDetailCache.getState().clear(); useResourceStore.setState(previous); }
 });

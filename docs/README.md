@@ -24,7 +24,8 @@
 - [Extension runtime](EXTENSION_PLATFORM.md): processes, panel isolation and trust boundaries.
 - [Tab metrics](UI_TABS.md): shared interface dimensions.
 - [Icons](ICONS.md): resource icons, product logo and application icon.
-- [Media](MEDIA.md): generating README screenshots and recordings.
+- [Media](MEDIA.md): generating README and website screenshots and recordings (`scripts/capture-readme.mjs`, `scripts/capture-website-media.mjs`).
+- [Project website](WEBSITE.md): static landing page, local preview and GitHub Pages publication.
 
 Usage documentation describes the current implementation and its limits. ADRs
 preserve architectural context, alternatives and consequences, with superseded

@@ -19,6 +19,7 @@ function actionFeedback(action: ResourceAction): Feedback {
     case 'argo_sync': return { title: 'Argo CD sync requested', detail: 'Waiting for the controller to report the result.' };
     case 'argo_refresh': return { title: action.hard ? 'Argo CD hard refresh requested' : 'Argo CD refresh requested' };
     case 'flux_retry': return { title: 'Flux Helm retry requested', detail: 'Waiting for the controller to report the result.' };
+    case 'flux_reconcile': return { title: 'Flux reconciliation requested', detail: 'Waiting for the controller to report the result.' };
   }
 }
 function batchFeedback(result: unknown, drain: boolean): Feedback {

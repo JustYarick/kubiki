@@ -85,6 +85,20 @@ impl FieldSelection {
             .keys()
             .all(|k| matches!(k.as_str(), "metadata" | "apiVersion" | "kind"))
     }
+    pub fn intersects(&self, other: &Self) -> bool {
+        fn common(a: &Selection, b: &Selection) -> bool {
+            a.whole || b.whole || a.children.iter().any(|(key, child)| b.children.iter().any(|(other, node)|
+                (key == other || key == "*" || other == "*") && common(child, node)))
+        }
+        common(&self.0, &other.0)
+    }
+    pub fn covers(&self, other: &Self) -> bool {
+        fn covers(a: &Selection, b: &Selection) -> bool {
+            a.whole || !b.whole && b.children.iter().all(|(key, child)|
+                a.children.get(key).or_else(|| a.children.get("*")).is_some_and(|node| covers(node, child)))
+        }
+        covers(&self.0, &other.0)
+    }
     pub fn apply(&self, source: &Value) -> Value {
         let mut result = select(source, &self.0).unwrap_or(json!({}));
         // Identity is always taken from the permitted projection, never raw data.

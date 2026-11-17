@@ -1,7 +1,7 @@
 import { requestError } from './errors.ts';
 import { isValidNamespaceName } from '../core/resources/resource_types.ts';
 
-export type HelmSection = 'releases' | 'repositories';
+export type HelmSection = 'overview' | 'releases' | 'repositories';
 export type HelmDocument = 'values' | 'manifest' | 'notes' | 'hooks';
 export interface HelmRelease { name: string; namespace: string; revision: string; updated: string; status: string; chart: string; app_version: string }
 export interface HelmHistory { revision: number; updated: string; status: string; chart: string; app_version: string; description: string }

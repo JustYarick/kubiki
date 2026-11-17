@@ -36,7 +36,7 @@ export function fluxReleaseOwner(release: Pick<HelmRelease, 'name' | 'namespace'
     const recorded = item.raw?.status?.history?.[0];
     const target = spec.targetNamespace ?? item.namespace;
     const name = spec.releaseName ?? recorded?.name ?? (target === item.namespace ? item.name : undefined);
-    return name === release.name && (spec.storageNamespace ?? target) === release.namespace;
+    return name === release.name && (item.raw?.status?.storageNamespace ?? spec.storageNamespace ?? item.namespace) === release.namespace;
   });
 }
 export function helmOperation(release: HelmRelease, history: HelmHistory[] = [], now = Date.now()) {

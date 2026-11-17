@@ -1,6 +1,7 @@
 # 005: Ограниченные запросы и память AI-расследования
 
 > Current implementation and limits: [AI tools](../AI_AGENT.md#tools-and-execution-limits).
+> Extended by [ADR-013](013-diagnostic-crd-access-and-resource-metrics.md) for diagnostic CRD access and resource metrics.
 > This record preserves the query design and its trade-offs; benchmark and migration
 > statements below are evidence from the decision period, not current performance guarantees.
 

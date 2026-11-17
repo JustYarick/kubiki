@@ -24,6 +24,11 @@ it('matches Flux ownership using explicit release and storage namespaces, avoidi
   expect(fluxReleaseOwner(release, [item])).toBe(item);
   expect(fluxReleaseOwner({ ...release, namespace: 'backend' }, [item])).toBeUndefined();
   expect(fluxReleaseOwner(release, [{ ...item, apiVersion: 'other.io/v1' }])).toBeUndefined();
+  const defaultStorage = { ...item, raw: { spec: { targetNamespace: 'backend', releaseName: 'redis' } } };
+  expect(fluxReleaseOwner({ ...release, namespace: 'flux-system' }, [defaultStorage])).toBe(defaultStorage);
+  expect(fluxReleaseOwner({ ...release, namespace: 'backend' }, [defaultStorage])).toBeUndefined();
+  const relocating = { ...item, raw: { spec: { releaseName: 'redis', storageNamespace: 'new-storage' }, status: { storageNamespace: 'storage' } } };
+  expect(fluxReleaseOwner(release, [relocating])).toBe(relocating);
 });
 it('reads multiple rendered documents and treats unloaded objects as unknown', () => {
   const items = parseReleaseManifest('apiVersion: v1\nkind: Namespace\nmetadata:\n  name: backend\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: redis\n', 'backend');

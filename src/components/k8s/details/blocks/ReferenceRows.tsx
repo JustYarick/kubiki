@@ -1,5 +1,7 @@
 import type { ResourceItem } from '../../../../types/k8s';
 import { ResourceKindBadge } from '../../ResourceKindBadge';
+import { useClusterStore } from '../../../../state/cluster_store';
+import { useDetailCache, detailReadKey } from '../../../../state/detail_cache';
 
 export interface ReferenceEntry {
   kind: string;
@@ -24,17 +26,24 @@ export interface ReferenceRowsProps {
  * link as soon as the referenced object is part of the loaded snapshot.
  */
 export function ReferenceRows({ entries, onNavigate, empty }: ReferenceRowsProps) {
+  const context = useClusterStore(state => state.currentContext);
+  const cacheContext = useDetailCache(state => state.context);
+  const reads = useDetailCache(state => state.readStates);
   if (!entries.length) return empty ? <p className="details-caption">{empty}</p> : null;
   return (
     <div className="details-reference-rows">
       {entries.map((entry) => {
         const key = `${entry.kind}/${entry.namespace ?? 'cluster'}/${entry.name}`;
         const target = entry.item;
+        const observed = context === cacheContext ? reads.get(detailReadKey(entry.kind, entry.name, entry.namespace)) : undefined;
+        const availability = target ? entry.kind === 'Secret' && target.readProjection === 'metadata' ? 'Exists · contents unavailable' : undefined
+          : observed === 'notFound' ? 'Not found' : observed === 'unavailable' ? 'Existence unknown · access unavailable' : undefined;
         const content = (
           <>
             <ResourceKindBadge kind={entry.kind} apiVersion={entry.item?.apiVersion} />
             <span className="details-resource-name" title={entry.name}>{entry.name}</span>
             <span className="details-resource-namespace">{entry.namespace ?? 'cluster'}</span>
+            {availability && <span className="details-resource-note !shrink min-w-0 max-w-[50%] truncate" title={availability}>{availability}</span>}
           </>
         );
         if (target && onNavigate) {

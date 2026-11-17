@@ -8,6 +8,8 @@ pub enum DataAccess {
     None,
     #[default]
     Metadata,
+    /// Selected diagnostic fields for recognized CRDs; other resources remain metadata-only.
+    Diagnostic,
     Content,
 }
 
@@ -232,7 +234,7 @@ impl Default for AgentPolicy {
             config_maps: DataAccess::Metadata,
             workload_configuration: false,
             annotations: false,
-            custom_resources: DataAccess::Metadata,
+            custom_resources: DataAccess::Diagnostic,
             helm: OptionalToolMode::Auto,
             argocd: OptionalToolMode::Auto,
             flux: OptionalToolMode::Auto,
@@ -388,19 +390,26 @@ impl AgentPolicy {
             && (self.metrics || target.group != "metrics.k8s.io")
     }
 
-    pub fn access(&self, target: &Target, builtin: bool) -> DataAccess {
+    fn configured_access(&self, target: &Target, builtin: bool) -> DataAccess {
         if !self.data_category_enabled(target) {
             return DataAccess::None;
         }
-        let access =
-            self.rule(target)
+        self.rule(target)
                 .map(|r| r.read)
                 .unwrap_or_else(|| match target.kind.as_str() {
                     "Secret" if target.group.is_empty() => self.secrets,
                     "ConfigMap" if target.group.is_empty() => self.config_maps,
                     _ if !builtin || !native_api_group(&target.group) => self.custom_resources,
                     _ => DataAccess::Content,
-                });
+                })
+    }
+
+    pub fn access(&self, target: &Target, builtin: bool) -> DataAccess {
+        let access = match self.configured_access(target, builtin) {
+            DataAccess::Diagnostic if diagnostic_fields(target).is_some() => DataAccess::Content,
+            DataAccess::Diagnostic => DataAccess::Metadata,
+            access => access,
+        };
         if access == DataAccess::Content
             && !self.allowed_fields.is_empty()
             && crate::FieldSelection::new(&self.allowed_fields).is_ok_and(|f| f.metadata_only())
@@ -421,6 +430,22 @@ impl AgentPolicy {
                 };
                 key == field || key.starts_with(&format!("{field}."))
             })
+    }
+
+    /// High-confidence denials, independent of whether the live field exists.
+    pub fn denied_fields(&self, target: &Target, builtin: bool, fields: &[String]) -> Vec<String> {
+        fields.iter().filter(|field| {
+            let Ok(selection) = crate::FieldSelection::new(&[(*field).clone()]) else { return false; };
+            if self.access(target, builtin) == DataAccess::Metadata && !selection.metadata_only() { return true; }
+            if self.denied_paths.iter().any(|path| crate::FieldSelection::new(&[path.clone()]).is_ok_and(|deny| deny.covers(&selection))) { return true; }
+            if !self.allowed_fields.is_empty() && crate::FieldSelection::new(&self.allowed_fields).is_ok_and(|allow| !allow.intersects(&selection)) { return true; }
+            if self.configured_access(target, builtin) == DataAccess::Diagnostic {
+                if let Some(allowed) = diagnostic_fields(target) {
+                    return crate::FieldSelection::new(&allowed.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).is_ok_and(|allow| !allow.intersects(&selection));
+                }
+            }
+            false
+        }).cloned().collect()
     }
 
     /// Conservative proof that content access is uniform across this collection.
@@ -495,7 +520,8 @@ impl AgentPolicy {
 
         let matched_rule_index = matched.map(|(idx, _)| idx);
         let matched_rule = matched.map(|(_, r)| r.clone());
-        let data_access = self.access(target, builtin);
+        let effective_access = self.access(target, builtin);
+        let data_access = if effective_access == DataAccess::Content && self.configured_access(target, builtin) == DataAccess::Diagnostic { DataAccess::Diagnostic } else { effective_access };
 
         let (write_allowed, write_reason) = if let Some(op) = write_op {
             match if phase == AgentPhase::Plan {
@@ -625,6 +651,11 @@ impl AgentPolicy {
                 }
             }
         }
+        if self.configured_access(target, builtin) == DataAccess::Diagnostic {
+            if let Some(fields) = diagnostic_fields(target) {
+                result = crate::FieldSelection::new(&fields.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>())?.apply(&result);
+            }
+        }
         if self.annotations {
             result["metadata"]["annotations"] = metadata["annotations"].clone();
         }
@@ -639,6 +670,24 @@ impl AgentPolicy {
             result = crate::FieldSelection::new(&self.allowed_fields)?.apply(&result);
         }
         Ok(result)
+    }
+}
+
+fn diagnostic_fields(target: &Target) -> Option<&'static [&'static str]> {
+    match (target.group.as_str(), target.kind.as_str()) {
+        ("kustomize.toolkit.fluxcd.io", "Kustomization")
+        | ("helm.toolkit.fluxcd.io", "HelmRelease")
+        | ("source.toolkit.fluxcd.io", "GitRepository" | "OCIRepository" | "HelmRepository" | "HelmChart" | "Bucket") => Some(&[
+            "metadata", "spec.suspend", "spec.dependsOn", "spec.path", "spec.sourceRef", "spec.chartRef",
+            "spec.releaseName", "spec.targetNamespace", "spec.storageNamespace", "spec.interval",
+            "status.conditions", "status.observedGeneration", "status.lastAppliedRevision", "status.lastAttemptedRevision",
+            "status.artifact", "status.inventory", "status.failures", "status.installFailures", "status.upgradeFailures",
+            "status.storageNamespace", "status.lastHandledReconcileAt", "status.lastHandledResetAt",
+        ]),
+        ("external-secrets.io", "ExternalSecret" | "SecretStore" | "ClusterSecretStore") => Some(&[
+            "metadata", "status.conditions", "status.refreshTime", "status.syncedResourceVersion",
+        ]),
+        _ => None,
     }
 }
 

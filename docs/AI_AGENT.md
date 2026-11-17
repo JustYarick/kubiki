@@ -102,9 +102,16 @@ Access controls are independent:
 - Cluster-scoped object reads require a separate permission. Namespace-name
   discovery only returns names allowed by the conversation scope, namespace
   patterns and resource rules; it does not return namespace contents.
-- Secrets, ConfigMaps and custom resources each have **No access**, **Metadata
-  only**, and **Contents** levels. Metadata reads use Kubernetes metadata APIs
-  rather than downloading and then hiding Secret/ConfigMap bodies.
+- Secrets and ConfigMaps have **No access**, **Metadata only**, and **Contents**
+  levels. Custom resources also offer **Diagnostic fields** (`diagnostic`), the
+  default for new policies and the Diagnostic preset. This projects selected Flux
+  conditions, revisions, artifacts, dependencies, paths, reconciliation markers and
+  failure counters, and external-secrets conditions/refresh state. Chart values,
+  credential/provider configuration and unrecognized CRD bodies remain hidden.
+  Existing saved Metadata-only/No-access settings and exact rules are preserved.
+  Metadata reads use Kubernetes metadata APIs rather than downloading and then
+  hiding Secret/ConfigMap bodies. Conditions/messages remain untrusted text and can
+  contain application-sensitive information; excluded paths still apply.
 - Inline environment values/commands and annotations have separate switches.
 - Context and namespace patterns bound every cluster tool. `*` matches any text;
   empty lists deny access. A conversation's pinned scope remains an upper bound.
@@ -223,7 +230,11 @@ Current bounds: 50 native conversations, two concurrent runs, one run per
 conversation, 20 tool calls per run, 4 MiB per provider response and a nominal
 64,000-byte resource-result bound. Generic get/list now accepts optional `fields`
 (up to 32 paths): dot paths with `[*]`/`[index]`, or escaped JSON pointers for keys
-containing dots/slashes. Identity is retained from the policy-filtered projection;
+containing dots/slashes. Exact and generic reads include `fieldAccess.requested`, `denied` and
+`allRequestedFieldsDenied`, so a request whose fields are all blocked cannot look
+like an ordinary empty body. Collection responses with per-resource rules defer
+that explanation to exact reads. A field that is not denied can still be absent or
+partially projected. Identity is retained from the policy-filtered projection;
 missing fields remain absent and explicit null stays null. Array entries retain
 position and container relationships. Selection never restores denied fields.
 
@@ -275,20 +286,69 @@ five example identities. Counts cover that invocation only. Follow its cursor to
 continue the same snapshot; expired snapshots require a new scan. It does not send
 all scanned objects to the model.
 
-Namespaces are capped at 200. Logs default to 150 lines over one hour; callers may
-choose `tailLines` 1–500 and `sinceSeconds` 1–86400. The shared log reader bounds API
-bytes and validates Pod UID/container; AI output is capped at 24,000 characters, and
-logs exceeding 40 lines are condensed (`filter_logs_for_ai`) to the first 10 startup
-lines, error/exception/stacktrace lines, and the last 25 tail lines. `get_events_timeline`
+Namespaces are capped at 200 per page. Logs default to 150 tail lines; callers may
+choose `tailLines` 1–500 and `sinceSeconds` 1–604800. The shared log reader bounds API
+bytes and validates Pod UID/container. Diagnostic output selects matching error and
+stacktrace lines, or up to 30 tail lines when none match; individual lines and the
+number of matching lines are bounded. To read exact lines, use `get_logs` with
+`mode: "lines"`: `contains` applies a case-sensitive literal substring filter within
+the fetched slice, and `pageSize` selects 1–100 lines (default 50). Responses contain
+`lines` with original slice line numbers and text. Repeat identical arguments with
+the returned `cursor` to continue the captured slice without another cluster read.
+Pages also respect a 48 KB serialized line budget. Cursors expire after five minutes,
+on policy changes, or under session cursor-store pressure (16 entries / 1 MiB).
+Oversized lines or remaining snapshots fail explicitly; narrow the tail/time window.
+`hasMore: false` means the slice is exhausted, not that all container logs were read.
+`sinceTime` accepts an RFC3339 start time, mutually exclusive with `sinceSeconds`,
+in either mode. Rotation, restarts, the selected tail/time window and the core API
+byte ceiling can omit logs; no durable log archive or lossless live resume is promised.
+`contains`, `pageSize` and log cursors require `lines` mode; existing calls retain
+diagnostic output.
+
+`get_events` pages Events in API order in one namespace. It supports involved
+object name/UID, `type` (`Normal`/`Warning`), `reason`, `pageSize` (1–100, default
+50), and inclusive RFC3339 `sinceTime`/`untilTime`. Name/UID/type/reason filters run
+in Kubernetes. Time filters run after policy projection on each bounded page,
+using the latest occurrence: series last-observed time, last timestamp, event time,
+first timestamp, then creation timestamp. Unavailable timestamps are excluded;
+`timeFilterOmitted` counts excluded items. An empty page can still have a cursor:
+continue until `hasMore` is false. These are occurrence windows, not a full history
+of every repeated Event. Repeat the same
+arguments with its `cursor`; cursors are session-local, expire after five minutes and
+are invalidated by policy changes. Kubernetes may expire a continuation, requiring a
+new scan. Pages do not promise chronological ordering. `get_events_timeline`
 normalizes dynamic identifiers (Pod suffixes, IPs, UUIDs, ports) to deduplicate
-repeated events (`deduplicate_events`). `diagnose_resource` extracts server-side
+repeated events (`deduplicate_events`) and sorts only its bounded page, not the whole
+namespace. It accepts the same object/type/reason/time filters, with `limit` in place
+of `pageSize`, and does not expose a continuation cursor. `diagnose_resource` extracts server-side
 container `crashCauses` (including `waiting` reasons alongside `lastTermination`
 exit codes/reasons on Pods and workload `childPods`), and policy scrubbing removes
 boilerplate `kubectl.kubernetes.io/last-applied-configuration` and `deployment.kubernetes.io/revision`
 annotations unless explicitly selected. For Anthropic Messages, the static system
 prefix and tool catalog use ephemeral prompt caching (`cache_control`).
-Pod metrics support an exact name, required under per-resource rules. Metrics
-are policy-projected under `/status/metrics`; historical usage is unavailable.
+`get_metrics` defaults to `kind: "Pod"` and keeps its existing per-container CPU
+and memory quantities. It adds numeric `usage` and effective `budgets` (requests and
+limits), in CPU cores and memory bytes. Exact names are required with per-resource
+rules. Budgets include ordinary and restartable init containers, Pod-level budgets
+and overhead; hidden budget fields stay unknown. Aggregates are computed from
+permitted source fields and cannot reconstruct masked container or host usage. A missing limit is unbounded or
+unknown, not zero. Samples predating a fetched Pod's creation are discarded.
+
+For host usage, call `get_metrics` with `kind: "Node"`, `namespace: null` and an
+exact `name`. It returns Node Metrics API usage, capacity, allocatable and bounded
+Pod `allocations` (requests/reservations and configured limits). Host usage is never
+calculated by summing Pods. Optional `podNamespaces` selects 1–20 permitted namespaces;
+otherwise up to 20 are discovered. At most ten Pod pages of 50 entries are examined,
+excluding Succeeded/Failed Pods. Restricted namespaces, denied reads, hidden budgets
+and remaining pages make allocations partial. Partial totals cover observed Pods
+only. Limits can exceed allocatable capacity; requests are scheduler reservations.
+
+Metrics require the category permission, target content access and cluster-resource
+permission for Nodes. Output is projected under `/status/metrics` of the target
+Pod/Node, including the computed fields; excluded paths and allowed fields still
+apply. Independent live reads are not an atomic snapshot. `timestamp`, `window`,
+`sampleAgeSeconds` and `stale` describe the measurement (stale after two minutes or
+more than 30 seconds in the future). Historical usage remains unavailable.
 
 Native reads have per-run transport caps: 128 HTTP GET attempts, 16 MiB fetched
 body data, 4 MiB per response and a 180-second deadline. Frames are checked before

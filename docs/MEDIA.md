@@ -1,8 +1,16 @@
-# README recordings
+# Application media & recordings
 
-The README embeds six looping GIFs captured from the actual interface in the
-built-in demo cluster: overview, Pod diagnostics, YAML, topology, Helm, and AI agent.
-Matching PNGs provide static alternatives. All files live in `docs/media/`.
+Kubiki maintains two reproducible Playwright + FFmpeg capture workflows against
+the built-in demo cluster (`?demo=1`):
+
+- **README media (`pnpm docs:media` → `scripts/capture-readme.mjs`)**: generates
+  six looping GIFs and static PNG alternatives (`overview`, `resources`, `yaml`,
+  `topology`, `helm`, `agent`) in `docs/media/`.
+- **Website media (`pnpm website:media` → `scripts/capture-website-media.mjs`)**:
+  records smooth 1440 × 900 WebM (VP9) and MP4 (H.264) loops alongside WebP
+  posters (`*.webp` and `*-960.webp`) directly into `website/media/`. See
+  [Project website](WEBSITE.md) for how the landing page embeds them, and
+  `scripts/prepare-website-images.mjs` for standalone PNG → WebP conversion.
 
 ## Regenerate
 

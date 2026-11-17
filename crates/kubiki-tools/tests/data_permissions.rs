@@ -135,3 +135,37 @@ async fn policy_change_revokes_cached_payloads_without_reusing_evidence_ids() {
     assert_ne!(id, fresh);
     assert_eq!(reads.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn diagnostic_crds_expose_status_without_values_and_preserve_explicit_denials() {
+    let target = Target { group:"helm.toolkit.fluxcd.io".into(), version:"v2".into(), kind:"HelmRelease".into(), namespace:Some("apps".into()),name:"web".into() };
+    let source = json!({"apiVersion":"helm.toolkit.fluxcd.io/v2","kind":"HelmRelease","metadata":{"name":"web"},"spec":{"values":{"password":"private"},"dependsOn":[{"name":"database"}],"chart":{"spec":{"valuesFiles":["private.yaml"]}}},"status":{"conditions":[{"type":"Ready","status":"False","reason":"RetriesExceeded"}],"installFailures":1,"lastAttemptedRevision":"1.2.3"}});
+    let policy = AgentPolicy::default();
+    let result = policy.project(&target,&source,false).unwrap();
+    assert_eq!(result["status"]["installFailures"],1);
+    assert_eq!(result["spec"]["dependsOn"][0]["name"],"database");
+    assert!(result["spec"].get("values").is_none());
+    assert!(result["spec"].get("chart").is_none());
+    let fields = vec!["status.conditions".into(),"spec.values".into()];
+    assert_eq!(policy.denied_fields(&target,false,&fields),vec!["spec.values"]);
+    let metadata = AgentPolicy { custom_resources:DataAccess::Metadata, ..Default::default() };
+    assert_eq!(metadata.denied_fields(&target,false,&fields),fields);
+    let denied = AgentPolicy { rules:vec![ResourceRule {group:target.group.clone(),kind:target.kind.clone(),namespace:"*".into(),name:"*".into(),read:DataAccess::None,writes:vec![]}],..Default::default() };
+    assert!(denied.project(&target,&source,false).is_err());
+    let excluded = AgentPolicy { denied_paths:vec!["/status/conditions".into()],..Default::default() };
+    assert!(excluded.project(&target,&source,false).unwrap()["status"].get("conditions").is_none());
+    assert_eq!(excluded.denied_fields(&target,false,&["status.conditions[*].message".into()]),vec!["status.conditions[*].message"]);
+}
+
+#[tokio::test]
+async fn exact_read_reports_when_all_requested_fields_are_denied() {
+    let session = session(AgentPolicy { confirm_reads:false,rules:vec![ResourceRule { group:"".into(),kind:"Event".into(),namespace:"apps".into(),name:"fixture".into(),read:DataAccess::Metadata,writes:vec![] }], ..Default::default() });
+    let tools = tools(&session, Arc::new(AtomicUsize::new(0)));
+    let _run = session.begin_run(0).unwrap();
+    let emit: EventSink = Arc::new(|_| {});
+    let result = tools.execute(&session, &ToolCall { id:"read".into(),name:"get_resource".into(),arguments:json!({"group":"","version":"v1","kind":"Event","namespace":"apps","name":"fixture","fields":["status.conditions"]}) }, &emit).await.unwrap();
+    assert_eq!(result["fieldAccess"]["allRequestedFieldsDenied"],true);
+    assert_eq!(result["fieldAccess"]["denied"],json!(["status.conditions"]));
+    assert!(result["resource"].get("status").is_none());
+    assert_eq!(result["resource"]["metadata"]["name"],"fixture");
+}

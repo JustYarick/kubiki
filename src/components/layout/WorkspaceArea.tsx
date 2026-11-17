@@ -175,7 +175,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
     return <TerminalSessionPane session={tab.session} visible={visible} onContainerChange={name => useWorkspaceStore.setState(state => ({ tabs: state.tabs.map(entry => entry.id === tab.id ? { ...entry, session: { ...entry.session!, container: name } } : entry) }))} />;
   }
   if (tab.type === 'flux-dashboard' || tab.type === 'argocd-dashboard') return <Suspense fallback={<ResourceLoading label="Opening dashboard…" description="" />}><GitOpsDashboard family={tab.type === 'flux-dashboard' ? 'flux' : 'argocd'} /></Suspense>;
-  if (tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Opening Helm…" description="" />}><HelmView section={tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
+  if (tab.type === 'helm-overview' || tab.type === 'helm-releases' || tab.type === 'helm-repositories') return <Suspense fallback={<ResourceLoading label="Opening Helm…" description="" />}><HelmView section={tab.type === 'helm-overview' ? 'overview' : tab.type === 'helm-releases' ? 'releases' : 'repositories'} /></Suspense>;
 
   if (tab.type !== 'resource-list' && tab.context !== context) {
     return <div className="p-6 text-[var(--text-secondary)]">This tab belongs to context {tab.context || 'unknown'}. Switch back to that context to use it.</div>;

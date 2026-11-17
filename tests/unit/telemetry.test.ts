@@ -1,6 +1,6 @@
 import { it, expect } from 'vitest';
 import { quantity, cpuText, memoryText } from '../../src/core/resources/quantities';
-import { podBudget, buildTelemetry, appendHistory } from '../../src/core/resources/telemetry';
+import { podBudget, buildTelemetry, appendHistory, nodeMemoryAlerts } from '../../src/core/resources/telemetry';
 import { validateMetrics, type OverviewMetrics } from '../../src/providers/overview_metrics';
 import { mapK8sResource } from '../../src/core/utils/k8s_mapper';
 const now = Date.parse('2026-10-20T12:00:00Z');
@@ -50,4 +50,14 @@ it('validates metrics response scope, missing samples, duplicate containers and 
   expect(validateMetrics(metrics(), 'test', 'a')).toBeTruthy();expect(() => validateMetrics(metrics(), 'wrong', 'a')).toThrow();
   const invalid = metrics();invalid.pods.items![0].containers[0].cpu = 'bad';expect(validateMetrics(invalid, 'test', 'a').pods.error?.code).toBe('internal');
   const duplicate = metrics();duplicate.pods.items![0].containers.push(duplicate.pods.items![0].containers[0]);expect(validateMetrics(duplicate, 'test', 'a').pods.error?.code).toBe('internal');
+});
+
+it('alerts on fresh individual Node memory usage instead of cluster averages or stale samples', () => {
+  const node = mapK8sResource({ metadata: { name: 'worker', uid: 'node' }, status: { allocatable: { memory: '1Gi' } } }, 'Node');
+  const row = { name: 'worker', item: node, cpu: 0.1, memory: 0.9 * 1024 ** 3, timestamp: now, window: '15s', containers: [] };
+  expect(nodeMemoryAlerts([row], now)[0].severity).toBe('warning');
+  expect(nodeMemoryAlerts([{ ...row, memory: 0.96 * 1024 ** 3 }], now)[0].severity).toBe('error');
+  expect(nodeMemoryAlerts([{ ...row, timestamp: now - 121000 }], now)).toEqual([]);
+  expect(nodeMemoryAlerts([{ ...row, item: undefined }], now)).toEqual([]);
+  expect(nodeMemoryAlerts([{ ...row, memory: 0.5 * 1024 ** 3 }], now)).toEqual([]);
 });

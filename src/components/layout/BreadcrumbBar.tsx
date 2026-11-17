@@ -53,7 +53,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
       <ChevronRight size="calc(11px * var(--ui-factor))" className="text-[var(--text-muted)] opacity-60 shrink-0" />
 
       {/* Namespace */}
-      <span className="flex items-center gap-1 px-1.5 min-w-0"><Layers size="calc(11px * var(--ui-factor))" className="text-violet-400 shrink-0" /><span className="truncate">{namespaceScopeLabel(selectedNamespace)}</span></span>
+      <span className="flex items-center gap-1 px-1.5 min-w-0"><Layers size="calc(11px * var(--ui-factor))" className="text-violet-400 shrink-0" /><span className="truncate">{namespaceScopeLabel(activeTab?.type === 'helm-overview' ? 'all' : selectedNamespace)}</span></span>
 
       {activeTab && (
         <>
@@ -61,7 +61,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
 
           {/* Kind or Category */}
           <div className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[var(--text-primary)] font-medium">
-            {activeTab.type === 'overview' && <LayoutDashboard size={11} className="text-[var(--accent)]" />}
+            {(activeTab.type === 'overview' || activeTab.type === 'helm-overview') && <LayoutDashboard size={11} className="text-[var(--accent)]" />}
             {activeTab.type.endsWith('-dashboard') && <DashboardIcon aria-hidden="true" size="calc(11px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--accent)]" />}
             {activeTab.type === 'yaml-editor' && <FileCode size="calc(11px * var(--ui-factor))" className="text-amber-400" />}
             {activeTab.type === 'terminal' && <TermIcon size="calc(11px * var(--ui-factor))" className="text-emerald-400" />}
@@ -74,7 +74,7 @@ export const BreadcrumbBar: React.FC<{ onSelectContext: (context: string) => voi
       )}
 
       {/* Resource Name if selected or viewing detail/yaml */}
-      {activeTab?.type !== 'extension' && activeTab?.type !== 'overview' && activeTab?.type !== 'terminal-session' && !activeTab?.type.endsWith('-dashboard') && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && (activeTab?.name || selectedItem?.name) && (
+      {activeTab?.type !== 'extension' && activeTab?.type !== 'overview' && activeTab?.type !== 'terminal-session' && !activeTab?.type.endsWith('-dashboard') && activeTab?.type !== 'helm-overview' && activeTab?.type !== 'helm-releases' && activeTab?.type !== 'helm-repositories' && (activeTab?.name || selectedItem?.name) && (
         <>
           <ChevronRight size="calc(11px * var(--ui-factor))" className="text-[var(--text-muted)] opacity-60 shrink-0" />
           <span className="font-mono text-[var(--text-primary)] min-w-0 truncate px-1 py-0.5 rounded bg-[var(--bg-surface)]/40 font-medium">

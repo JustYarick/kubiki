@@ -82,7 +82,7 @@ export const MainTabBar: React.FC = () => {
       const Icon = CATEGORY_ICONS[tab.type === 'flux-dashboard' ? 'flux' : 'argocd'];
       return <Icon aria-hidden="true" size="calc(13px * var(--ui-factor))" strokeWidth={1.75} className="text-[var(--accent)] shrink-0" />;
     }
-    if (tab.type === 'overview') return <LayoutDashboard aria-hidden="true" size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
+    if (tab.type === 'overview' || tab.type === 'helm-overview') return <LayoutDashboard aria-hidden="true" size="calc(13px * var(--ui-factor))" className="text-[var(--accent)] shrink-0" />;
     if (tab.type === 'yaml-editor') return <FileCode size="calc(13px * var(--ui-factor))" className="text-amber-400 shrink-0" />;
     if (tab.type === 'terminal') return <TermIcon size="calc(13px * var(--ui-factor))" className="text-emerald-400 shrink-0" />;
     if (tab.type === 'logs') return <FileText size="calc(13px * var(--ui-factor))" className="text-blue-400 shrink-0" />;

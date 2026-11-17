@@ -38,6 +38,7 @@ Kubiki is a desktop application for inspecting and managing Kubernetes clusters.
   - [Verification commands](#verification-commands)
 - [Publishing releases](#publishing-releases)
 - [Documentation](#documentation)
+- [Project website development](docs/WEBSITE.md)
 - [Repository structure](#repository-structure)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [License](#license)
@@ -167,6 +168,8 @@ Filter and sort resource tables to narrow the current inventory. Column order, w
 
 In workload tables, **Pods** shows ready Pods divided by all currently existing Pods belonging to that workload. Pending and terminating Pods remain in the total until deletion; terminating Pods are excluded from ready. During a rollout, the total can temporarily exceed the desired replica count. Hover over the cell to see pending and terminating counts.
 
+When inspecting a Pod, referenced Secrets show whether metadata confirms existence, a live read returned 404, or access is unavailable. Metadata-only Secrets do not expose values; an RBAC denial does not establish absence.
+
 When inspecting a Pod, the **Environment** tab resolves effective environment variables across containers and sidecars without requiring container exec privileges. It maps direct values, Downward API fields, ConfigMaps, and Secrets (`valueFrom` and `envFrom`), keeps Secret values masked with a 60-second auto-masking timer, detects configuration drift when referenced ConfigMaps or Secrets have been updated after the Pod started, and allows exporting container variables to `.env` format.
 
 On connection, Kubiki discovers supported APIs and fetches lightweight resource counts using metadata queries with `limit=1`. Full resource collections load only when a visible view needs them. Initial reads are bounded across selected namespaces; unavailable counts remain unknown instead of triggering a full inventory scan.
@@ -190,6 +193,11 @@ To apply a change:
 
 The frontend parses YAML and checks the resource name and kind before submission. The backend checks the resource identity and version before committing the update; the Kubernetes API validates the submitted object.
 
+The cluster Overview highlights fresh per-Node memory measurements at 85% (warning)
+and 95% (critical) of allocatable memory. These usage notices are separate from
+the kubelet's `MemoryPressure` condition; stale or unavailable samples do not create
+usage alerts.
+
 ### Resource topology
 
 Open the cluster topology from the activity bar, or open a topology focused on a resource or Helm release. Use the graph to follow workload ownership, Service selectors, routing connections, and other supported relationships.
@@ -198,9 +206,11 @@ Select graph nodes to inspect the corresponding resources. The topology includes
 
 ### Helm releases
 
-Open Helm in the explorer to browse releases in the selected context and namespace scope. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters cover a complete snapshot of the selected scope; failed releases and operations in progress are shown separately. The table and topology share that snapshot, with one Helm list command per selected namespace on each refresh. The inventory refreshes every 30 seconds while the window is visible. Reads use the selected cluster's merged kubeconfig and have a cancellable 60-second command deadline.
+Open **Helm → Releases** in the explorer for the shared typed resource table, with column sorting, inclusion/exclusion filters, visibility, resizing, reordering and virtualized rows. **Helm → Overview** summarizes the entire selected cluster, independently of the namespace filter: deployed, in-progress and failed releases, namespace status, installed chart versions, releases updated in the last 24 hours and the latest revision of each recently changed release. It shows the inventory timestamp and distinguishes partial data and retained snapshots after read errors. Status describes Helm operations, not workload health. Clicking a count or namespace opens the release table with matching filters and all namespaces selected. The release table follows the selected context and namespace scope. The release inventory contains only entries recorded in Helm storage; a Flux HelmRelease CR without a stored Helm revision remains in the Flux resource views. Select a release to inspect its status, chart, revision history, values, generated manifests, hooks, and notes. Counts and filters describe the loaded snapshot; unavailable namespaces are reported explicitly, and failed releases and operations in progress are shown separately. The table and topology share that snapshot, with one Helm list command per selected namespace on each refresh. The inventory refreshes every 30 seconds while the window is visible. Reads use the selected cluster's merged kubeconfig and have a cancellable 60-second command deadline.
 
-The release overview shows Helm's operation description, status of loaded rendered objects, and hook Jobs with their conditions and matching events. An unloaded object is marked as unchecked. Flux-managed releases link to their owning HelmRelease; change that resource to keep reconciliation in sync.
+The release overview shows Helm's operation description, status of loaded rendered objects, and hook Jobs with their conditions and matching events. An unloaded object is marked as unchecked. Flux-managed releases link to their owning HelmRelease. Flux ownership does not block direct upgrade, rollback or uninstall; the controller may later restore its declared state or reinstall the release, depending on suspension and reconciliation/remediation state.
+
+Flux Kustomization and HelmRelease details offer **Reconcile**, which sets a new `reconcile.fluxcd.io/requestedAt` annotation after backend confirmation. An exhausted HelmRelease additionally offers **Retry Helm release**: it sets the same new token on `requestedAt` and `resetAt`, preserving spec/values and avoiding `forceAt`. Retry resets the failure counters and requests another controller attempt; it neither runs Helm directly nor proves successful installation. A failed first install may leave resources depending on failure and cleanup behavior; their presence does not create a Helm storage entry.
 
 Flux and Argo CD overviews focus on reconciliation issues and recent controller events. Flux groups Kustomizations, HelmReleases, and Sources by readiness; Argo CD keeps application sync and health independent. These views refresh every 15 seconds while the window is visible, preserve the previous snapshot on errors, and report unavailable resource types and event permissions.
 

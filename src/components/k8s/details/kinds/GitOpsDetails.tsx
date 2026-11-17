@@ -21,7 +21,7 @@ import { UsedByList } from '../blocks/UsedByList';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { Button } from '../../../ui/Button';
 import { SearchInput } from '../../../ui/Input';
-import { FluxHelmRetry } from '../../FluxHelmRetry';
+import { FluxHelmRetry, FluxReconcile } from '../../FluxHelmRetry';
 
 /** Flux and Argo CD resources: reconciliation state, sources and managed objects. */
 export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavigate: (item: ResourceItem) => void }) {
@@ -127,7 +127,7 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
               Hard Refresh
             </Button>
           </div>
-        ) : undefined}
+        ) : family === 'flux' ? <div className="details-actions-row"><FluxReconcile key={item.uid} item={item} /></div> : undefined}
       />
 
       {raw.status?.operationState?.message && (

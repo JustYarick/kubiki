@@ -4,7 +4,8 @@ import { RESOURCE_TYPES } from '../core/resources/resource_types';
 import { namespaceScopeCovers } from '../core/resources/namespace_scope';
 import { buildResourceGraph } from '../core/resources/relationships';
 import { useResourceStore } from '../state/resource_store';
-import { useDetailCache } from '../state/detail_cache';
+import { useDetailCache, detailReadKey } from '../state/detail_cache';
+import { normalizeK8sError } from './errors';
 import { k8s } from './k8s_provider';
 
 export interface PrefetchTarget {
@@ -112,7 +113,17 @@ export async function prefetchDetailDependencies(
         useDetailCache.getState().upsert(context, fetched);
       }
       return fetched;
-    } catch {
+    } catch (failure) {
+      if (signal.aborted) return null;
+      // A failed contents read does not erase metadata already observed for a Secret.
+      if (target.kind === 'Secret' && !target.metadataOnly) {
+        try {
+          const metadata = await k8s.getResource!(context, target.kind, target.name, target.namespace, { metadataOnly: true, priority: 'low' }, signal);
+          if (!signal.aborted) useDetailCache.getState().upsert(context, metadata);
+          return metadata;
+        } catch (metadataFailure) { failure = metadataFailure; }
+      }
+      if (!signal.aborted) useDetailCache.getState().setReadState(context, detailReadKey(target.kind, target.name, target.namespace), normalizeK8sError(failure).code === 'not_found' ? 'notFound' : 'unavailable');
       return null;
     }
   };

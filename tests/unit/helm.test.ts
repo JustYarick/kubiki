@@ -37,8 +37,8 @@ describe('Helm transport contract', () => {
     const previous = useWorkspaceStore.getState();
     useWorkspaceStore.setState({ tabs: [], activeTabId: '', splitTabId: null });
     try {
-      previous.openHelm('releases'); previous.openHelm('repositories'); previous.openHelm('releases');
-      expect(useWorkspaceStore.getState().tabs.map(tab => tab.type)).toEqual(['helm-releases', 'helm-repositories']);
+      previous.openHelm('overview'); previous.openHelm('releases'); previous.openHelm('repositories'); previous.openHelm('releases');
+      expect(useWorkspaceStore.getState().tabs.map(tab => tab.type)).toEqual(['helm-overview', 'helm-releases', 'helm-repositories']);
       expect(useWorkspaceStore.getState().activeTabId).toBe('tab-helm-releases');
     } finally { useWorkspaceStore.setState(previous); }
     expect(helmUpdatedAt(release.updated)).toBe(Date.parse('2026-10-20T12:00:00.123Z'));

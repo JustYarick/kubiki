@@ -30,3 +30,4 @@ pub use types::*;
 pub use working_scope::WorkingScope;
 
 mod neighborhood;
+mod resource_metrics;

@@ -22,5 +22,7 @@ context. Follow status clarifications and replacement ADRs for later changes.
 | [009: MCP isolation and phase permissions](009-standalone-mcp-server-and-unified-tool-permissions.md) | Accepted boundaries; managed lifecycle remains proposed |
 | [010: Conversational Markdown plans](010-conversational-markdown-plans.md) | Accepted; replaces structured model-facing plans |
 | [011: Trusted Node extension runtime](011-trusted-node-extension-runtime.md) | Accepted; records the existing runtime choice |
+| [012: Bounded log snapshot pages](012-bounded-log-snapshot-pages.md) | Accepted; exact-line MCP log pages reuse bounded session cursors |
+| [013: Diagnostic CRD access and resource metrics](013-diagnostic-crd-access-and-resource-metrics.md) | Accepted; bounded policy-projected status, usage and budgets |
 
 Use the [ADR template](TEMPLATE.md) and [documentation conventions](../DOCUMENTATION.md).

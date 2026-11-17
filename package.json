@@ -5,6 +5,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "website:dev": "vite --config website/vite.config.ts",
+    "website:typecheck": "tsc --noEmit -p website/tsconfig.json",
+    "website:build": "pnpm website:typecheck && node scripts/build-website.mjs",
+    "website:media": "node scripts/capture-website-media.mjs",
     "docs:media": "node scripts/capture-readme.mjs",
     "dev": "vite",
     "build": "pnpm extensions:build && pnpm typecheck && vite build",

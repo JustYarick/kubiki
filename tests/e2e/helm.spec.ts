@@ -57,7 +57,7 @@ test('failed release shows the Helm error and events from hook Job Pods', async 
   await expect.poll(() => namespaces.filter(namespace => namespace === 'backend').length).toBeGreaterThan(1);
 });
 
-test('Helm supports inspection, revision documents, name/namespace filters, incremental rendering and one tab per section', async ({ page }) => {
+test('Helm supports inspection, revision documents, name/namespace filters, the shared typed table and a separate overview and one tab per section', async ({ page }) => {
   await baseApi(page);
   const calls: URL[] = [];
   await page.route('**/api/k8s/helm/**', route => {
@@ -70,18 +70,16 @@ test('Helm supports inspection, revision documents, name/namespace filters, incr
   });
   await page.goto('/'); await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click(); await open(page);
   const view = page.getByTestId('helm-releases');
-  await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeVisible();
-  await view.getByRole('button', { name: 'Helm release filters', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('combobox', { name: 'Helm release status' }).selectOption('problems');
-  await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('button', { name: 'Done', exact: true }).click();
+  await view.getByRole('columnheader', { name: 'Status', exact: true }).click({ button: 'right' });
+  const filter = page.getByRole('dialog', { name: 'Filter by Status', exact: true });
+  await filter.getByRole('button', { name: 'failed', exact: true }).click();
+  await filter.getByRole('button', { name: 'Close filter', exact: true }).click();
   await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toHaveCount(0);
   await expect(view.getByRole('row', { name: 'Inspect Helm release broken in other' })).toBeVisible();
-  await view.getByRole('button', { name: 'Helm release filters', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('combobox', { name: 'Helm release status' }).selectOption('all');
-  await page.getByRole('dialog', { name: 'Helm release filters' }).getByRole('button', { name: 'Done', exact: true }).click();
-  const search = view.getByRole('textbox', { name: 'Search Helm releases by name or namespace' });
-  await search.fill('web-chart'); await expect(view.getByText('No releases match these filters.')).toBeVisible();
-  await search.fill('backend'); await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeVisible();
+  await view.getByRole('button', { name: 'Reset all filters and sorting', exact: true }).click();
+  const search = view.getByRole('textbox', { name: 'Filter helmreleases…' });
+  await search.fill('web-chart'); await expect(view.getByText('No helmreleases match your filters', { exact: true })).toBeVisible();
+  await search.fill('web'); await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeVisible();
   await view.getByRole('row', { name: 'Inspect Helm release web in backend' }).focus(); await page.keyboard.press('Enter');
   const details = page.getByTestId('inspector-panel').getByTestId('resource-details');
   await expect(details.getByText('Latest release snapshot')).toBeVisible();
@@ -98,11 +96,18 @@ test('Helm supports inspection, revision documents, name/namespace filters, incr
   await expect(view.getByRole('row', { name: 'Inspect Helm release web in backend' })).toBeFocused();
   await search.fill('zz-next-page');
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
-  await expect(view).toContainText('1 of 1 matching · 101 total');
+  await expect(view.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
   await search.fill('');
-  await view.locator('.helm-table-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await view.getByTestId('resource-table').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
-  await expect(view).toContainText('1–101 of 101 matching · 101 total');
+  await expect(view.locator('table')).toHaveAttribute('aria-rowcount', '102');
+  await open(page, 'Overview');
+  const overview = page.getByTestId('helm-overview');
+  await expect(overview.getByRole('region', { name: 'Helm summary', exact: true })).toBeVisible();
+  await expect(overview.getByRole('region', { name: 'Helm release status', exact: true })).toBeVisible();
+  await expect(overview.getByTestId('resource-table')).toHaveCount(0);
+  await overview.getByRole('button', { name: 'View releases', exact: true }).click();
+  await expect(view.getByTestId('resource-table')).toBeVisible();
   await open(page, 'Repositories'); await expect(page.getByTestId('helm-repositories')).toContainText('https://example.com/charts');
   await open(page); await expect(page.getByRole('tab', { name: /^Helm Releases/ })).toHaveCount(1);
   expect(calls.filter(url => ['history', 'content'].includes(url.pathname.split('/').pop()!)).every(url => url.searchParams.get('context') === 'prod' && url.searchParams.get('namespace') === 'backend' && url.searchParams.get('name') === 'web')).toBe(true);
@@ -125,7 +130,7 @@ test('Helm cancels late scope responses, isolates contexts and retains same-scop
   await namespace(page, 'backend'); await expect.poll(() => held).toBe(true);
   await namespace(page, 'other'); await expect(view.getByRole('row', { name: 'Inspect Helm release prod-other in other' })).toBeVisible();
   releaseOld(); await expect(view.getByText('prod-backend', { exact: true })).toHaveCount(0);
-  fail = true; await view.getByRole('button', { name: 'Refresh Helm releases' }).click();
+  fail = true; await view.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(view.getByRole('alert')).toContainText('may be out of date');
   await expect(view.getByRole('row', { name: 'Inspect Helm release prod-other in other' })).toBeVisible();
   fail = false; await view.getByRole('button', { name: 'Retry', exact: true }).click();
@@ -241,4 +246,105 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
   await page.reload();
   await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test('Helm Overview summarizes healthy releases with shared overview icons and scoped navigation', async ({ page }) => {
+  await baseApi(page);
+  await page.route('**/api/k8s/helm/inventory**', route => route.fulfill({ json: [
+    { ...release('api', 'backend'), chart: 'api-1.0.0' },
+    { ...release('worker', 'backend'), chart: 'api-1.0.0', updated: '2026-11-17T12:00:00Z' },
+    { ...release('database', 'other'), chart: 'postgres-16.0.0' },
+  ] }));
+  await page.goto('/');
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  const navigation = page.getByRole('button', { name: 'Open Helm Overview', exact: true });
+  await expect(navigation.locator('svg')).toHaveClass(/lucide-layout-dashboard/);
+  await navigation.click();
+  const overview = page.getByTestId('helm-overview');
+  await expect(page.getByRole('tab', { name: /^Helm Overview/ }).locator('svg').first()).toHaveClass(/lucide-layout-dashboard/);
+  await expect(overview.getByRole('button', { name: 'Releases: 3', exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Deployed: 3', exact: true })).toBeVisible();
+  await expect(overview.getByRole('region', { name: 'Helm summary', exact: true })).toContainText('Namespaces with releases');
+  await expect(overview.getByRole('region', { name: 'Helm release status', exact: true }).getByRole('img')).toHaveAccessibleName(/3 deployed/);
+  await expect(overview.getByRole('region', { name: 'Helm charts', exact: true })).toContainText('2 installed chart versions');
+  await expect(overview.getByRole('region', { name: 'Helm recent updates', exact: true }).getByRole('button', { name: /^Inspect / }).first()).toContainText('worker');
+  await expect(overview.getByText('Releases needing attention', { exact: true })).toHaveCount(0);
+  await expect(overview.getByText('No failed or pending Helm operations in the loaded inventory.', { exact: true })).toHaveCount(0);
+  await captureScreenshot(page, { path: 'test-results/helm-overview-desktop.png' });
+  await page.setViewportSize({ width: 800, height: 800 });
+  expect(await overview.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await overview.getByRole('region', { name: 'Helm namespaces', exact: true }).getByRole('button', { name: 'backend: 2 releases, 0 failed, 0 in progress', exact: true }).click();
+  const table = page.getByTestId('helm-releases');
+  await expect(table.getByRole('row', { name: 'Inspect Helm release api in backend', exact: true })).toBeVisible();
+  await expect(table.getByRole('row', { name: 'Inspect Helm release database in other', exact: true })).toHaveCount(0);
+});
+
+test('Helm Overview keeps cluster-wide counts with a namespace selected, distinguishes statuses and opens matching releases', async ({ page }) => {
+  await baseApi(page);
+  const calls: URL[] = [];
+  let fail = false;
+  const now = Date.now();
+  const releases = [
+    { ...release('api', 'backend'), updated: new Date(now - 3600000).toISOString() },
+    { ...release('database', 'other', 'failed'), chart: 'postgres-16.0.0', updated: new Date(now - 7200000).toISOString() },
+    { ...release('worker', 'other', 'pending-upgrade'), updated: new Date(now - 90000000).toISOString() },
+    { ...release('legacy', 'other', 'uninstalled'), updated: 'unknown' },
+  ];
+  await page.route('**/api/k8s/helm/inventory**', route => {
+    const url = new URL(route.request().url()); calls.push(url);
+    if (fail) return route.fulfill({ status: 503, json: { error: { code: 'bridge_unavailable', message: 'Inventory temporarily unavailable', retryable: true } } });
+    const ns = url.searchParams.get('namespace');
+    return route.fulfill({ json: releases.filter(release => !ns || release.namespace === ns) });
+  });
+  await page.goto('/');
+  await namespace(page, 'backend');
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await open(page, 'Overview');
+  const overview = page.getByTestId('helm-overview');
+  await expect(overview.getByRole('button', { name: 'Releases: 4', exact: true })).toBeVisible();
+  await expect(overview.getByText('All namespaces', { exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Deployed: 1', exact: true })).toContainText('25%');
+  await expect(overview.getByRole('button', { name: 'In progress: 1', exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Failed: 1', exact: true })).toBeVisible();
+  await expect(overview.locator('.helm-inventory-facts > div').filter({ hasText: 'Releases updated in 24h' })).toContainText('2');
+  await expect(overview.getByRole('region', { name: 'Helm release status', exact: true }).getByRole('img')).toHaveAccessibleName(/1 other/);
+  await expect(overview.getByRole('region', { name: 'Helm namespaces', exact: true }).getByRole('button').first()).toHaveAccessibleName('other: 3 releases, 1 failed, 1 in progress');
+  expect(calls.some(url => !url.searchParams.has('namespace'))).toBe(true);
+  await captureScreenshot(page, { path: 'test-results/helm-overview-mixed.png' });
+  await overview.getByRole('button', { name: 'Failed: 1', exact: true }).click();
+  const table = page.getByTestId('helm-releases');
+  await expect(table.getByRole('row', { name: 'Inspect Helm release database in other', exact: true })).toBeVisible();
+  await expect(table.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
+  await open(page, 'Overview');
+  fail = true;
+  await overview.getByRole('button', { name: 'Refresh Helm releases', exact: true }).click();
+  await expect(overview.getByRole('status')).toContainText('Last available snapshot');
+  await expect(overview.getByRole('button', { name: 'Releases: 4', exact: true })).toBeVisible();
+  await expect(overview.getByRole('alert')).toContainText('may be out of date');
+});
+
+test('Helm Overview distinguishes unavailable, empty and partial cluster inventory', async ({ page }) => {
+  await baseApi(page);
+  let mode = 'unavailable';
+  await page.route('**/api/k8s/helm/inventory**', route => {
+    const ns = new URL(route.request().url()).searchParams.get('namespace');
+    if (mode === 'unavailable') return route.fulfill({ status: 503, json: { error: { code: 'bridge_unavailable', message: 'Inventory unavailable', retryable: true } } });
+    if (mode === 'partial' && ns !== 'backend') return route.fulfill({ status: 403, json: { error: { code: 'forbidden', message: 'Release read forbidden', retryable: false } } });
+    return route.fulfill({ json: [] });
+  });
+  await page.goto('/');
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await open(page, 'Overview');
+  const overview = page.getByTestId('helm-overview');
+  await expect(overview.getByRole('heading', { name: 'Helm inventory unavailable', exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Releases: —', exact: true })).toBeVisible();
+  mode = 'empty';
+  await overview.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(overview.getByRole('heading', { name: 'No Helm releases yet', exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Releases: 0', exact: true })).toBeVisible();
+  mode = 'partial';
+  await overview.getByRole('button', { name: 'Refresh Helm releases', exact: true }).click();
+  await expect(overview.getByRole('status')).toContainText('Partial inventory');
+  await expect(overview.getByRole('heading', { name: 'No releases in accessible namespaces', exact: true })).toBeVisible();
+  await expect(overview.getByText('No Helm releases yet', { exact: true })).toHaveCount(0);
 });
