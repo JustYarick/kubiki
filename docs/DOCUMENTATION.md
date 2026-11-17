@@ -13,6 +13,7 @@ responsibilities must be clear:
 | Structure, contracts and limits | `STRUCTURE.md`, SDK references and topic references | Source modules, schemas and tests |
 | Why an architecture was chosen | `decisions/` | Decision context, alternatives, trade-offs and consequences |
 | Future capabilities | `plans/` | Explicitly proposed or deferred work, never an implemented API |
+| Release history | `CHANGELOG.md` | [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) entries (`[Unreleased]` and released versions) |
 
 Keep stable topic filenames so incoming links continue to work. Link to the
 canonical guide rather than copying changing defaults, command tables or SDK
@@ -31,6 +32,23 @@ Do not include dated test transcripts, private conversation exports, temporary
 paths or one-off benchmark results as product reference. Keep reproducible test
 commands and explain what they establish; retain investigation artifacts in the
 workflow or issue where the investigation happened.
+
+## Changelog
+
+Record user-facing changes in [CHANGELOG.md](CHANGELOG.md) using
+[Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html):
+
+- Keep active work under `## [Unreleased]` without assigning a target version
+  until stable release preparation.
+- Track only stable releases (`vX.Y.Z`) as versioned sections; `-dev` and other
+  prerelease builds are excluded from changelog version headings and remain under
+  `## [Unreleased]`.
+- Group entries under `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed` and
+  `Security`, omitting empty sections.
+- On a stable release (`vX.Y.Z`), move `## [Unreleased]` entries into
+  `## [X.Y.Z] - YYYY-MM-DD`, leave an empty `## [Unreleased]` heading at the
+  top, and update the bottom comparison links.
 
 ## Architecture decision records
 

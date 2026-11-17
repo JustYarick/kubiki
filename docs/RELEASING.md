@@ -73,6 +73,13 @@ git tag -a v1.0.1-rc.1 -m "Kubiki 1.0.1 release candidate 1"
 git push origin v1.0.1-rc.1
 ```
 
+Only stable `vX.Y.Z` releases get versioned sections in
+[CHANGELOG.md](CHANGELOG.md); `-dev` and other prerelease builds are not tracked
+as separate releases and stay under `## [Unreleased]`. Before tagging a stable
+`vX.Y.Z` release, promote `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, keep
+a fresh empty `## [Unreleased]` section at the top, and update the comparison
+links at the bottom of the file.
+
 An explicit tag selects the channel regardless of branch. Plain `vX.Y.Z` tags
 are stable. Tags with prerelease suffixes or build metadata are prereleases and
 never become Latest. An older stable release does not replace a newer Latest.

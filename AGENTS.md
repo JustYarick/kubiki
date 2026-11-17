@@ -91,6 +91,15 @@ not an application rebuild unless executable examples or generated assets change
 - Update documentation in the same change as behavior, commands, defaults,
   configuration, UI labels, architecture or security boundaries. Follow
   [documentation conventions](docs/DOCUMENTATION.md).
+- Update [the changelog](docs/CHANGELOG.md) continuously as part of feature work,
+  behavioral changes, bug fixes, deprecations, removals and security fixes:
+  add concise user-facing bullets under `## [Unreleased]` using
+  [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) categories
+  (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). Record
+  only stable `vX.Y.Z` releases as versioned sections—never create sections for
+  `-dev` or other prereleases, and do not bind entries to a version number
+  prematurely; skip purely internal refactors, formatting or test-only tweaks
+  that do not alter user-visible behavior.
 - Keep operating guides and references current. Update README summaries and links
   when affected; link to canonical detail instead of duplicating it.
 - Record significant architectural choices with context, alternatives and costs
@@ -110,8 +119,13 @@ not an application rebuild unless executable examples or generated assets change
   out of commits, fixtures, logs and documentation. Use synthetic examples.
 - Preserve backend authorization and confirmation checks; model output and
   frontend flags cannot grant permissions. See [AI planning](docs/AI_PLAN_CONTRACT.md).
-- Follow [Releasing](docs/RELEASING.md) for publication. Updater signing is separate
-  from OS code signing; VirusTotal reports are advisory and must retain detections.
+- Follow [Releasing](docs/RELEASING.md) for publication. Only stable `vX.Y.Z`
+  releases are versioned in [the changelog](docs/CHANGELOG.md) (`-dev` and other
+  prereleases stay under `## [Unreleased]`). When preparing a stable `vX.Y.Z`
+  release, promote `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, leave a fresh
+  empty `## [Unreleased]` section at the top, and update the comparison links at
+  the bottom. Updater signing is separate from OS code signing; VirusTotal
+  reports are advisory and must retain detections.
 - Before finishing, inspect the diff, run `git diff --check`, and summarize the
   behavior change, documentation updates, verification and remaining limitations.
   Use focused `type(scope): description` commit messages when a commit is requested.
