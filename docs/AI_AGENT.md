@@ -275,13 +275,33 @@ five example identities. Counts cover that invocation only. Follow its cursor to
 continue the same snapshot; expired snapshots require a new scan. It does not send
 all scanned objects to the model.
 
-Namespaces are capped at 200. Logs default to 150 lines over one hour; callers may
-choose `tailLines` 1–500 and `sinceSeconds` 1–86400. The shared log reader bounds API
-bytes and validates Pod UID/container; AI output is capped at 24,000 characters, and
-logs exceeding 40 lines are condensed (`filter_logs_for_ai`) to the first 10 startup
-lines, error/exception/stacktrace lines, and the last 25 tail lines. `get_events_timeline`
+Namespaces are capped at 200 per page. Logs default to 150 tail lines; callers may
+choose `tailLines` 1–500 and `sinceSeconds` 1–604800. The shared log reader bounds API
+bytes and validates Pod UID/container. Diagnostic output selects matching error and
+stacktrace lines, or up to 30 tail lines when none match; individual lines and the
+number of matching lines are bounded. To read exact lines, use `get_logs` with
+`mode: "lines"`: `contains` applies a case-sensitive literal substring filter within
+the fetched slice, and `pageSize` selects 1–100 lines (default 50). Responses contain
+`lines` with original slice line numbers and text. Repeat identical arguments with
+the returned `cursor` to continue the captured slice without another cluster read.
+Pages also respect a 48 KB serialized line budget. Cursors expire after five minutes,
+on policy changes, or under session cursor-store pressure (16 entries / 1 MiB).
+Oversized lines or remaining snapshots fail explicitly; narrow the tail/time window.
+`hasMore: false` means the slice is exhausted, not that all container logs were read.
+`sinceTime` accepts an RFC3339 start time, mutually exclusive with `sinceSeconds`,
+in either mode. Rotation, restarts, the selected tail/time window and the core API
+byte ceiling can omit logs; no durable log archive or lossless live resume is promised.
+`contains`, `pageSize` and log cursors require `lines` mode; existing calls retain
+diagnostic output.
+
+`get_events` pages Events in API order in one
+namespace, optionally filtering the involved object's name and UID. Repeat the same
+arguments with its `cursor`; cursors are session-local, expire after five minutes and
+are invalidated by policy changes. Kubernetes may expire a continuation, requiring a
+new scan. Pages do not promise chronological ordering. `get_events_timeline`
 normalizes dynamic identifiers (Pod suffixes, IPs, UUIDs, ports) to deduplicate
-repeated events (`deduplicate_events`). `diagnose_resource` extracts server-side
+repeated events (`deduplicate_events`) and sorts only its bounded page, not the whole
+namespace. `diagnose_resource` extracts server-side
 container `crashCauses` (including `waiting` reasons alongside `lastTermination`
 exit codes/reasons on Pods and workload `childPods`), and policy scrubbing removes
 boilerplate `kubectl.kubernetes.io/last-applied-configuration` and `deployment.kubernetes.io/revision`

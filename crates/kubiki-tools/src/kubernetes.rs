@@ -1681,11 +1681,26 @@ impl KubernetesTools {
             limit: Option<u32>,
             tail_lines: Option<i64>,
             since_seconds: Option<i64>,
+            cursor: Option<String>,
+            since_time: Option<String>,
+            mode: Option<String>,
+            contains: Option<String>,
+            page_size: Option<usize>,
         }
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid diagnostic arguments")?;
-        if call.name != "get_logs" && (args.tail_lines.is_some() || args.since_seconds.is_some()) {
+        if call.name != "get_logs"
+            && (args.tail_lines.is_some()
+                || args.since_seconds.is_some()
+                || args.since_time.is_some()
+                || args.mode.is_some()
+                || args.contains.is_some()
+                || args.page_size.is_some())
+        {
             return Err("Log options only apply to get_logs".into());
+        }
+        if call.name != "get_events" && call.name != "get_logs" && args.cursor.is_some() {
+            return Err("Cursor only applies to get_events or get_logs".into());
         }
         if args.tail_lines.is_some_and(|n| !(1..=500).contains(&n))
             || args
@@ -1720,42 +1735,109 @@ impl KubernetesTools {
                             .into(),
                     );
                 }
+                let mode = args.mode.as_deref().unwrap_or("diagnostic");
+                if !matches!(mode, "diagnostic" | "lines")
+                    || args
+                        .page_size
+                        .is_some_and(|size| !(1..=100).contains(&size))
+                    || args.contains.as_ref().is_some_and(|text| text.len() > 1024)
+                    || (mode != "lines"
+                        && (args.cursor.is_some()
+                            || args.contains.is_some()
+                            || args.page_size.is_some()))
+                {
+                    return Err("Choose diagnostic or lines mode; cursor, contains and pageSize (1–100) require lines mode".into());
+                }
                 let request = kubiki_core::pod_ops::logs::LogSliceRequest {
-                    resource: reference(&session.scope.context, &target, args.uid),
-                    container: args.container.ok_or("Container is required")?,
+                    resource: reference(&session.scope.context, &target, args.uid.clone()),
+                    container: args.container.clone().ok_or("Container is required")?,
                     previous: args.previous.unwrap_or(false),
                     tail_lines: Some(args.tail_lines.unwrap_or(150)),
-                    since_time: None,
+                    since_time: args.since_time.clone(),
                     since_seconds: args.since_seconds,
                 };
+                request.validate().map_err(error_message)?;
+                if mode == "lines" {
+                    let mut arguments = call.arguments.clone();
+                    arguments
+                        .as_object_mut()
+                        .ok_or("Invalid log arguments")?
+                        .remove("cursor");
+                    let binding = json!({"tool":"get_logs","arguments":arguments});
+                    let page = if let Some(cursor) = &args.cursor {
+                        session
+                            .query_cursors
+                            .lock()
+                            .map_err(|_| "Cursor store unavailable")?
+                            .load(cursor, &binding, state.revision)?
+                    } else {
+                        let logs = request.read(client).await.map_err(error_message)?;
+                        let items = logs
+                            .lines()
+                            .enumerate()
+                            .filter(|(_, line)| {
+                                args.contains
+                                    .as_ref()
+                                    .is_none_or(|text| line.contains(text))
+                            })
+                            .map(|(index, line)| json!({"line":index + 1,"text":line}))
+                            .collect();
+                        QueryPage {
+                            items,
+                            continuation: None,
+                            captured_at: stamp(),
+                            omitted: 0,
+                        }
+                    };
+                    let captured_at = page.captured_at;
+                    let mut page = page;
+                    let remaining = page
+                        .items
+                        .split_off(page.items.len().min(args.page_size.unwrap_or(50)));
+                    let (lines, mut tail) = split_page(page, 48_000)?;
+                    tail.items.extend(remaining);
+                    let more = !tail.items.is_empty();
+                    let cursor = if more {
+                        Some(
+                            session
+                                .query_cursors
+                                .lock()
+                                .map_err(|_| "Cursor store unavailable")?
+                                .save(binding, state.revision, tail)?,
+                        )
+                    } else {
+                        None
+                    };
+                    return Ok(
+                        json!({"capturedAt":captured_at,"lines":lines,"cursor":cursor,"hasMore":more,
+                        "completeness":"partial","coverage":"Exact lines within one bounded Pod log slice; cursor resumes this captured slice without reading live logs. Tail, time, API byte limit and rotation may omit other logs."}),
+                    );
+                }
                 let logs = request.read(client).await.map_err(error_message)?;
                 let (filtered_logs, total_lines, matched_lines, is_filtered) =
-                    crate::diagnostics::filter_logs_for_ai(&logs, args.tail_lines.unwrap_or(150) as usize);
-                Ok(
-                    json!({
-                        "capturedAt": stamp(),
-                        "logs": filtered_logs,
-                        "totalLines": total_lines,
-                        "matchedErrorLines": matched_lines,
-                        "filtered": is_filtered,
-                        "tailLines": args.tail_lines.unwrap_or(150),
-                        "sinceSeconds": args.since_seconds,
-                        "coverage": if is_filtered {
-                            "Filtered to relevant diagnostic error/warning lines"
-                        } else {
-                            "Recent tail lines (no error patterns detected)"
-                        }
-                    }),
-                )
+                    crate::diagnostics::filter_logs_for_ai(
+                        &logs,
+                        args.tail_lines.unwrap_or(150) as usize,
+                    );
+                Ok(json!({
+                    "capturedAt": stamp(),
+                    "logs": filtered_logs,
+                    "totalLines": total_lines,
+                    "matchedErrorLines": matched_lines,
+                    "filtered": is_filtered,
+                    "tailLines": args.tail_lines.unwrap_or(150),
+                    "sinceSeconds": args.since_seconds,
+                    "coverage": if is_filtered {
+                        "Filtered to relevant diagnostic error/warning lines"
+                    } else {
+                        "Recent tail lines (no error patterns detected)"
+                    }
+                }))
             } else if call.name == "get_events" {
                 if !state.policy.events {
                     return Err("Events are disabled by policy".into());
                 }
-                if args.uid.is_some()
-                    || args.container.is_some()
-                    || args.previous.is_some()
-                    || args.limit.is_some()
-                {
+                if args.container.is_some() || args.previous.is_some() || args.limit.is_some() {
                     return Err("Unexpected Event arguments".into());
                 }
                 let query = ResourceQuery {
@@ -1767,15 +1849,77 @@ impl KubernetesTools {
                 };
                 let reader =
                     kubiki_core::core::access::ResourceAccess::new(client, &query, false).await?;
-                let mut params = ListParams::default().limit(50);
+                let mut filters = Vec::new();
                 if !target.name.is_empty() {
-                    let selector = format!("involvedObject.name={}", target.name);
-                    validate_query_filters(&state.policy, &target, true, None, Some(&selector))?;
-                    params = params.fields(&selector);
+                    filters.push(format!("involvedObject.name={}", target.name));
                 }
-                let page = projected_page(&reader, &state.policy, &target, &params, false).await?;
-                bounded_result(
-                    json!({"capturedAt":page.captured_at,"items":page.items,"hasMore":page.continuation.is_some(),"omittedByPolicy":page.omitted,"coverage":"Policy-projected bounded Events; no complete absence claim"}),
+                if let Some(uid) = &args.uid {
+                    if uid.is_empty()
+                        || uid.len() > 253
+                        || !uid.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+                    {
+                        return Err("Invalid Event resource UID".into());
+                    }
+                    filters.push(format!("involvedObject.uid={uid}"));
+                }
+                let selector = filters.join(",");
+                if !selector.is_empty() {
+                    validate_query_filters(&state.policy, &target, true, None, Some(&selector))?;
+                }
+                let mut arguments = call.arguments.clone();
+                arguments
+                    .as_object_mut()
+                    .ok_or("Invalid Event arguments")?
+                    .remove("cursor");
+                let binding = json!({"tool":"get_events","arguments":arguments});
+                let mut pending = args
+                    .cursor
+                    .as_ref()
+                    .map(|cursor| {
+                        session
+                            .query_cursors
+                            .lock()
+                            .map_err(|_| "Cursor store unavailable".to_owned())?
+                            .load(cursor, &binding, state.revision)
+                    })
+                    .transpose()?;
+                if pending
+                    .as_ref()
+                    .is_none_or(|page| page.items.is_empty() && page.continuation.is_some())
+                {
+                    let mut params = ListParams::default().limit(50);
+                    if !selector.is_empty() {
+                        params = params.fields(&selector);
+                    }
+                    if let Some(token) = pending
+                        .as_ref()
+                        .and_then(|page| page.continuation.as_deref())
+                    {
+                        params = params.continue_token(token);
+                    }
+                    pending = Some(
+                        projected_page(&reader, &state.policy, &target, &params, false).await?,
+                    );
+                }
+                let page = pending.ok_or("Cursor has no remaining page")?;
+                let captured_at = page.captured_at;
+                let omitted = page.omitted;
+                let (items, mut tail) = split_page(page, 48_000)?;
+                tail.omitted = 0;
+                let more = !tail.items.is_empty() || tail.continuation.is_some();
+                let cursor = if more {
+                    Some(
+                        session
+                            .query_cursors
+                            .lock()
+                            .map_err(|_| "Cursor store unavailable")?
+                            .save(binding, state.revision, tail)?,
+                    )
+                } else {
+                    None
+                };
+                Ok(
+                    json!({"capturedAt":captured_at,"items":items,"hasMore":more,"cursor":cursor,"omittedByPolicy":omitted,"coverage":"Policy-projected Events in API order; no chronological or complete absence claim"}),
                 )
             } else if call.name == "get_events_timeline" {
                 if !state.policy.events {

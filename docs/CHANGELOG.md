@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP Event reads can filter by involved resource UID and continue through bounded pages.
+- MCP logs support exact-line snapshot pages, literal substring filtering and RFC3339 time windows alongside the existing diagnostic output.
+
 ## [1.4.0] - 2026-11-17
 
 ### Added
