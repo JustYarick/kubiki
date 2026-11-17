@@ -66,22 +66,39 @@ export function ConnectedSection() {
           })}
         </div>
 
-        <div className="kb-quote-wrap">
-          <div className="kb-quote-box">
-            <div className="kb-quote-marks" aria-hidden="true">
-              <span /><span />
+        <div className="kb-tips-wrap">
+          <div className="kb-strip-head">
+            <span className="kb-strip-label">Keyboard workflow</span>
+            <p>Navigate resources, bottom logs and split YAML panes without leaving the keyboard.</p>
+          </div>
+          <div className="kb-tips-grid">
+            <div className="kb-tip-card">
+              <div className="kb-tip-top">
+                <kbd>Ctrl+K</kbd>
+                <span>Master Search</span>
+              </div>
+              <p>Jump straight to any Pod, CRD, Helm release, action or manifest.</p>
             </div>
-            <blockquote>
-              Cluster tools shouldn’t force you to choose between noisy browser dashboards and twenty terminal tabs. Kubiki keeps discovery, live state, manifests and AI in one crisp workspace.
-            </blockquote>
-            <div className="kb-quote-author">
-              <div className="kb-quote-avatar">
-                <img src={mark} width="18" height="18" alt="" />
+            <div className="kb-tip-card">
+              <div className="kb-tip-top">
+                <kbd>Ctrl+J</kbd>
+                <span>Bottom Panel</span>
               </div>
-              <div>
-                <strong>Kubiki Desktop</strong>
-                <span>React IDE surface · Rust Kubernetes engine · Apache 2.0</span>
+              <p>Toggle live streamed container logs, Pod exec shells and local terminals.</p>
+            </div>
+            <div className="kb-tip-card">
+              <div className="kb-tip-top">
+                <kbd>Ctrl+B</kbd>
+                <span>Cluster Explorer</span>
               </div>
+              <p>Show or collapse the sidebar tree to focus on split editors and topology.</p>
+            </div>
+            <div className="kb-tip-card">
+              <div className="kb-tip-top">
+                <kbd>Y</kbd>
+                <span>Clean YAML</span>
+              </div>
+              <p>Inspect selected objects with managedFields hidden or open side-by-side splits.</p>
             </div>
           </div>
         </div>

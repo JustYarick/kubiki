@@ -16,10 +16,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Cluster-wide Helm Overview with release metrics, status distribution, namespace health, chart versions, recent changes and explicit snapshot freshness, independent of the namespace filter. Counts open the shared typed release table with matching filters; the table supports column sorting, layouts and virtualization. Overview navigation uses the common dashboard icon.
+- Flux Kustomization and HelmRelease reconciliation actions alongside the existing reset-and-retry action for exhausted HelmRelease attempts.
+- MCP Pod/Node CPU and RAM usage with requests, limits, capacity, allocatable and explicit coverage for bounded Node reservations.
+- Diagnostic-only CRD access for selected Flux and external-secrets fields without exposing chart values or provider credentials; existing saved access levels remain unchanged.
+- MCP Event type, reason and time-window filters, and explicit explanations when requested resource fields are denied.
+- Overview warnings for high per-Node memory usage and Secret reference states distinguishing observed metadata, missing resources and unavailable access.
 - MCP Event reads can filter by involved resource UID and continue through bounded pages.
 - MCP logs support exact-line snapshot pages, literal substring filtering and RFC3339 time windows alongside the existing diagnostic output.
 - React project website with a pipeline that builds static assets, commits them to `gh-pages` and deploys them to GitHub Pages.
 - Dark website with recorded WebM/MP4 workspace animations, interactive diagnostics/topology/YAML/MCP policy previews, responsive WebP posters and platform-aware direct downloads from the latest stable GitHub release.
+
+### Changed
+
+- Refined Helm Overview layout and density to match the application's overview cards, with a compact header strip, uniform card surfaces, monospace summary metrics, evenly distributed inventory facts, aligned namespace and chart panels, and single-line release change rows.
+- Updated the project website with bundled JetBrains Mono Variable display typography, concise Hero copy with `#download` anchor links, a unified FAQ and Get Kubiki constellation closing band with smooth section gradients, reordered MCP topology and resource workbench sections without redundant labels, keyboard and triage workflow bars, and a non-scrolling interactive Pod inspector card.
+
+### Fixed
+
+- Allow direct Helm upgrade, rollback and uninstall for Flux-managed releases while preserving backend confirmation.
+- Resolve explicitly requested served CRD API versions even when a more stable version exists, and match Flux Helm storage namespaces correctly.
 
 ## [1.4.0] - 2026-11-17
 

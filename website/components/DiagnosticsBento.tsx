@@ -4,30 +4,43 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowRightLeft,
+  Box,
   Boxes,
   Braces,
   ChevronRight,
   CircleDot,
+  Copy,
   Cpu,
+  ExternalLink,
+  FileCode,
   FileText,
   Folder,
   GitBranch,
   HelpCircle,
   Layers,
   LayoutDashboard,
+  Lock,
   MemoryStick,
   Network,
   Pause,
+  Pin,
   Play,
   Radio,
+  Rocket,
+  RotateCw,
+  Search,
   Server,
+  ShieldAlert,
+  ShieldBan,
   Terminal,
+  Trash2,
   TriangleAlert,
 } from 'lucide-react';
 
 type ProblemSeverity = 'all' | 'error' | 'warning';
 type LogFilter = 'all' | 'error' | 'warn' | 'info';
-type InspectorTab = 'overview' | 'related' | 'events';
+type InspectorTab = 'overview' | 'env' | 'related' | 'events' | 'yaml';
+type DemoResourceId = 'pod-worker' | 'rs-worker' | 'deploy-worker' | 'node-2b' | 'cm-worker' | 'svc-metrics' | 'pod-analytics';
 
 const KIND_STYLES: Record<string, { color: string; bg: string; border: string }> = {
   Pod: { color: '#b39aff', bg: 'rgba(179, 154, 255, 0.16)', border: 'rgba(179, 154, 255, 0.34)' },
@@ -52,6 +65,267 @@ function MiniKindBadge({ kind }: { kind: string }) {
   );
 }
 
+function ResourceKindGlyph({ kind }: { kind: string }) {
+  const color = KIND_STYLES[kind]?.color ?? '#9da0a8';
+  const props = { size: 15, style: { color, flexShrink: 0 }, 'aria-hidden': true as const };
+  switch (kind) {
+    case 'ReplicaSet':
+      return <Copy {...props} />;
+    case 'Deployment':
+      return <Rocket {...props} />;
+    case 'Node':
+      return <Server {...props} />;
+    case 'ConfigMap':
+      return <FileCode {...props} />;
+    case 'Service':
+      return <Network {...props} />;
+    default:
+      return <CircleDot {...props} />;
+  }
+}
+
+type DemoSummaryRow = {
+  label: string;
+  value: string;
+  linkTo?: DemoResourceId;
+  pill?: boolean;
+};
+
+type DemoRelatedItem = {
+  dir: 'in' | 'out';
+  kind: string;
+  name: string;
+  ns: string;
+  rel: string;
+  target?: DemoResourceId;
+};
+
+type DemoEventItem = {
+  type: 'Warning' | 'Normal';
+  reason: string;
+  count: number;
+  age: string;
+  msg: string;
+  reporter: string;
+};
+
+type DemoResource = {
+  id: DemoResourceId;
+  kind: string;
+  name: string;
+  ns?: string;
+  owners?: { name: string; kind: string; target?: DemoResourceId }[];
+  problem?: { title: string; desc: string; hint: string };
+  summaryTitle: string;
+  summary: DemoSummaryRow[];
+  containers?: { name: string; image: string; state: string; restarts: number; cpu: string; ram: string }[];
+  env?: { name: string; value: string; source: string; target?: DemoResourceId; secret?: boolean; drifted?: boolean }[];
+  related: DemoRelatedItem[];
+  events: DemoEventItem[];
+  yaml: string;
+};
+
+const DEMO_RESOURCES: Record<DemoResourceId, DemoResource> = {
+  'pod-worker': {
+    id: 'pod-worker',
+    kind: 'Pod',
+    name: 'payment-worker-67f98b984-pv4n8',
+    ns: 'backend',
+    owners: [
+      { kind: 'ReplicaSet', name: 'payment-worker-67f98b984', target: 'rs-worker' },
+      { kind: 'Deployment', name: 'payment-worker', target: 'deploy-worker' },
+    ],
+    problem: {
+      title: 'OOMKilled (Exit Code 137) · Container “worker”',
+      desc: 'The process was killed by Linux OOM killer because memory consumption exceeded the defined container limit.',
+      hint: 'Increase “resources.limits.memory” in your Deployment spec.',
+    },
+    summaryTitle: 'Pod summary',
+    summary: [
+      { label: 'Node', value: 'node-2b', linkTo: 'node-2b' },
+      { label: 'QoS Class', value: 'Burstable', pill: true },
+      { label: 'Controlled by', value: 'ReplicaSet/payment-worker-67f98b984', linkTo: 'rs-worker' },
+      { label: 'Pod IP', value: '10.42.0.21' },
+      { label: 'Service account', value: 'payment-worker' },
+    ],
+    containers: [
+      {
+        name: 'worker',
+        image: 'ghcr.io/acme/payment-worker:v2.4.1',
+        state: 'CrashLoopBackOff',
+        restarts: 6,
+        cpu: '84m',
+        ram: '241 MiB',
+      },
+    ],
+    env: [
+      { name: 'APP_ENV', value: 'production', source: 'Direct value' },
+      { name: 'BATCH_MEMORY_MB', value: '512', source: 'ConfigMap/worker-config', target: 'cm-worker', drifted: true },
+      { name: 'STRIPE_API_KEY', value: '••••••••••••', source: 'Secret/payments-secrets', secret: true },
+    ],
+    related: [
+      { dir: 'in', kind: 'Deployment', name: 'payment-worker', ns: 'backend', rel: 'root controller', target: 'deploy-worker' },
+      { dir: 'in', kind: 'ReplicaSet', name: 'payment-worker-67f98b984', ns: 'backend', rel: 'owns', target: 'rs-worker' },
+      { dir: 'in', kind: 'Service', name: 'payment-worker-metrics', ns: 'backend', rel: 'selects', target: 'svc-metrics' },
+      { dir: 'out', kind: 'ConfigMap', name: 'worker-config', ns: 'backend', rel: 'envFrom', target: 'cm-worker' },
+      { dir: 'out', kind: 'Secret', name: 'payments-secrets', ns: 'backend', rel: 'valueFrom' },
+      { dir: 'out', kind: 'Node', name: 'node-2b', ns: 'cluster', rel: 'scheduled on', target: 'node-2b' },
+    ],
+    events: [
+      { type: 'Warning', reason: 'OOMKilling', count: 6, age: '2m', reporter: 'kubelet, node-2b', msg: 'Memory cgroup out of memory: Killed process worker (exit 137)' },
+      { type: 'Warning', reason: 'BackOff', count: 14, age: '1m', reporter: 'kubelet, node-2b', msg: 'Back-off restarting failed container worker in pod payment-worker' },
+      { type: 'Normal', reason: 'Scheduled', count: 1, age: '4m', reporter: 'default-scheduler', msg: 'Successfully assigned backend/payment-worker-67f98b984-pv4n8 to node-2b' },
+    ],
+    yaml: `kind: Pod\nmetadata:\n  name: payment-worker-67f98b984-pv4n8\n  namespace: backend\nspec:\n  nodeName: node-2b\n  containers:\n    - name: worker\n      resources:\n        limits:\n          memory: 256Mi`,
+  },
+  'rs-worker': {
+    id: 'rs-worker',
+    kind: 'ReplicaSet',
+    name: 'payment-worker-67f98b984',
+    ns: 'backend',
+    owners: [{ kind: 'Deployment', name: 'payment-worker', target: 'deploy-worker' }],
+    summaryTitle: 'Workload summary',
+    summary: [
+      { label: 'Replicas', value: '2 / 3 ready' },
+      { label: 'Controlled by', value: 'Deployment/payment-worker', linkTo: 'deploy-worker' },
+      { label: 'Pod template', value: 'ghcr.io/acme/payment-worker:v2.4.1' },
+      { label: 'Selector', value: 'app=payment-worker' },
+    ],
+    related: [
+      { dir: 'in', kind: 'Deployment', name: 'payment-worker', ns: 'backend', rel: 'owns', target: 'deploy-worker' },
+      { dir: 'out', kind: 'Pod', name: 'payment-worker-67f98b984-pv4n8', ns: 'backend', rel: 'manages', target: 'pod-worker' },
+      { dir: 'out', kind: 'ConfigMap', name: 'worker-config', ns: 'backend', rel: 'references', target: 'cm-worker' },
+    ],
+    events: [
+      { type: 'Normal', reason: 'SuccessfulCreate', count: 3, age: '18m', reporter: 'replicaset-controller', msg: 'Created pod: payment-worker-67f98b984-pv4n8' },
+    ],
+    yaml: `kind: ReplicaSet\nmetadata:\n  name: payment-worker-67f98b984\n  namespace: backend\nspec:\n  replicas: 3\nstatus:\n  readyReplicas: 2`,
+  },
+  'deploy-worker': {
+    id: 'deploy-worker',
+    kind: 'Deployment',
+    name: 'payment-worker',
+    ns: 'backend',
+    summaryTitle: 'Deployment summary',
+    summary: [
+      { label: 'Ready replicas', value: '2 / 3 ready' },
+      { label: 'Strategy', value: 'RollingUpdate (25% maxSurge)', pill: true },
+      { label: 'Active ReplicaSet', value: 'payment-worker-67f98b984', linkTo: 'rs-worker' },
+      { label: 'Config', value: 'ConfigMap/worker-config', linkTo: 'cm-worker' },
+    ],
+    related: [
+      { dir: 'out', kind: 'ReplicaSet', name: 'payment-worker-67f98b984', ns: 'backend', rel: 'owns', target: 'rs-worker' },
+      { dir: 'out', kind: 'Pod', name: 'payment-worker-67f98b984-pv4n8', ns: 'backend', rel: 'manages', target: 'pod-worker' },
+      { dir: 'in', kind: 'Service', name: 'payment-worker-metrics', ns: 'backend', rel: 'exposes', target: 'svc-metrics' },
+    ],
+    events: [
+      { type: 'Normal', reason: 'ScalingReplicaSet', count: 1, age: '18m', reporter: 'deployment-controller', msg: 'Scaled up replica set payment-worker-67f98b984 to 3' },
+    ],
+    yaml: `kind: Deployment\nmetadata:\n  name: payment-worker\n  namespace: backend\nspec:\n  replicas: 3`,
+  },
+  'node-2b': {
+    id: 'node-2b',
+    kind: 'Node',
+    name: 'node-2b',
+    summaryTitle: 'Node summary',
+    summary: [
+      { label: 'Status', value: 'Ready', pill: true },
+      { label: 'CPU usage', value: '14.2 / 32 cores (44%)' },
+      { label: 'RAM usage', value: '48.6 / 128 GiB (38%)' },
+      { label: 'Running Pods', value: 'payment-worker-67f98b984-pv4n8', linkTo: 'pod-worker' },
+      { label: 'Kubelet', value: 'v1.31.2 · containerd 1.7' },
+    ],
+    related: [
+      { dir: 'in', kind: 'Pod', name: 'payment-worker-67f98b984-pv4n8', ns: 'backend', rel: 'scheduled here', target: 'pod-worker' },
+      { dir: 'in', kind: 'Pod', name: 'analytics-dispatcher-7f9c97d-88943', ns: 'analytics-staging', rel: 'scheduled here', target: 'pod-analytics' },
+    ],
+    events: [
+      { type: 'Warning', reason: 'OOMKilling', count: 6, age: '2m', reporter: 'kernel-monitor, node-2b', msg: 'Memory cgroup out of memory on container worker' },
+      { type: 'Normal', reason: 'NodeReady', count: 1, age: '14d', reporter: 'kubelet, node-2b', msg: 'Node node-2b status is now: NodeReady' },
+    ],
+    yaml: `kind: Node\nmetadata:\n  name: node-2b\nstatus:\n  capacity:\n    cpu: "32"\n    memory: 128Gi`,
+  },
+  'cm-worker': {
+    id: 'cm-worker',
+    kind: 'ConfigMap',
+    name: 'worker-config',
+    ns: 'backend',
+    problem: {
+      title: 'Configuration drift detected',
+      desc: 'ConfigMap keys were updated after Pod payment-worker-67f98b984-pv4n8 started.',
+      hint: 'Restart Deployment/payment-worker to roll in updated env values.',
+    },
+    summaryTitle: 'ConfigMap summary',
+    summary: [
+      { label: 'Keys', value: '3 entries (BATCH_MEMORY_MB, QUEUE_NAME, LOG_LEVEL)' },
+      { label: 'Mounted by', value: 'Pod/payment-worker-67f98b984-pv4n8', linkTo: 'pod-worker' },
+      { label: 'Controller', value: 'Deployment/payment-worker', linkTo: 'deploy-worker' },
+    ],
+    related: [
+      { dir: 'in', kind: 'Pod', name: 'payment-worker-67f98b984-pv4n8', ns: 'backend', rel: 'mounted by', target: 'pod-worker' },
+      { dir: 'in', kind: 'Deployment', name: 'payment-worker', ns: 'backend', rel: 'referenced by', target: 'deploy-worker' },
+    ],
+    events: [],
+    yaml: `kind: ConfigMap\nmetadata:\n  name: worker-config\n  namespace: backend\ndata:\n  BATCH_MEMORY_MB: "512"\n  QUEUE_NAME: pay`,
+  },
+  'svc-metrics': {
+    id: 'svc-metrics',
+    kind: 'Service',
+    name: 'payment-worker-metrics',
+    ns: 'backend',
+    summaryTitle: 'Service summary',
+    summary: [
+      { label: 'Type', value: 'ClusterIP', pill: true },
+      { label: 'Cluster IP', value: '10.96.18.42' },
+      { label: 'Ports', value: '9090/TCP → metrics' },
+      { label: 'Backend Pod', value: 'payment-worker-67f98b984-pv4n8', linkTo: 'pod-worker' },
+    ],
+    related: [
+      { dir: 'out', kind: 'Pod', name: 'payment-worker-67f98b984-pv4n8', ns: 'backend', rel: 'endpoints (1/3)', target: 'pod-worker' },
+      { dir: 'out', kind: 'Deployment', name: 'payment-worker', ns: 'backend', rel: 'targets', target: 'deploy-worker' },
+    ],
+    events: [],
+    yaml: `kind: Service\nmetadata:\n  name: payment-worker-metrics\n  namespace: backend\nspec:\n  type: ClusterIP\n  ports:\n    - port: 9090`,
+  },
+  'pod-analytics': {
+    id: 'pod-analytics',
+    kind: 'Pod',
+    name: 'analytics-dispatcher-7f9c97d-88943',
+    ns: 'analytics-staging',
+    problem: {
+      title: 'ImagePullBackOff · Container “app”',
+      desc: 'Container image pull failed due to missing registry pull secret in analytics-staging.',
+      hint: 'Verify imagePullSecrets on ServiceAccount or Pod spec.',
+    },
+    summaryTitle: 'Pod summary',
+    summary: [
+      { label: 'Node', value: 'node-2b', linkTo: 'node-2b' },
+      { label: 'QoS Class', value: 'Burstable', pill: true },
+      { label: 'Pod IP', value: 'Pending' },
+    ],
+    containers: [
+      {
+        name: 'app',
+        image: 'ghcr.io/acme/analytics-dispatcher:staging',
+        state: 'ImagePullBackOff',
+        restarts: 0,
+        cpu: '—',
+        ram: '—',
+      },
+    ],
+    env: [
+      { name: 'STAGE', value: 'staging', source: 'Direct value' },
+    ],
+    related: [
+      { dir: 'out', kind: 'Node', name: 'node-2b', ns: 'cluster', rel: 'scheduled on', target: 'node-2b' },
+    ],
+    events: [
+      { type: 'Warning', reason: 'Failed', count: 4, age: '3m', reporter: 'kubelet, node-2b', msg: 'Failed to pull image: unauthorized' },
+    ],
+    yaml: `kind: Pod\nmetadata:\n  name: analytics-dispatcher-7f9c97d-88943\n  namespace: analytics-staging`,
+  },
+};
+
 const PROBLEMS_DATA = [
   {
     id: 'p1',
@@ -61,6 +335,7 @@ const PROBLEMS_DATA = [
     ns: 'backend',
     summary: 'Container worker: CrashLoopBackOff',
     message: 'Last termination OOMKilled (exitCode 137) · 6 restarts',
+    target: 'pod-worker' as DemoResourceId,
   },
   {
     id: 'p2',
@@ -70,15 +345,17 @@ const PROBLEMS_DATA = [
     ns: 'analytics-staging',
     summary: 'Container app: ImagePullBackOff',
     message: 'Waiting for container startup',
+    target: 'pod-analytics' as DemoResourceId,
   },
   {
     id: 'p3',
     severity: 'warning' as const,
     kind: 'Deployment',
-    name: 'analytics-dispatcher',
-    ns: 'analytics-staging',
-    summary: '14/16 replicas are ready',
+    name: 'payment-worker',
+    ns: 'backend',
+    summary: '2/3 replicas are ready',
     message: 'Some desired replicas are not ready. Check related Pods.',
+    target: 'deploy-worker' as DemoResourceId,
   },
   {
     id: 'p4',
@@ -88,6 +365,7 @@ const PROBLEMS_DATA = [
     ns: 'backend',
     summary: 'Configuration drift detected',
     message: 'Updated after Pod payment-worker-67f98b984-pv4n8 started.',
+    target: 'cm-worker' as DemoResourceId,
   },
 ];
 
@@ -125,22 +403,6 @@ const POD_PHASES = [
   { label: 'Terminating', value: 15, pct: 0, color: '#e5b742' },
 ];
 
-const RELATED_ROWS = [
-  { dir: 'in' as const, kind: 'ReplicaSet', name: 'payment-worker-67f98b984', ns: 'backend', rel: 'owns' },
-  { dir: 'in' as const, kind: 'Deployment', name: 'payment-worker', ns: 'backend', rel: 'root controller' },
-  { dir: 'in' as const, kind: 'Service', name: 'payment-worker-metrics', ns: 'backend', rel: 'selects' },
-  { dir: 'out' as const, kind: 'ConfigMap', name: 'worker-config', ns: 'backend', rel: 'envFrom' },
-  { dir: 'out' as const, kind: 'Secret', name: 'payments-secrets', ns: 'backend', rel: 'valueFrom' },
-  { dir: 'out' as const, kind: 'Node', name: 'node-2b', ns: 'cluster', rel: 'scheduled on' },
-];
-
-const POD_EVENTS = [
-  { type: 'Warning', reason: 'OOMKilling', age: '2m', msg: 'Memory cgroup out of memory: Killed process payment-worker (137)' },
-  { type: 'Warning', reason: 'BackOff', age: '1m', msg: 'Back-off restarting failed container worker in pod payment-worker' },
-  { type: 'Normal', reason: 'Pulled', age: '4m', msg: 'Container image "ghcr.io/acme/payment-worker:v2.4.1" already present on machine' },
-  { type: 'Normal', reason: 'Scheduled', age: '4m', msg: 'Successfully assigned backend/payment-worker-67f98b984-pv4n8 to node-2b' },
-];
-
 const CPU_POINTS = [
   { t: '-8m', v: '2,240 cores' },
   { t: '-6m', v: '2,410 cores' },
@@ -157,6 +419,10 @@ export function DiagnosticsBento() {
   const [streaming, setStreaming] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>(SEED_LOGS);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('overview');
+  const [activeResId, setActiveResId] = useState<DemoResourceId>('pod-worker');
+  const [history, setHistory] = useState<DemoResourceId[]>([]);
+  const [pinned, setPinned] = useState(false);
+  const [relatedQuery, setRelatedQuery] = useState('');
 
   useEffect(() => {
     if (!streaming) return;
@@ -169,13 +435,51 @@ export function DiagnosticsBento() {
     return () => window.clearInterval(id);
   }, [streaming]);
 
+  const activeRes = DEMO_RESOURCES[activeResId];
+
+  const openResource = (nextId: DemoResourceId) => {
+    if (nextId === activeResId) return;
+    setHistory(prev => [...prev, activeResId]);
+    setActiveResId(nextId);
+    setInspectorTab('overview');
+    setRelatedQuery('');
+  };
+
+  const goBack = () => {
+    if (!history.length) return;
+    const prevId = history[history.length - 1];
+    setHistory(h => h.slice(0, -1));
+    setActiveResId(prevId);
+    setInspectorTab('overview');
+    setRelatedQuery('');
+  };
+
+  const availableTabs: { id: InspectorTab; label: string }[] =
+    activeRes.kind === 'Pod'
+      ? [
+          { id: 'overview', label: 'Overview' },
+          { id: 'env', label: 'Environment' },
+          { id: 'related', label: 'Related' },
+          { id: 'events', label: 'Events' },
+          { id: 'yaml', label: 'YAML' },
+        ]
+      : [
+          { id: 'overview', label: 'Overview' },
+          { id: 'related', label: 'Related' },
+          { id: 'events', label: 'Events' },
+          { id: 'yaml', label: 'YAML' },
+        ];
+
+  const filteredRelated = activeRes.related.filter(entry =>
+    `${entry.name} ${entry.kind} ${entry.ns} ${entry.rel}`.toLowerCase().includes(relatedQuery.trim().toLowerCase()),
+  );
+
   const filteredProblems = PROBLEMS_DATA.filter(p => problemFilter === 'all' || p.severity === problemFilter);
   const filteredLogs = logFilter === 'all' ? logs : logs.filter(l => l.level === logFilter);
 
   return (
     <section className="kb-section kb-section-glow-tl" id="diagnostics">
       <div className="kb-container">
-        <span className="kb-badge">Cluster Diagnostics</span>
         <div className="kb-split-head">
           <h2>Start inspecting in under a minute</h2>
           <p>
@@ -391,7 +695,12 @@ export function DiagnosticsBento() {
 
                 <div className="kb-prob-list">
                   {filteredProblems.map(item => (
-                    <div key={item.id} className="kb-prob-row">
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={activeResId === item.target ? 'kb-prob-row active' : 'kb-prob-row'}
+                      onClick={() => openResource(item.target)}
+                    >
                       <div className="kb-prob-row-top">
                         <span className={item.severity === 'error' ? 'kb-sev-crit' : 'kb-sev-warn'}>
                           {item.severity === 'error' ? 'Critical' : 'Warning'}
@@ -401,7 +710,7 @@ export function DiagnosticsBento() {
                       </div>
                       <p className="kb-prob-sub">{item.ns} · {item.summary}</p>
                       <p className="kb-prob-msg">{item.message}</p>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -486,134 +795,283 @@ export function DiagnosticsBento() {
             </div>
           </article>
 
-          {/* Card 4 (2 cols): Authentic Kubiki Pod ResourceDetails Inspector (ProblemsBanner + Pod summary + Related + Events) */}
+          {/* Card 4 (2 cols): Authentic Kubiki DetailsPanel + ResourceHeader + Navigable Linked Resources */}
           <article className="kb-bento-card kb-col-2">
             <div className="kb-bento-app-body kb-real-inspector">
               {/* ResourceHeader matching src/components/k8s/details/ResourceHeader.tsx */}
               <div className="kb-insp-header">
                 <div className="kb-insp-identity">
-                  <div className="kb-insp-breadcrumbs">
-                    <span>Deployment/payment-worker</span>
-                    <ChevronRight size={11} />
-                    <span>ReplicaSet/payment-worker-67f98b984</span>
-                    <ChevronRight size={11} />
+                  <button
+                    type="button"
+                    className={history.length ? 'kb-insp-back' : 'kb-insp-back empty'}
+                    onClick={goBack}
+                    disabled={!history.length}
+                    aria-label="Back to previous resource"
+                    title={history.length ? `Back to ${DEMO_RESOURCES[history[history.length - 1]].name}` : 'Back (history)'}
+                  >
+                    <ArrowLeft size={12} />
+                  </button>
+
+                  <ResourceKindGlyph kind={activeRes.kind} />
+
+                  <div className="kb-insp-main">
+                    <div className="kb-insp-title">{activeRes.name}</div>
+                    <div className="kb-insp-subtitle">
+                      <span>{activeRes.kind} · {activeRes.ns || 'Cluster scoped'}</span>
+                      {activeRes.owners?.map(crumb => (
+                        <span key={crumb.name} className="kb-insp-crumb-wrap">
+                          <ChevronRight size={10} />
+                          {crumb.target ? (
+                            <button
+                              type="button"
+                              className="kb-insp-crumb-link"
+                              onClick={() => openResource(crumb.target!)}
+                            >
+                              {crumb.name}
+                            </button>
+                          ) : (
+                            <span>{crumb.name}</span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="kb-insp-title-row">
-                    <MiniKindBadge kind="Pod" />
-                    <strong>payment-worker-67f98b984-pv4n8</strong>
-                    <span className="kb-insp-ns">backend</span>
+
+                  <div className="kb-insp-tools" aria-hidden="true">
+                    <span><Copy size={12} /></span>
+                    <button
+                      type="button"
+                      className={pinned ? 'active' : ''}
+                      onClick={() => setPinned(p => !p)}
+                      aria-label="Pin details"
+                      aria-pressed={pinned}
+                    >
+                      <Pin size={12} />
+                    </button>
+                    <span><ExternalLink size={12} /></span>
+                    <span className="danger"><Trash2 size={12} /></span>
                   </div>
                 </div>
 
                 <div className="kb-insp-actions">
-                  <span><FileText size={11} />Logs</span>
-                  <span><Terminal size={11} />Shell</span>
-                  <span><Radio size={11} />Attach</span>
-                  <span><ArrowRightLeft size={11} />Ports</span>
+                  {['Pod', 'Deployment', 'ReplicaSet'].includes(activeRes.kind) && (
+                    <span><FileText size={11} />Logs</span>
+                  )}
+                  {['Pod', 'Node'].includes(activeRes.kind) && (
+                    <span><Terminal size={11} />{activeRes.kind === 'Node' ? 'Node shell' : 'Shell'}</span>
+                  )}
+                  {activeRes.kind === 'Pod' && (
+                    <span><Radio size={11} />Attach</span>
+                  )}
+                  {activeRes.kind === 'Deployment' && (
+                    <span><RotateCw size={11} />Restart</span>
+                  )}
+                  {activeRes.kind === 'Node' && (
+                    <>
+                      <span><ShieldBan size={11} />Cordon</span>
+                      <span><ShieldAlert size={11} />Drain</span>
+                    </>
+                  )}
+                  {['Pod', 'Service'].includes(activeRes.kind) && (
+                    <span><ArrowRightLeft size={11} />Ports</span>
+                  )}
                   <span><GitBranch size={11} />Topology</span>
                 </div>
 
-                <div className="kb-insp-tabs" role="tablist" aria-label="Pod inspector tabs">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={inspectorTab === 'overview'}
-                    onClick={() => setInspectorTab('overview')}
-                  >
-                    Overview
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={inspectorTab === 'related'}
-                    onClick={() => setInspectorTab('related')}
-                  >
-                    Related
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={inspectorTab === 'events'}
-                    onClick={() => setInspectorTab('events')}
-                  >
-                    Events
-                  </button>
+                <div className="kb-insp-tabs" role="tablist" aria-label="Resource inspector tabs">
+                  {availableTabs.map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={inspectorTab === t.id}
+                      onClick={() => setInspectorTab(t.id)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {inspectorTab === 'overview' && (
-                <div className="kb-insp-overview-grid">
-                  {/* Real ProblemsBanner.tsx */}
-                  <div className="kb-problems-banner">
-                    <div className="kb-pb-head">
-                      <AlertCircle size={13} />
-                      <span>WHAT’S WRONG · 1 ISSUE DETECTED</span>
+              <div className="kb-insp-scroll">
+                {inspectorTab === 'overview' && (
+                  <div className="kb-details-stack">
+                    {activeRes.problem && (
+                      <div className="kb-problems-banner">
+                        <div className="kb-pb-head">
+                          <AlertCircle size={13} />
+                          <span>WHAT’S WRONG · 1 ISSUE DETECTED</span>
+                        </div>
+                        <div className="kb-pb-title">{activeRes.problem.title}</div>
+                        <p className="kb-pb-desc">{activeRes.problem.desc}</p>
+                        <div className="kb-pb-hint">
+                          <HelpCircle size={12} />
+                          <span>{activeRes.problem.hint}</span>
+                        </div>
+                        <div className="kb-pb-foot">
+                          <span className="kb-pb-btn">Investigate with AI</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="kb-details-sec">
+                      <div className="kb-details-sec-head">{activeRes.summaryTitle}</div>
+                      <dl className="kb-details-props">
+                        {activeRes.summary.map(row => (
+                          <div key={row.label} className="kb-details-prop-row">
+                            <dt>{row.label}</dt>
+                            <dd>
+                              {row.linkTo ? (
+                                <button
+                                  type="button"
+                                  className="kb-details-link"
+                                  onClick={() => openResource(row.linkTo!)}
+                                >
+                                  {row.value}
+                                </button>
+                              ) : row.pill ? (
+                                <span className="kb-qos-pill">{row.value}</span>
+                              ) : (
+                                row.value
+                              )}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
                     </div>
-                    <div className="kb-pb-title">OOMKilled (Exit Code 137) · Container “worker”</div>
-                    <p className="kb-pb-desc">
-                      The process was killed by Linux OOM killer because memory consumption exceeded the defined container limit.
-                    </p>
-                    <div className="kb-pb-hint">
-                      <HelpCircle size={12} />
-                      <span>Increase “resources.limits.memory” in your Deployment spec.</span>
+
+                    {activeRes.containers && (
+                      <div className="kb-details-sec">
+                        <div className="kb-details-sec-head with-icon">
+                          <Box size={12} />
+                          <span>Containers ({activeRes.containers.length})</span>
+                        </div>
+                        <div className="kb-container-list">
+                          {activeRes.containers.map(c => (
+                            <div key={c.name} className="kb-container-row">
+                              <div className="kb-container-main">
+                                <span className="kb-c-dot" />
+                                <strong className="kb-c-name">{c.name}</strong>
+                                <span className="kb-c-state">{c.state}</span>
+                                <span className="kb-c-restarts">{c.restarts} restarts</span>
+                              </div>
+                              <div className="kb-c-metrics">
+                                <span>CPU <b>{c.cpu}</b></span>
+                                <span>RAM <b>{c.ram}</b></span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {inspectorTab === 'env' && activeRes.env && (
+                  <div className="kb-details-sec">
+                    <div className="kb-details-sec-head">Resolved environment · {activeRes.env.length} variables</div>
+                    <div className="kb-insp-env-list">
+                      {activeRes.env.map(v => (
+                        <div key={v.name} className={v.drifted ? 'kb-insp-env-row drifted' : 'kb-insp-env-row'}>
+                          <div className="kb-insp-env-k">
+                            <code>{v.name}</code>
+                            {v.target ? (
+                              <button
+                                type="button"
+                                className="kb-details-link"
+                                onClick={() => openResource(v.target!)}
+                              >
+                                {v.source}
+                              </button>
+                            ) : (
+                              <span>{v.source}</span>
+                            )}
+                          </div>
+                          <code className={v.secret ? 'kb-insp-env-v masked' : 'kb-insp-env-v'}>
+                            {v.secret && <Lock size={10} />}
+                            {v.value}
+                          </code>
+                        </div>
+                      ))}
                     </div>
-                    <div className="kb-pb-foot">
-                      <span className="kb-pb-btn">
-                        Investigate with AI
+                  </div>
+                )}
+
+                {inspectorTab === 'related' && (
+                  <div className="kb-details-sec">
+                    <div className="kb-details-sec-head split">
+                      <span>Resource relationships</span>
+                      <span className="kb-rel-count">
+                        {filteredRelated.length} matching · {activeRes.related.length} relationships
                       </span>
                     </div>
+                    <div className="kb-related-search-wrap">
+                      <Search size={11} />
+                      <input
+                        type="search"
+                        value={relatedQuery}
+                        onChange={e => setRelatedQuery(e.target.value)}
+                        placeholder="Filter related resources…"
+                        aria-label="Filter related resources"
+                      />
+                    </div>
+                    <div className="kb-related-list">
+                      {filteredRelated.map(row => (
+                        <button
+                          key={`${row.kind}/${row.name}`}
+                          type="button"
+                          disabled={!row.target}
+                          className="kb-related-row"
+                          onClick={() => row.target && openResource(row.target)}
+                        >
+                          {row.dir === 'out' ? <ArrowRight size={11} /> : <ArrowLeft size={11} />}
+                          <MiniKindBadge kind={row.kind} />
+                          <span className="kb-rel-name">{row.name}</span>
+                          <span className="kb-rel-ns">{row.ns}</span>
+                          <span className="kb-rel-label">{row.rel}</span>
+                        </button>
+                      ))}
+                      {!filteredRelated.length && (
+                        <div className="kb-details-empty">No related resources match this filter.</div>
+                      )}
+                    </div>
                   </div>
+                )}
 
-                  {/* Real Pod summary DetailsSection */}
+                {inspectorTab === 'events' && (
                   <div className="kb-details-sec">
-                    <div className="kb-details-sec-head">Pod summary</div>
-                    <dl className="kb-details-props">
-                      <dt>Node</dt>
-                      <dd className="link">node-2b</dd>
-                      <dt>QoS Class</dt>
-                      <dd><span className="kb-qos-pill">Burstable</span></dd>
-                      <dt>Controlled by</dt>
-                      <dd className="link">ReplicaSet/payment-worker-67f98b984</dd>
-                      <dt>Pod IP</dt>
-                      <dd>10.42.0.21</dd>
-                      <dt>Restarts</dt>
-                      <dd className="danger">6 (CrashLoopBackOff)</dd>
-                    </dl>
+                    <div className="kb-details-sec-head split">
+                      <span>Resource events</span>
+                      <span className="kb-rel-count">{activeRes.events.length} events</span>
+                    </div>
+                    <div className="kb-events-list">
+                      {activeRes.events.length ? (
+                        activeRes.events.map((ev, i) => (
+                          <article key={i} className="kb-ev-article">
+                            <div className="kb-ev-head">
+                              <span className={ev.type === 'Warning' ? 'kb-ev-warn' : 'kb-ev-ok'}>{ev.type}</span>
+                              <strong>{ev.reason}</strong>
+                              <span className="kb-ev-cnt">×{ev.count}</span>
+                              <span className="kb-ev-age">{ev.age}</span>
+                            </div>
+                            <p className="kb-ev-msg-full">{ev.msg}</p>
+                            <div className="kb-ev-rep">{ev.reporter}</div>
+                          </article>
+                        ))
+                      ) : (
+                        <div className="kb-details-empty">No events for this object in the loaded snapshot.</div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {inspectorTab === 'related' && (
-                <div className="kb-details-sec">
-                  <div className="kb-details-sec-head">Resource relationships · 6 linked objects</div>
-                  <div className="kb-related-list">
-                    {RELATED_ROWS.map(row => (
-                      <div key={row.name} className="kb-related-row">
-                        {row.dir === 'out' ? <ArrowRight size={11} /> : <ArrowLeft size={11} />}
-                        <MiniKindBadge kind={row.kind} />
-                        <span className="kb-rel-name">{row.name}</span>
-                        <span className="kb-rel-ns">{row.ns}</span>
-                        <span className="kb-rel-label">{row.rel}</span>
-                      </div>
-                    ))}
+                {inspectorTab === 'yaml' && (
+                  <div className="kb-details-sec">
+                    <div className="kb-details-sec-head">Clean YAML · {activeRes.kind}/{activeRes.name}</div>
+                    <pre className="kb-insp-yaml">{activeRes.yaml}</pre>
                   </div>
-                </div>
-              )}
-
-              {inspectorTab === 'events' && (
-                <div className="kb-details-sec">
-                  <div className="kb-details-sec-head">Events · payment-worker-67f98b984-pv4n8</div>
-                  <div className="kb-events-list">
-                    {POD_EVENTS.map((ev, i) => (
-                      <div key={i} className="kb-event-row">
-                        <span className={ev.type === 'Warning' ? 'kb-ev-warn' : 'kb-ev-ok'}>{ev.reason}</span>
-                        <span className="kb-ev-msg">{ev.msg}</span>
-                        <span className="kb-ev-age">{ev.age}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="kb-bento-foot">
@@ -622,7 +1080,7 @@ export function DiagnosticsBento() {
                 <h3>Details that lead somewhere</h3>
               </div>
               <p>
-                Move from root-cause diagnostics and Pod summary properties directly to warning events, linked workloads and topology.
+                Jump directly between failing Pods, ReplicaSets, Nodes, ConfigMaps and related Services with full back navigation.
               </p>
             </div>
           </article>

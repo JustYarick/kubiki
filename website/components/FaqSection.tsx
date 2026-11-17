@@ -32,7 +32,7 @@ export function FaqSection() {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
 
   return (
-    <section className="kb-section kb-section-glow-tl" id="faq">
+    <div className="kb-closing-faq" id="faq">
       <div className="kb-container">
         <div className="kb-faq-wrap">
           <h2>FAQs</h2>
@@ -61,6 +61,6 @@ export function FaqSection() {
           </div>
         </div>
       </div>
-    </section>
+    </div>
   );
 }

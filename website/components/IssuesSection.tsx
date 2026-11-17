@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Bell, Bot, Braces, Eye, EyeOff, FileDiff, FileText, GitBranch, Key, MoreHorizontal, ShieldCheck } from 'lucide-react';
-import mark from '../../public/brand/kubiki-mark-color.svg';
 
 type WorkbenchTab = 'issues' | 'env' | 'yaml';
 
@@ -65,7 +64,6 @@ export function IssuesSection() {
   return (
     <section className="kb-section kb-section-glow-tl" id="capabilities">
       <div className="kb-container">
-        <span className="kb-badge">Resource Workbench</span>
         <div className="kb-split-head">
           <h2>Track failing workloads and config drift</h2>
           <p>
@@ -283,22 +281,31 @@ export function IssuesSection() {
           </div>
         </div>
 
-        <div className="kb-quote-wrap">
-          <div className="kb-quote-box">
-            <div className="kb-quote-marks" aria-hidden="true">
-              <span /><span />
+        <div className="kb-playbook-wrap">
+          <div className="kb-strip-head">
+            <span className="kb-strip-label">Recommended workflow</span>
+            <p>Practical cluster triage sequence built around read-first diagnostics and safe mutations.</p>
+          </div>
+          <div className="kb-playbook-grid">
+            <div className="kb-playbook-step">
+              <span className="kb-step-num">01</span>
+              <h3>Pin context &amp; scope</h3>
+              <p>Select your cluster and namespace before starting terminals or MCP sessions so watches stay bounded.</p>
             </div>
-            <blockquote>
-              Review the exact target, diff and resource version before anything touches your cluster. API acceptance never hides an unhealthy rollout.
-            </blockquote>
-            <div className="kb-quote-author">
-              <div className="kb-quote-avatar">
-                <img src={mark} width="18" height="18" alt="" />
-              </div>
-              <div>
-                <strong>Safe cluster mutations</strong>
-                <span>Explicit confirmation · Bounded scope · Local kubeconfig</span>
-              </div>
+            <div className="kb-playbook-step">
+              <span className="kb-step-num">02</span>
+              <h3>Start from Problems</h3>
+              <p>Click any CrashLoopBackOff or drift signal to jump straight into container metrics, Events and Related owners.</p>
+            </div>
+            <div className="kb-playbook-step">
+              <span className="kb-step-num">03</span>
+              <h3>Keep MCP in Plan mode</h3>
+              <p>Use the default Read-only profile while Claude Code or Codex inspect logs, events and YAML without writes.</p>
+            </div>
+            <div className="kb-playbook-step">
+              <span className="kb-step-num">04</span>
+              <h3>Check diff &amp; UID</h3>
+              <p>Review clean YAML diffs and resourceVersion conflict checks before applying changes to live workloads.</p>
             </div>
           </div>
         </div>

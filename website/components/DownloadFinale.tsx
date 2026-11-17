@@ -16,25 +16,94 @@ type DownloadFinaleProps = {
 };
 
 const GRAPH_NODES = [
-  { x: 145, y: 96, kind: 'Ingress', color: '#73daca' },
-  { x: 430, y: 88, kind: 'Service', color: '#73daca' },
-  { x: 745, y: 155, kind: 'Deployment', color: '#b39aff' },
-  { x: 715, y: 345, kind: 'Pod', color: '#b39aff' },
-  { x: 185, y: 600, kind: 'ConfigMap', color: '#56c8d8' },
-  { x: 525, y: 590, kind: 'Node', color: '#7e9fff' },
-  { x: 1185, y: 90, kind: 'Helm', color: '#4ec9b0' },
-  { x: 1295, y: 604, kind: 'MCP', color: '#3574f0' },
+  { x: 130, y: 260, kind: 'Ingress', color: '#73daca' },
+  { x: 190, y: 465, kind: 'Service', color: '#73daca' },
+  { x: 1290, y: 280, kind: 'Helm', color: '#4ec9b0' },
+  { x: 1245, y: 495, kind: 'Secret', color: '#56c8d8' },
+  { x: 745, y: 710, kind: 'Deployment', color: '#b39aff' },
+  { x: 715, y: 905, kind: 'Pod', color: '#b39aff' },
+  { x: 175, y: 1140, kind: 'ConfigMap', color: '#56c8d8' },
+  { x: 525, y: 1130, kind: 'Node', color: '#7e9fff' },
+  { x: 1295, y: 1135, kind: 'MCP', color: '#3574f0' },
 ];
 
 const GRAPH_EDGES = [
-  { d: 'M 145 96 C 285 96, 290 88, 430 88', color: '#73daca', delay: '0s' },
-  { d: 'M 430 88 C 585 88, 595 155, 745 155', color: '#b39aff', delay: '-0.9s' },
-  { d: 'M 745 155 C 745 250, 715 250, 715 345', color: '#b39aff', delay: '-1.7s' },
-  { d: 'M 185 600 C 355 600, 355 590, 525 590', color: '#56c8d8', delay: '-2.3s' },
-  { d: 'M 525 590 C 625 590, 625 345, 715 345', color: '#7e9fff', delay: '-1.1s' },
-  { d: 'M 1185 90 C 965 90, 965 155, 745 155', color: '#4ec9b0', delay: '-0.5s' },
-  { d: 'M 715 345 C 1005 345, 1005 604, 1295 604', color: '#3574f0', delay: '-1.9s' },
+  { d: 'M 130 260 C 160 360, 160 360, 190 465', color: '#73daca', delay: '0s' },
+  { d: 'M 190 465 C 460 465, 520 710, 745 710', color: '#b39aff', delay: '-0.9s' },
+  { d: 'M 1290 280 C 1270 385, 1270 385, 1245 495', color: '#4ec9b0', delay: '-0.5s' },
+  { d: 'M 1245 495 C 1020 495, 970 710, 745 710', color: '#56c8d8', delay: '-1.5s' },
+  { d: 'M 745 710 C 745 805, 715 805, 715 905', color: '#b39aff', delay: '-1.8s' },
+  { d: 'M 175 1140 C 350 1140, 350 1130, 525 1130', color: '#56c8d8', delay: '-2.3s' },
+  { d: 'M 525 1130 C 625 1130, 625 905, 715 905', color: '#7e9fff', delay: '-1.1s' },
+  { d: 'M 715 905 C 1005 905, 1005 1135, 1295 1135', color: '#3574f0', delay: '-2.0s' },
 ];
+
+export function ClosingConstellation() {
+  return (
+    <svg
+      className="kb-closing-svg"
+      viewBox="0 0 1440 1240"
+      fill="none"
+      preserveAspectRatio="xMidYMid slice"
+      aria-hidden="true"
+    >
+      <defs>
+        <radialGradient id="kbFinaleGlow" cx="38%" cy="74%" r="48%">
+          <stop offset="0%" stopColor="#3574f0" stopOpacity="0.16" />
+          <stop offset="48%" stopColor="#9b7aea" stopOpacity="0.06" />
+          <stop offset="100%" stopColor="#121316" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <rect width="1440" height="1240" fill="url(#kbFinaleGlow)" />
+
+      <g className="kb-finale-edges">
+        {GRAPH_EDGES.map((edge, i) => (
+          <g key={i}>
+            <path d={edge.d} stroke="rgba(255,255,255,0.06)" strokeWidth="1.2" strokeDasharray="4 4" />
+            <path
+              d={edge.d}
+              className="kb-finale-pulse"
+              stroke={edge.color}
+              strokeWidth="1.8"
+              style={{ animationDelay: edge.delay }}
+            />
+          </g>
+        ))}
+      </g>
+
+      <g className="kb-finale-nodes">
+        {GRAPH_NODES.map(node => {
+          const labelW = node.kind.length * 6.8;
+          const groupW = 14 + labelW;
+          const boxW = Math.max(82, Math.ceil(groupW + 28));
+          return (
+            <g key={node.kind} transform={`translate(${node.x}, ${node.y})`}>
+              <rect
+                x={-boxW / 2}
+                y="-15"
+                width={boxW}
+                height="30"
+                rx="5"
+                fill="#1e1f22"
+                stroke="#32353a"
+              />
+              <circle cx={-groupW / 2 + 3.5} cy="0" r="3.5" fill={node.color} opacity="0.85" />
+              <text
+                x={-groupW / 2 + 14}
+                y="4"
+                fill="rgba(223, 225, 229, 0.55)"
+                fontSize="11"
+                fontFamily='"JetBrains Mono Variable", "JetBrains Mono", monospace'
+              >
+                {node.kind}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
 
 export function DownloadFinale({ release, status, platform, selectPlatform }: DownloadFinaleProps) {
   const recommended = preferredDownload(release, platform);
@@ -45,71 +114,7 @@ export function DownloadFinale({ release, status, platform, selectPlatform }: Do
       .sort((a, b) => formatRank.indexOf(a.format) - formatRank.indexOf(b.format) || a.arch.localeCompare(b.arch)) ?? [];
 
   return (
-    <section id="download" className="kb-finale-band">
-      {/* Animated Kubiki Topology Backdrop */}
-      <svg
-        className="kb-finale-svg"
-        viewBox="0 0 1440 680"
-        fill="none"
-        preserveAspectRatio="xMidYMid slice"
-        aria-hidden="true"
-      >
-        <defs>
-          <radialGradient id="kbFinaleGlow" cx="34%" cy="50%" r="55%">
-            <stop offset="0%" stopColor="#3574f0" stopOpacity="0.16" />
-            <stop offset="50%" stopColor="#9b7aea" stopOpacity="0.07" />
-            <stop offset="100%" stopColor="#121316" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <rect width="1440" height="680" fill="url(#kbFinaleGlow)" />
-
-        <g className="kb-finale-edges">
-          {GRAPH_EDGES.map((edge, i) => (
-            <g key={i}>
-              <path d={edge.d} stroke="rgba(255,255,255,0.06)" strokeWidth="1.2" strokeDasharray="4 4" />
-              <path
-                d={edge.d}
-                className="kb-finale-pulse"
-                stroke={edge.color}
-                strokeWidth="1.8"
-                style={{ animationDelay: edge.delay }}
-              />
-            </g>
-          ))}
-        </g>
-
-        <g className="kb-finale-nodes">
-          {GRAPH_NODES.map(node => {
-            const labelW = node.kind.length * 6.8;
-            const groupW = 14 + labelW;
-            const boxW = Math.max(82, Math.ceil(groupW + 28));
-            return (
-              <g key={node.kind} transform={`translate(${node.x}, ${node.y})`}>
-                <rect
-                  x={-boxW / 2}
-                  y="-15"
-                  width={boxW}
-                  height="30"
-                  rx="5"
-                  fill="#1e1f22"
-                  stroke="#32353a"
-                />
-                <circle cx={-groupW / 2 + 3.5} cy="0" r="3.5" fill={node.color} opacity="0.85" />
-                <text
-                  x={-groupW / 2 + 14}
-                  y="4"
-                  fill="rgba(223, 225, 229, 0.55)"
-                  fontSize="11"
-                  fontFamily='"JetBrains Mono Variable", "JetBrains Mono", monospace'
-                >
-                  {node.kind}
-                </text>
-              </g>
-            );
-          })}
-        </g>
-      </svg>
-
+    <div id="download" className="kb-closing-download">
       <div className="kb-container kb-finale-inner">
         <div className="kb-download-copy">
           <div className="kb-download-mark">
@@ -219,6 +224,6 @@ export function DownloadFinale({ release, status, platform, selectPlatform }: Do
           </a>
         </div>
       </div>
-    </section>
+    </div>
   );
 }

@@ -8,7 +8,7 @@ import { ConnectedSection } from './components/ConnectedSection';
 import { IssuesSection } from './components/IssuesSection';
 import { InfrastructureSection } from './components/InfrastructureSection';
 import { FaqSection } from './components/FaqSection';
-import { DownloadFinale } from './components/DownloadFinale';
+import { DownloadFinale, ClosingConstellation } from './components/DownloadFinale';
 
 const REPO = 'https://github.com/JustYarick/kubiki';
 const DOCS = `${REPO}/tree/main/docs`;
@@ -22,7 +22,7 @@ export default function App() {
   const { release, status, platform, selectPlatform } = useDownloads();
   const recommended = preferredDownload(release, platform);
   const downloadLabel = recommended ? `Download for ${OS_LABELS[recommended.os]}` : 'Download Kubiki';
-  const downloadHref = recommended?.url ?? '#download';
+  const downloadHref = '#download';
 
   return (
     <>
@@ -37,8 +37,8 @@ export default function App() {
             <nav aria-label="Main navigation">
               <a href="#diagnostics">Diagnostics</a>
               <a href="#workspace">Workspace</a>
-              <a href="#capabilities">Resources</a>
               <a href="#agents">AI &amp; MCP</a>
+              <a href="#capabilities">Resources</a>
               <a href={DOCS}>
                 Docs <ExternalLink size={12} />
               </a>
@@ -70,18 +70,20 @@ export default function App() {
 
         <ConnectedSection />
 
-        <IssuesSection />
-
         <InfrastructureSection />
 
-        <FaqSection />
+        <IssuesSection />
 
-        <DownloadFinale
-          release={release}
-          status={status}
-          platform={platform}
-          selectPlatform={selectPlatform}
-        />
+        <section className="kb-closing-band" aria-label="Frequently asked questions and downloads">
+          <ClosingConstellation />
+          <FaqSection />
+          <DownloadFinale
+            release={release}
+            status={status}
+            platform={platform}
+            selectPlatform={selectPlatform}
+          />
+        </section>
       </main>
 
       <footer className="kb-footer">

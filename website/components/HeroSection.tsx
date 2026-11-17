@@ -50,13 +50,18 @@ export function HeroSection({ version, downloadLabel, downloadHref, repoUrl }: H
 
       <div className="kb-container kb-hero-inner">
         <div className="kb-hero-copy">
-          <h1>
-            <span className="blur-up">Your cluster.</span>
-            <span className="blur-up blur-up-d1">Finally, in focus.</span>
+          <div className="kb-hero-eyebrow blur-up">
+            <span className="status-dot" />
+            <span>{version ? `${version} · ` : ''}Rust Kubernetes Core · Loopback MCP</span>
+          </div>
+          <h1 className="blur-up blur-up-d1">
+            <span>Your cluster,</span>
+            <span>
+              finally <em className="kb-hero-highlight">in focus.</em>
+            </span>
           </h1>
           <p className="blur-up blur-up-d2">
-            Kubiki is a native Kubernetes workspace built for real investigations.
-            Resource tables, topology, YAML splits, Helm and scoped AI—all in one window.
+            Native desktop workspace for workloads, topology, YAML splits, Helm and scoped AI.
           </p>
           <div className="kb-hero-actions blur-up blur-up-d3">
             <a className="kb-btn kb-btn-primary" href={downloadHref}>
@@ -67,6 +72,13 @@ export function HeroSection({ version, downloadLabel, downloadHref, repoUrl }: H
               <GitFork size={16} />
               <span>{version ? `${version} · GitHub` : 'View on GitHub'}</span>
             </a>
+          </div>
+          <div className="kb-hero-specs blur-up blur-up-d3" aria-label="Workspace highlights">
+            <span>Direct kubeconfig</span>
+            <i aria-hidden="true" />
+            <span>Zero cloud proxy</span>
+            <i aria-hidden="true" />
+            <span>macOS · Windows · Linux</span>
           </div>
         </div>
 

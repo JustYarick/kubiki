@@ -11,26 +11,31 @@ application backend or analytics.
 ## Experience and downloads
 
 The deep JetBrains graphite landing page (`#121316`–`#1e1f22` matching Kubiki's
-desktop shell) aligns every section to one unified `1280px` grid and includes:
+desktop shell) uses bundled `JetBrains Mono Variable` for display headings and
+controls alongside `Inter Variable` body copy, aligns every section to one
+unified `1280px` grid with smooth gradient transitions between bands, and includes:
 
-- A Hero (`HeroSection`) with an animated sweeping beam backdrop (`beam-background`),
-  blur-up typography, platform-aware primary CTA, and a full-width `1280px`
-  demo cluster recording (`overview.webm`/`.mp4`) with a full-screen walkthrough
-  modal across all six scenes.
+- A Hero (`HeroSection`) with a subtle dot grid, animated sweeping beam backdrop
+  (`beam-background`), blur-up typography with a highlighted slogan, compact specs
+  row, platform-aware primary CTA, and a full-width `1280px` demo cluster
+  recording (`overview.webm`/`.mp4`) with a full-screen walkthrough modal across
+  all six scenes.
 - An asymmetric 2:1 / 1:2 diagnostics bento grid (`DiagnosticsBento`) mirroring
   Kubiki's real Cluster Overview (`Summary`, `Compute & memory`, `Pod distribution`),
   `OverviewProblems` severity filter, `LogsSessionPane` severity-stripped and
   structured JSON logs, and Pod `ResourceDetails` inspector (`ProblemsBanner`,
   `Pod summary`, `Related`, `Events`).
-- A uniform 3×3 resource capability grid, crosshair architecture quote, and a
+- A uniform 3×3 resource capability grid, keyboard shortcuts bar, and a
   full-width interactive workspace explorer (`ConnectedSection`) switching across
   all six recorded scenes (`Overview`, `Diagnostics`, `Topology`, `YAML Splits`,
   `Helm`, `AI Agent`).
-- An interactive resource, Environment/Secret drift and YAML diff workbench
-  (`IssuesSection`), a borderless animated Kubiki Topology/MCP flow with
-  interactive `Plan · Read-Only`, `Action · Ask`, and `Action · Auto Accept`
-  policy modes (`InfrastructureSection`), an FAQ accordion (`FaqSection`), and
-  a cluster topology constellation download finale (`DownloadFinale`).
+- A borderless animated Kubiki Topology/MCP flow with interactive
+  `Plan · Read-Only`, `Action · Ask`, and `Action · Auto Accept` policy modes
+  (`InfrastructureSection`), an interactive resource, Environment/Secret drift,
+  YAML diff workbench and triage workflow strip (`IssuesSection`), and a unified
+  closing band merging the full-width FAQ accordion (`FaqSection`) with a rising
+  cluster topology constellation behind the lower FAQ area and download panel
+  (`DownloadFinale`).
 
 All screenshots and video clips use Kubiki's built-in demo cluster (`?demo=1`);
 inline terminal/timeline/env cards are explanatory UI demonstrations.
@@ -40,10 +45,11 @@ played.
 
 On page load, the browser requests GitHub's public latest-release API, validates
 a published stable tag and selects only desktop installer assets. It excludes CLI
-binaries, signatures and updater archives. Links use the actual asset URLs from
-that release; no version or filename is guessed. The primary button downloads the
-matched installer on user action, never automatically on page load. Release updates
-do not require a website rebuild; refresh the page to recheck the latest release.
+binaries, signatures and updater archives. Download buttons in the header and
+Hero scroll directly to `#download`, while cards in the `Get Kubiki` panel use the
+actual asset URLs from that release; no version or filename is guessed. No
+installer downloads automatically on page load. Release updates do not require a
+website rebuild; refresh the page to recheck the latest release.
 
 OS and architecture detection is best effort, with local browser Client Hints where
 available. When architecture is unknown or after switching operating systems

@@ -93,7 +93,6 @@ export function InfrastructureSection() {
   return (
     <section className="kb-section kb-section-glow-tl" id="agents">
       <div className="kb-container">
-        <span className="kb-badge">Architecture &amp; MCP</span>
         <div className="kb-split-head">
           <h2>Built for cluster scale and scoped AI</h2>
           <p>
