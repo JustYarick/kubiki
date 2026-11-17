@@ -152,6 +152,23 @@ fn diagnostic_crds_expose_status_without_values_and_preserve_explicit_denials() 
     assert_eq!(metadata.denied_fields(&target,false,&fields),fields);
     let denied = AgentPolicy { rules:vec![ResourceRule {group:target.group.clone(),kind:target.kind.clone(),namespace:"*".into(),name:"*".into(),read:DataAccess::None,writes:vec![]}],..Default::default() };
     assert!(denied.project(&target,&source,false).is_err());
+    assert_eq!(denied.denied_fields(&target,false,&fields),fields);
+    let pod_target = Target { group:"".into(), version:"v1".into(), kind:"Pod".into(), namespace:Some("apps".into()), name:"web".into() };
+    let restricted = AgentPolicy::default();
+    assert_eq!(
+        restricted.denied_fields(&pod_target, true, &[
+            "metadata.name".into(),
+            "metadata.annotations".into(),
+            "spec.containers[*].command".into(),
+            "spec.containers[*].env[*].value".into(),
+            "spec.containers[*].image".into(),
+        ]),
+        vec![
+            "metadata.annotations".to_string(),
+            "spec.containers[*].command".to_string(),
+            "spec.containers[*].env[*].value".to_string(),
+        ]
+    );
     let excluded = AgentPolicy { denied_paths:vec!["/status/conditions".into()],..Default::default() };
     assert!(excluded.project(&target,&source,false).unwrap()["status"].get("conditions").is_none());
     assert_eq!(excluded.denied_fields(&target,false,&["status.conditions[*].message".into()]),vec!["status.conditions[*].message"]);

@@ -4,15 +4,32 @@ use kubiki_core::metrics::{
     MetricsService,
     budget::{pod_budget, quantity},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+#[derive(Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+enum MetricsKind {
+    #[default]
+    Pod,
+    Node,
+}
+
+impl MetricsKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pod => "Pod",
+            Self::Node => "Node",
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Args {
     namespace: Option<String>,
     name: Option<String>,
-    kind: Option<String>,
+    #[serde(default)]
+    kind: MetricsKind,
     pod_namespaces: Option<Vec<String>>,
 }
 
@@ -28,11 +45,11 @@ impl KubernetesTools {
         if !state.policy.metrics {
             return Err("Metrics are disabled by policy".into());
         }
-        let kind = args.kind.as_deref().unwrap_or("Pod");
-        if !matches!(kind, "Pod" | "Node")
-            || kind == "Pod" && (args.namespace.is_none() || args.pod_namespaces.is_some())
-            || kind == "Node"
-                && (args.namespace.is_some() || args.name.as_deref().is_none_or(str::is_empty))
+        let kind = args.kind;
+        if (kind == MetricsKind::Pod
+            && (args.namespace.is_none() || args.pod_namespaces.is_some()))
+            || (kind == MetricsKind::Node
+                && (args.namespace.is_some() || args.name.as_deref().is_none_or(str::is_empty)))
         {
             return Err("Pod metrics require one namespace; Node metrics require namespace:null and an exact name".into());
         }
@@ -46,7 +63,7 @@ impl KubernetesTools {
         let target = Target {
             group: "".into(),
             version: "v1".into(),
-            kind: kind.into(),
+            kind: kind.as_str().into(),
             namespace: args.namespace.clone(),
             name: args.name.clone().unwrap_or_default(),
         };
@@ -78,7 +95,7 @@ impl KubernetesTools {
             .client
             .clone()
             .ok_or("Cluster connection unavailable")?;
-        if kind == "Pod"
+        if kind == MetricsKind::Pod
             && target.name.is_empty()
             && !state.policy.collection_content_allowed(&target, true)
         {
@@ -86,7 +103,7 @@ impl KubernetesTools {
         }
         let mut metrics = Vec::new();
         let mut has_more = false;
-        if kind == "Pod" {
+        if kind == MetricsKind::Pod {
             let ns = args.namespace.as_deref().unwrap();
             let samples = if target.name.is_empty() {
                 MetricsService::get_pod_metrics(&client, Some(ns)).await

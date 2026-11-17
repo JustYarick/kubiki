@@ -1729,7 +1729,7 @@ impl KubernetesTools {
             return Err("Invalid Event type/reason/pageSize".into());
         }
         let since = if events { args.since_time.as_deref().map(chrono::DateTime::parse_from_rfc3339).transpose().map_err(|_| "Invalid Event sinceTime")? } else { None };
-        let until = args.until_time.as_deref().map(chrono::DateTime::parse_from_rfc3339).transpose().map_err(|_| "Invalid Event untilTime")?;
+        let until = if events { args.until_time.as_deref().map(chrono::DateTime::parse_from_rfc3339).transpose().map_err(|_| "Invalid Event untilTime")? } else { None };
         if since.zip(until).is_some_and(|(start,end)| start > end) { return Err("sinceTime must not be after untilTime".into()); }
         if call.name != "get_events" && call.name != "get_logs" && args.cursor.is_some() {
             return Err("Cursor only applies to get_events or get_logs".into());

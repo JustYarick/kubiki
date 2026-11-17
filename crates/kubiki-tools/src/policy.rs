@@ -436,7 +436,10 @@ impl AgentPolicy {
     pub fn denied_fields(&self, target: &Target, builtin: bool, fields: &[String]) -> Vec<String> {
         fields.iter().filter(|field| {
             let Ok(selection) = crate::FieldSelection::new(&[(*field).clone()]) else { return false; };
-            if self.access(target, builtin) == DataAccess::Metadata && !selection.metadata_only() { return true; }
+            let access = self.access(target, builtin);
+            if access == DataAccess::None || (access == DataAccess::Metadata && !selection.metadata_only()) { return true; }
+            if !self.annotations && selection.has_key("annotations") { return true; }
+            if !self.workload_configuration && selection.has_workload_configuration() { return true; }
             if self.denied_paths.iter().any(|path| crate::FieldSelection::new(&[path.clone()]).is_ok_and(|deny| deny.covers(&selection))) { return true; }
             if !self.allowed_fields.is_empty() && crate::FieldSelection::new(&self.allowed_fields).is_ok_and(|allow| !allow.intersects(&selection)) { return true; }
             if self.configured_access(target, builtin) == DataAccess::Diagnostic {

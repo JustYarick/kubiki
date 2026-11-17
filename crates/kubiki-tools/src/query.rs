@@ -99,6 +99,24 @@ impl FieldSelection {
         }
         covers(&self.0, &other.0)
     }
+    pub fn has_key(&self, target: &str) -> bool {
+        fn visit(node: &Selection, target: &str) -> bool {
+            node.children
+                .iter()
+                .any(|(key, child)| key == target || visit(child, target))
+        }
+        visit(&self.0, target)
+    }
+    pub fn has_workload_configuration(&self) -> bool {
+        fn visit(node: &Selection, in_env: bool) -> bool {
+            node.children.iter().any(|(key, child)| {
+                matches!(key.as_str(), "command" | "args")
+                    || (in_env && key == "value")
+                    || visit(child, in_env || key == "env")
+            })
+        }
+        visit(&self.0, false)
+    }
     pub fn apply(&self, source: &Value) -> Value {
         let mut result = select(source, &self.0).unwrap_or(json!({}));
         // Identity is always taken from the permitted projection, never raw data.
