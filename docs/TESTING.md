@@ -177,3 +177,18 @@ Keep cancellation, late-response isolation, unsaved-data retention, exact mutati
 identity and process/watch/tunnel cleanup covered even when simplifying layout
 or catalog checks. Do not compensate for broken fixtures with retries, sleeps
 or larger timeouts.
+
+
+## Application diagnostics
+
+`application_diagnostics.test.ts` and `diagnostics_transport.test.ts` verify safe field admission,
+secret/message exclusion, rate and retention bounds, failed console output,
+monotonic configuration, late native replies and failed-clear lease continuity.
+`diagnostics.spec.ts` exercises Developer-mode panel registration/removal, severity
+filters, JSONL export, safe console output and a narrow detail overlay.
+Native `diagnostics` tests use real temporary files and synthetic HTTP services:
+rotation/privacy, I/O failure, nonblocking backpressure, lease revocation and
+trace propagation through the actual kube client wrapper. Core `http_diagnostics`
+tests check discovery/resource/subresource routing and query-value exclusion.
+See [the logging guide](DIAGNOSTICS.md#implementation-and-verification) for commands
+and platform limits. No live cluster writes or paid-provider calls are required.

@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import type { ExtensionManifest, Json } from '@kubiki/extension-sdk';
 export interface InstalledExtension {
   manifest: ExtensionManifest;
@@ -27,7 +28,7 @@ export async function extensionRequest<T>(
     throw new Error(
       'Extensions run in the desktop application. Open Kubiki desktop to install or run extensions.',
     );
-  const { invoke } = await import('@tauri-apps/api/core');
+  const invoke = diagnosticInvoke;
   const id = crypto.randomUUID();
   if (signal?.aborted) throw new Error('Request cancelled');
   const cancel = () => {

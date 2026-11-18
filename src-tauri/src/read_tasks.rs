@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{Semaphore, oneshot};
+use tracing::Instrument;
 
 const MAX_PENDING: usize = 128;
 const COMPLETED_HISTORY: usize = 128;
@@ -83,6 +84,34 @@ impl Drop for ReadGuard {
 }
 impl ReadTasks {
     pub async fn run<T, F>(
+        &self,
+        owner: &str,
+        request_id: Option<String>,
+        context: Option<&str>,
+        operation: &str,
+        timeout: Duration,
+        future: F,
+    ) -> Result<T, ApiError>
+    where
+        F: Future<Output = Result<T, ApiError>>,
+    {
+        let mut diagnostic =
+            crate::diagnostics::ReadDiagnostic::start(operation, context, request_id.as_deref());
+        let span = diagnostic
+            .as_ref()
+            .map(|diagnostic| diagnostic.span())
+            .unwrap_or_else(tracing::Span::none);
+        let result = self
+            .run_inner(owner, request_id, context, operation, timeout, future)
+            .instrument(span)
+            .await;
+        if let Some(diagnostic) = diagnostic.as_mut() {
+            diagnostic.finish(&result);
+        }
+        result
+    }
+
+    async fn run_inner<T, F>(
         &self,
         owner: &str,
         request_id: Option<String>,

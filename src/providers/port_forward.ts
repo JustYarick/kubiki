@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import type { ResourceRef } from '../core/resources/resource_types';
 import { normalizeK8sError, requestError, type K8sErrorPayload } from './errors';
 export interface ForwardRequest { resource: ResourceRef; remote_port: number; local_port: number }
@@ -11,7 +12,7 @@ const pending = new Set<() => void>();
 const native = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!native()) throw requestError('unsupported', 'Live port forwarding is available in the desktop app.', { operation: 'port_forward' });
-  const { invoke } = await import('@tauri-apps/api/core');
+  const invoke = diagnosticInvoke;
   try { return await invoke<T>(command, args); } catch (error) { throw normalizeK8sError(error, { operation: 'port_forward' }); }
 }
 export async function startPortForward(request: ForwardRequest, signal: AbortSignal): Promise<ForwardSession> {

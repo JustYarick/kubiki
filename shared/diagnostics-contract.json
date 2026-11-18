@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "levels": {
+    "TRACE": 1,
+    "DEBUG": 5,
+    "INFO": 9,
+    "WARN": 13,
+    "ERROR": 17,
+    "FATAL": 21
+  },
+  "events": {
+    "diagnostics.enabled": true,
+    "operation.started": true,
+    "operation.succeeded": true,
+    "operation.failed": true,
+    "operation.cancelled": true,
+    "operation.slow": true,
+    "watch.started": true,
+    "watch.batch": true,
+    "watch.closed": true,
+    "watch.failed": true,
+    "scope.changed": true,
+    "navigation.changed": true,
+    "runtime.error": true,
+    "runtime.rejection": true,
+    "render.failed": true,
+    "native.tracing": true,
+    "kubernetes.request.started": true,
+    "kubernetes.request.succeeded": true,
+    "kubernetes.request.failed": true,
+    "kubernetes.request.cancelled": true
+  },
+  "attributes": {
+    "text": [
+      "operation",
+      "transport",
+      "context",
+      "namespace",
+      "resource.kind",
+      "resource.name",
+      "resource.uid",
+      "error.code",
+      "exception.type",
+      "outcome",
+      "area",
+      "command",
+      "target",
+      "code.file.name",
+      "watch.phase",
+      "http.request.method",
+      "k8s.api.group",
+      "k8s.api.version",
+      "k8s.resource.plural",
+      "k8s.subresource",
+      "k8s.operation"
+    ],
+    "number": [
+      "duration_ms",
+      "http.response.status_code",
+      "resource.count",
+      "batch.count",
+      "code.line.number",
+      "code.column.number",
+      "dropped.count",
+      "k8s.list.limit"
+    ],
+    "boolean": [
+      "k8s.watch",
+      "k8s.list.paginated"
+    ],
+    "route": "http.route"
+  },
+  "limits": {
+    "memoryRecords": 2000,
+    "frontendEventsPerSecond": 300,
+    "nativeEventsPerSecond": 600,
+    "frontendQueueRecords": 500,
+    "nativeQueueRecords": 512,
+    "journalFileBytes": 2097152,
+    "journalFiles": 3,
+    "textBytes": 160,
+    "routeBytes": 240
+  }
+}

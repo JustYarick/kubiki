@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import type { ResourceRef } from '../core/resources/resource_types';
 import { normalizeK8sError, requestError, type K8sErrorPayload } from './errors';
 import { useUiStore } from '../state/ui_store';
@@ -13,7 +14,7 @@ const active = new Set<() => void>();
 export function closeExecConnections(): void { for (const close of [...active]) close(); }
 export async function resetExecSessions(): Promise<void> {
   closeExecConnections();
-  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) { const { invoke } = await import('@tauri-apps/api/core'); await Promise.all([invoke('stop_pod_execs'), invoke('stop_host_terminals'), invoke('stop_node_debugs')]); }
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) { const invoke = diagnosticInvoke; await Promise.all([invoke('stop_pod_execs'), invoke('stop_host_terminals'), invoke('stop_node_debugs')]); }
 }
 
 /** No automatic reconnect: resending input to a new shell could repeat a destructive command. */
@@ -38,7 +39,7 @@ export async function connectOpenCode(request: OpenCodeRequest, receive: (event:
 }
 export async function getHostTerminalInfo(): Promise<HostTerminalInfo> {
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Local shell is available in the desktop app. Start Kubiki with pnpm tauri dev.', { operation: 'host_terminal' });
-  const { invoke } = await import('@tauri-apps/api/core');
+  const invoke = diagnosticInvoke;
   return invoke<HostTerminalInfo>('get_host_terminal_info');
 }
 async function connectTerminal(request: ExecRequest | HostTerminalRequest | NodeExecRequest | OpenCodeRequest, receive: (event: ExecEvent) => void | Promise<void>, signal: AbortSignal, target: 'pod_exec' | 'host_terminal' | 'node_exec', startCommand = `start_${target}`): Promise<ExecConnection> {
@@ -47,7 +48,7 @@ async function connectTerminal(request: ExecRequest | HostTerminalRequest | Node
   const info = 'resource' in request ? (node ? { operation: 'node_debug', context: request.resource.context } : { operation: isAttach ? 'attach' : 'exec', context: request.resource.context, resource: request.resource }) : { operation: 'host_terminal' };
   const routing = 'debug_session_id' in request ? { debugSessionId: request.debug_session_id } : {};
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Interactive shell is available in the desktop app. Start Kubiki with pnpm tauri dev.', info);
-  const { Channel, invoke } = await import('@tauri-apps/api/core');
+  const { Channel } = await import('@tauri-apps/api/core'); const invoke = diagnosticInvoke;
   let closed = signal.aborted; const id = crypto.randomUUID(); let sequence = 0; let pendingInput = 0;
   let input = Promise.resolve(); let rendering = Promise.resolve();
   const channel = new Channel<ExecBatch>();

@@ -5,6 +5,10 @@ import './App.css';
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useUiStore } from './state/ui_store';
 import { applyAppearance } from './core/appearance';
+import { initializeDiagnostics } from './core/diagnostics/runtime';
+
+const stopDiagnostics = initializeDiagnostics();
+if (import.meta.hot) import.meta.hot.dispose(stopDiagnostics);
 
 // Apply persisted values before the first render, including body portals.
 applyAppearance(document.documentElement, useUiStore.getState());

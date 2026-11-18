@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Developer-mode Application Logs with filtered, virtualized frontend/native events, correlated Kubernetes API request metadata, structured console/stderr output, bounded private JSONL rotation and export. Capture excludes request/response contents and credentials, reports drops and sink failures, and stops when Developer mode is disabled.
+
 - Cluster-wide Helm Overview with release metrics, status distribution, namespace health, chart versions, recent changes and explicit snapshot freshness, independent of the namespace filter. Counts open the shared typed release table with matching filters; the table supports column sorting, layouts and virtualization. Overview navigation uses the common dashboard icon.
 - Flux Kustomization and HelmRelease reconciliation actions alongside the existing reset-and-retry action for exhausted HelmRelease attempts.
 - MCP Pod/Node CPU and RAM usage with requests, limits, capacity, allocatable and explicit coverage for bounded Node reservations.

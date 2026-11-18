@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import { environmentReadTransport, type KubernetesReadTransport } from './read_transport';
 import { queuedRead, type ReadLane } from './read_queue';
 import type { ReadPriority } from './initial_sync_queue';
@@ -55,7 +56,7 @@ export class K8sProvider implements KubernetesProvider {
 
   async resetResourceWatches(): Promise<void> {
     if (!this.isTauriEnv()) return;
-    const { invoke } = await import('@tauri-apps/api/core');
+    const invoke = diagnosticInvoke;
     try { await invoke('stop_resource_watches'); }
     catch (error) { throw normalizeK8sError(error, { operation: 'unwatch' }); }
   }

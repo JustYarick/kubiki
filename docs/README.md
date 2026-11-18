@@ -10,6 +10,7 @@
 - [Extensions](EXTENSIONS.md): installation, management and SDK.
 - [Application updates](APP_UPDATES.md): update channels, installation and preferences.
 - [Local state](LOCAL_STATE.md): persistence and sensitive data.
+- [Application diagnostics](DIAGNOSTICS.md): Developer-mode logs, console/JSONL capture and safe AI debugging.
 
 ## Development
 

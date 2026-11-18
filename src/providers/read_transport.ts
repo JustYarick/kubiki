@@ -1,3 +1,5 @@
+import { startDiagnosticOperation } from '../core/diagnostics/collector';
+import { diagnosticInvoke } from './diagnostic_invoke';
 import { normalizeK8sError, requestError, type RequestInfo } from './errors';
 export interface KubernetesReadTransport {
   readonly native: boolean;
@@ -7,7 +9,7 @@ export class TauriReadTransport implements KubernetesReadTransport {
   readonly native = true;
   async request<T>(command: string, _path: string, args: Record<string, unknown>, _info: RequestInfo, _body?: unknown, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) throw requestError('cancelled', 'Read was cancelled', _info);
-    const { invoke } = await import('@tauri-apps/api/core');
+    const invoke = diagnosticInvoke;
     if (signal?.aborted) throw requestError('cancelled', 'Read was cancelled', _info);
     const requestId = crypto.randomUUID();
     const managed = MANAGED_READS.has(command);
@@ -35,10 +37,11 @@ export class HttpReadTransport implements KubernetesReadTransport {
       if (signal?.aborted) controller.abort();
       signal?.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(abort, path.startsWith('helm/') ? 60000 : 20000);
+      const diagnostic = startDiagnosticOperation(_command, { transport: 'http', context: info.context, namespace: info.resource?.namespace, 'resource.kind': info.resource?.kind });
       try {
         // A signal also bounds reading the response body.
-        response = await fetch(`/api/k8s/${path}?${query}`, { signal: controller.signal, ...(body === undefined ? {} : {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        response = await fetch(`/api/k8s/${path}?${query}`, { signal: controller.signal, headers: diagnostic.trace ? { traceparent: `00-${diagnostic.trace.traceId}-${diagnostic.trace.spanId}-01` } : {}, ...(body === undefined ? {} : {
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...(diagnostic.trace ? { traceparent: `00-${diagnostic.trace.traceId}-${diagnostic.trace.spanId}-01` } : {}) }, body: JSON.stringify(body),
         }) });
         let data: unknown;
         try { data = await response.json(); }
@@ -49,10 +52,12 @@ export class HttpReadTransport implements KubernetesReadTransport {
         if (!response.ok) throw normalizeK8sError(data, info, response.status);
         return data as T;
       } catch (error) {
-        if (controller.signal.aborted) throw requestError(signal?.aborted ? 'cancelled' : 'timeout', signal?.aborted ? 'Read was cancelled' : 'Kubernetes bridge request timed out', info, signal?.aborted ? undefined : 504);
-        if (error instanceof TypeError) throw requestError('unavailable', error.message, info);
-        throw error;
-      } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+        const failure = controller.signal.aborted
+          ? requestError(signal?.aborted ? 'cancelled' : 'timeout', signal?.aborted ? 'Read was cancelled' : 'Kubernetes bridge request timed out', info, signal?.aborted ? undefined : 504)
+          : error instanceof TypeError ? requestError('unavailable', error.message, info) : error;
+        diagnostic.finish(failure);
+        throw failure;
+      } finally { diagnostic.finish(); clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
 }
 const MANAGED_READS = new Set(['ping_cluster', 'get_namespaces', 'get_resources', 'get_resource', 'get_resource_counts', 'get_api_resources', 'get_custom_resources', 'get_custom_resource', 'get_custom_search_inventory', 'get_overview_metrics', 'get_pod_metric', 'get_pod_logs', 'get_helm_inventory', 'get_helm_history', 'get_helm_content', 'list_helm_repositories', 'search_helm_charts']);

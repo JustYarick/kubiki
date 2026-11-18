@@ -14,6 +14,8 @@ import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useTableViewStore } from '../../state/table_view_store';
 import { k8s } from '../../providers/k8s_provider';
+import { diagnosticPanel } from '../../core/diagnostics/runtime';
+import { openWorkspacePanel } from '../../core/workspace_panels';
 import {
   DEFAULT_SCROLLBACK,
   LOG_BUFFER_PRESETS,
@@ -703,6 +705,11 @@ function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
         <Row entry={findEntry('developer.mode')}>
           <Checkbox aria-label="Developer mode" checked={enabled} onChange={event => setEnabled(event.target.checked)} />
         </Row>
+        <p className="text-xs text-[var(--text-muted)] px-3 pb-3">Capture structured application metadata in Application Logs and the console. Desktop capture also writes a private JSONL journal with a 6 MiB rotation limit. Resource contents, credentials and conversation text are excluded.</p>
+        {enabled && <div className="px-3 pb-3"><Button size="sm" onClick={() => {
+          if (!useUiStore.getState().developerMode) return;
+          openWorkspacePanel(diagnosticPanel); useUiStore.getState().setSettingsOpen(false);
+        }}>Open Application Logs</Button></div>}
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import { changeResource, deleteObject } from './mutations';
 import type { ResourceRef } from '../core/resources/resource_types';
 import { toast } from '../state/notifications_store';
@@ -6,13 +7,12 @@ export interface NodeDebugRequest { resource: ResourceRef; namespace: string; im
 export interface NodeDebugResult { session_id: string; pod: ResourceRef; reused: boolean }
 export interface NodeDebugState { phase: string; name: string; namespace: string; detail: string; error?: K8sErrorPayload }
 export interface DebugPod { resource: ResourceRef; node: string; phase: string }
-let sdk: Promise<typeof import('@tauri-apps/api/core')> | undefined;
 /** In-flight preparations; a close must fold a Pod-less lease away from the registry. */
 const pending = new Map<string, () => Promise<void>>();
 export function closeNodeDebugConnections(): void { for (const cancel of [...pending.values()]) void cancel().catch(() => {});pending.clear(); }
 async function native<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   if (!('__TAURI_INTERNALS__' in window)) throw requestError('unsupported', 'Node shell is available in the desktop app.', { operation: 'node_debug' });
-  const { invoke } = await (sdk ??= import('@tauri-apps/api/core'));
+  const invoke = diagnosticInvoke;
   try { return await invoke<T>(command, args); } catch (error) { throw normalizeK8sError(error, { operation: 'node_debug' }); }
 }
 export async function prepareNodeDebug(request: NodeDebugRequest, signal: AbortSignal): Promise<NodeDebugResult> {

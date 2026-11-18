@@ -78,6 +78,23 @@ inspection. Helm inventory does not use Kubernetes YAML/create/delete actions.
 
 Resource table column geometry lives in `src/components/k8s/table/useColumnLayout.ts`. Actual table width is the sum of its columns, so the browser does not redistribute saved widths. Automatic fitting observes the scroll viewport and does not rerun just because the order changed. Resizing anchors its guide to the rendered header and accounts for UI scale and scrolling. `useColumnReorder.ts` uses pointer gestures with a movement threshold, before/after drop indicators and horizontal edge scrolling; resize handles and menu buttons do not initiate reordering. Escape, pointer cancellation, lost capture and unmount release the gesture without saving unfinished changes. Header menus and keyboard resizing remain available as drag alternatives.
 
+### Developer diagnostics
+
+`src/core/diagnostics/` owns the safe local model, bounded frontend collector and
+Developer-mode lifecycle. `src/providers/diagnostic_invoke.ts` observes native IPC
+without serializing arguments/results; `read_transport.ts` observes browser bridge
+reads. `src/providers/diagnostics.ts` owns batched native forwarding and cursor
+polling. `DiagnosticLogsView` is a registered global workbench panel and subscribes
+only while visible. `shared/diagnostics-contract.json` defines the cross-language
+fields, event names, levels and bounds.
+
+`src-tauri/src/diagnostics.rs` owns per-window leases, native record validation,
+tracing metadata projection, memory retention and the rotating JSONL/stderr output
+worker. `kubiki-core/src/cluster/http_diagnostics.rs` observes actual native Kubernetes
+HTTP requests below caches and policy/budget wrappers, preserving cancellation,
+headers and bodies. See [Application diagnostics](DIAGNOSTICS.md) and
+[ADR-014](decisions/014-local-developer-diagnostics.md).
+
 ### Application state
 
 Zustand stores separate workspace state from cached Kubernetes data and session state.
