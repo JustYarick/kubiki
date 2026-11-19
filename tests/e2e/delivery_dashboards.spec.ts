@@ -66,15 +66,17 @@ test('Flux and Argo dashboards expose status filters, inspection and independent
 
 test('Helm summary separates failed and pending operations without losing its revision inspection', async ({ page }) => {
   await fixture(page);
-  await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
+  await page.getByRole('button', { name: 'Open Helm Overview', exact: true }).click();
+  const overview = page.getByTestId('helm-overview');
+  await expect(overview.getByRole('button', { name: 'Releases: 3', exact: true })).toBeVisible();
+  await overview.getByRole('button', { name: 'Failed: 1', exact: true }).click();
   const helm = page.getByTestId('helm-releases');
-  await expect(helm.getByRole('button', { name: /Releases 3/ })).toBeVisible();
-  await helm.getByRole('button', { name: /Failed 1/ }).click();
-  await expect(helm.locator('tbody tr')).toHaveCount(1);
-  await helm.getByRole('button', { name: /In progress 1/ }).click();
-  await expect(helm.locator('tbody tr')).toHaveCount(1);
-  await expect(helm.locator('tbody')).toContainText('pending-upgrade');
-  await expect(helm).toContainText('Complete release inventory');
+  await expect(helm.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
+  await expect(helm).toContainText('failed');
+  await page.getByRole('button', { name: 'Open Helm Overview', exact: true }).click();
+  await overview.getByRole('button', { name: 'In progress: 1', exact: true }).click();
+  await expect(helm.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
+  await expect(helm).toContainText('pending-upgrade');
   await captureScreenshot(page, { path: 'test-results/helm-dashboard.png' });
 });
 
