@@ -72,3 +72,5 @@ Performance contains Pod totals only. A single container list follows it, ordere
 Overview, node and Pod charts display a single measurement as a horizontal preview, explicitly labelled as the first measurement. It remains one sample in the data and tooltip. Once a second measurement arrives, the line joins the real observations, including across pauses or missing measurements. The time axis preserves the elapsed interval. These connecting lines do not add synthetic observations or zeroes; tooltips and sample counts use actual measurements only.
 
 The shared SVG chart measures its rendered area with ResizeObserver and uses the same coordinate scale on both axes. Lines retain their stroke width and markers remain circular on narrow panes and ultrawide monitors. Pointer selection accounts for the chart's plot padding; keyboard arrows and Home/End inspect the same actual observations.
+
+Pod details display configured CPU and RAM requests before the first metrics sample. Pending Pod summaries show assignment, any nominated node and the scheduling condition message. Resource filters and master search disable automatic spelling corrections for resource names.

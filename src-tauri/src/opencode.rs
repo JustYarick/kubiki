@@ -1122,17 +1122,17 @@ mod tests {
             .count()
         };
         let full = AgentPolicy { logs:true, cluster_resources:true, writes:vec![WriteOperation::Create,WriteOperation::Update,WriteOperation::Delete,WriteOperation::Scale,WriteOperation::Restart], ..Default::default() };
-        assert_eq!(count_external(&sanitize_mcp_policy(&full)), 31);
+        assert_eq!(count_external(&sanitize_mcp_policy(&full)), 32);
 
         let mut read_only = full.clone();
         read_only.read_only = true;
-        assert_eq!(count_external(&sanitize_mcp_policy(&read_only)), 27);
+        assert_eq!(count_external(&sanitize_mcp_policy(&read_only)), 28);
 
         let mut explicit_no_writes = full.clone();
         explicit_no_writes.writes.clear();
         let preserved = sanitize_mcp_policy(&explicit_no_writes);
         assert!(preserved.writes.is_empty());
-        assert_eq!(count_external(&preserved), 27);
+        assert_eq!(count_external(&preserved), 28);
     }
     #[test]
     fn installation_requires_an_executable_path_not_a_shell_command() {

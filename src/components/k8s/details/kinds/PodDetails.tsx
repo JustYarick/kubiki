@@ -27,7 +27,8 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
   const nodeSelector: Record<string, string> = spec.nodeSelector ?? {};
 
   // Lens-matching metadata properties
-  const nodeName = spec.nodeName || item.node;
+  const nodeName = spec.nodeName || (item.node === '-' ? undefined : item.node);
+  const scheduler = status.phase === 'Pending' ? status.conditions?.find((c: { type?: string }) => c.type === 'PodScheduled') : undefined;
   const linkedNode = nodeName ? [...resources.Node.values()].find((n) => n.name === nodeName) : undefined;
   const qosClass = status.qosClass || spec.qosClass || item.qosClass || 'Unknown';
   const ownerRef = raw.metadata?.ownerReferences?.[0];
@@ -78,10 +79,17 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
                 {nodeName}
               </button>
             ) : (
-              <span className="font-mono text-[var(--text-secondary)]">{nodeName || '—'}</span>
+              <span className="font-mono text-[var(--text-secondary)]">{nodeName || (status.phase === 'Pending' ? 'Awaiting assignment' : '—')}</span>
             )}
           </dd>
 
+          {status.phase === 'Pending' && !nodeName && status.nominatedNodeName && <>
+            <dt>Nominated node</dt><dd>{status.nominatedNodeName}</dd>
+          </>}
+
+          {scheduler && (scheduler.message || scheduler.reason) && <>
+            <dt>Scheduling</dt><dd className="break-words">{scheduler.message || scheduler.reason}</dd>
+          </>}
           <dt>QoS Class</dt>
           <dd>
             <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono font-medium bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)]">

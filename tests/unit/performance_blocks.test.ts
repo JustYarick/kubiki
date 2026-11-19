@@ -39,7 +39,7 @@ describe('PerformanceBlocks metrics visibility', () => {
     };
   });
 
-  it('hides telemetry-metrics in PodPerformanceBlock when metrics.sample and history are empty', () => {
+  it('shows configured Pod resources while usage samples are unavailable', () => {
     const metricsWithoutData = {
       sample: null,
       history: [],
@@ -60,8 +60,10 @@ describe('PerformanceBlocks metrics visibility', () => {
       })
     );
 
-    // Chart container should NOT be rendered
-    expect(html).not.toContain('telemetry-metrics');
+    expect(html).toContain('Requests');
+    expect(html).toContain('500m');
+    expect(html).toContain('512 MiB');
+    expect(html).not.toContain('CPU usage history');
     // Notice banner should be rendered
     expect(html).toContain('No metrics for this Pod');
     // Fixed scale button and range dropdown should NOT be rendered

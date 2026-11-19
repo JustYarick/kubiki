@@ -255,6 +255,8 @@ pub fn profile_fields(profile: &str) -> Result<Option<Vec<String>>, String> {
                 "metadata.ownerReferences",
             ],
             "health" => &[
+                "spec.nodeName",
+                "status.nominatedNodeName",
                 "metadata.generation",
                 "status.phase",
                 "status.conditions",
@@ -304,6 +306,7 @@ pub fn profile_fields(profile: &str) -> Result<Option<Vec<String>>, String> {
             ],
             "scheduling" => &[
                 "spec.nodeName",
+                "status.nominatedNodeName",
                 "spec.nodeSelector",
                 "spec.affinity",
                 "spec.tolerations",

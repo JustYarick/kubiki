@@ -51,6 +51,9 @@ export function SearchInput({ value, onChange, placeholder, className, size = 'm
     <div className={cx('relative flex items-center', className)}>
       <Search size="calc(13px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
       <input
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
         ref={refCb}
         value={value}
         onChange={(e) => onChange(e.target.value)}

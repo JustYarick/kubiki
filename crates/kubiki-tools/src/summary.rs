@@ -11,7 +11,7 @@ pub struct ResourceSummary {
 }
 impl ResourceSummary {
     pub fn new(group_by: &str) -> Result<Self, String> {
-        if !matches!(group_by, "phase" | "node" | "image" | "health") {
+        if !matches!(group_by, "phase" | "node" | "nodeName" | "image" | "health") {
             return Err("groupBy must be phase, node, image or health".into());
         }
         Ok(Self {
@@ -30,7 +30,7 @@ impl ResourceSummary {
                 .unwrap_or("unknown")
                 .to_owned()]
             .into(),
-            "node" => [item["spec"]["nodeName"]
+            "node" | "nodeName" => [item["spec"]["nodeName"]
                 .as_str()
                 .unwrap_or("unknown")
                 .to_owned()]

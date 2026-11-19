@@ -149,6 +149,11 @@ export class ResourceWatchSession {
           }
         } else throw new Error('Unknown resource watch message');
       }
+      if (!subscription.hasSnapshot && subscription.snapshot && subscription.phase === 'live') {
+        clearTimeout(subscription.flushTimer);
+        this.flush(kind, subscription);
+        return;
+      }
       subscription.flushTimer ??= setTimeout(() => this.flush(kind, subscription), WATCH_FLUSH_MS);
     } catch (error) { this.fail(kind, subscription, normalizeK8sError(error, { operation: 'watch', context: this.context, resource: subscription.query })); }
   }

@@ -14,6 +14,7 @@ pub struct Session {
     cancel: watch::Sender<bool>,
     pub query_cursors: Arc<Mutex<CursorStore>>,
     pub working_scope: Arc<Mutex<WorkingScope>>,
+    pub(crate) metric_history: Arc<Mutex<crate::resource_metrics::MetricHistory>>,
     pub evidence: Arc<Mutex<EvidenceStore>>,
     pub plans: Arc<Mutex<PlanStore>>,
     pub accepted_operations: Arc<Mutex<AcceptedOperations>>,
@@ -58,6 +59,7 @@ impl Session {
                 invalidated: false,
             })),
             query_cursors: Arc::default(),
+            metric_history: Arc::default(),
             evidence: Arc::default(),
             plans: Arc::default(),
             accepted_operations: Arc::default(),
@@ -307,6 +309,7 @@ pub fn parallel_read_tool(name: &str) -> bool {
             | "get_logs"
             | "get_metrics"
             | "list_helm_releases"
+            | "preview_helm_chart"
             | "get_helm_release"
             | "list_argocd_apps"
             | "get_argocd_app"

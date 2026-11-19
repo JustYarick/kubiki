@@ -132,8 +132,25 @@ impl ToolExecutor for DynamicConnectionExecutor {
 pub struct PersistentMcpManager {
     inner: Arc<Mutex<ManagerState>>,
     scope: Arc<StdMutex<AgentScope>>,
+    routing: Arc<StdMutex<ScopeRouting>>,
     policy: Arc<StdMutex<AgentPolicy>>,
     servers: Arc<StdMutex<Vec<kubiki_mcp::ClusterServer>>>,
+}
+
+#[derive(Default)]
+struct ScopeRouting {
+    desktop: AgentScope,
+    pinned_context: Option<String>,
+}
+
+impl ScopeRouting {
+    fn effective(&self) -> AgentScope {
+        let mut scope = self.desktop.clone();
+        if let Some(context) = &self.pinned_context {
+            scope.context = context.clone();
+        }
+        scope
+    }
 }
 
 #[derive(Default)]
@@ -156,6 +173,7 @@ impl Default for PersistentMcpManager {
                 running: None,
             })),
             scope: Arc::new(StdMutex::new(AgentScope::default())),
+            routing: Arc::default(),
             policy: Arc::new(StdMutex::new(crate::opencode::sanitize_mcp_policy(
                 &AgentPolicy::default(),
             ))),
@@ -324,7 +342,20 @@ impl PersistentMcpManager {
     ) -> Result<(), String> {
         settings.mcp_server.validate()?;
         let effective = settings.effective_mcp_policy();
-        self.update_access(&effective)?;
+        {
+            let mut routing = self.routing.lock().map_err(|_| "MCP routing unavailable")?;
+            let pinned = settings
+                .mcp_profiles
+                .iter()
+                .find(|p| Some(&p.id) == settings.active_mcp_profile_id.as_ref())
+                .and_then(|p| p.pinned_context.clone());
+            if routing.pinned_context != pinned {
+                self.rebind(AgentScope::default());
+            }
+            self.update_access(&effective)?;
+            routing.pinned_context = pinned;
+            self.rebind(routing.effective());
+        }
 
         let desired = &settings.mcp_server;
         let token = if desired.enabled && desired.require_auth {
@@ -394,6 +425,13 @@ impl PersistentMcpManager {
     /// Dynamically rebinds active MCP sessions to the newly selected cluster/namespace
     /// without dropping external client connections.
     pub fn set_scope(&self, next: AgentScope) {
+        if let Ok(mut routing) = self.routing.lock() {
+            routing.desktop = next;
+            self.rebind(routing.effective());
+        }
+    }
+
+    fn rebind(&self, next: AgentScope) {
         let changed = if let Ok(mut current) = self.scope.lock() {
             if *current == next {
                 false
@@ -682,6 +720,23 @@ pub async fn ai_mcp_auto_configure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_pin_follows_namespace_but_preserves_desktop_context_for_unpin() {
+        let manager = PersistentMcpManager::default();
+        manager.routing.lock().unwrap().pinned_context = Some("incident".into());
+        let desktop = AgentScope {
+            context: "other".into(),
+            namespaces: vec!["apps".into()],
+            all_namespaces: false,
+        };
+        manager.set_scope(desktop.clone());
+        assert_eq!(manager.scope.lock().unwrap().context, "incident");
+        assert_eq!(manager.scope.lock().unwrap().namespaces, ["apps"]);
+        manager.routing.lock().unwrap().pinned_context = None;
+        manager.set_scope(desktop.clone());
+        assert_eq!(*manager.scope.lock().unwrap(), desktop);
+    }
 
     #[test]
     fn merges_opencode_claude_and_cursor_configs_without_clobbering_user_keys() {

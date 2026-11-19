@@ -31,6 +31,61 @@ struct Args {
     #[serde(default)]
     kind: MetricsKind,
     pod_namespaces: Option<Vec<String>>,
+    history_minutes: Option<u32>,
+    history_end: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Default)]
+pub(crate) struct MetricHistory {
+    samples: std::collections::VecDeque<(u64, String, i64, Value)>,
+}
+
+impl MetricHistory {
+    fn observe(&mut self, revision: u64, metric: &Value) {
+        let (Some(uid), Some(time)) = (metric["uid"].as_str(), metric["timestamp"].as_str()) else {
+            return;
+        };
+        let Ok(time) = chrono::DateTime::parse_from_rfc3339(time) else {
+            return;
+        };
+        let at = time.timestamp_millis();
+        if !metric["usage"].is_object()
+            || self
+                .samples
+                .iter()
+                .rev()
+                .any(|(r, id, t, _)| *r == revision && id == uid && *t == at)
+        {
+            return;
+        }
+        if self.samples.len() >= 4096 {
+            self.samples.pop_front();
+        }
+        self.samples.push_back((
+            revision,
+            uid.into(),
+            at,
+            json!({"timestamp":metric["timestamp"],"usage":metric["usage"]}),
+        ));
+    }
+
+    fn range(&self, revision: u64, uid: &str, minutes: u32, now: i64) -> Vec<Value> {
+        let mut points: Vec<_> = self
+            .samples
+            .iter()
+            .filter(|(r, id, t, _)| {
+                *r == revision && id == uid && (now - i64::from(minutes) * 60000..=now).contains(t)
+            })
+            .collect();
+        points.sort_by_key(|(_, _, t, _)| *t);
+        points
+            .into_iter()
+            .rev()
+            .take(200)
+            .rev()
+            .map(|(_, _, _, v)| v.clone())
+            .collect()
+    }
 }
 
 impl KubernetesTools {
@@ -100,6 +155,77 @@ impl KubernetesTools {
             && !state.policy.collection_content_allowed(&target, true)
         {
             return Err("Per-resource rules require an exact Pod name for metrics; query permitted identities first".into());
+        }
+        if args.history_end.is_some() && args.history_minutes.is_none() {
+            return Err("historyEnd requires historyMinutes".into());
+        }
+        if let Some(minutes) = args.history_minutes {
+            let end = args.history_end.unwrap_or_else(chrono::Utc::now);
+            if end > chrono::Utc::now() {
+                return Err("History end is in the future".into());
+            }
+            if !(1..=1440).contains(&minutes) || target.name.is_empty() {
+                return Err(
+                    "History requires an exact resource name and historyMinutes between 1 and 1440"
+                        .into(),
+                );
+            }
+            let root = self
+                .metric_resource(session, &target)
+                .await
+                .ok_or("Cannot verify the current resource identity")?;
+            let uid = root["metadata"]["uid"]
+                .as_str()
+                .ok_or("Resource UID unavailable")?;
+            if let Some(service) =
+                kubiki_core::metrics::history::configured_service(&session.scope.context)?
+            {
+                // External series contain aggregate usage. Never reconstruct a hidden input.
+                let fields = ["cpu", "memory", "usage", "containers", "timestamp", "uid"];
+                let restricted = !state.policy.allowed_fields.is_empty()
+                    || state.policy.denied_paths.iter().any(|p| {
+                        fields.iter().any(|field| {
+                            let path = format!("/status/metrics/{field}");
+                            path == *p
+                                || path.starts_with(&format!("{p}/"))
+                                || p.starts_with(&format!("{path}/"))
+                        })
+                    });
+                if restricted {
+                    return Err("Historical aggregates require unrestricted metric inputs".into());
+                }
+                let created = root["metadata"]["creationTimestamp"]
+                    .as_str()
+                    .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                    .ok_or("Cannot establish resource creation time for historical series")?;
+                let end = end.timestamp();
+                // CPU uses a five-minute rate; keep its entire window inside the current object's lifetime.
+                let start = (end - i64::from(minutes) * 60).max(created.timestamp() + 301);
+                let samples = if start <= end {
+                    service
+                        .usage(
+                            &client,
+                            target.namespace.as_deref(),
+                            &target.name,
+                            start,
+                            end,
+                        )
+                        .await?
+                } else {
+                    Vec::new()
+                };
+                return Ok(
+                    json!({"kind":kind,"uid":uid,"samples":samples,"units":{"cpu":"cores","memory":"bytes"},"source":"Prometheus","coverage":"Source series for the current resource lifetime. Missing points or dimensions are unknown."}),
+                );
+            }
+            let samples = session
+                .metric_history
+                .lock()
+                .map_err(|_| "Metrics history unavailable")?
+                .range(state.revision, uid, minutes, end.timestamp_millis());
+            return Ok(
+                json!({"kind":kind,"samples":samples,"units":{"cpu":"cores","memory":"bytes"},"coverage":"Up to 200 previously observed Metrics API samples for this resource UID in the current session and scope. Gaps are unknown."}),
+            );
         }
         let mut metrics = Vec::new();
         let mut has_more = false;
@@ -195,6 +321,13 @@ impl KubernetesTools {
                 .unwrap_or(Value::Null);
             metrics.push(project_metric(&state.policy, &target, data)?);
         }
+        let mut history = session
+            .metric_history
+            .lock()
+            .map_err(|_| "Metrics history unavailable")?;
+        for metric in &metrics {
+            history.observe(state.revision, metric);
+        }
         Ok(
             json!({"kind":kind,"metrics":metrics,"hasMore":has_more,"capturedAt":chrono::Utc::now().timestamp_millis(),"units":{"cpu":"cores","memory":"bytes"},"completeness":"partial","coverage":"Current Metrics API samples; requests are scheduler reservations, limits are configured ceilings, null is unbounded or unknown. Node allocations report their own namespace/page/policy coverage; usage includes host processes and is never inferred from Pod sums."}),
         )
@@ -247,6 +380,7 @@ impl KubernetesTools {
         let mut count = 0;
         let mut pages = 0;
         let mut successful_pages = 0;
+        let mut ranked_pods = Vec::new();
         for ns in &names {
             let mut query = json!({"group":"","version":"v1","kind":"Pod","namespace":ns,"fieldSelector":format!("spec.nodeName={name}"),"fields":["metadata","spec.nodeName","spec.containers","spec.initContainers","spec.resources","spec.overhead","status.phase"],"pageSize":50});
             loop {
@@ -293,6 +427,12 @@ impl KubernetesTools {
                         name: pod["metadata"]["name"].as_str().unwrap_or_default().into(),
                     };
                     let known = budgets(&state.policy, &target, pod);
+                    if let (Some(memory), Some(pod_name)) = (
+                        known["memory"]["requests"].as_f64(),
+                        pod["metadata"]["name"].as_str(),
+                    ) {
+                        ranked_pods.push((memory, json!({"namespace":pod["metadata"]["namespace"],"name":pod_name,"uid":pod["metadata"]["uid"],"budgets":known})));
+                    }
                     if known["status"] == "unknown"
                         || known["cpu"]["requests"].is_null()
                         || known["memory"]["requests"].is_null()
@@ -326,7 +466,13 @@ impl KubernetesTools {
         if successful_pages == 0 && !names.is_empty() {
             return json!({"status":"unavailable","namespaces":names,"pages":pages,"activePods":null,"cpu":{"requests":null,"limits":null},"memory":{"requests":null,"limits":null},"reasons":reasons});
         }
-        json!({"status":if complete {"complete"} else {"partial"},"namespaces":names,"pages":pages,"activePods":count,"cpu":{"requests":totals[0][0],"limits":totals[0][1]},"memory":{"requests":totals[1][0],"limits":totals[1][1]},"reasons":reasons})
+        ranked_pods.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let top: Vec<_> = ranked_pods
+            .into_iter()
+            .take(20)
+            .map(|(_, pod)| pod)
+            .collect();
+        json!({"topPodsByMemoryRequest":top,"status":if complete {"complete"} else {"partial"},"namespaces":names,"pages":pages,"activePods":count,"cpu":{"requests":totals[0][0],"limits":totals[0][1]},"memory":{"requests":totals[1][0],"limits":totals[1][1]},"reasons":reasons})
     }
 }
 

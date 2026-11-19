@@ -3,6 +3,18 @@ use kubiki_mcp::{ClusterServer, ConnectionExecutor};
 use kubiki_tools::*;
 use rmcp::ServiceExt;
 use std::{path::PathBuf, sync::Arc};
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConnectionProfile {
+    context: String,
+    #[serde(default)]
+    namespaces: Vec<String>,
+    #[serde(default)]
+    all_namespaces: bool,
+    kubeconfig: Option<PathBuf>,
+    policy: Option<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -21,7 +33,7 @@ async fn run() -> Result<(), String> {
     }
     if command != "serve" {
         eprintln!(
-            "Usage: kubiki-mcp serve --context NAME [--namespace NAME] [--all-namespaces] [--kubeconfig PATH] [--profile PATH]\n       kubiki-mcp attach BOOTSTRAP\nPermissions are owned by the MCP host. Default exposure permits filtered reads only."
+            "Usage: kubiki-mcp serve --context NAME [--namespace NAME] [--all-namespaces] [--kubeconfig PATH] [--profile PATH]\n       kubiki-mcp serve --connections FILE --connection NAME\n       kubiki-mcp attach BOOTSTRAP\nPermissions are owned by the MCP host. Default exposure permits filtered reads only."
         );
         return Ok(());
     }
@@ -30,8 +42,16 @@ async fn run() -> Result<(), String> {
     let mut all = false;
     let mut kubeconfig = None;
     let mut profile = None;
+    let mut connections = None;
+    let mut connection = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--connections" => {
+                connections = Some(PathBuf::from(
+                    args.next().ok_or("Missing connections file")?,
+                ))
+            }
+            "--connection" => connection = Some(args.next().ok_or("Missing connection name")?),
             "--context" => context = Some(args.next().ok_or("Missing context")?),
             "--namespace" => namespaces.push(args.next().ok_or("Missing namespace")?),
             "--all-namespaces" => all = true,
@@ -41,6 +61,32 @@ async fn run() -> Result<(), String> {
             "--profile" => profile = Some(PathBuf::from(args.next().ok_or("Missing profile")?)),
             _ => return Err(format!("Unknown argument {arg}")),
         }
+    }
+    match (connections, connection) {
+        (Some(file), Some(name)) => {
+            if context.is_some()
+                || all
+                || !namespaces.is_empty()
+                || kubeconfig.is_some()
+                || profile.is_some()
+            {
+                return Err(
+                    "Choose either a named connection or explicit connection options".into(),
+                );
+            }
+            let bytes = tokio::fs::read(&file).await.map_err(|e| e.to_string())?;
+            let mut profiles: std::collections::BTreeMap<String, ConnectionProfile> =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            let selected = profiles.remove(&name).ok_or("Unknown connection profile")?;
+            let dir = file.parent().unwrap_or(std::path::Path::new("."));
+            context = Some(selected.context);
+            namespaces = selected.namespaces;
+            all = selected.all_namespaces;
+            kubeconfig = selected.kubeconfig.map(|path| dir.join(path));
+            profile = selected.policy.map(|path| dir.join(path));
+        }
+        (None, None) => {}
+        _ => return Err("Specify both --connections and --connection".into()),
     }
     if !all && namespaces.is_empty() {
         return Err("Specify --namespace or --all-namespaces".into());

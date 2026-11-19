@@ -19,6 +19,7 @@ pub struct McpProfile {
     pub id: String,
     pub name: String,
     pub inherit_shared: bool,
+    pub pinned_context: Option<String>,
     pub policy: AgentPolicy,
 }
 
@@ -27,6 +28,7 @@ impl Default for McpProfile {
         Self {
             id: "read-only".into(),
             name: "Read-only".into(),
+            pinned_context: None,
             inherit_shared: false,
             policy: AgentPolicy::default(),
         }
@@ -43,6 +45,13 @@ impl McpProfile {
                 .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
         {
             return Err("Invalid MCP profile ID".into());
+        }
+        if self.pinned_context.as_ref().is_some_and(|context| {
+            context.trim().is_empty()
+                || context.len() > 4096
+                || context.chars().any(char::is_control)
+        }) {
+            return Err("Invalid pinned MCP context".into());
         }
         let trimmed = self.name.trim();
         if trimmed.is_empty() || self.name.len() > 64 || self.name.chars().any(char::is_control) {
@@ -98,12 +107,14 @@ impl AiSettings {
                 McpProfile {
                     id: "read-only".into(),
                     name: "Read-only".into(),
+                    pinned_context: None,
                     inherit_shared: false,
                     policy: readonly_policy.clone(),
                 },
                 McpProfile {
                     id: "action".into(),
                     name: "Action".into(),
+                    pinned_context: None,
                     inherit_shared: true,
                     policy: action_policy,
                 },

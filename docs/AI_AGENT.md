@@ -305,7 +305,7 @@ byte ceiling can omit logs; no durable log archive or lossless live resume is pr
 `contains`, `pageSize` and log cursors require `lines` mode; existing calls retain
 diagnostic output.
 
-`get_events` pages Events in API order in one namespace. It supports involved
+`get_events` pages Events in API order in the requested namespace scope. It supports involved
 object name/UID, `type` (`Normal`/`Warning`), `reason`, `pageSize` (1–100, default
 50), and inclusive RFC3339 `sinceTime`/`untilTime`. Name/UID/type/reason filters run
 in Kubernetes. Time filters run after policy projection on each bounded page,
@@ -421,8 +421,7 @@ or unknown results do not prove rollout completion or application health.
   children, replacement and unavailable reads are reported; results stay partial.
 - Workload health uses kind-specific replica fields, Job completion/failure,
   CronJob suspension, observed generation and StatefulSet revisions. Missing fields
-  stay unknown/null rather than invented zero/default replicas. Historical metrics
-  and complete child pagination remain pending. Exit 137 alone is not reported as
+  stay unknown/null rather than invented zero/default replicas. Historical metrics require observed session samples or a configured Prometheus source. Complete child pagination remains pending. Exit 137 alone is not reported as
   confirmed OOM, and a normal Completed container is not flagged as a failure.
 - Pod/workload diagnostics now require content access before fetching bodies and
   derive spec/status from the generic policy projection. Children are discovered
@@ -610,9 +609,56 @@ When enabled, independent external sessions (such as OpenCode, Claude Code, Code
 - Bound strictly to `127.0.0.1:<port>` on `/mcp`; non-loopback `Host` headers and requests carrying browser `Origin` headers are always rejected (`403 Forbidden`).
 - Loopback authentication is zero-friction by default; **Require Bearer token (optional on 127.0.0.1)** enables constant-time `Authorization: Bearer <token>` checks (token stored in the OS keyring with a `0o600` `mcp-http.token` fallback in app config if the keyring is unavailable, rotatable via **Regenerate token**).
 - **1-Click Client Auto-Configure** writes the OpenCode V2 `disabled: false` setting and safely merges the `kubiki` entry into `~/.config/opencode/opencode.json`, `~/.claude.json`, or `~/.cursor/mcp.json` without overwriting existing user settings. On Unix, replacement files are private (`0600`, or stricter existing owner permissions), including when a bearer token is enabled.
-- The active **MCP profile**, shared **Permissions & Scope** (when the profile follows shared permissions), and cluster/namespace switching in Kubiki apply live across all connected HTTP MCP sessions without disconnecting external clients.
+- The active **MCP profile**, shared **Permissions & Scope** (when the profile follows shared permissions), and workspace namespace switching apply live across all connected HTTP MCP sessions without disconnecting external clients.
+
+In **MCP Access Profiles → MCP cluster**, select a kubeconfig context to pin the
+HTTP endpoint or choose **Follow workspace cluster**. The workspace namespace
+selection and the active profile's policy still apply.
+
+## Scheduling and incident diagnostics
+
+- `get_pod_diagnostics` returns the assigned `nodeName`, scheduler candidate
+  `nominatedNodeName`, and projected conditions, including scheduler messages.
+  Unassigned Pending Pods can have neither node. Check field access before
+  interpreting omissions. Strings longer than 8,000 characters are marked as truncated.
+- Use `summarize_resources` with `groupBy: "nodeName"` for counts. For the Pods on
+  one node use `list_resources` with `fieldSelector: "spec.nodeName=worker-a"`
+  and `profile: "resources"`. Node `get_metrics` also ranks up to 20 observed Pods by memory request under `allocations.topPodsByMemoryRequest`. Use Pod metrics for measured usage.
+- `get_events` accepts `namespace: "*"` with unrestricted namespace access and
+  no matching per-resource Event rules. Use `uid` to follow one involved object
+  across bounded pages. `list_flux_resources` includes projected conditions for
+  HelmRelease, Kustomization and GitRepository. Saved metadata-only policies
+  require an explicit change to diagnostic access to read status.
+- `get_helm_release` with `storageOnly: true` checks the named release using
+  Helm storage metadata labels; RBAC failures are errors. `preview_helm_chart`
+  takes namespace, release name, chart (`repository/chart`), version and a values
+  object. It runs client-side Helm rendering using a configured HTTPS repository.
+  It requires Release content and resource access and returns policy-projected
+  built-in objects, omitting Secrets and custom resources.
+- For historical usage, pass an exact Pod or Node to `get_metrics` with
+  `historyMinutes` (1–1440) and optional RFC3339 `historyEnd`. The default
+  source retains up to 4,096 observations per session and returns up to 200
+  samples for the current UID and session revision. To query earlier history,
+  set `KUBIKI_PROMETHEUS_SERVICES` on the desktop or stdio host to a JSON map,
+  for example `{"staging":{"namespace":"monitoring","service":"prometheus","port":9090}}`.
+  The selected Kubernetes client needs GET access to that service proxy. Configure
+  a single-cluster HTTP Prometheus endpoint with cAdvisor namespace/pod/container
+  labels and node-exporter series labeled by Kubernetes node name. CPU uses a
+  five-minute rate, Pod memory uses working set, and Node memory uses total minus
+  available. Samples begin after the current object's creation and CPU rate window.
+  Missing series yield gaps. Retention follows the source.
 
 ## Standalone MCP server
+
+Use `kubiki-mcp serve --connections connections.json --connection staging`
+to select a host-owned connection. Each client can start its own named entry.
+Policy and kubeconfig paths are relative to the connections file. Restart that
+client's stdio server with a different name to switch its cluster.
+
+```json
+{"staging":{"context":"staging","namespaces":["apps"],"policy":"staging-policy.json"}}
+```
+
 
 `crates/kubiki-mcp` and `crates/kubiki-tools` run without Tauri or frontend state.
 Desktop sessions use an attached bridge and the desktop connection pool. The

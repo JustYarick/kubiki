@@ -570,12 +570,12 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
   expect(defaultMcpPolicy().writes).toEqual([]);
   const base = { ...defaultMcpPolicy(), logs: true, clusterResources: true, writes: ['create', 'update', 'delete', 'scale', 'restart'] as import('../../src/domains/ai/types').WriteOperation[] };
   const activeAll = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, base));
-  expect(activeAll.length).toBe(31);
+  expect(activeAll.length).toBe(32);
 
-  // Toggling to readOnly blocks all 4 write tools, leaving exactly 27 active read tools
+  // Toggling to readOnly blocks all 4 write tools, leaving exactly 28 active read tools
   const readOnlyPolicy = toggleReadOnlyMcpPolicy(true, base);
   const activeReadOnly = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, readOnlyPolicy));
-  expect(activeReadOnly.length).toBe(27);
+  expect(activeReadOnly.length).toBe(28);
   expect(isToolActiveInPolicy('apply_manifest', readOnlyPolicy)).toBe(false);
   expect(isToolActiveInPolicy('scale_workload', readOnlyPolicy)).toBe(false);
   expect(isToolActiveInPolicy('restart_workload', readOnlyPolicy)).toBe(false);
@@ -627,7 +627,7 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
   expect(configuredNoWrites.writes).toEqual([]);
   expect(isToolActiveInPolicy('apply_manifest', configuredNoWrites)).toBe(false);
   expect(isToolActiveInPolicy('scale_workload', configuredNoWrites)).toBe(false);
-  expect(MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, configuredNoWrites)).length).toBe(27);
+  expect(MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, configuredNoWrites)).length).toBe(28);
 
   // Enabling a tool on the Global tab (phase === undefined) clears phase-specific disable lists for that tool
   const reenabledGlobal = patchToolInPolicy('scale_workload', true, actionDisabledPolicy);

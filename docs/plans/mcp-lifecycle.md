@@ -6,7 +6,8 @@ No delivery date is assigned.
 ## Current implementation
 
 `kubiki-mcp serve` runs independently over stdio. It accepts explicit context,
-namespace scope, kubeconfig and an optional `AgentPolicy` profile. Desktop-attached
+namespace scope, kubeconfig and an optional `AgentPolicy` profile, or a named
+connection from a JSON connections file. Desktop-attached
 clients use a separate bridge and desktop-owned connections. See the
 [current CLI contract](../AI_AGENT.md#standalone-mcp-server).
 

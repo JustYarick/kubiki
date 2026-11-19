@@ -49,6 +49,7 @@ export interface McpProfile {
   id: string;
   name: string;
   inheritShared: boolean;
+  pinnedContext?: string | null;
   policy: AgentPolicy;
 }
 export interface McpHttpStatus {
@@ -264,6 +265,8 @@ export function isToolActiveInPolicy(toolId: string, policy: AgentPolicy, phase?
       return Boolean(policy.events);
     case 'get_metrics':
       return Boolean(policy.metrics);
+    case 'preview_helm_chart':
+      return Boolean(policy.resources) && policy.helm !== 'disabled';
     case 'list_helm_releases':
     case 'get_helm_release':
       return policy.helm !== 'disabled';
@@ -547,6 +550,10 @@ export function patchToolInPolicy(toolId: string, enabled: boolean, policy: Agen
       case 'get_metrics':
         next.metrics = true;
         break;
+      case 'preview_helm_chart':
+        next.resources = true;
+        if (next.helm === 'disabled') next.helm = 'auto';
+        break;
       case 'list_helm_releases':
       case 'get_helm_release':
         if (next.helm === 'disabled') next.helm = 'auto';
@@ -596,6 +603,7 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
   { id: 'get_logs', label: 'Pod logs', group: 'read', description: 'Stream container logs with support for tail lines, timestamps, and previous crash logs' },
   { id: 'get_metrics', label: 'Pod and Node metrics', group: 'read', description: 'Read CPU/RAM usage, requests, limits and bounded Node allocations' },
   { id: 'list_helm_releases', label: 'List Helm releases', group: 'read', description: 'List deployed Helm releases across permitted namespaces' },
+  { id: 'preview_helm_chart', label: 'Preview Helm chart', group: 'read', description: 'Render a repository chart with supplied values' },
   { id: 'get_helm_release', label: 'Get Helm release', group: 'read', description: 'Inspect Helm release values, revision history, release manifest, and chart metadata' },
   { id: 'list_argocd_apps', label: 'List Argo CD apps', group: 'read', description: 'List Argo CD applications, sync status, and destination clusters' },
   { id: 'get_argocd_app', label: 'Get Argo CD app', group: 'read', description: 'Argo CD application health, sync state, Git source repo, revision, and managed resource tree' },

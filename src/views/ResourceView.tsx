@@ -199,15 +199,17 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
 
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const tableResources = useMemo(() => source ? { ...resources, [effectiveKind]: new Map(source.items.map(item => [item.uid, item])) } : resources, [resources, effectiveKind, source?.items]);
-  const { allItems, rows, columnValues, statusValues } = useResourceTableModel({ resources: tableResources, effectiveKind, tableColumns, selectedNamespace, searchQuery: deferredSearchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
+  const { allItems, rows, columnValues, getStatusValues } = useResourceTableModel({ resources: tableResources, effectiveKind, tableColumns, selectedNamespace, searchQuery: deferredSearchQuery, searchRegex, columnFilters, sorts, hiddenColumns, columnOrder, isConnected, isLoading, activeFilterColumnId: filterMenu?.colId ?? null });
   useEffect(() => {
+    if (!sorts.some(key => key.columnId === 'status' && key.statusFirst)) return;
+    const statusValues = getStatusValues();
     if (!statusValues.length) return;
     setSorts(previous => {
       const current = previous.find(key => key.columnId === 'status');
       if (!current?.statusFirst || statusValues.includes(current.statusFirst)) return previous;
       return previous.map(key => key === current ? { ...key, statusFirst: statusValues[0] } : key);
     });
-  }, [statusValues]);
+  }, [getStatusValues, sorts]);
   const tableError = source ? source.error : loadError;
   const pending = source ? source.loading : !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
@@ -311,6 +313,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
     setSorts((previous) => {
       const index = previous.findIndex((key) => key.columnId === colId);
       if (colId === 'status') {
+        const statusValues = getStatusValues();
         const choices = statusValues.length ? statusValues : ['—'];
         if (index === -1) return [...previous, { columnId: colId, direction: 'asc', statusFirst: choices[0] }];
         const current = previous[index];

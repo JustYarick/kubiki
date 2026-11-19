@@ -65,6 +65,7 @@ const ALWAYS_ASK_TOOLS = [
   ['get_logs', 'Get logs'],
   ['get_metrics', 'Get metrics'],
   ['list_helm_releases', 'List Helm releases'],
+  ['preview_helm_chart', 'Preview Helm chart'],
   ['get_helm_release', 'Get Helm release'],
   ['list_argocd_apps', 'List Argo CD applications'],
   ['get_argocd_app', 'Get Argo CD application'],

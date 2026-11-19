@@ -979,6 +979,91 @@ impl KubernetesTools {
         if call.name == "get_pvc_diagnostics" {
             return self.read_pvc_diagnostics(session, call, client).await;
         }
+        if call.name == "preview_helm_chart" {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                namespace: String,
+                name: String,
+                chart: String,
+                version: String,
+                values: Value,
+            }
+            let args: Args = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| "Invalid Helm preview arguments")?;
+            let release = Target {
+                group: "helm.sh".into(),
+                version: "v1".into(),
+                kind: "Release".into(),
+                namespace: Some(args.namespace.clone()),
+                name: args.name.clone(),
+            };
+            state.policy.check_scope(&session.scope, &release)?;
+            if !state.policy.resources
+                || !state.policy.is_helm_active(&state.capabilities)
+                || state.policy.access(&release, false) != DataAccess::Content
+            {
+                return Err(
+                    "Helm preview requires resource and Helm Release content access".into(),
+                );
+            }
+            let read = async {
+                let yaml = kubiki_core::helm::reader::HelmReader::default().preview(&session.scope.context, &args.namespace, &args.name, &args.chart, &args.version, &args.values).await
+                    .map_err(|_| "Helm render failed; check repository, version, values and Helm availability")?;
+                let mut items = Vec::new();
+                let mut omitted = 0;
+                for document in serde_yaml::Deserializer::from_str(&yaml) {
+                    let value =
+                        Value::deserialize(document).map_err(|_| "Invalid rendered manifest")?;
+                    if value.is_null() {
+                        continue;
+                    }
+                    let kind = value["kind"]
+                        .as_str()
+                        .ok_or("Rendered resource has no kind")?;
+                    let Some(def) = kubiki_core::core::api::resource_type(kind) else {
+                        omitted += 1;
+                        continue;
+                    };
+                    let api = value["apiVersion"].as_str().unwrap_or("");
+                    let (group, version) = api.split_once('/').unwrap_or(("", api));
+                    if group != def.group || version != def.version || kind == "Secret" {
+                        omitted += 1;
+                        continue;
+                    }
+                    let target = Target {
+                        group: group.into(),
+                        version: version.into(),
+                        kind: kind.into(),
+                        namespace: def.namespaced.then(|| {
+                            value["metadata"]["namespace"]
+                                .as_str()
+                                .unwrap_or(&args.namespace)
+                                .into()
+                        }),
+                        name: value["metadata"]["name"].as_str().unwrap_or("").into(),
+                    };
+                    if validate_target(&target, true).is_err()
+                        || state.policy.check_scope(&session.scope, &target).is_err()
+                        || state.policy.access(&target, true) == DataAccess::None
+                    {
+                        omitted += 1;
+                        continue;
+                    }
+                    items.push(state.policy.project(&target, &value, true)?);
+                }
+                bounded_result(
+                    json!({"items":items,"omitted":omitted,"source":"client-side Helm template"}),
+                )
+            };
+            return timed_read(
+                session,
+                "Helm preview cancelled",
+                "Helm preview timed out",
+                read,
+            )
+            .await;
+        }
         if call.name == "list_helm_releases" {
             return self.list_helm_releases(session, call, client).await;
         }
@@ -1030,7 +1115,7 @@ impl KubernetesTools {
                 "profile".into(),
                 json!(match group.as_str() {
                     "image" => "images",
-                    "node" => "scheduling",
+                    "node" | "nodeName" => "scheduling",
                     _ => "health",
                 }),
             );
@@ -1754,7 +1839,27 @@ impl KubernetesTools {
             namespace: Some(args.namespace.clone()),
             name: args.name.clone().unwrap_or_default(),
         };
-        validate_target(&target, call.name == "get_logs")?;
+        let all_events = call.name == "get_events" && args.namespace == "*";
+        if all_events {
+            if !session.scope.all_namespaces
+                || !state.policy.namespaces.iter().any(|scope| scope == "*")
+                || state.policy.rules.iter().any(|rule| {
+                    crate::policy::matches(&rule.kind, "Event")
+                        && crate::policy::matches(&rule.group, "")
+                })
+            {
+                return Err("All-namespace Events require unrestricted Event namespace access; choose an explicit namespace".into());
+            }
+            validate_target(
+                &Target {
+                    namespace: None,
+                    ..target.clone()
+                },
+                false,
+            )?;
+        } else {
+            validate_target(&target, call.name == "get_logs")?;
+        }
         state.policy.check_scope(&session.scope, &target)?;
         let read = async {
             if call.name == "get_logs" {
@@ -1877,10 +1982,15 @@ impl KubernetesTools {
                     group: target.group.clone(),
                     version: target.version.clone(),
                     kind: target.kind.clone(),
-                    namespace: target.namespace.clone(),
+                    namespace: if all_events {
+                        None
+                    } else {
+                        target.namespace.clone()
+                    },
                 };
                 let reader =
-                    kubiki_core::core::access::ResourceAccess::new(client, &query, false).await?;
+                    kubiki_core::core::access::ResourceAccess::new(client, &query, all_events)
+                        .await?;
                 let mut filters = Vec::new();
                 if !target.name.is_empty() {
                     filters.push(format!("involvedObject.name={}", target.name));
@@ -2223,11 +2333,13 @@ impl KubernetesTools {
                 "phase": phase,
                 "ownerReferences": projected["metadata"].get("ownerReferences"),
                 "nodeName": node_name,
+                "nominatedNodeName": status.get("nominatedNodeName"),
                 "podIP": pod_ip,
                 "hostIP": host_ip,
                 "restartPolicy": restart_policy,
                 "issuesSummary": issues,
                 "conditions": conditions_summary,
+                "fieldAccess": field_access_report(&state.policy, &target, true, Some(&["spec.nodeName".into(), "status.nominatedNodeName".into(), "status.conditions".into()])),
                 "initContainers": init_containers,
                 "containers": containers,
             }))
@@ -2836,6 +2948,8 @@ impl KubernetesTools {
         struct Args {
             namespace: String,
             name: String,
+            #[serde(default, rename = "storageOnly")]
+            storage_only: bool,
         }
         let args: Args = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid get_helm_release arguments")?;
@@ -2850,13 +2964,14 @@ impl KubernetesTools {
             namespace: Some(args.namespace.clone()),
             name: args.name.clone(),
         };
+        validate_target(&target, true)?;
         state.policy.check_scope(&session.scope, &target)?;
 
         let access = state.policy.access(&target, false);
         if access == DataAccess::None {
             return Err("Helm release access is denied by policy".into());
         }
-        if access == DataAccess::Metadata {
+        if access == DataAccess::Metadata || args.storage_only {
             let query = ResourceQuery {
                 context: session.scope.context.clone(),
                 group: "".into(),
@@ -2881,6 +2996,13 @@ impl KubernetesTools {
                     .as_str()
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(0);
+                if args.storage_only
+                    && (rev == 0
+                        || storage["metadata"]["name"]
+                            != format!("sh.helm.release.v1.{}.v{rev}", args.name))
+                {
+                    continue;
+                }
                 let value = json!({
                     "apiVersion": "helm.sh/v1",
                     "kind": "Release",
@@ -2897,6 +3019,13 @@ impl KubernetesTools {
                 if latest.as_ref().is_none_or(|(old, _)| rev > *old) {
                     latest = Some((rev, projected));
                 }
+            }
+            if args.storage_only {
+                return bounded_result(json!({
+                    "storagePresent": if latest.is_some() { Some(true) } else if page.continuation.is_none() { Some(false) } else { None },
+                    "metadata": latest.map(|(_, value)| value["metadata"].clone()),
+                    "hasMore": page.continuation.is_some()
+                }));
             }
             let (revision, projected) =
                 latest.ok_or("Helm release not found in namespace")?;
@@ -3046,11 +3175,19 @@ impl KubernetesTools {
                     if page["hasMore"] == true {
                         unavailable.push(format!("{kind}: additional pages"));
                     }
+                    if page["fieldAccess"]["denied"]
+                        .as_array()
+                        .is_some_and(|fields| {
+                            fields.iter().any(|field| field == "status.conditions")
+                        })
+                    {
+                        unavailable.push(format!("{kind}: status.conditions denied by policy"));
+                    }
                     for item in page["items"].as_array().ok_or("Invalid Flux page")? {
                         let ready = item["status"]["conditions"]
                             .as_array()
                             .and_then(|cs| cs.iter().find(|c| c["type"] == "Ready"));
-                        items.push(json!({"kind":kind,"name":item["metadata"]["name"],"namespace":item["metadata"]["namespace"],"ready":ready.map(|c|&c["status"]),"message":ready.map(|c|&c["message"]),"suspended":item["spec"]["suspend"],"lastAppliedRevision":item["status"]["lastAppliedRevision"],"lastAttemptedRevision":item["status"]["lastAttemptedRevision"],"artifact":item["status"]["artifact"]}));
+                        items.push(json!({"kind":kind,"name":item["metadata"]["name"],"namespace":item["metadata"]["namespace"],"conditions":item["status"]["conditions"],"ready":ready.map(|c|&c["status"]),"message":ready.map(|c|&c["message"]),"suspended":item["spec"]["suspend"],"lastAppliedRevision":item["status"]["lastAppliedRevision"],"lastAttemptedRevision":item["status"]["lastAttemptedRevision"],"artifact":item["status"]["artifact"]}));
                     }
                 }
                 Err(_) => unavailable.push(format!("{kind}: unavailable or denied")),

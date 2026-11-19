@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MCP cluster selection per HTTP profile and named standalone connections with independent scope and policy.
+- Incident diagnostics for nominated Pod nodes, Flux conditions, node grouping, cross-namespace Events, Helm storage checks and client-side chart previews.
+- Historical Pod and Node CPU/memory reads from session observations or a configured Prometheus service.
+
 - Developer-mode Application Logs with filtered, virtualized frontend/native events, correlated Kubernetes API request metadata, structured console/stderr output, bounded private JSONL rotation and export. Capture excludes request/response contents and credentials, reports drops and sink failures, and stops when Developer mode is disabled.
 
 - Cluster-wide Helm Overview with release metrics, status distribution, namespace health, chart versions, recent changes and explicit snapshot freshness, independent of the namespace filter. Counts open the shared typed release table with matching filters; the table supports column sorting, layouts and virtualization. Overview navigation uses the common dashboard icon.
@@ -35,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated the project website with bundled JetBrains Mono Variable display typography, concise Hero copy with `#download` anchor links, a unified FAQ and Get Kubiki constellation closing band with smooth section gradients, reordered MCP topology and resource workbench sections without redundant labels, keyboard and triage workflow bars, and a non-scrolling interactive Pod inspector card.
 
 ### Fixed
+
+- Pod requests remain visible without usage samples. Pending Pod summaries include scheduler placement details.
+- Resource name filters disable spelling corrections. Ready watch snapshots appear immediately and idle status sorting skips an initial table scan.
 
 - Limit Pod Environment tab Secret status notices to unresolved or restricted `env`/`envFrom` references while moving volume Secret availability indicators to Pod `Overview` and `Related`.
 - Allow direct Helm upgrade, rollback and uninstall for Flux-managed releases while preserving backend confirmation.

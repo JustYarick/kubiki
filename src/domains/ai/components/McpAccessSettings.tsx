@@ -3,6 +3,8 @@ import { Copy, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { Input } from '../../../components/ui/Input';
+import { Select } from '../../../components/ui/Select';
+import { useClusterStore } from '../../../state/cluster_store';
 import { useAiStore } from '../store';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 import {
@@ -30,6 +32,7 @@ export function McpAccessSettings({
   onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void;
   onResetActionChange?: (action: AgentSettingsResetAction | null) => void;
 } = {}) {
+  const contexts = useClusterStore(state => state.contexts);
   const settings = useAiStore(s => s.settings);
   const saving = useAiStore(s => s.saving);
   const { profiles, activeId, activeProfile } = ensureMcpProfiles(settings);
@@ -239,7 +242,7 @@ export function McpAccessSettings({
       const next = updateAiMcpSettings(cur, {
         profiles: [
           ...ensured.profiles,
-          { id: nextId, name: nextName, inheritShared: false, policy: nextPolicy },
+          { id: nextId, name: nextName, inheritShared: false, policy: nextPolicy, pinnedContext: mode === 'duplicate' ? ensured.activeProfile.pinnedContext : null },
         ],
         activeProfileId: nextId,
       });
@@ -445,7 +448,7 @@ export function McpAccessSettings({
         </div>
 
         <p className="ai-help">
-          Binds strictly to <code>127.0.0.1</code> with Host validation and browser <code>Origin</code> rejection, dynamically routing tool calls to whichever cluster &amp; namespace are active in Kubiki without dropping connections.
+          Binds strictly to <code>127.0.0.1</code> with Host validation and browser <code>Origin</code> rejection, dynamically routing tool calls to the selected MCP cluster and workspace namespace scope without dropping connections.
         </p>
 
         <div className="ai-field-row">
@@ -596,6 +599,15 @@ export function McpAccessSettings({
         </div>
 
         <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-wrap items-end gap-3">
+          <label className="ai-field w-56">
+            MCP cluster
+            <Select aria-label="MCP cluster" value={activeProfile.pinnedContext ?? ''} disabled={saving || !desktopAiAvailable()}
+              onChange={event => void updateActiveProfileMeta({ pinnedContext: event.target.value || null }, 'MCP cluster updated.')}>
+              <option value="">Follow workspace cluster</option>
+              {activeProfile.pinnedContext && !contexts.some(c => c.name === activeProfile.pinnedContext) && <option>{activeProfile.pinnedContext}</option>}
+              {contexts.map(context => <option key={context.name}>{context.name}</option>)}
+            </Select>
+          </label>
           <label className="ai-field w-56">
             Profile name
             <Input

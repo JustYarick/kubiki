@@ -122,3 +122,25 @@ async fn missing_ownership_remains_unknown() {
         .unwrap();
     assert!(result["ownerReferences"].is_null());
 }
+
+#[tokio::test]
+async fn pending_pod_preserves_nomination_and_scheduler_explanation() {
+    let session = session(vec![]);
+    let message = "insufficient memory; ".repeat(30);
+    let pod = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent-abcde","namespace":"apps"},"status":{"phase":"Pending","nominatedNodeName":"candidate","conditions":[{"type":"PodScheduled","status":"False","message":message}]}});
+    let result = tools(&session, pod)
+        .execute(
+            &session,
+            &ToolCall {
+                id: "placement".into(),
+                name: "get_pod_diagnostics".into(),
+                arguments: json!({"namespace":"apps","name":"agent-abcde"}),
+            },
+            &(Arc::new(|_| {}) as EventSink),
+        )
+        .await
+        .unwrap();
+    assert!(result["nodeName"].is_null());
+    assert_eq!(result["nominatedNodeName"], "candidate");
+    assert_eq!(result["conditions"][0]["message"], message);
+}
