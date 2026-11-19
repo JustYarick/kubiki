@@ -14,6 +14,7 @@ use tokio::{
     sync::{Mutex, mpsc},
     task::JoinHandle,
 };
+use tracing::Instrument;
 
 pub const WATCH_QUEUE_CAPACITY: usize = 256;
 // Below kube-rs' default 295s read timeout. Watch renewal resumes the current RV;
@@ -184,9 +185,12 @@ impl InformerManager {
         let store = self.store.clone();
         let (tx, rx) = mpsc::channel(WATCH_QUEUE_CAPACITY);
         let task_scope = scope.clone();
-        let handle = tokio::spawn(async move {
-            run_watch(store, task_scope, filter, client, tx).await;
-        });
+        let handle = tokio::spawn(
+            async move {
+                run_watch(store, task_scope, filter, client, tx).await;
+            }
+            .in_current_span(),
+        );
         active.insert(
             key,
             ActiveWatch {

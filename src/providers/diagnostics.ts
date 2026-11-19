@@ -75,7 +75,7 @@ export function createDiagnosticTransport() {
         const status = await invoke<NativeDiagnosticStatus & { cleared: boolean }>('diagnostics_clear', { epoch });
         if (current !== generation) return;
         epoch = status.epoch;
-        diagnostics.nativeStatus({ nativeIoFailures: status.ioFailures, nativeFileReady: false });
+        diagnostics.nativeStatus({ nativeIoFailures: status.ioFailures, nativeFileReady: status.journalAvailable });
         if (!status.cleared) throw new Error('Diagnostic files could not be cleared');
       } finally { if (current === generation) { active = true; schedule(); } }
     },

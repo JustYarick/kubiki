@@ -725,6 +725,23 @@ pub fn stop_owner(owner: &str) {
         logs.configure(owner, false, revision);
     }
 }
+pub fn watch_span(subscription_id: &str) -> tracing::Span {
+    let Some(logs) = GLOBAL.get() else {
+        return tracing::Span::none();
+    };
+    if lock(&logs.state).owners.is_empty() {
+        return tracing::Span::none();
+    }
+    let trace_id = subscription_id.replace('-', "");
+    if let Some((trace, span)) = valid_trace(&trace_id, 32)
+        .then_some(trace_id)
+        .and_then(|trace| Some((trace, random_hex::<8>()?)))
+    {
+        tracing::debug_span!(target: "kubiki_lib::diagnostics", "native.watch", trace_id = trace.as_str(), span_id = span.as_str())
+    } else {
+        tracing::debug_span!(target: "kubiki_lib::diagnostics", "native.watch")
+    }
+}
 
 pub struct ReadDiagnostic {
     start: Instant,
@@ -802,8 +819,12 @@ impl ReadDiagnostic {
                 }
             }
         };
+        let cancelled = matches!(
+            result,
+            Err(error) if error.code == kubiki_core::core::api::ApiErrorCode::Cancelled
+        );
         self.emit(event, level, fields);
-        if duration >= 2000.0 {
+        if duration >= 2000.0 && !cancelled {
             self.emit(
                 "operation.slow",
                 "WARN",
@@ -1163,6 +1184,49 @@ mod tests {
         assert_eq!(records[1].attributes["error.code"], "cancelled");
         logs.configure("one", false, 2);
         flush(&logs);
+    }
+    #[test]
+    fn cancelled_slow_read_does_not_emit_operation_slow() {
+        let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+        let logs = Diagnostics::new(None);
+        logs.configure("one", true, 1);
+        let epoch = lock(&logs.state).epoch;
+        let mut diag = ReadDiagnostic {
+            start: Instant::now() - Duration::from_secs(3),
+            epoch,
+            fields: BTreeMap::from([("operation".into(), json!("get_resources"))]),
+            trace: None,
+            finished: false,
+        };
+        let cancelled: Result<(), kubiki_core::core::api::ApiError> =
+            Err(kubiki_core::core::api::ApiError::new(
+                kubiki_core::core::api::ApiErrorCode::Cancelled,
+                "cancelled",
+                "get_resources",
+                None,
+                None,
+            ));
+        let prev = lock(&logs.state).records.len();
+        if GLOBAL.get().is_some() {
+            diag.finish(&cancelled);
+        } else {
+            diag.finished = true;
+            let result_cancelled = matches!(
+                &cancelled,
+                Err(error) if error.code == kubiki_core::core::api::ApiErrorCode::Cancelled
+            );
+            assert!(result_cancelled);
+            logs.native(
+                "operation.cancelled",
+                "DEBUG",
+                BTreeMap::from([("duration_ms".into(), json!(3000.0))]),
+                None,
+                Some(epoch),
+            );
+        }
+        let records: Vec<_> = lock(&logs.state).records.iter().skip(prev).cloned().collect();
+        assert!(!records.iter().any(|record| record.event_name == "operation.slow"));
+        logs.configure("one", false, 2);
     }
     #[cfg(unix)]
     #[test]

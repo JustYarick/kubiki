@@ -12,7 +12,9 @@ function dispatch<T>(invoke: Invoke, command: string, args?: Record<string, unkn
   const call = () => args === undefined ? invoke<T>(command) : invoke<T>(command, args);
   // No per-keystroke telemetry. Diagnostics must never recursively observe itself.
   if (/^(write_|ack_|resize_|diagnostics_)/.test(command)) return call();
-  const operation = startDiagnosticOperation(command, { transport: 'tauri', context: args?.context }, typeof args?.requestId === 'string' ? args.requestId : undefined);
+  const queryContext = typeof args?.query === 'object' && args.query !== null ? (args.query as Record<string, unknown>).context : undefined;
+  const traceId = typeof args?.requestId === 'string' ? args.requestId : typeof args?.subscriptionId === 'string' ? args.subscriptionId : undefined;
+  const operation = startDiagnosticOperation(command, { transport: 'tauri', context: args?.context ?? queryContext }, traceId);
   try {
     return call().then(result => { operation.finish(); return result; }, error => { operation.finish(error); throw error; });
   } catch (error) { operation.finish(error); return Promise.reject(error); }

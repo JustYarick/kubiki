@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDiagnosticTransport, type NativeDiagnosticStatus } from '../../src/providers/diagnostics';
+import { diagnosticInvoke } from '../../src/providers/diagnostic_invoke';
 import { diagnostics } from '../../src/core/diagnostics/collector';
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => native);
@@ -46,4 +47,16 @@ it('returns to live polling with the new lease when clearing files fails', async
   await expect(transport.clearSaved()).rejects.toThrow('could not be cleared');
   await vi.advanceTimersByTimeAsync(250);
   expect(native.invoke).toHaveBeenLastCalledWith('diagnostics_exchange', expect.objectContaining({ epoch: 2 }));
+});
+it('preserves journal availability after clearing saved logs and correlates watch_resources', async () => {
+  await transport.configure(true);
+  native.invoke.mockImplementationOnce(async () => ({ ...status(true, 2), cleared: true }));
+  await transport.clearSaved();
+  expect(diagnostics.getSnapshot().nativeFileReady).toBe(true);
+  const subscriptionId = '11111111-2222-3333-4444-555555555555';
+  await diagnosticInvoke('watch_resources', { query: { context: 'testbed' }, subscriptionId });
+  const watchRecords = diagnostics.getRecords().filter(record => record.attributes.operation === 'watch_resources');
+  expect(watchRecords).toHaveLength(2);
+  expect(watchRecords[0].attributes.context).toBe('testbed');
+  expect(watchRecords[0].traceId).toBe(subscriptionId.replace(/-/g, ''));
 });
