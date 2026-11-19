@@ -5,6 +5,7 @@ import { useResourceStore } from '../../../../state/resource_store';
 import { Button } from '../../../ui/Button';
 import { Input } from '../../../ui/Input';
 import { cpuText, memoryText, quantity } from '../../../../core/resources/quantities';
+import { podNodeInfo, podNodeSourceLabel } from '../../../../core/resources/pod_node';
 
 interface NodePodsBlockProps {
   item: ResourceItem;
@@ -22,16 +23,20 @@ export function NodePodsBlock({ item, onNavigate }: NodePodsBlockProps) {
   const capacity = status.capacity ?? {};
 
   // Find all pods scheduled on this node (using memoization for fast performance in 10,000+ pod clusters)
-  const podsOnNode = useMemo(() => {
-    if (!podMap) return [];
-    const list: ResourceItem[] = [];
+  const { podsOnNode, pendingTargetPods } = useMemo(() => {
+    if (!podMap) return { podsOnNode: [] as ResourceItem[], pendingTargetPods: [] as Array<{ pod: ResourceItem; source: string }> };
+    const bound: ResourceItem[] = [];
+    const targeted: Array<{ pod: ResourceItem; source: string }> = [];
     const nodeName = item.name;
     for (const pod of podMap.values()) {
-      if (pod.node === nodeName || (pod.raw as any)?.spec?.nodeName === nodeName) {
-        list.push(pod);
+      const info = podNodeInfo(pod);
+      if (info.assigned === nodeName) {
+        bound.push(pod);
+      } else if (!info.assigned && info.pendingNode === nodeName) {
+        targeted.push({ pod, source: podNodeSourceLabel(info.pendingSource) });
       }
     }
-    return list;
+    return { podsOnNode: bound, pendingTargetPods: targeted };
   }, [podMap, item.name]);
 
   // Compute resource allocation
@@ -215,6 +220,47 @@ export function NodePodsBlock({ item, onNavigate }: NodePodsBlockProps) {
           )}
         </div>
       </section>
+
+      {pendingTargetPods.length > 0 && (
+        <section aria-label="Pending pods targeting this node" className="details-section">
+          <div className="details-section-heading bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Box size="calc(13px * var(--ui-factor))" className="text-[var(--status-warn)]" />
+              <span className="text-xs font-semibold text-[var(--text-primary)]">
+                Pending pods targeting this node ({pendingTargetPods.length})
+              </span>
+            </div>
+            <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">
+              Not yet scheduled
+            </span>
+          </div>
+          <div className="p-2 space-y-1.5 max-h-[240px] overflow-y-auto kubiki-scrollbar">
+            {pendingTargetPods.map(({ pod, source }) => (
+              <div
+                key={pod.uid}
+                className="flex items-center justify-between gap-2 p-1.5 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-xs hover:border-[var(--border-default)] transition-colors"
+              >
+                <div className="min-w-0 flex-1 flex flex-col">
+                  <button
+                    type="button"
+                    className="details-link font-medium text-left truncate"
+                    onClick={() => onNavigate(pod)}
+                    title={pod.name}
+                  >
+                    {pod.name}
+                  </button>
+                  <span className="text-[10px] text-[var(--text-muted)] truncate">
+                    {pod.namespace || 'default'} · {source}
+                  </span>
+                </div>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0 bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  {pod.status || 'Pending'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

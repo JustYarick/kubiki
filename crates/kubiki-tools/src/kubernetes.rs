@@ -352,10 +352,9 @@ impl ToolExecutor for KubernetesTools {
             return self.execute_inner(session, call, emit).await;
         }
         if self.budget.expired()
-            && !matches!(
-                call.name.as_str(),
-                "get_evidence" | "get_plan" | "resource_catalog"
-            )
+            && !(matches!(call.name.as_str(), "get_evidence" | "get_plan")
+                || (call.name == "cluster_info"
+                    && matches!(call.arguments["view"].as_str(), None | Some("session"))))
         {
             return Err("AI read deadline exhausted".into());
         }
@@ -419,10 +418,11 @@ impl KubernetesTools {
         }
         if call.name == "propose_manifests" {
             #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
             struct Proposal {
                 title: String,
                 yaml: String,
+                dry_run: Option<bool>,
             }
             let proposal: Proposal = serde_json::from_value(call.arguments.clone())
                 .map_err(|_| "Invalid proposal arguments")?;
@@ -436,9 +436,170 @@ impl KubernetesTools {
             if docs.is_empty() || docs.iter().any(|d| !d.is_object()) {
                 return Err("Provide YAML resource documents".into());
             }
-            return Ok(
-                json!({"proposal":true,"title":proposal.title,"yaml":proposal.yaml,"executed":false}),
-            );
+            if proposal.dry_run != Some(true) {
+                return Ok(
+                    json!({"proposal":true,"title":proposal.title,"yaml":proposal.yaml,"executed":false}),
+                );
+            }
+            let mut results = Vec::new();
+            let can_server_dry_run = self.client.is_some()
+                && state.policy.resources
+                && state.phase == AgentPhase::Action
+                && state.mode != AgentMode::ReadOnly
+                && !state.policy.read_only;
+            for doc in &docs {
+                let api_version = match doc["apiVersion"].as_str() {
+                    Some(v) => v,
+                    None => {
+                        results.push(json!({"valid":false,"stage":"schema","error":"apiVersion is required"}));
+                        continue;
+                    }
+                };
+                let (group, version) = api_version.split_once('/').unwrap_or(("", api_version));
+                let kind = match doc["kind"].as_str() {
+                    Some(k) => k,
+                    None => {
+                        results.push(json!({"valid":false,"stage":"schema","error":"kind is required"}));
+                        continue;
+                    }
+                };
+                let name = match doc["metadata"]["name"].as_str() {
+                    Some(n) => n,
+                    None => {
+                        results.push(json!({"valid":false,"stage":"schema","error":"metadata.name is required"}));
+                        continue;
+                    }
+                };
+                let target = Target {
+                    group: group.into(),
+                    version: version.into(),
+                    kind: kind.into(),
+                    namespace: doc["metadata"]["namespace"].as_str().map(str::to_owned),
+                    name: name.into(),
+                };
+                if let Err(err) = validate_target(&target, true)
+                    .and_then(|_| state.policy.check_scope(&session.scope, &target))
+                    .and_then(|_| reject_privileged_manifest(doc))
+                    .and_then(|_| check_manifest_data_access(doc, &state.policy, &session.scope, &target))
+                {
+                    results.push(json!({"target":target,"valid":false,"stage":"policy","error":err}));
+                    continue;
+                }
+                if doc["spec"]["replicas"]
+                    .as_u64()
+                    .is_some_and(|n| n > u64::from(state.policy.max_replicas))
+                {
+                    results.push(json!({"target":target,"valid":false,"stage":"policy","error":"Manifest replica count exceeds the AI policy limit"}));
+                    continue;
+                }
+                if target.kind == "HorizontalPodAutoscaler"
+                    && doc["spec"]["maxReplicas"]
+                        .as_u64()
+                        .is_some_and(|n| n > u64::from(state.policy.max_replicas))
+                {
+                    results.push(json!({"target":target,"valid":false,"stage":"policy","error":"HPA maximum replicas exceeds the AI policy limit"}));
+                    continue;
+                }
+                let Some(client) = self.client.clone() else {
+                    results.push(json!({"target":target,"valid":true,"serverDryRun":false,"note":"Validated against Kubiki policy locally; no cluster connection available for live dry-run"}));
+                    continue;
+                };
+                if !state.policy.resources {
+                    results.push(json!({"target":target,"valid":true,"serverDryRun":false,"note":"Validated against Kubiki policy locally; resource reads are disabled"}));
+                    continue;
+                }
+                let query = ResourceQuery {
+                    context: session.scope.context.clone(),
+                    group: target.group.clone(),
+                    version: target.version.clone(),
+                    kind: target.kind.clone(),
+                    namespace: target.namespace.clone(),
+                };
+                let (api, builtin, _ar) = match kubiki_core::core::access::resolve_api(client, &query, false).await {
+                    Ok(resolved) => resolved,
+                    Err(err) => {
+                        results.push(json!({"target":target,"valid":false,"stage":"discovery","error":err}));
+                        continue;
+                    }
+                };
+                let write_permitted = can_server_dry_run
+                    && (state
+                        .policy
+                        .check_write(state.mode, &session.scope, &target, WriteOperation::Create)
+                        .is_ok()
+                        || state
+                            .policy
+                            .check_write(state.mode, &session.scope, &target, WriteOperation::Update)
+                            .is_ok());
+                if !write_permitted {
+                    results.push(json!({
+                        "target": target,
+                        "valid": true,
+                        "apiDiscovered": true,
+                        "serverDryRun": false,
+                        "note": "Validated locally against policy and live API discovery. Server-side dry-run requires Action phase with write permission enabled (ReadOnly/Plan never sends non-GET API requests)."
+                    }));
+                    continue;
+                }
+                let patch_params = kube::api::PatchParams::apply("kubiki-dry-run").dry_run();
+                match tokio::time::timeout(
+                    Duration::from_secs(15),
+                    api.patch(&target.name, &patch_params, &kube::api::Patch::Apply(doc)),
+                )
+                .await
+                {
+                    Ok(Ok(obj)) => {
+                        let preview = if state.policy.access(&target, builtin) != DataAccess::None {
+                            serde_json::to_value(obj)
+                                .ok()
+                                .and_then(|v| state.policy.project(&target, &v, builtin).ok())
+                        } else {
+                            None
+                        };
+                        results.push(json!({
+                            "target": target,
+                            "valid": true,
+                            "apiDiscovered": true,
+                            "serverDryRun": true,
+                            "preview": preview
+                        }));
+                    }
+                    Ok(Err(kube::Error::Api(err))) => {
+                        let safe_message = if target.kind == "Secret"
+                            || state.policy.access(&target, builtin) != DataAccess::Content
+                        {
+                            format!("Dry-run rejected (HTTP {}, {})", err.code, err.reason)
+                        } else {
+                            let bounded_msg: String = err.message.chars().take(500).collect();
+                            format!("Dry-run rejected (HTTP {}, {}): {}", err.code, err.reason, bounded_msg)
+                        };
+                        results.push(json!({
+                            "target": target,
+                            "valid": false,
+                            "apiDiscovered": true,
+                            "serverDryRun": true,
+                            "status": err.code,
+                            "reason": err.reason,
+                            "error": safe_message
+                        }));
+                    }
+                    Ok(Err(_)) => {
+                        results.push(json!({"target":target,"valid":false,"serverDryRun":true,"error":"Server-side dry-run failed; check cluster connectivity and permissions"}));
+                    }
+                    Err(_) => {
+                        results.push(json!({"target":target,"valid":false,"serverDryRun":true,"error":"Server-side dry-run timed out"}));
+                    }
+                }
+            }
+            let all_valid = results.iter().all(|r| r["valid"] == true);
+            return bounded_result(json!({
+                "proposal": true,
+                "title": proposal.title,
+                "executed": false,
+                "dryRun": true,
+                "valid": all_valid,
+                "results": results
+            }));
         }
         if call.name == "propose_plan" {
             let args: PlanProposal = serde_json::from_value(call.arguments.clone())
@@ -701,394 +862,37 @@ impl KubernetesTools {
                 json!({"workingScope":*working,"allowedScope":session.scope,"permissionsChanged":false}),
             );
         }
+        if call.name == "cluster_info" {
+            return self.execute_cluster_info(session, call).await;
+        }
         let client = self
             .client
             .clone()
             .ok_or("Start a conversation bound to a Kubernetes context to use cluster tools")?;
-        if call.name == "resource_catalog" {
-            #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct Args { discover:Option<bool>, group:Option<String>, page:Option<usize> }
-            let args:Args=serde_json::from_value(call.arguments.clone()).map_err(|_|"Invalid catalog arguments")?;
-            if args.group.as_ref().is_some_and(|g|g.len()>253 || !g.bytes().all(|b|b.is_ascii_alphanumeric() || b".-".contains(&b))) {return Err("Invalid API group".into());}
-            let mut resources=Vec::new();
-            if args.discover==Some(true) {
-                let mut discovery=kube::discovery::Discovery::new(client);
-                if let Some(group)=&args.group {discovery=discovery.filter(&[group.as_str()]);}
-                let discovery=discovery.run().await.map_err(|_|"API discovery unavailable")?;
-                for group in discovery.groups() {
-                    for (ar,caps) in group.resources_by_stability() {
-                        if !ar.plural.contains('/') && caps.supports_operation("get") {
-                            resources.push(json!({"group":ar.group,"version":ar.version,"kind":ar.kind,"plural":ar.plural,"namespaced":caps.scope==kube::discovery::Scope::Namespaced}));
-                        }
-                    }
-                }
-            } else {
-                resources=resource_types().iter().filter(|r|args.group.as_ref().is_none_or(|g|g==&r.group)).map(|r|json!(r)).collect();
-            }
-            resources.sort_by_key(|r|r.to_string()); resources.dedup();
-            let start=args.page.unwrap_or(0).checked_mul(100).ok_or("Catalog page overflow")?;
-            let has_more=start.saturating_add(100)<resources.len();
-            return bounded_result(json!({"resources":resources.into_iter().skip(start).take(100).collect::<Vec<_>>(),"hasMore":has_more,"nextPage":if has_more {Some(args.page.unwrap_or(0)+1)} else {None},"coverage":if args.discover==Some(true){"Live API discovery snapshot; object access still requires policy/RBAC"}else{"Built-in registry; use discover=true for CRDs"}}));
-        }
-        if call.name == "list_namespaces" {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Args {
-                cursor: Option<String>,
-                page_size: Option<u32>,
-            }
-            let args: Args = serde_json::from_value(call.arguments.clone())
-                .map_err(|_| "Invalid namespace query")?;
-            let size = args.page_size.unwrap_or(200);
-            if !(1..=200).contains(&size)
-                || !state
-                    .policy
-                    .contexts
-                    .iter()
-                    .any(|p| crate::matches(p, &session.scope.context))
-            {
-                return Err("Namespace query is outside policy or page limits".into());
-            }
-            let mut binding = call.arguments.clone();
-            binding.as_object_mut().unwrap().remove("cursor");
-            let binding = json!({"tool":"list_namespaces","arguments":binding});
-            let pending = if let Some(cursor) = &args.cursor {
-                Some(
-                    session
-                        .query_cursors
-                        .lock()
-                        .map_err(|_| "Cursor store unavailable")?
-                        .load(cursor, &binding, state.revision)?,
-                )
-            } else {
-                None
-            };
-            let read = async {
-                let mut page = match pending {
-                    Some(page) => page,
-                    None => QueryPage {
-                        items: Vec::new(),
-                        continuation: None,
-                        captured_at: stamp(),
-                        omitted: 0,
-                    },
-                };
-                if page.items.is_empty() {
-                    let names = if session.scope.all_namespaces {
-                        let target = Target {
-                            group: "".into(),
-                            version: "v1".into(),
-                            kind: "Namespace".into(),
-                            namespace: None,
-                            name: "".into(),
-                        };
-                        let reader = resource_access(client, &target).await?;
-                        let mut params = ListParams::default().limit(size);
-                        if let Some(token) = &page.continuation {
-                            params = params.continue_token(token);
-                        }
-                        let fetched = reader.page(&params, true).await.map_err(query_list_error)?;
-                        page.continuation = fetched.continuation;
-                        fetched
-                            .items
-                            .into_iter()
-                            .filter_map(|v| v["metadata"]["name"].as_str().map(str::to_owned))
-                            .collect::<Vec<_>>()
-                    } else {
-                        session.scope.namespaces.clone()
-                    };
-                    page.captured_at = stamp();
-                    for name in names {
-                        if !state
-                            .policy
-                            .namespaces
-                            .iter()
-                            .any(|p| crate::matches(p, &name))
-                        {
-                            page.omitted += 1;
-                            continue;
-                        }
-                        let target = Target {
-                            group: "".into(),
-                            version: "v1".into(),
-                            kind: "Namespace".into(),
-                            namespace: None,
-                            name: name.clone(),
-                        };
-                        let source =
-                            json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":name}});
-                        if let Ok(projected) = state.policy.project(&target, &source, true) {
-                            if let Some(name) = projected["metadata"]["name"].as_str() {
-                                page.items.push(json!(name));
-                                continue;
-                            }
-                        }
-                        page.omitted += 1;
-                    }
-                }
-                let captured_at = page.captured_at;
-                let omitted = page.omitted;
-                let tail = page
-                    .items
-                    .split_off(std::cmp::min(size as usize, page.items.len()));
-                let names = std::mem::replace(&mut page.items, tail);
-                page.omitted = 0;
-                let more = !page.items.is_empty() || page.continuation.is_some();
-                let cursor = if more {
-                    Some(
-                        session
-                            .query_cursors
-                            .lock()
-                            .map_err(|_| "Cursor store unavailable")?
-                            .save(binding, state.revision, page)?,
-                    )
-                } else {
-                    None
-                };
-                Ok(
-                    json!({"source":if session.scope.all_namespaces {"kubernetesMetadata"}else{"conversationScope"},"namespaces":names,"hasMore":more,"cursor":cursor,"capturedAt":captured_at,"omittedByPolicy":omitted,"completeness":if more||omitted>0 {"partial"}else{"complete"},"coverage":"Namespace names only, projected by allowed scope and policy; missing names do not prove absence"}),
-                )
-            };
-            return timed_read(session, "Namespace discovery cancelled", "Namespace discovery timed out", read).await;
-        }
         if call.name == "get_metrics" {
             let result = timed_read(session, "Metrics read cancelled", "Metrics read timed out", self.resource_metrics(session, call)).await?;
             return bounded_result(result);
         }
-        if [
-            "get_logs",
-            "get_events",
-            "get_events_timeline",
-        ]
-        .contains(&call.name.as_str())
-        {
+        if matches!(call.name.as_str(), "get_logs" | "get_events") {
             return self.read_diagnostic(session, call, client).await;
         }
-        if call.name == "get_neighborhood" { return self.neighborhood(session, call.arguments.clone()).await; }
-        if call.name == "diagnose_resource" { return self.diagnose_resource(session, call.arguments.clone()).await; }
-        if call.name == "get_pod_diagnostics" {
-            return self.read_pod_diagnostics(session, call, client).await;
+        if call.name == "get_neighborhood" {
+            return self.neighborhood(session, call.arguments.clone()).await;
         }
-        if call.name == "get_workload_diagnostics" {
-            return self.read_workload_diagnostics(session, call, client).await;
+        if call.name == "diagnose_resource" {
+            return self.diagnose_resource(session, call.arguments.clone()).await;
         }
-        if call.name == "get_node_diagnostics" {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Args {
-                name: String,
-            }
-            let args: Args =
-                serde_json::from_value(call.arguments.clone()).map_err(|_| "Invalid Node query")?;
-            let page=self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":"Node","namespace":null,"name":args.name,"fields":["spec.unschedulable","spec.taints","status.conditions","status.capacity","status.allocatable"]})).await?;
-            return bounded_result(
-                json!({"node":node_diagnostics(&page["resource"]),"evidence":{"context":session.scope.context,"kind":"Node","name":page["resource"]["metadata"]["name"],"uid":page["resource"]["metadata"]["uid"],"capturedAt":page["capturedAt"],"completeness":"partial"}}),
-            );
+        if call.name == "helm" {
+            return self.execute_helm(session, call, client).await;
         }
-        if call.name == "get_config_diagnostics" {
-            let args: ResourceArgs = serde_json::from_value(call.arguments.clone())
-                .map_err(|_| "Invalid configuration query")?;
-            if !matches!(
-                args.kind.as_str(),
-                "Pod"
-                    | "Deployment"
-                    | "StatefulSet"
-                    | "DaemonSet"
-                    | "ReplicaSet"
-                    | "Job"
-                    | "CronJob"
-            ) {
-                return Err("Configuration diagnostics supports Pods and workloads".into());
-            }
-            let fields = [
-                "spec",
-                "spec.template.spec",
-                "spec.jobTemplate.spec.template.spec",
-            ]
-            .into_iter()
-            .flat_map(|prefix| {
-                [
-                    "containers[*].name",
-                    "containers[*].envFrom",
-                    "containers[*].env[*].valueFrom",
-                    "initContainers[*].name",
-                    "initContainers[*].envFrom",
-                    "initContainers[*].env[*].valueFrom",
-                    "volumes[*].configMap",
-                    "volumes[*].secret",
-                    "imagePullSecrets",
-                ]
-                .into_iter()
-                .map(move |field| format!("{prefix}.{field}"))
-            })
-            .collect::<Vec<_>>();
-            let page=self.linked_read(session,"get_resource",json!({"group":args.group,"version":args.version,"kind":args.kind,"namespace":args.namespace,"name":args.name,"fields":fields})).await?;
-            let root = &page["resource"];
-            let pod_spec = if args.kind == "Pod" {
-                &root["spec"]
-            } else if args.kind == "CronJob" {
-                &root["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-            } else {
-                &root["spec"]["template"]["spec"]
-            };
-            let references = config_reference_diagnostics(pod_spec);
-            let mut checks = Vec::new();
-            let mut examined = 0;
-            let mut seen = std::collections::BTreeSet::new();
-            for (key, kind) in [("configMaps", "ConfigMap"), ("secrets", "Secret")] {
-                for reference in references[key].as_array().into_iter().flatten() {
-                    if examined >= 20 {
-                        break;
-                    }
-                    let Some(name) = reference["name"].as_str() else {
-                        continue;
-                    };
-                    if !seen.insert((
-                        kind.to_owned(),
-                        name.to_owned(),
-                        reference["key"].as_str().map(str::to_owned),
-                    )) {
-                        continue;
-                    }
-                    examined += 1;
-                    let target = Target {
-                        group: "".into(),
-                        version: "v1".into(),
-                        kind: kind.into(),
-                        namespace: args.namespace.clone(),
-                        name: name.into(),
-                    };
-                    let content = state.policy.access(&target, true) == DataAccess::Content;
-                    let fields = if content && reference["key"].is_string() {
-                        json!(["data", "binaryData"])
-                    } else {
-                        json!(["metadata.name"])
-                    };
-                    match self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":kind,"namespace":args.namespace,"name":name,"fields":fields})).await {
-                        Ok(found)=>{let item=&found["resource"];let key=reference["key"].as_str();let present=key.is_some_and(|key|item["data"].get(key).is_some()||item["binaryData"].get(key).is_some());checks.push(json!({"kind":kind,"name":name,"key":key,"object":"observed","keyStatus":if present{"present"}else{"unknownOrMissing"},"capturedAt":found["capturedAt"]}));}
-                        Err(error)=>checks.push(json!({"kind":kind,"name":name,"object":if error.contains("HTTP 404"){"notFound"}else{"unavailableOrDenied"},"reason":error})),
-                    }
-                }
-            }
-            return bounded_result(
-                json!({"references":references,"checks":checks,"examined":examined,"evidence":{"context":session.scope.context,"kind":args.kind,"namespace":args.namespace,"name":args.name,"capturedAt":page["capturedAt"],"completeness":"partial","coverage":"Projected references and at most 20 distinct exact checks; secret/configuration values are never returned, absent/filtered keys remain unknown"}}),
-            );
-        }
-        if call.name == "get_service_diagnostics" {
-            return self.read_service_diagnostics(session, call, client).await;
-        }
-        if call.name == "get_pvc_diagnostics" {
-            return self.read_pvc_diagnostics(session, call, client).await;
-        }
-        if call.name == "preview_helm_chart" {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Args {
-                namespace: String,
-                name: String,
-                chart: String,
-                version: String,
-                values: Value,
-            }
-            let args: Args = serde_json::from_value(call.arguments.clone())
-                .map_err(|_| "Invalid Helm preview arguments")?;
-            let release = Target {
-                group: "helm.sh".into(),
-                version: "v1".into(),
-                kind: "Release".into(),
-                namespace: Some(args.namespace.clone()),
-                name: args.name.clone(),
-            };
-            state.policy.check_scope(&session.scope, &release)?;
-            if !state.policy.resources
-                || !state.policy.is_helm_active(&state.capabilities)
-                || state.policy.access(&release, false) != DataAccess::Content
-            {
-                return Err(
-                    "Helm preview requires resource and Helm Release content access".into(),
-                );
-            }
-            let read = async {
-                let yaml = kubiki_core::helm::reader::HelmReader::default().preview(&session.scope.context, &args.namespace, &args.name, &args.chart, &args.version, &args.values).await
-                    .map_err(|_| "Helm render failed; check repository, version, values and Helm availability")?;
-                let mut items = Vec::new();
-                let mut omitted = 0;
-                for document in serde_yaml::Deserializer::from_str(&yaml) {
-                    let value =
-                        Value::deserialize(document).map_err(|_| "Invalid rendered manifest")?;
-                    if value.is_null() {
-                        continue;
-                    }
-                    let kind = value["kind"]
-                        .as_str()
-                        .ok_or("Rendered resource has no kind")?;
-                    let Some(def) = kubiki_core::core::api::resource_type(kind) else {
-                        omitted += 1;
-                        continue;
-                    };
-                    let api = value["apiVersion"].as_str().unwrap_or("");
-                    let (group, version) = api.split_once('/').unwrap_or(("", api));
-                    if group != def.group || version != def.version || kind == "Secret" {
-                        omitted += 1;
-                        continue;
-                    }
-                    let target = Target {
-                        group: group.into(),
-                        version: version.into(),
-                        kind: kind.into(),
-                        namespace: def.namespaced.then(|| {
-                            value["metadata"]["namespace"]
-                                .as_str()
-                                .unwrap_or(&args.namespace)
-                                .into()
-                        }),
-                        name: value["metadata"]["name"].as_str().unwrap_or("").into(),
-                    };
-                    if validate_target(&target, true).is_err()
-                        || state.policy.check_scope(&session.scope, &target).is_err()
-                        || state.policy.access(&target, true) == DataAccess::None
-                    {
-                        omitted += 1;
-                        continue;
-                    }
-                    items.push(state.policy.project(&target, &value, true)?);
-                }
-                bounded_result(
-                    json!({"items":items,"omitted":omitted,"source":"client-side Helm template"}),
-                )
-            };
-            return timed_read(
-                session,
-                "Helm preview cancelled",
-                "Helm preview timed out",
-                read,
-            )
-            .await;
-        }
-        if call.name == "list_helm_releases" {
-            return self.list_helm_releases(session, call, client).await;
-        }
-        if call.name == "get_helm_release" {
-            return self.get_helm_release(session, call, client).await;
-        }
-        if call.name == "list_argocd_apps" {
-            return self.list_argocd_apps(session, call, client).await;
-        }
-        if call.name == "get_argocd_app" {
-            return self.get_argocd_app(session, call, client).await;
-        }
-        if call.name == "list_flux_resources" {
-            return self.list_flux_resources(session, call, client).await;
-        }
-        if call.name == "get_flux_resource" {
-            return self.get_flux_resource(session, call, client).await;
+        if call.name == "gitops" {
+            return self.execute_gitops(session, call, client).await;
         }
         if [
             "apply_manifest",
             "scale_workload",
             "restart_workload",
             "delete_resource",
-            "sync_argocd_app",
-            "reconcile_flux_resource",
         ]
         .contains(&call.name.as_str())
         {
@@ -1171,7 +975,9 @@ impl KubernetesTools {
             } else {
                 "complete"
             });
-            result["error"] = json!(failure);
+            if let Some(err) = failure {
+                result["error"] = json!(err);
+            }
             result["capturedAt"] = json!(stamp());
             return bounded_result(result);
         }
@@ -1245,16 +1051,32 @@ impl KubernetesTools {
             namespace: args.namespace,
             name: args.name,
         };
-        validate_target(&target, call.name == "get_resource")?;
-        state.policy.check_scope(&session.scope, &target)?;
+        let all_ns = call.name == "list_resources" && target.namespace.as_deref() == Some("*");
+        if all_ns {
+            validate_target(
+                &Target {
+                    namespace: None,
+                    ..target.clone()
+                },
+                false,
+            )?;
+            if !state.policy.data_category_enabled(&target) {
+                return Err("Event, Metrics or Secret data access is disabled by policy".into());
+            }
+            if session.scope.context.is_empty()
+                || !state
+                    .policy
+                    .contexts
+                    .iter()
+                    .any(|p| crate::policy::matches(p, &session.scope.context))
+            {
+                return Err("This conversation has no permitted Kubernetes context".into());
+            }
+        } else {
+            validate_target(&target, call.name == "get_resource")?;
+            state.policy.check_scope(&session.scope, &target)?;
+        }
         let read = async {
-            let query = ResourceQuery {
-                context: session.scope.context.clone(),
-                group: target.group.clone(),
-                version: target.version.clone(),
-                kind: target.kind.clone(),
-                namespace: target.namespace.clone(),
-            };
             let known = kubiki_core::core::api::resource_type(&target.kind)
                 .is_some_and(|resource| resource.group == target.group);
             if call.name == "get_resource"
@@ -1262,9 +1084,281 @@ impl KubernetesTools {
             {
                 return Err("Reading this resource is disabled by policy".into());
             }
+            if call.name == "list_resources"
+                && state.policy.collection_completely_denied(&target, known)
+            {
+                return Err("Reading this resource is disabled by policy".into());
+            }
+            if call.name == "list_resources" && all_ns {
+                if !target.name.is_empty() {
+                    return Err("Use get_resource for an exact object".into());
+                }
+                let unrestricted_all_ns = session.scope.all_namespaces
+                    && state.policy.namespaces.iter().any(|p| p == "*");
+                if unrestricted_all_ns {
+                    let query = ResourceQuery {
+                        context: session.scope.context.clone(),
+                        group: target.group.clone(),
+                        version: target.version.clone(),
+                        kind: target.kind.clone(),
+                        namespace: None,
+                    };
+                    let reader =
+                        kubiki_core::core::access::ResourceAccess::new(client.clone(), &query, true)
+                            .await?;
+                    let builtin = reader.builtin;
+                    if state.policy.collection_completely_denied(&target, builtin) {
+                        return Err("Reading this resource is disabled by policy".into());
+                    }
+                    validate_query_filters(
+                        &state.policy,
+                        &target,
+                        builtin,
+                        args.label_selector.as_deref(),
+                        args.field_selector.as_deref(),
+                    )?;
+                    let mut pending = resumed;
+                    if pending
+                        .as_ref()
+                        .is_none_or(|page| page.items.is_empty() && page.continuation.is_some())
+                    {
+                        let mut params = ListParams::default().limit(args.page_size.unwrap_or(25));
+                        if let Some(token) = pending
+                            .as_ref()
+                            .and_then(|page| page.continuation.as_deref())
+                        {
+                            params = params.continue_token(token);
+                        }
+                        if let Some(selector) = &args.label_selector {
+                            params = params.labels(selector);
+                        }
+                        if let Some(selector) = &args.field_selector {
+                            params = params.fields(selector);
+                        }
+                        let mut page = projected_page(
+                            &client,
+                            &reader,
+                            &state.policy,
+                            &session.scope,
+                            &target,
+                            &params,
+                            metadata_only,
+                        )
+                        .await?;
+                        if let Some(selection) = &selection {
+                            page.items = page
+                                .items
+                                .iter()
+                                .map(|item| selection.apply(item))
+                                .collect();
+                        }
+                        pending = Some(page);
+                    }
+                    let pending = pending.ok_or("Cursor has no remaining page")?;
+                    let captured_at = pending.captured_at;
+                    let omitted = pending.omitted;
+                    let field_access =
+                        field_access_report(&state.policy, &target, builtin, fields.as_deref());
+                    let page_budget =
+                        48_000.min(56_000usize.saturating_sub(field_access.to_string().len()));
+                    let (items, mut tail) = split_page(pending, page_budget)?;
+                    tail.omitted = 0;
+                    let has_more = !tail.items.is_empty() || tail.continuation.is_some();
+                    let cursor = if has_more {
+                        Some(
+                            session
+                                .query_cursors
+                                .lock()
+                                .map_err(|_| "Cursor store unavailable")?
+                                .save(query_binding, state.revision, tail)?,
+                        )
+                    } else {
+                        None
+                    };
+                    return Ok(json!({
+                        "scope": {"namespace": "*", "kind": target.kind, "labelSelector": args.label_selector, "fieldSelector": args.field_selector},
+                        "capturedAt": captured_at,
+                        "returned": items.len(),
+                        "items": items,
+                        "fieldAccess": field_access,
+                        "omittedByPolicy": omitted,
+                        "hasMore": has_more,
+                        "cursor": cursor,
+                        "completeness": if has_more || omitted > 0 { "partial" } else { "complete" },
+                        "coverage": "Cross-namespace policy-projected bounded page; cursor retains byte-limited tail before the next Kubernetes page"
+                    }));
+                }
+                // Restricted namespace scope: fan out across explicit/permitted namespaces (up to 10)
+                // without ever fetching objects from unpermitted namespaces.
+                let mut namespaces: Vec<String> = if !session.scope.all_namespaces {
+                    session
+                        .scope
+                        .namespaces
+                        .iter()
+                        .filter(|ns| {
+                            state
+                                .policy
+                                .namespaces
+                                .iter()
+                                .any(|p| crate::policy::matches(p, ns))
+                        })
+                        .cloned()
+                        .collect()
+                } else {
+                    let ns_res = self
+                        .linked_read(
+                            session,
+                            "cluster_info",
+                            json!({"view": "namespaces", "pageSize": 50}),
+                        )
+                        .await?;
+                    ns_res["namespaces"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                };
+                if namespaces.is_empty() {
+                    return Err(
+                        "Resource is outside this conversation's namespace/cluster scope".into(),
+                    );
+                }
+                let truncated_namespaces = namespaces.len() > 10;
+                namespaces.truncate(10);
+                let mut pending = resumed;
+                let mut builtin = known;
+                let mut ns_truncated = truncated_namespaces;
+                if pending.is_none() {
+                    let mut combined = QueryPage {
+                        items: Vec::new(),
+                        continuation: None,
+                        captured_at: stamp(),
+                        omitted: 0,
+                    };
+                    let per_ns_limit = args.page_size.unwrap_or(25);
+                    for ns in &namespaces {
+                        let ns_target = Target {
+                            namespace: Some(ns.clone()),
+                            ..target.clone()
+                        };
+                        if state.policy.check_scope(&session.scope, &ns_target).is_err()
+                            || state
+                                .policy
+                                .collection_completely_denied(&ns_target, known)
+                        {
+                            combined.omitted += 1;
+                            continue;
+                        }
+                        let query = ResourceQuery {
+                            context: session.scope.context.clone(),
+                            group: ns_target.group.clone(),
+                            version: ns_target.version.clone(),
+                            kind: ns_target.kind.clone(),
+                            namespace: Some(ns.clone()),
+                        };
+                        let reader = kubiki_core::core::access::ResourceAccess::new(
+                            client.clone(),
+                            &query,
+                            false,
+                        )
+                        .await?;
+                        builtin = reader.builtin;
+                        if state
+                            .policy
+                            .collection_completely_denied(&ns_target, builtin)
+                        {
+                            combined.omitted += 1;
+                            continue;
+                        }
+                        validate_query_filters(
+                            &state.policy,
+                            &ns_target,
+                            builtin,
+                            args.label_selector.as_deref(),
+                            args.field_selector.as_deref(),
+                        )?;
+                        let mut params = ListParams::default().limit(per_ns_limit);
+                        if let Some(selector) = &args.label_selector {
+                            params = params.labels(selector);
+                        }
+                        if let Some(selector) = &args.field_selector {
+                            params = params.fields(selector);
+                        }
+                        let page = projected_page(
+                            &client,
+                            &reader,
+                            &state.policy,
+                            &session.scope,
+                            &ns_target,
+                            &params,
+                            metadata_only,
+                        )
+                        .await?;
+                        if page.continuation.is_some() {
+                            ns_truncated = true;
+                        }
+                        combined.omitted += page.omitted;
+                        for item in page.items {
+                            let projected = match &selection {
+                                Some(sel) => sel.apply(&item),
+                                None => item,
+                            };
+                            combined.items.push(projected);
+                        }
+                    }
+                    pending = Some(combined);
+                }
+                let pending = pending.ok_or("Cursor has no remaining page")?;
+                let captured_at = pending.captured_at;
+                let omitted = pending.omitted;
+                let field_access =
+                    field_access_report(&state.policy, &target, builtin, fields.as_deref());
+                let page_budget =
+                    48_000.min(56_000usize.saturating_sub(field_access.to_string().len()));
+                let (items, mut tail) = split_page(pending, page_budget)?;
+                tail.omitted = 0;
+                let has_more = !tail.items.is_empty();
+                let cursor = if has_more {
+                    Some(
+                        session
+                            .query_cursors
+                            .lock()
+                            .map_err(|_| "Cursor store unavailable")?
+                            .save(query_binding, state.revision, tail)?,
+                    )
+                } else {
+                    None
+                };
+                return Ok(json!({
+                    "scope": {"namespace": "*", "namespacesScanned": namespaces, "kind": target.kind, "labelSelector": args.label_selector, "fieldSelector": args.field_selector},
+                    "capturedAt": captured_at,
+                    "returned": items.len(),
+                    "items": items,
+                    "fieldAccess": field_access,
+                    "omittedByPolicy": omitted,
+                    "hasMore": has_more,
+                    "cursor": cursor,
+                    "completeness": if has_more || omitted > 0 || ns_truncated { "partial" } else { "complete" },
+                    "coverage": "Bounded multi-namespace fan-out across up to 10 permitted namespaces; query individual namespaces if truncated"
+                }));
+            }
+            let query = ResourceQuery {
+                context: session.scope.context.clone(),
+                group: target.group.clone(),
+                version: target.version.clone(),
+                kind: target.kind.clone(),
+                namespace: target.namespace.clone(),
+            };
             let reader =
-                kubiki_core::core::access::ResourceAccess::new(client, &query, false).await?;
+                kubiki_core::core::access::ResourceAccess::new(client.clone(), &query, false)
+                    .await?;
             let builtin = reader.builtin;
+            if call.name == "list_resources"
+                && state.policy.collection_completely_denied(&target, builtin)
+            {
+                return Err("Reading this resource is disabled by policy".into());
+            }
             validate_query_filters(
                 &state.policy,
                 &target,
@@ -1316,9 +1410,16 @@ impl KubernetesTools {
                     if let Some(selector) = &args.field_selector {
                         params = params.fields(selector);
                     }
-                    let mut page =
-                        projected_page(&reader, &state.policy, &target, &params, metadata_only)
-                            .await?;
+                    let mut page = projected_page(
+                        &client,
+                        &reader,
+                        &state.policy,
+                        &session.scope,
+                        &target,
+                        &params,
+                        metadata_only,
+                    )
+                    .await?;
                     if let Some(selection) = &selection {
                         page.items = page
                             .items
@@ -1375,8 +1476,10 @@ async fn diagnostic_metadata_list(
 }
 
 async fn projected_page(
+    client: &Client,
     reader: &kubiki_core::core::access::ResourceAccess,
     policy: &AgentPolicy,
+    scope: &AgentScope,
     target: &Target,
     params: &ListParams,
     metadata_only: bool,
@@ -1388,21 +1491,39 @@ async fn projected_page(
         .map_err(query_list_error)?;
     let mut items = Vec::new();
     let mut omitted = 0;
+    let all_ns = target.namespace.as_deref() == Some("*");
     for item in page.items {
         let actual = Target {
+            namespace: if all_ns {
+                item["metadata"]["namespace"].as_str().map(str::to_owned)
+            } else {
+                target.namespace.clone()
+            },
             name: item["metadata"]["name"].as_str().unwrap_or_default().into(),
             ..target.clone()
         };
+        if policy.check_scope(scope, &actual).is_err() {
+            omitted += 1;
+            continue;
+        }
         let access = policy.access(&actual, reader.builtin);
         if access == DataAccess::None {
             omitted += 1;
             continue;
         }
         let value = if !full_list && access == DataAccess::Content && !metadata_only {
-            let object = reader
-                .get(&actual.name, false)
-                .await
-                .map_err(|_| "Resource changed or access was denied during list")?;
+            let object = if all_ns && actual.namespace.is_some() {
+                let ns_reader = resource_access(client.clone(), &actual).await?;
+                ns_reader
+                    .get(&actual.name, false)
+                    .await
+                    .map_err(|_| "Resource changed or access was denied during list")?
+            } else {
+                reader
+                    .get(&actual.name, false)
+                    .await
+                    .map_err(|_| "Resource changed or access was denied during list")?
+            };
             if object["metadata"]["uid"] != item["metadata"]["uid"] {
                 return Err("Resource replaced during list; repeat the scoped query".into());
             }
@@ -1459,13 +1580,44 @@ fn field_access_report(policy: &AgentPolicy, target: &Target, builtin: bool, fie
     let per_resource = target.name.is_empty() && !policy.rules.is_empty();
     json!({"requested":requested,"denied":if per_resource {None}else{Some(&denied)},"allRequestedFieldsDenied":if per_resource {None}else{Some(!requested.is_empty() && requested.len()==denied.len())},"perResourceRules":per_resource,"coverage":"Reported denials follow policy; per-resource rules require exact reads for field explanations. A permitted but omitted field may be absent or partially projected."})
 }
-fn flux_gvk(kind: &str) -> Result<(&'static str, &'static str), String> {
+fn flux_gvk(kind: &str) -> Result<(&'static str, &'static [&'static str]), String> {
     match kind {
-        "HelmRelease" => Ok(("helm.toolkit.fluxcd.io", "v2")),
-        "Kustomization" => Ok(("kustomize.toolkit.fluxcd.io", "v1")),
-        "GitRepository" | "OCIRepository" | "HelmRepository" | "HelmChart" | "Bucket" => Ok(("source.toolkit.fluxcd.io", "v1")),
+        "HelmRelease" => Ok(("helm.toolkit.fluxcd.io", &["v2", "v2beta2", "v2beta1"])),
+        "Kustomization" => Ok(("kustomize.toolkit.fluxcd.io", &["v1", "v1beta2", "v1beta1"])),
+        "GitRepository" | "OCIRepository" | "HelmRepository" | "HelmChart" | "Bucket" => {
+            Ok(("source.toolkit.fluxcd.io", &["v1", "v1beta2", "v1beta1"]))
+        }
         _ => Err("Unsupported Flux kind".into()),
     }
+}
+
+async fn resolve_flux_gvk(client: &Client, kind: &str) -> Result<(&'static str, String), String> {
+    let (group, candidates) = flux_gvk(kind)?;
+    if let Ok(discovery) = kube::discovery::Discovery::new(client.clone())
+        .filter(&[group])
+        .run()
+        .await
+    {
+        if let Some(api_group) = discovery.groups().find(|g| g.name() == group) {
+            for candidate in candidates {
+                if api_group
+                    .versioned_resources(candidate)
+                    .iter()
+                    .any(|(ar, _)| ar.kind == kind)
+                {
+                    return Ok((group, (*candidate).to_owned()));
+                }
+            }
+            if let Some((ar, _)) = api_group
+                .recommended_resources()
+                .into_iter()
+                .find(|(ar, _)| ar.kind == kind)
+            {
+                return Ok((group, ar.version));
+            }
+        }
+    }
+    Ok((group, candidates[0].to_owned()))
 }
 
 fn query_get_error(error: kube::Error) -> String {
@@ -1498,6 +1650,11 @@ fn validate_query_filters(
     labels: Option<&str>,
     fields: Option<&str>,
 ) -> Result<(), String> {
+    if (labels.is_some_and(|s| !s.is_empty()) || fields.is_some_and(|s| !s.is_empty()))
+        && policy.collection_completely_denied(target, builtin)
+    {
+        return Err("Reading this resource is disabled by policy".into());
+    }
     if labels.is_some_and(|s| !s.is_empty()) && !policy.filter_field_allowed("metadata.labels") {
         return Err("Label filters are outside the selected-field access policy".into());
     }
@@ -1532,16 +1689,8 @@ fn validate_query_filters(
                 .split(|c: char| c.is_whitespace() || c == '=' || c == '!')
                 .next()
                 .unwrap_or("");
-            if [
-                "token",
-                "password",
-                "clientKeyData",
-                "clientCertificateData",
-                "authorization",
-            ]
-            .iter()
-            .any(|v| key.eq_ignore_ascii_case(v))
-            {
+            let leaf = key.rsplit('/').next().unwrap_or(key);
+            if crate::policy::is_sensitive_key(key) || crate::policy::is_sensitive_key(leaf) {
                 return Err("Selector references a sensitive field".into());
             }
         }
@@ -1551,16 +1700,7 @@ fn validate_query_filters(
             let key = term.split(['=', '!']).next().unwrap_or("").trim();
             let path = format!("/{}", key.replace('.', "/"));
             if key.split('.').any(|part| {
-                [
-                    "token",
-                    "password",
-                    "clientKeyData",
-                    "clientCertificateData",
-                    "authorization",
-                    "managedFields",
-                ]
-                .iter()
-                .any(|v| part.eq_ignore_ascii_case(v))
+                crate::policy::is_sensitive_key(part) || part.eq_ignore_ascii_case("managedFields")
             }) || (!policy.annotations && key.split('.').any(|part| part == "annotations"))
                 || (!policy.workload_configuration
                     && key
@@ -1575,7 +1715,7 @@ fn validate_query_filters(
                     || p.starts_with(&format!("{path}/"))
             }) || !policy.denied_fields(target, builtin, &[key.to_owned()]).is_empty()
                 || (!key.starts_with("metadata.")
-                && !policy.collection_content_allowed(target, builtin))
+                    && !policy.collection_content_allowed(target, builtin))
             {
                 return Err("Field selector is outside the permitted query projection".into());
             }
@@ -1656,48 +1796,6 @@ fn parse_mutation(
             return Err("HPA maximum replicas exceeds the AI policy limit".into());
         }
         (target, Some(args.yaml), None, None)
-    } else if call.name == "sync_argocd_app" {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            namespace: String,
-            name: String,
-            #[allow(dead_code)]
-            hard: Option<bool>,
-        }
-        let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid sync_argocd_app arguments")?;
-        let target = Target {
-            group: "argoproj.io".into(),
-            version: "v1alpha1".into(),
-            kind: "Application".into(),
-            namespace: Some(args.namespace),
-            name: args.name,
-        };
-        (target, None, Some(WriteOperation::Update), None)
-    } else if call.name == "reconcile_flux_resource" {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            kind: String,
-            namespace: String,
-            name: String,
-        }
-        let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid reconcile_flux_resource arguments")?;
-        let (group, version) = match args.kind.as_str() {
-            "HelmRelease" => ("helm.toolkit.fluxcd.io", "v2"),
-            "Kustomization" => ("kustomize.toolkit.fluxcd.io", "v1"),
-            _ => return Err("kind must be 'HelmRelease' or 'Kustomization'".into()),
-        };
-        let target = Target {
-            group: group.into(),
-            version: version.into(),
-            kind: args.kind,
-            namespace: Some(args.namespace),
-            name: args.name,
-        };
-        (target, None, Some(WriteOperation::Update), None)
     } else {
         let args: ResourceArgs = serde_json::from_value(call.arguments.clone())
             .map_err(|_| "Invalid mutation arguments")?;
@@ -1767,6 +1865,505 @@ fn bounded_result(mut result: Value) -> Result<Value, String> {
 }
 
 impl KubernetesTools {
+    async fn execute_cluster_info(
+        &self,
+        session: &Session,
+        call: &ToolCall,
+    ) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Args {
+            view: Option<String>,
+            namespace: Option<String>,
+            discover: Option<bool>,
+            group: Option<String>,
+            page: Option<usize>,
+            page_size: Option<u32>,
+            cursor: Option<String>,
+        }
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid cluster_info arguments")?;
+        let view = args.view.as_deref().unwrap_or("session");
+        let state = session.control()?;
+        match view {
+            "session" => {
+                if args.namespace.is_some()
+                    || args.discover.is_some()
+                    || args.group.is_some()
+                    || args.page.is_some()
+                    || args.page_size.is_some()
+                    || args.cursor.is_some()
+                {
+                    return Err("view='session' does not accept catalog/namespace/problem filters".into());
+                }
+                let working = session
+                    .working_scope
+                    .lock()
+                    .map_err(|_| "Working scope unavailable")?
+                    .clone();
+                Ok(json!({
+                    "view": "session",
+                    "context": session.scope.context,
+                    "connected": self.client.is_some(),
+                    "allowedScope": session.scope,
+                    "workingScope": working,
+                    "mode": state.mode,
+                    "phase": state.phase,
+                    "capabilities": state.capabilities,
+                    "policy": state.policy.prompt_summary(),
+                    "capturedAt": stamp()
+                }))
+            }
+            "catalog" => {
+                if args.namespace.is_some() || args.page_size.is_some() || args.cursor.is_some() {
+                    return Err("view='catalog' only accepts discover, group and page".into());
+                }
+                if args.group.as_ref().is_some_and(|g| {
+                    g.len() > 253
+                        || !g
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
+                }) {
+                    return Err("Invalid API group".into());
+                }
+                let mut resources = Vec::new();
+                if args.discover == Some(true) {
+                    let client = self
+                        .client
+                        .clone()
+                        .ok_or("Start a conversation bound to a Kubernetes context to discover cluster APIs")?;
+                    let mut discovery = kube::discovery::Discovery::new(client);
+                    if let Some(group) = &args.group {
+                        discovery = discovery.filter(&[group.as_str()]);
+                    }
+                    let discovery = discovery
+                        .run()
+                        .await
+                        .map_err(|_| "API discovery unavailable")?;
+                    for group in discovery.groups() {
+                        for (ar, caps) in group.resources_by_stability() {
+                            if !ar.plural.contains('/') && caps.supports_operation("get") {
+                                resources.push(json!({
+                                    "group": ar.group,
+                                    "version": ar.version,
+                                    "kind": ar.kind,
+                                    "plural": ar.plural,
+                                    "namespaced": caps.scope == kube::discovery::Scope::Namespaced
+                                }));
+                            }
+                        }
+                    }
+                } else {
+                    resources = resource_types()
+                        .iter()
+                        .filter(|r| args.group.as_ref().is_none_or(|g| g == &r.group))
+                        .map(|r| json!(r))
+                        .collect();
+                }
+                resources.sort_by_key(|r| r.to_string());
+                resources.dedup();
+                let start = args
+                    .page
+                    .unwrap_or(0)
+                    .checked_mul(100)
+                    .ok_or("Catalog page overflow")?;
+                let has_more = start.saturating_add(100) < resources.len();
+                bounded_result(json!({
+                    "view": "catalog",
+                    "resources": resources.into_iter().skip(start).take(100).collect::<Vec<_>>(),
+                    "hasMore": has_more,
+                    "nextPage": if has_more { Some(args.page.unwrap_or(0) + 1) } else { None },
+                    "coverage": if args.discover == Some(true) {
+                        "Live API discovery snapshot; object access still requires policy/RBAC"
+                    } else {
+                        "Built-in registry; use discover=true for CRDs"
+                    }
+                }))
+            }
+            "namespaces" => {
+                if args.namespace.is_some()
+                    || args.discover.is_some()
+                    || args.group.is_some()
+                    || args.page.is_some()
+                {
+                    return Err("view='namespaces' only accepts pageSize and cursor".into());
+                }
+                let client = self
+                    .client
+                    .clone()
+                    .ok_or("Start a conversation bound to a Kubernetes context to list namespaces")?;
+                let size = args.page_size.unwrap_or(200);
+                if !(1..=200).contains(&size)
+                    || !state
+                        .policy
+                        .contexts
+                        .iter()
+                        .any(|p| crate::matches(p, &session.scope.context))
+                {
+                    return Err("Namespace query is outside policy or page limits".into());
+                }
+                let mut binding = call.arguments.clone();
+                if let Some(map) = binding.as_object_mut() {
+                    map.remove("cursor");
+                }
+                let binding = json!({"tool":"cluster_info","view":"namespaces","arguments":binding});
+                let pending = if let Some(cursor) = &args.cursor {
+                    Some(
+                        session
+                            .query_cursors
+                            .lock()
+                            .map_err(|_| "Cursor store unavailable")?
+                            .load(cursor, &binding, state.revision)?,
+                    )
+                } else {
+                    None
+                };
+                let read = async {
+                    let mut page = match pending {
+                        Some(page) => page,
+                        None => QueryPage {
+                            items: Vec::new(),
+                            continuation: None,
+                            captured_at: stamp(),
+                            omitted: 0,
+                        },
+                    };
+                    if page.items.is_empty() {
+                        let names = if session.scope.all_namespaces {
+                            let target = Target {
+                                group: "".into(),
+                                version: "v1".into(),
+                                kind: "Namespace".into(),
+                                namespace: None,
+                                name: "".into(),
+                            };
+                            let reader = resource_access(client, &target).await?;
+                            let mut params = ListParams::default().limit(size);
+                            if let Some(token) = &page.continuation {
+                                params = params.continue_token(token);
+                            }
+                            let fetched =
+                                reader.page(&params, true).await.map_err(query_list_error)?;
+                            page.continuation = fetched.continuation;
+                            fetched
+                                .items
+                                .into_iter()
+                                .filter_map(|v| v["metadata"]["name"].as_str().map(str::to_owned))
+                                .collect::<Vec<_>>()
+                        } else {
+                            session.scope.namespaces.clone()
+                        };
+                        page.captured_at = stamp();
+                        for name in names {
+                            if !state
+                                .policy
+                                .namespaces
+                                .iter()
+                                .any(|p| crate::matches(p, &name))
+                            {
+                                page.omitted += 1;
+                                continue;
+                            }
+                            let target = Target {
+                                group: "".into(),
+                                version: "v1".into(),
+                                kind: "Namespace".into(),
+                                namespace: None,
+                                name: name.clone(),
+                            };
+                            let source = json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":name}});
+                            if let Ok(projected) = state.policy.project(&target, &source, true) {
+                                if let Some(name) = projected["metadata"]["name"].as_str() {
+                                    page.items.push(json!(name));
+                                    continue;
+                                }
+                            }
+                            page.omitted += 1;
+                        }
+                    }
+                    let captured_at = page.captured_at;
+                    let omitted = page.omitted;
+                    let tail = page
+                        .items
+                        .split_off(std::cmp::min(size as usize, page.items.len()));
+                    let names = std::mem::replace(&mut page.items, tail);
+                    page.omitted = 0;
+                    let more = !page.items.is_empty() || page.continuation.is_some();
+                    let cursor = if more {
+                        Some(
+                            session
+                                .query_cursors
+                                .lock()
+                                .map_err(|_| "Cursor store unavailable")?
+                                .save(binding, state.revision, page)?,
+                        )
+                    } else {
+                        None
+                    };
+                    Ok(json!({
+                        "view": "namespaces",
+                        "source": if session.scope.all_namespaces { "kubernetesMetadata" } else { "conversationScope" },
+                        "namespaces": names,
+                        "hasMore": more,
+                        "cursor": cursor,
+                        "capturedAt": captured_at,
+                        "omittedByPolicy": omitted,
+                        "completeness": if more || omitted > 0 { "partial" } else { "complete" },
+                        "coverage": "Namespace names only, projected by allowed scope and policy; missing names do not prove absence"
+                    }))
+                };
+                timed_read(
+                    session,
+                    "Namespace discovery cancelled",
+                    "Namespace discovery timed out",
+                    read,
+                )
+                .await
+            }
+            "problems" => {
+                if args.discover.is_some()
+                    || args.group.is_some()
+                    || args.page.is_some()
+                    || args.page_size.is_some()
+                    || args.cursor.is_some()
+                {
+                    return Err("view='problems' only accepts optional namespace".into());
+                }
+                let _client = self
+                    .client
+                    .clone()
+                    .ok_or("Start a conversation bound to a Kubernetes context to scan problems")?;
+                let working_ns = session
+                    .working_scope
+                    .lock()
+                    .ok()
+                    .and_then(|w| w.namespace.clone());
+                let scope_ns = args.namespace.or(working_ns).unwrap_or_else(|| {
+                    if session.scope.all_namespaces
+                        && state.policy.namespaces.iter().any(|p| p == "*")
+                    {
+                        "*".to_owned()
+                    } else if session.scope.namespaces.len() == 1 {
+                        session.scope.namespaces[0].clone()
+                    } else {
+                        "*".to_owned()
+                    }
+                });
+                let pods_fut = self.linked_read(
+                    session,
+                    "list_resources",
+                    json!({"group":"","version":"v1","kind":"Pod","namespace":scope_ns,"profile":"health","pageSize":50}),
+                );
+                let deploys_fut = self.linked_read(
+                    session,
+                    "list_resources",
+                    json!({"group":"apps","version":"v1","kind":"Deployment","namespace":scope_ns,"profile":"health","pageSize":30}),
+                );
+                let sts_fut = self.linked_read(
+                    session,
+                    "list_resources",
+                    json!({"group":"apps","version":"v1","kind":"StatefulSet","namespace":scope_ns,"profile":"health","pageSize":20}),
+                );
+                let ds_fut = self.linked_read(
+                    session,
+                    "list_resources",
+                    json!({"group":"apps","version":"v1","kind":"DaemonSet","namespace":scope_ns,"profile":"health","pageSize":20}),
+                );
+                let pvcs_fut = self.linked_read(
+                    session,
+                    "list_resources",
+                    json!({"group":"","version":"v1","kind":"PersistentVolumeClaim","namespace":scope_ns,"profile":"health","pageSize":30}),
+                );
+                let nodes_fut = async {
+                    if state.policy.cluster_resources {
+                        Some(
+                            self.linked_read(
+                                session,
+                                "list_resources",
+                                json!({"group":"","version":"v1","kind":"Node","namespace":null,"fields":["spec.unschedulable","status.conditions"],"pageSize":30}),
+                            )
+                            .await,
+                        )
+                    } else {
+                        None
+                    }
+                };
+                let events_fut = async {
+                    if state.policy.events {
+                        Some(
+                            self.linked_read(
+                                session,
+                                "get_events",
+                                json!({"namespace":scope_ns,"mode":"timeline","type":"Warning","limit":20,"maxPages":1}),
+                            )
+                            .await,
+                        )
+                    } else {
+                        None
+                    }
+                };
+                let (pods_res, deploys_res, sts_res, ds_res, pvcs_res, nodes_res, events_res) = tokio::join!(
+                    pods_fut,
+                    deploys_fut,
+                    sts_fut,
+                    ds_fut,
+                    pvcs_fut,
+                    nodes_fut,
+                    events_fut
+                );
+
+                let mut problem_pods = Vec::new();
+                let mut truncated = Vec::new();
+                if let Ok(page) = pods_res {
+                    if page["hasMore"] == true {
+                        truncated.push("pods");
+                    }
+                    for item in page["items"].as_array().into_iter().flatten() {
+                        let phase = item["status"]["phase"].as_str().unwrap_or("");
+                        let reason = item["status"]["reason"].as_str().unwrap_or("");
+                        let mut issues = Vec::new();
+                        let _ = container_diagnostics(&item["status"]["initContainerStatuses"], true, &mut issues);
+                        let _ = container_diagnostics(&item["status"]["containerStatuses"], false, &mut issues);
+                        let unready = item["status"]["conditions"]
+                            .as_array()
+                            .is_some_and(|cs| {
+                                cs.iter().any(|c| c["type"] == "Ready" && c["status"] == "False")
+                            });
+                        if matches!(phase, "Pending" | "Failed" | "Unknown")
+                            || !reason.is_empty()
+                            || !issues.is_empty()
+                            || (phase == "Running" && unready)
+                        {
+                            if problem_pods.len() < 20 {
+                                let node_name = item["spec"]["nodeName"]
+                                    .as_str()
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty());
+                                let mut entry = json!({
+                                    "name": item["metadata"]["name"],
+                                    "namespace": item["metadata"]["namespace"],
+                                    "uid": item["metadata"]["uid"],
+                                    "phase": phase,
+                                    "reason": if reason.is_empty() { Value::Null } else { json!(reason) },
+                                    "nodeName": node_name,
+                                    "issues": issues
+                                });
+                                if node_name.is_none() {
+                                    if let Some((target, source)) =
+                                        crate::diagnostics::extract_pod_target_node(item)
+                                    {
+                                        entry["targetNode"] = json!(target);
+                                        entry["targetNodeSource"] = json!(source);
+                                    }
+                                    if let Some(nominated) = item["status"]["nominatedNodeName"]
+                                        .as_str()
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                    {
+                                        entry["nominatedNodeName"] = json!(nominated);
+                                    }
+                                }
+                                problem_pods.push(entry);
+                            }
+                        }
+                    }
+                }
+                let mut problem_workloads = Vec::new();
+                for (kind, res) in [
+                    ("Deployment", deploys_res),
+                    ("StatefulSet", sts_res),
+                    ("DaemonSet", ds_res),
+                ] {
+                    if let Ok(page) = res {
+                        if page["hasMore"] == true {
+                            truncated.push(kind);
+                        }
+                        for item in page["items"].as_array().into_iter().flatten() {
+                            let health = workload_health(kind, item);
+                            if health["rolloutState"] != "healthy" {
+                                if problem_workloads.len() < 20 {
+                                    problem_workloads.push(json!({
+                                        "kind": kind,
+                                        "name": item["metadata"]["name"],
+                                        "namespace": item["metadata"]["namespace"],
+                                        "uid": item["metadata"]["uid"],
+                                        "rolloutState": health["rolloutState"],
+                                        "replicas": health["replicas"],
+                                        "issues": health["issuesSummary"]
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut problem_pvcs = Vec::new();
+                if let Ok(page) = pvcs_res {
+                    if page["hasMore"] == true {
+                        truncated.push("pvcs");
+                    }
+                    for item in page["items"].as_array().into_iter().flatten() {
+                        let phase = item["status"]["phase"].as_str().unwrap_or("");
+                        if phase != "Bound" && problem_pvcs.len() < 15 {
+                            problem_pvcs.push(json!({
+                                "name": item["metadata"]["name"],
+                                "namespace": item["metadata"]["namespace"],
+                                "phase": phase
+                            }));
+                        }
+                    }
+                }
+                let mut problem_nodes = Vec::new();
+                if let Some(Ok(page)) = nodes_res {
+                    if page["hasMore"] == true {
+                        truncated.push("nodes");
+                    }
+                    for item in page["items"].as_array().into_iter().flatten() {
+                        let unschedulable = item["spec"]["unschedulable"] == true;
+                        let bad_conditions: Vec<Value> = item["status"]["conditions"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|c| {
+                                let t = c["type"].as_str().unwrap_or("");
+                                let s = c["status"].as_str().unwrap_or("");
+                                (t == "Ready" && s != "True") || (t != "Ready" && s == "True")
+                            })
+                            .cloned()
+                            .collect();
+                        if unschedulable || !bad_conditions.is_empty() {
+                            if problem_nodes.len() < 15 {
+                                problem_nodes.push(json!({
+                                    "name": item["metadata"]["name"],
+                                    "unschedulable": unschedulable,
+                                    "conditions": bad_conditions
+                                }));
+                            }
+                        }
+                    }
+                }
+                let warning_events = match events_res {
+                    Some(Ok(v)) => v["timeline"].clone(),
+                    Some(Err(e)) => json!({"unavailable": true, "error": e}),
+                    None => json!({"unavailable": true, "error": "Events disabled by policy"}),
+                };
+                bounded_result(json!({
+                    "view": "problems",
+                    "namespace": scope_ns,
+                    "pods": problem_pods,
+                    "workloads": problem_workloads,
+                    "pvcs": problem_pvcs,
+                    "nodes": problem_nodes,
+                    "warningEvents": warning_events,
+                    "truncatedCollections": truncated,
+                    "capturedAt": stamp(),
+                    "completeness": "partial",
+                    "coverage": "Bounded triage snapshot over first page of each collection (Pods<=50, Workloads<=30/20, PVCs<=30, Nodes<=30, Warning Events<=20); empty lists do not prove absence outside scanned pages or namespaces."
+                }))
+            }
+            _ => Err("Unsupported cluster_info view; choose session, namespaces, catalog or problems".into()),
+        }
+    }
+
     async fn read_diagnostic(
         &self,
         session: &Session,
@@ -1782,12 +2379,16 @@ impl KubernetesTools {
             container: Option<String>,
             previous: Option<bool>,
             limit: Option<u32>,
+            max_pages: Option<u32>,
+            involved_kind: Option<String>,
             tail_lines: Option<i64>,
             since_seconds: Option<i64>,
             cursor: Option<String>,
             since_time: Option<String>,
             mode: Option<String>,
             contains: Option<String>,
+            ignore_case: Option<bool>,
+            context_lines: Option<usize>,
             page_size: Option<usize>,
             #[serde(rename = "type")]
             event_type: Option<String>,
@@ -1799,57 +2400,82 @@ impl KubernetesTools {
         if call.name != "get_logs"
             && (args.tail_lines.is_some()
                 || args.since_seconds.is_some()
-                || args.mode.is_some()
-                || args.contains.is_some())
+                || args.contains.is_some()
+                || args.ignore_case.is_some()
+                || args.context_lines.is_some())
         {
             return Err("Log options only apply to get_logs".into());
         }
-        let events = matches!(call.name.as_str(), "get_events" | "get_events_timeline");
-        if !events && (args.event_type.is_some() || args.reason.is_some() || args.until_time.is_some()) {
+        let events = call.name == "get_events";
+        if !events
+            && (args.event_type.is_some()
+                || args.reason.is_some()
+                || args.until_time.is_some()
+                || args.involved_kind.is_some()
+                || args.limit.is_some()
+                || args.max_pages.is_some())
+        {
             return Err("Event filters only apply to Events".into());
         }
-        if events && (args.event_type.as_ref().is_some_and(|v| !["Normal", "Warning"].contains(&v.as_str()))
-            || args.reason.as_ref().is_some_and(|v| v.is_empty() || v.len() > 253 || !v.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
-            || args.page_size.is_some_and(|n| !(1..=100).contains(&n))) {
-            return Err("Invalid Event type/reason/pageSize".into());
+        if events
+            && (args
+                .event_type
+                .as_ref()
+                .is_some_and(|v| !["Normal", "Warning"].contains(&v.as_str()))
+                || args.reason.as_ref().is_some_and(|v| {
+                    v.is_empty()
+                        || v.len() > 253
+                        || !v.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                })
+                || args.involved_kind.as_ref().is_some_and(|v| {
+                    v.is_empty()
+                        || v.len() > 253
+                        || !v.bytes().all(|c| c.is_ascii_alphanumeric())
+                })
+                || args.page_size.is_some_and(|n| !(1..=100).contains(&n))
+                || args.limit.is_some_and(|n| !(1..=100).contains(&n))
+                || args.max_pages.is_some_and(|n| !(1..=5).contains(&n)))
+        {
+            return Err("Invalid Event filter, pageSize, limit or maxPages".into());
         }
-        let since = if events { args.since_time.as_deref().map(chrono::DateTime::parse_from_rfc3339).transpose().map_err(|_| "Invalid Event sinceTime")? } else { None };
-        let until = if events { args.until_time.as_deref().map(chrono::DateTime::parse_from_rfc3339).transpose().map_err(|_| "Invalid Event untilTime")? } else { None };
-        if since.zip(until).is_some_and(|(start,end)| start > end) { return Err("sinceTime must not be after untilTime".into()); }
-        if call.name != "get_events" && call.name != "get_logs" && args.cursor.is_some() {
-            return Err("Cursor only applies to get_events or get_logs".into());
+        let since = if events {
+            args.since_time
+                .as_deref()
+                .map(chrono::DateTime::parse_from_rfc3339)
+                .transpose()
+                .map_err(|_| "Invalid Event sinceTime")?
+        } else {
+            None
+        };
+        let until = if events {
+            args.until_time
+                .as_deref()
+                .map(chrono::DateTime::parse_from_rfc3339)
+                .transpose()
+                .map_err(|_| "Invalid Event untilTime")?
+        } else {
+            None
+        };
+        if since.zip(until).is_some_and(|(start, end)| start > end) {
+            return Err("sinceTime must not be after untilTime".into());
         }
-        if args.tail_lines.is_some_and(|n| !(1..=500).contains(&n))
+        if args.tail_lines.is_some_and(|n| !(1..=5000).contains(&n))
             || args
                 .since_seconds
                 .is_some_and(|n| !(1..=604800).contains(&n))
         {
-            return Err("Logs require tailLines 1–500 and sinceSeconds 1–604800".into());
+            return Err("Logs require tailLines 1–5000 and sinceSeconds 1–604800".into());
         }
         let state = session.control()?;
         let target = Target {
             group: "".into(),
             version: "v1".into(),
-            kind: if call.name == "get_events" || call.name == "get_events_timeline" {
-                "Event"
-            } else {
-                "Pod"
-            }
-            .into(),
+            kind: if events { "Event" } else { "Pod" }.into(),
             namespace: Some(args.namespace.clone()),
             name: args.name.clone().unwrap_or_default(),
         };
-        let all_events = call.name == "get_events" && args.namespace == "*";
+        let all_events = events && args.namespace == "*";
         if all_events {
-            if !session.scope.all_namespaces
-                || !state.policy.namespaces.iter().any(|scope| scope == "*")
-                || state.policy.rules.iter().any(|rule| {
-                    crate::policy::matches(&rule.kind, "Event")
-                        && crate::policy::matches(&rule.group, "")
-                })
-            {
-                return Err("All-namespace Events require unrestricted Event namespace access; choose an explicit namespace".into());
-            }
             validate_target(
                 &Target {
                     namespace: None,
@@ -1857,10 +2483,22 @@ impl KubernetesTools {
                 },
                 false,
             )?;
+            if !state.policy.data_category_enabled(&target) {
+                return Err("Event, Metrics or Secret data access is disabled by policy".into());
+            }
+            if session.scope.context.is_empty()
+                || !state
+                    .policy
+                    .contexts
+                    .iter()
+                    .any(|p| crate::policy::matches(p, &session.scope.context))
+            {
+                return Err("This conversation has no permitted Kubernetes context".into());
+            }
         } else {
             validate_target(&target, call.name == "get_logs")?;
+            state.policy.check_scope(&session.scope, &target)?;
         }
-        state.policy.check_scope(&session.scope, &target)?;
         let read = async {
             if call.name == "get_logs" {
                 if !state.policy.logs || state.policy.access(&target, true) != DataAccess::Content {
@@ -1878,22 +2516,35 @@ impl KubernetesTools {
                         .page_size
                         .is_some_and(|size| !(1..=100).contains(&size))
                     || args.contains.as_ref().is_some_and(|text| text.len() > 1024)
+                    || args.context_lines.is_some_and(|c| c > 10)
                     || (mode != "lines"
                         && (args.cursor.is_some()
                             || args.contains.is_some()
+                            || args.ignore_case.is_some()
+                            || args.context_lines.is_some()
                             || args.page_size.is_some()))
                 {
-                    return Err("Choose diagnostic or lines mode; cursor, contains and pageSize (1–100) require lines mode".into());
+                    return Err("Choose diagnostic or lines mode; cursor, contains, ignoreCase, contextLines (0–10) and pageSize (1–100) require lines mode".into());
                 }
+                let previous = args.previous.unwrap_or(false);
                 let request = kubiki_core::pod_ops::logs::LogSliceRequest {
                     resource: reference(&session.scope.context, &target, args.uid.clone()),
                     container: args.container.clone().ok_or("Container is required")?,
-                    previous: args.previous.unwrap_or(false),
+                    previous,
                     tail_lines: Some(args.tail_lines.unwrap_or(150)),
                     since_time: args.since_time.clone(),
                     since_seconds: args.since_seconds,
                 };
                 request.validate().map_err(error_message)?;
+                let map_log_err = |err: kubiki_core::core::api::ApiError| {
+                    if previous && err.status == Some(400) {
+                        "Previous container logs unavailable (HTTP 400; container may not have a previous terminated instance or logs rotated). Retry with previous=false".into()
+                    } else if err.status == Some(400) {
+                        "Container logs unavailable (HTTP 400; container may still be initializing or invalid container name)".into()
+                    } else {
+                        error_message(err)
+                    }
+                };
                 if mode == "lines" {
                     let mut arguments = call.arguments.clone();
                     arguments
@@ -1908,17 +2559,56 @@ impl KubernetesTools {
                             .map_err(|_| "Cursor store unavailable")?
                             .load(cursor, &binding, state.revision)?
                     } else {
-                        let logs = request.read(client).await.map_err(error_message)?;
-                        let items = logs
-                            .lines()
-                            .enumerate()
-                            .filter(|(_, line)| {
-                                args.contains
-                                    .as_ref()
-                                    .is_none_or(|text| line.contains(text))
-                            })
-                            .map(|(index, line)| json!({"line":index + 1,"text":line}))
-                            .collect();
+                        let logs = request.read(client).await.map_err(map_log_err)?;
+                        let all_lines: Vec<&str> = logs.lines().collect();
+                        let ignore_case = args.ignore_case.unwrap_or(false);
+                        let ctx = args.context_lines.unwrap_or(0);
+                        let items = if let Some(needle) = &args.contains {
+                            let needle_lower = ignore_case.then(|| needle.to_lowercase());
+                            let matched: std::collections::BTreeSet<usize> = all_lines
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, line)| {
+                                    if let Some(ref lower) = needle_lower {
+                                        line.to_lowercase().contains(lower)
+                                    } else {
+                                        line.contains(needle)
+                                    }
+                                })
+                                .map(|(idx, _)| idx)
+                                .collect();
+                            if ctx == 0 {
+                                matched
+                                    .into_iter()
+                                    .map(|idx| json!({"line": idx + 1, "text": all_lines[idx]}))
+                                    .collect()
+                            } else {
+                                let mut expanded = std::collections::BTreeSet::new();
+                                for &idx in &matched {
+                                    let lo = idx.saturating_sub(ctx);
+                                    let hi = (idx + ctx).min(all_lines.len().saturating_sub(1));
+                                    for i in lo..=hi {
+                                        expanded.insert(i);
+                                    }
+                                }
+                                expanded
+                                    .into_iter()
+                                    .map(|idx| {
+                                        json!({
+                                            "line": idx + 1,
+                                            "text": all_lines[idx],
+                                            "matched": matched.contains(&idx)
+                                        })
+                                    })
+                                    .collect()
+                            }
+                        } else {
+                            all_lines
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, line)| json!({"line": index + 1, "text": line}))
+                                .collect()
+                        };
                         QueryPage {
                             items,
                             continuation: None,
@@ -1950,7 +2640,7 @@ impl KubernetesTools {
                         "completeness":"partial","coverage":"Exact lines within one bounded Pod log slice; cursor resumes this captured slice without reading live logs. Tail, time, API byte limit and rotation may omit other logs."}),
                     );
                 }
-                let logs = request.read(client).await.map_err(error_message)?;
+                let logs = request.read(client).await.map_err(map_log_err)?;
                 let (filtered_logs, total_lines, matched_lines, is_filtered) =
                     crate::diagnostics::filter_logs_for_ai(
                         &logs,
@@ -1974,26 +2664,25 @@ impl KubernetesTools {
                 if !state.policy.events {
                     return Err("Events are disabled by policy".into());
                 }
-                if args.container.is_some() || args.previous.is_some() || args.limit.is_some() {
+                if args.container.is_some() || args.previous.is_some() {
                     return Err("Unexpected Event arguments".into());
                 }
-                let query = ResourceQuery {
-                    context: session.scope.context.clone(),
-                    group: target.group.clone(),
-                    version: target.version.clone(),
-                    kind: target.kind.clone(),
-                    namespace: if all_events {
-                        None
-                    } else {
-                        target.namespace.clone()
-                    },
-                };
-                let reader =
-                    kubiki_core::core::access::ResourceAccess::new(client, &query, all_events)
-                        .await?;
+                let mode = args.mode.as_deref().unwrap_or("raw");
+                if !matches!(mode, "raw" | "timeline") {
+                    return Err("Event mode must be 'raw' or 'timeline'".into());
+                }
+                if mode == "raw" && (args.limit.is_some() || args.max_pages.is_some()) {
+                    return Err("limit and maxPages only apply to Event timeline mode".into());
+                }
+                if mode == "timeline" && args.cursor.is_some() {
+                    return Err("Cursor only applies to raw Event mode".into());
+                }
                 let mut filters = Vec::new();
                 if !target.name.is_empty() {
                     filters.push(format!("involvedObject.name={}", target.name));
+                }
+                if let Some(kind) = &args.involved_kind {
+                    filters.push(format!("involvedObject.kind={kind}"));
                 }
                 if let Some(uid) = &args.uid {
                     if uid.is_empty()
@@ -2004,112 +2693,304 @@ impl KubernetesTools {
                     }
                     filters.push(format!("involvedObject.uid={uid}"));
                 }
-                if let Some(value) = &args.event_type { filters.push(format!("type={value}")); }
-                if let Some(value) = &args.reason { filters.push(format!("reason={value}")); }
+                if let Some(value) = &args.event_type {
+                    filters.push(format!("type={value}"));
+                }
+                if let Some(value) = &args.reason {
+                    filters.push(format!("reason={value}"));
+                }
                 let selector = filters.join(",");
                 if !selector.is_empty() {
                     validate_query_filters(&state.policy, &target, true, None, Some(&selector))?;
                 }
-                let mut arguments = call.arguments.clone();
-                arguments
-                    .as_object_mut()
-                    .ok_or("Invalid Event arguments")?
-                    .remove("cursor");
-                let binding = json!({"tool":"get_events","arguments":arguments});
-                let mut pending = args
-                    .cursor
-                    .as_ref()
-                    .map(|cursor| {
+                let unrestricted_all_ns = all_events
+                    && session.scope.all_namespaces
+                    && state.policy.namespaces.iter().any(|p| p == "*");
+                let fanout_namespaces: Option<Vec<String>> = if all_events && !unrestricted_all_ns {
+                    let mut nss: Vec<String> = if !session.scope.all_namespaces {
                         session
-                            .query_cursors
-                            .lock()
-                            .map_err(|_| "Cursor store unavailable".to_owned())?
-                            .load(cursor, &binding, state.revision)
-                    })
-                    .transpose()?;
-                if pending
-                    .as_ref()
-                    .is_none_or(|page| page.items.is_empty() && page.continuation.is_some())
-                {
-                    let mut params = ListParams::default().limit(args.page_size.unwrap_or(50) as u32);
-                    if !selector.is_empty() {
-                        params = params.fields(&selector);
+                            .scope
+                            .namespaces
+                            .iter()
+                            .filter(|ns| {
+                                state
+                                    .policy
+                                    .namespaces
+                                    .iter()
+                                    .any(|p| crate::policy::matches(p, ns))
+                            })
+                            .cloned()
+                            .collect()
+                    } else {
+                        let ns_res = self
+                            .linked_read(
+                                session,
+                                "cluster_info",
+                                json!({"view": "namespaces", "pageSize": 50}),
+                            )
+                            .await?;
+                        ns_res["namespaces"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect()
+                    };
+                    if nss.is_empty() {
+                        return Err(
+                            "Resource is outside this conversation's namespace/cluster scope".into(),
+                        );
                     }
-                    if let Some(token) = pending
-                        .as_ref()
-                        .and_then(|page| page.continuation.as_deref())
-                    {
-                        params = params.continue_token(token);
-                    }
-                    pending = Some(
-                        projected_page(&reader, &state.policy, &target, &params, false).await?,
-                    );
-                }
-                let mut page = pending.ok_or("Cursor has no remaining page")?;
-                let before_time_filter = page.items.len();
-                page.items.retain(|item| event_in_window(item, since, until));
-                let time_filter_omitted = before_time_filter - page.items.len();
-                let captured_at = page.captured_at;
-                let omitted = page.omitted;
-                let (items, mut tail) = split_page(page, 48_000)?;
-                tail.omitted = 0;
-                let more = !tail.items.is_empty() || tail.continuation.is_some();
-                let cursor = if more {
-                    Some(
-                        session
-                            .query_cursors
-                            .lock()
-                            .map_err(|_| "Cursor store unavailable")?
-                            .save(binding, state.revision, tail)?,
-                    )
+                    nss.truncate(10);
+                    Some(nss)
                 } else {
                     None
                 };
-                Ok(
-                    json!({"capturedAt":captured_at,"items":items,"hasMore":more,"cursor":cursor,"omittedByPolicy":omitted,"timeFilterOmitted":time_filter_omitted,"coverage":"Policy-projected Events in API order. Time filters apply after each bounded page using latest occurrence (inclusive); unknown timestamps are omitted. Empty filtered pages may have a cursor; no chronological or complete absence claim"}),
-                )
-            } else if call.name == "get_events_timeline" {
-                if !state.policy.events {
-                    return Err("Events are disabled by policy".into());
-                }
-                if args.container.is_some() || args.previous.is_some() {
-                    return Err("Unexpected arguments for events timeline".into());
-                }
-                let query = ResourceQuery {
-                    context: session.scope.context.clone(),
-                    group: target.group.clone(),
-                    version: target.version.clone(),
-                    kind: target.kind.clone(),
-                    namespace: target.namespace.clone(),
-                };
-                let reader =
-                    kubiki_core::core::access::ResourceAccess::new(client, &query, false).await?;
-                let limit = args.limit.unwrap_or(40).clamp(1, 100);
-                let mut params = ListParams::default().limit(limit);
-                let mut filters = Vec::new();
-                if !target.name.is_empty() {
-                    filters.push(format!("involvedObject.name={}", target.name));
-                }
-                if let Some(uid) = &args.uid {
-                    if uid.is_empty()
-                        || uid.len() > 253
-                        || !uid.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+
+                if mode == "raw" {
+                    let mut arguments = call.arguments.clone();
+                    arguments
+                        .as_object_mut()
+                        .ok_or("Invalid Event arguments")?
+                        .remove("cursor");
+                    let binding = json!({"tool":"get_events","arguments":arguments});
+                    let mut pending = args
+                        .cursor
+                        .as_ref()
+                        .map(|cursor| {
+                            session
+                                .query_cursors
+                                .lock()
+                                .map_err(|_| "Cursor store unavailable".to_owned())?
+                                .load(cursor, &binding, state.revision)
+                        })
+                        .transpose()?;
+                    if pending
+                        .as_ref()
+                        .is_none_or(|page| page.items.is_empty() && page.continuation.is_some())
                     {
-                        return Err("Invalid Event resource UID".into());
+                        if let Some(ref namespaces) = fanout_namespaces {
+                            let mut combined = QueryPage {
+                                items: Vec::new(),
+                                continuation: None,
+                                captured_at: stamp(),
+                                omitted: 0,
+                            };
+                            let per_ns = args.page_size.unwrap_or(50) as u32;
+                            for ns in namespaces {
+                                let ns_target = Target {
+                                    namespace: Some(ns.clone()),
+                                    ..target.clone()
+                                };
+                                let query = ResourceQuery {
+                                    context: session.scope.context.clone(),
+                                    group: "".into(),
+                                    version: "v1".into(),
+                                    kind: "Event".into(),
+                                    namespace: Some(ns.clone()),
+                                };
+                                let reader = kubiki_core::core::access::ResourceAccess::new(
+                                    client.clone(),
+                                    &query,
+                                    false,
+                                )
+                                .await?;
+                                let mut params = ListParams::default().limit(per_ns);
+                                if !selector.is_empty() {
+                                    params = params.fields(&selector);
+                                }
+                                let p = projected_page(
+                                    &client,
+                                    &reader,
+                                    &state.policy,
+                                    &session.scope,
+                                    &ns_target,
+                                    &params,
+                                    false,
+                                )
+                                .await?;
+                                combined.omitted += p.omitted;
+                                combined.items.extend(p.items);
+                            }
+                            pending = Some(combined);
+                        } else {
+                            let query = ResourceQuery {
+                                context: session.scope.context.clone(),
+                                group: target.group.clone(),
+                                version: target.version.clone(),
+                                kind: target.kind.clone(),
+                                namespace: if unrestricted_all_ns {
+                                    None
+                                } else {
+                                    target.namespace.clone()
+                                },
+                            };
+                            let reader = kubiki_core::core::access::ResourceAccess::new(
+                                client.clone(),
+                                &query,
+                                unrestricted_all_ns,
+                            )
+                            .await?;
+                            let mut params =
+                                ListParams::default().limit(args.page_size.unwrap_or(50) as u32);
+                            if !selector.is_empty() {
+                                params = params.fields(&selector);
+                            }
+                            if let Some(token) = pending
+                                .as_ref()
+                                .and_then(|page| page.continuation.as_deref())
+                            {
+                                params = params.continue_token(token);
+                            }
+                            pending = Some(
+                                projected_page(
+                                    &client,
+                                    &reader,
+                                    &state.policy,
+                                    &session.scope,
+                                    &target,
+                                    &params,
+                                    false,
+                                )
+                                .await?,
+                            );
+                        }
                     }
-                    filters.push(format!("involvedObject.uid={uid}"));
+                    let mut page = pending.ok_or("Cursor has no remaining page")?;
+                    let before_time_filter = page.items.len();
+                    page.items.retain(|item| event_in_window(item, since, until));
+                    let time_filter_omitted = before_time_filter - page.items.len();
+                    let captured_at = page.captured_at;
+                    let omitted = page.omitted;
+                    let (items, mut tail) = split_page(page, 48_000)?;
+                    tail.omitted = 0;
+                    let more = !tail.items.is_empty() || tail.continuation.is_some();
+                    let cursor = if more {
+                        Some(
+                            session
+                                .query_cursors
+                                .lock()
+                                .map_err(|_| "Cursor store unavailable")?
+                                .save(binding, state.revision, tail)?,
+                        )
+                    } else {
+                        None
+                    };
+                    return Ok(
+                        json!({"capturedAt":captured_at,"items":items,"hasMore":more,"cursor":cursor,"omittedByPolicy":omitted,"timeFilterOmitted":time_filter_omitted,"coverage":"Policy-projected Events in API order. Time filters apply after each bounded page using latest occurrence (inclusive); unknown timestamps are omitted. Empty filtered pages may have a cursor; no chronological or complete absence claim"}),
+                    );
                 }
-                if let Some(value) = &args.event_type { filters.push(format!("type={value}")); }
-                if let Some(value) = &args.reason { filters.push(format!("reason={value}")); }
-                if !filters.is_empty() {
-                    let selector = filters.join(",");
-                    validate_query_filters(&state.policy, &target, true, None, Some(&selector))?;
-                    params = params.fields(&selector);
+
+                // Timeline mode: scan up to max_pages (default 2, max 5) pages, sort newest-first, deduplicate.
+                let limit = args.limit.unwrap_or(40).clamp(1, 100);
+                let max_pages = args.max_pages.unwrap_or(2).clamp(1, 5);
+                let mut raw_events = Vec::new();
+                let mut pages_examined = 0u32;
+                let mut has_more_pages = false;
+                if let Some(ref namespaces) = fanout_namespaces {
+                    for ns in namespaces {
+                        let ns_target = Target {
+                            namespace: Some(ns.clone()),
+                            ..target.clone()
+                        };
+                        let query = ResourceQuery {
+                            context: session.scope.context.clone(),
+                            group: "".into(),
+                            version: "v1".into(),
+                            kind: "Event".into(),
+                            namespace: Some(ns.clone()),
+                        };
+                        let reader = kubiki_core::core::access::ResourceAccess::new(
+                            client.clone(),
+                            &query,
+                            false,
+                        )
+                        .await?;
+                        let mut params = ListParams::default().limit(limit);
+                        if !selector.is_empty() {
+                            params = params.fields(&selector);
+                        }
+                        let page = projected_page(
+                            &client,
+                            &reader,
+                            &state.policy,
+                            &session.scope,
+                            &ns_target,
+                            &params,
+                            false,
+                        )
+                        .await?;
+                        pages_examined += 1;
+                        if page.continuation.is_some() {
+                            has_more_pages = true;
+                        }
+                        raw_events.extend(page.items);
+                        if raw_events.len() >= 250 {
+                            has_more_pages = true;
+                            break;
+                        }
+                    }
+                } else {
+                    let query = ResourceQuery {
+                        context: session.scope.context.clone(),
+                        group: target.group.clone(),
+                        version: target.version.clone(),
+                        kind: target.kind.clone(),
+                        namespace: if unrestricted_all_ns {
+                            None
+                        } else {
+                            target.namespace.clone()
+                        },
+                    };
+                    let reader = kubiki_core::core::access::ResourceAccess::new(
+                        client.clone(),
+                        &query,
+                        unrestricted_all_ns,
+                    )
+                    .await?;
+                    let mut continuation: Option<String> = None;
+                    for _ in 0..max_pages {
+                        let mut params = ListParams::default().limit(limit.max(50));
+                        if !selector.is_empty() {
+                            params = params.fields(&selector);
+                        }
+                        if let Some(ref token) = continuation {
+                            params = params.continue_token(token);
+                        }
+                        let page = projected_page(
+                            &client,
+                            &reader,
+                            &state.policy,
+                            &session.scope,
+                            &target,
+                            &params,
+                            false,
+                        )
+                        .await?;
+                        pages_examined += 1;
+                        continuation = page.continuation;
+                        raw_events.extend(page.items);
+                        if continuation.is_none() || raw_events.len() >= 250 {
+                            break;
+                        }
+                    }
+                    has_more_pages = continuation.is_some();
                 }
-                let page = projected_page(&reader, &state.policy, &target, &params, false).await?;
+
                 let mut timeline = Vec::new();
-                for value in page.items {
-                    if !event_in_window(&value, since, until) { continue; }
+                for value in raw_events {
+                    if !event_in_window(&value, since, until) {
+                        continue;
+                    }
+                    let last_ts = [
+                        "/series/lastObservedTime",
+                        "/lastTimestamp",
+                        "/eventTime",
+                        "/firstTimestamp",
+                        "/metadata/creationTimestamp",
+                    ]
+                    .iter()
+                    .find_map(|p| value.pointer(p).and_then(Value::as_str).map(str::to_owned));
                     let item: DynamicObject = serde_json::from_value(value)
                         .map_err(|_| "Cannot decode projected Event")?;
                     if let Some(ref target_uid) = args.uid {
@@ -2122,7 +3003,9 @@ impl KubernetesTools {
                             continue;
                         }
                     }
+                    let item_ns = item.metadata.namespace.clone();
                     let actual = Target {
+                        namespace: item_ns.clone().or_else(|| target.namespace.clone()),
                         name: item.metadata.name.clone().unwrap_or_default(),
                         ..target.clone()
                     };
@@ -2145,25 +3028,18 @@ impl KubernetesTools {
                     let first_ts = data
                         .get("firstTimestamp")
                         .and_then(Value::as_str)
-                        .map(|s| s.to_string());
-                    let last_ts = data
-                        .get("lastTimestamp")
-                        .and_then(Value::as_str)
-                        .map(|s| s.to_string())
-                        .or_else(|| {
-                            data.get("eventTime")
-                                .and_then(Value::as_str)
-                                .map(|s| s.to_string())
-                        });
+                        .map(str::to_owned);
                     let involved = data.get("involvedObject").cloned().unwrap_or(json!({}));
                     let component = data
                         .get("source")
                         .and_then(|s| s.get("component"))
                         .and_then(Value::as_str)
+                        .or_else(|| data.get("reportingComponent").and_then(Value::as_str))
                         .unwrap_or("")
                         .to_string();
 
                     timeline.push(json!({
+                        "namespace": item_ns,
                         "type": event_type,
                         "reason": reason,
                         "message": message,
@@ -2173,13 +3049,13 @@ impl KubernetesTools {
                         "involvedObject": {
                             "kind": involved.get("kind"),
                             "name": involved.get("name"),
+                            "namespace": involved.get("namespace"),
                             "uid": involved.get("uid"),
                             "fieldPath": involved.get("fieldPath"),
                         },
                         "component": component,
                     }));
                 }
-                // Sort by lastTimestamp descending so newest events appear first
                 timeline.sort_by(|a, b| {
                     let ts_a = a.get("lastTimestamp").and_then(Value::as_str).unwrap_or("");
                     let ts_b = b.get("lastTimestamp").and_then(Value::as_str).unwrap_or("");
@@ -2192,10 +3068,14 @@ impl KubernetesTools {
                         "namespace": args.namespace,
                         "name": args.name,
                         "uid": args.uid,
+                        "involvedKind": args.involved_kind,
                         "capturedAt": stamp(),
+                        "pagesExamined": pages_examined,
+                        "hasMore": has_more_pages,
                         "total": timeline.len(),
                         "deduplicated": deduped.len(),
-                        "completeness":"partial", "coverage":"Policy-projected deduplicated timeline; missing fields and expired Events are unknown"
+                        "completeness": "partial",
+                        "coverage": "Policy-projected deduplicated timeline across bounded pages; missing fields and expired Events are unknown"
                     },
                     "timeline": deduped,
                 }))
@@ -2206,34 +3086,33 @@ impl KubernetesTools {
         timed_read(session, "Read cancelled", "Diagnostic read timed out", read).await
     }
 
-    async fn read_pod_diagnostics(
+    pub(crate) async fn read_pod_diagnostics_for(
         &self,
         session: &Session,
-        call: &ToolCall,
-        client: Client,
+        target: &Target,
     ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            namespace: String,
-            name: String,
-        }
-        let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid pod diagnostics arguments")?;
+        let client = self
+            .client
+            .clone()
+            .ok_or("Cluster connection unavailable")?;
         let state = session.control()?;
         if !state.policy.resources {
             return Err("Resource access is disabled by policy".into());
         }
-        let target = Target {
+        let namespace = target
+            .namespace
+            .clone()
+            .ok_or("Pod diagnostics require a namespace")?;
+        let pod_target = Target {
             group: "".into(),
             version: "v1".into(),
             kind: "Pod".into(),
-            namespace: Some(args.namespace.clone()),
-            name: args.name.clone(),
+            namespace: Some(namespace.clone()),
+            name: target.name.clone(),
         };
-        validate_target(&target, true)?;
-        state.policy.check_scope(&session.scope, &target)?;
-        if state.policy.access(&target, true) != DataAccess::Content {
+        validate_target(&pod_target, true)?;
+        state.policy.check_scope(&session.scope, &pod_target)?;
+        if state.policy.access(&pod_target, true) != DataAccess::Content {
             return Err(
                 "Pod diagnostics require content access; use get_resource for permitted metadata"
                     .into(),
@@ -2241,13 +3120,13 @@ impl KubernetesTools {
         }
 
         let read = async {
-            let api_dyn = resource_access(client.clone(), &target).await?;
+            let api_dyn = resource_access(client.clone(), &pod_target).await?;
             let pod = api_dyn
-                .get_object(&args.name)
+                .get_object(&pod_target.name)
                 .await
                 .map_err(query_get_error)?;
 
-            let projected = diagnostic_projection(&state.policy, &target, &pod)?;
+            let projected = diagnostic_projection(&state.policy, &pod_target, &pod)?;
             let spec = projected.get("spec").cloned().unwrap_or(json!({}));
             let status = projected.get("status").cloned().unwrap_or(json!({}));
             let uid = projected["metadata"]["uid"]
@@ -2264,21 +3143,44 @@ impl KubernetesTools {
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown")
                 .to_string();
+            let status_reason = status
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let status_message = status
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             let pod_ip = status
                 .get("podIP")
                 .and_then(Value::as_str)
-                .map(|s| s.to_string());
+                .map(str::to_owned);
             let host_ip = status
                 .get("hostIP")
                 .and_then(Value::as_str)
-                .map(|s| s.to_string());
+                .map(str::to_owned);
             let node_name = spec
                 .get("nodeName")
                 .and_then(Value::as_str)
-                .map(|s| s.to_string());
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            let target_node = if node_name.is_none() {
+                crate::diagnostics::extract_pod_target_node(&projected)
+            } else {
+                None
+            };
             let restart_policy = spec.get("restartPolicy").and_then(Value::as_str);
 
             let mut issues = Vec::new();
+            if let Some(ref reason) = status_reason {
+                let msg = status_message.as_deref().unwrap_or("");
+                if msg.is_empty() {
+                    issues.push(format!("Pod status reason: {reason}"));
+                } else {
+                    issues.push(format!("Pod status reason {reason}: {msg}"));
+                }
+            }
 
             // Conditions
             let mut conditions_summary = Vec::new();
@@ -2317,13 +3219,69 @@ impl KubernetesTools {
                 false,
                 &mut issues,
             );
+            let ephemeral_containers = container_diagnostics(
+                &status
+                    .get("ephemeralContainerStatuses")
+                    .cloned()
+                    .unwrap_or(json!([])),
+                false,
+                &mut issues,
+            );
 
-            bounded_result(json!({
+            // Compact describe-equivalent scheduling & container specs (policy-projected).
+            let mut scheduling = serde_json::Map::new();
+            for field in [
+                "nodeSelector",
+                "tolerations",
+                "affinity",
+                "priorityClassName",
+                "topologySpreadConstraints",
+                "schedulerName",
+                "preemptionPolicy",
+            ] {
+                if let Some(val) = spec.get(field) {
+                    if !val.is_null() {
+                        scheduling.insert(field.into(), val.clone());
+                    }
+                }
+            }
+            let mut container_specs = Vec::new();
+            for (is_init, list) in [
+                (true, spec.get("initContainers").and_then(Value::as_array)),
+                (false, spec.get("containers").and_then(Value::as_array)),
+            ] {
+                for c in list.into_iter().flatten() {
+                    let mut entry = serde_json::Map::new();
+                    if let Some(n) = c.get("name") {
+                        entry.insert("name".into(), n.clone());
+                    }
+                    if is_init {
+                        entry.insert("init".into(), json!(true));
+                    }
+                    for field in [
+                        "image",
+                        "ports",
+                        "resources",
+                        "livenessProbe",
+                        "readinessProbe",
+                        "startupProbe",
+                    ] {
+                        if let Some(val) = c.get(field) {
+                            if !val.is_null() {
+                                entry.insert(field.into(), val.clone());
+                            }
+                        }
+                    }
+                    container_specs.push(Value::Object(entry));
+                }
+            }
+
+            let mut out = json!({
                 "diagnostic": "pod_diagnostics",
                 "evidence": {
                     "kind": "Pod",
-                    "namespace": args.namespace,
-                    "name": args.name,
+                    "namespace": namespace,
+                    "name": pod_target.name,
                     "uid": uid,
                     "resourceVersion": resource_version,
                     "capturedAt": stamp(),
@@ -2339,42 +3297,63 @@ impl KubernetesTools {
                 "restartPolicy": restart_policy,
                 "issuesSummary": issues,
                 "conditions": conditions_summary,
-                "fieldAccess": field_access_report(&state.policy, &target, true, Some(&["spec.nodeName".into(), "status.nominatedNodeName".into(), "status.conditions".into()])),
+                "fieldAccess": field_access_report(&state.policy, &pod_target, true, Some(&[
+                    "spec.nodeName".into(),
+                    "status.nominatedNodeName".into(),
+                    "status.conditions".into(),
+                    "status.reason".into()
+                ])),
                 "initContainers": init_containers,
                 "containers": containers,
-            }))
+            });
+            if let Some((target, source)) = target_node {
+                out["targetNode"] = json!(target);
+                out["targetNodeSource"] = json!(source);
+            }
+            if let Some(reason) = status_reason {
+                out["reason"] = json!(reason);
+            }
+            if let Some(message) = status_message {
+                out["message"] = json!(message);
+            }
+            if let Some(qos) = status.get("qosClass").filter(|v| !v.is_null()) {
+                out["qosClass"] = qos.clone();
+            }
+            if let Some(start) = status.get("startTime").filter(|v| !v.is_null()) {
+                out["startTime"] = start.clone();
+            }
+            if !scheduling.is_empty() {
+                out["scheduling"] = Value::Object(scheduling);
+            }
+            if !container_specs.is_empty() {
+                out["containerSpecs"] = Value::Array(container_specs);
+            }
+            if !ephemeral_containers.is_empty() {
+                out["ephemeralContainers"] = json!(ephemeral_containers);
+            }
+            bounded_result(out)
         };
         timed_read(session, "Pod diagnostics cancelled", "Pod diagnostics timed out", read).await
     }
 
-    async fn read_workload_diagnostics(
+    pub(crate) async fn read_workload_diagnostics_for(
         &self,
         session: &Session,
-        call: &ToolCall,
-        client: Client,
+        target: &Target,
     ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct Args {
-            group: String,
-            version: String,
-            kind: String,
-            namespace: String,
-            name: String,
-        }
-        let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid workload diagnostics arguments")?;
+        let client = self
+            .client
+            .clone()
+            .ok_or("Cluster connection unavailable")?;
         let state = session.control()?;
         if !state.policy.resources {
             return Err("Resource access is disabled by policy".into());
         }
-        let target = Target {
-            group: args.group,
-            version: args.version,
-            kind: args.kind,
-            namespace: Some(args.namespace.clone()),
-            name: args.name.clone(),
-        };
+        let namespace = target
+            .namespace
+            .clone()
+            .ok_or("Workload diagnostics require a namespace")?;
+        let target = target.clone();
         validate_target(&target, true)?;
         state.policy.check_scope(&session.scope, &target)?;
         if state.policy.access(&target, true) != DataAccess::Content {
@@ -2384,7 +3363,7 @@ impl KubernetesTools {
         let read = async {
             let api_dyn = resource_access(client.clone(), &target).await?;
             let obj = api_dyn
-                .get_object(&args.name)
+                .get_object(&target.name)
                 .await
                 .map_err(query_get_error)?;
 
@@ -2414,7 +3393,7 @@ impl KubernetesTools {
                     group: "apps".into(),
                     version: "v1".into(),
                     kind: "ReplicaSet".into(),
-                    namespace: Some(args.namespace.clone()),
+                    namespace: Some(namespace.clone()),
                     name: "".into(),
                 };
                 if let Ok(label_selector) = &selector {
@@ -2481,6 +3460,14 @@ impl KubernetesTools {
                                             .map_err(|_| "Cannot encode ReplicaSet")?,
                                         true,
                                     )?;
+                                    let rs_created = projected["metadata"]["creationTimestamp"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned();
+                                    let pod_template_hash = projected["metadata"]["labels"]
+                                        ["pod-template-hash"]
+                                        .as_str()
+                                        .map(str::to_owned);
                                     let rs: DynamicObject = serde_json::from_value(projected)
                                         .map_err(|_| "Cannot decode projected ReplicaSet")?;
                                     if let Some(owner) = rs.metadata.uid.clone() {
@@ -2509,12 +3496,25 @@ impl KubernetesTools {
                                     replica_sets_summary.push(json!({
                                         "name": rs_name,
                                         "revision": revision,
+                                        "podTemplateHash": pod_template_hash,
+                                        "creationTimestamp": rs_created,
                                         "desired": rs_desired,
                                         "current": rs_current,
                                         "ready": rs_ready,
                                     }));
                                 }
                             }
+                            replica_sets_summary.sort_by(|a, b| {
+                                let rev_a = a["revision"].as_str().and_then(|s| s.parse::<u64>().ok());
+                                let rev_b = b["revision"].as_str().and_then(|s| s.parse::<u64>().ok());
+                                match (rev_b, rev_a) {
+                                    (Some(rb), Some(ra)) => rb.cmp(&ra),
+                                    _ => b["creationTimestamp"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .cmp(a["creationTimestamp"].as_str().unwrap_or("")),
+                                }
+                            });
                         } else {
                             coverage_reasons.push("ReplicaSet list unavailable".into());
                         }
@@ -2534,7 +3534,7 @@ impl KubernetesTools {
                         group: "".into(),
                         version: "v1".into(),
                         kind: "Pod".into(),
-                        namespace: Some(args.namespace.clone()),
+                        namespace: Some(namespace.clone()),
                         name: "".into(),
                     };
                     if let Ok(pod_api) = resource_access(client.clone(), &pod_target).await {
@@ -2608,6 +3608,35 @@ impl KubernetesTools {
                                     .and_then(Value::as_str)
                                     .unwrap_or("Unknown")
                                     .to_string();
+                                let pod_reason = pod
+                                    .data
+                                    .get("status")
+                                    .and_then(|s| s.get("reason"))
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned);
+                                let pod_node = pod
+                                    .data
+                                    .get("spec")
+                                    .and_then(|s| s.get("nodeName"))
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_owned);
+                                let pod_target_node = if pod_node.is_none() {
+                                    crate::diagnostics::extract_pod_target_node(&pod.data)
+                                } else {
+                                    None
+                                };
+                                let pod_nominated_node = if pod_node.is_none() {
+                                    pod.data
+                                        .pointer("/status/nominatedNodeName")
+                                        .and_then(Value::as_str)
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                        .map(str::to_owned)
+                                } else {
+                                    None
+                                };
                                 let mut pod_issues = Vec::new();
                                 let init_diag = container_diagnostics(
                                     &pod.data["status"]["initContainerStatuses"],
@@ -2629,8 +3658,19 @@ impl KubernetesTools {
                                     "name": pod_name,
                                     "uid": pod.metadata.uid,
                                     "phase": pod_phase,
+                                    "nodeName": pod_node,
                                     "issue": pod_issue,
                                 });
+                                if let Some((target, source)) = pod_target_node {
+                                    pod_entry["targetNode"] = json!(target);
+                                    pod_entry["targetNodeSource"] = json!(source);
+                                }
+                                if let Some(nominated) = pod_nominated_node {
+                                    pod_entry["nominatedNodeName"] = json!(nominated);
+                                }
+                                if let Some(reason) = pod_reason {
+                                    pod_entry["reason"] = json!(reason);
+                                }
                                 if !pod_causes.is_empty() {
                                     pod_entry["crashCauses"] = json!(pod_causes);
                                 }
@@ -2655,8 +3695,8 @@ impl KubernetesTools {
                     "kind": target.kind,
                     "group": target.group,
                     "version": target.version,
-                    "namespace": args.namespace,
-                    "name": args.name,
+                    "namespace": namespace,
+                    "name": target.name,
                     "uid": uid,
                     "generation": generation,
                     "observedGeneration": obs_gen,
@@ -2700,45 +3740,39 @@ impl KubernetesTools {
         Ok(result)
     }
 
-    async fn read_service_diagnostics(
+    pub(crate) async fn read_service_diagnostics_for(
         &self,
         session: &Session,
-        call: &ToolCall,
-        _client: Client,
+        target: &Target,
     ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            namespace: String,
-            name: String,
-        }
-        let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid service diagnostics arguments")?;
         let state = session.control()?;
-        let target = Target {
+        let namespace = target
+            .namespace
+            .clone()
+            .ok_or("Service diagnostics require a namespace")?;
+        let svc_target = Target {
             group: "".into(),
             version: "v1".into(),
             kind: "Service".into(),
-            namespace: Some(args.namespace.clone()),
-            name: args.name.clone(),
+            namespace: Some(namespace.clone()),
+            name: target.name.clone(),
         };
-        validate_target(&target, true)?;
-        state.policy.check_scope(&session.scope, &target)?;
-        if state.policy.access(&target, true) != DataAccess::Content {
+        validate_target(&svc_target, true)?;
+        state.policy.check_scope(&session.scope, &svc_target)?;
+        if state.policy.access(&svc_target, true) != DataAccess::Content {
             return Err("Service diagnostics require content access".into());
         }
-        let root = self.linked_read(session, "get_resource", json!({"group":"","version":"v1","kind":"Service","namespace":args.namespace,"name":args.name,"fields":["spec.type","spec.clusterIP","spec.selector","spec.ports","spec.externalName","spec.publishNotReadyAddresses","status.loadBalancer"]})).await?;
+        let root = self.linked_read(session, "get_resource", json!({"group":"","version":"v1","kind":"Service","namespace":namespace,"name":svc_target.name,"fields":["spec.type","spec.clusterIP","spec.selector","spec.ports","spec.externalName","spec.publishNotReadyAddresses","status.loadBalancer"]})).await?;
         let service = &root["resource"];
         let mut coverage = json!({});
         let mut slices = None;
         let mut pods = None;
         if service["spec"]["type"] != "ExternalName" {
-            let result = self.linked_read(session, "list_resources", json!({"group":"discovery.k8s.io","version":"v1","kind":"EndpointSlice","namespace":args.namespace,"labelSelector":format!("kubernetes.io/service-name={}",args.name),"pageSize":10,"fields":["metadata.ownerReferences","endpoints[*].conditions","ports"]})).await;
+            let result = self.linked_read(session, "list_resources", json!({"group":"discovery.k8s.io","version":"v1","kind":"EndpointSlice","namespace":namespace,"labelSelector":format!("kubernetes.io/service-name={}", svc_target.name),"pageSize":10,"fields":["metadata.ownerReferences","endpoints[*].conditions","ports"]})).await;
             match result {
                 Ok(mut page) => {
                     let service_uid = service["metadata"]["uid"].as_str();
                     if let Some(items) = page["items"].as_array_mut() {
-                        // A known conflicting owner belongs to a previous Service incarnation.
                         let before = items.len();
                         items.retain(|item| {
                             !item["metadata"]["ownerReferences"]
@@ -2770,54 +3804,63 @@ impl KubernetesTools {
                 .filter(|s| !s.is_empty());
             if let Some(selector) = selector {
                 let selector = diagnostic_selector(&json!({"matchLabels":selector}))?;
-                match self.linked_read(session, "list_resources", json!({"group":"","version":"v1","kind":"Pod","namespace":args.namespace,"labelSelector":selector,"pageSize":20,"fields":["status.phase","status.conditions","spec.containers[*].name","spec.containers[*].ports"]})).await {
+                match self.linked_read(session, "list_resources", json!({"group":"","version":"v1","kind":"Pod","namespace":namespace,"labelSelector":selector,"pageSize":20,"fields":["status.phase","status.conditions","spec.containers[*].name","spec.containers[*].ports","spec.containers[*].readinessProbe"]})).await {
                     Ok(page) => { pods = page["items"].as_array().cloned(); coverage["pods"]=page; }
                     Err(error) => coverage["pods"]=json!({"completeness":"unavailable","reason":error}),
                 }
             } else {
                 coverage["pods"] = json!({"completeness":"unavailable","reason":"No usable permitted selector; no broad Pod scan performed"});
             }
+            if let Ok(np_page) = self.linked_read(session, "list_resources", json!({"group":"networking.k8s.io","version":"v1","kind":"NetworkPolicy","namespace":namespace,"pageSize":10,"fields":["metadata.name","spec.podSelector","spec.policyTypes"]})).await {
+                if let Some(items) = np_page["items"].as_array() {
+                    if !items.is_empty() {
+                        coverage["networkPolicies"] = json!({
+                            "count": items.len(),
+                            "hasMore": np_page["hasMore"],
+                            "policies": items.iter().map(|np| json!({
+                                "name": np["metadata"]["name"],
+                                "podSelector": np["spec"]["podSelector"],
+                                "policyTypes": np["spec"]["policyTypes"],
+                            })).collect::<Vec<_>>()
+                        });
+                    }
+                }
+            }
         }
         let diag = service_diagnostics(service, slices.as_ref(), pods.as_deref());
-        // Do not duplicate all child bodies in evidence. Keep filters/cursors/time/counts.
         for key in ["pods", "endpointSlices"] {
             if let Some(map) = coverage[key].as_object_mut() {
                 map.remove("items");
             }
         }
         bounded_result(
-            json!({"diagnostic":"service_diagnostics","service":diag,"components":coverage,"evidence":{"context":session.scope.context,"kind":"Service","namespace":args.namespace,"name":args.name,"uid":service["metadata"]["uid"],"resourceVersion":service["metadata"]["resourceVersion"],"capturedAt":root["capturedAt"],"completeness":"partial","coverage":"Scoped policy-projected observations; endpoint readiness does not establish connectivity or application health"}}),
+            json!({"diagnostic":"service_diagnostics","service":diag,"components":coverage,"evidence":{"context":session.scope.context,"kind":"Service","namespace":namespace,"name":svc_target.name,"uid":service["metadata"]["uid"],"resourceVersion":service["metadata"]["resourceVersion"],"capturedAt":root["capturedAt"],"completeness":"partial","coverage":"Scoped policy-projected observations; endpoint readiness does not establish connectivity or application health"}}),
         )
     }
 
-    async fn read_pvc_diagnostics(
+    pub(crate) async fn read_pvc_diagnostics_for(
         &self,
         session: &Session,
-        call: &ToolCall,
-        _client: Client,
+        target: &Target,
     ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            namespace: String,
-            name: String,
-        }
-        let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid PVC diagnostics arguments")?;
         let state = session.control()?;
-        let target = Target {
+        let namespace = target
+            .namespace
+            .clone()
+            .ok_or("PVC diagnostics require a namespace")?;
+        let pvc_target = Target {
             group: "".into(),
             version: "v1".into(),
             kind: "PersistentVolumeClaim".into(),
-            namespace: Some(args.namespace.clone()),
-            name: args.name.clone(),
+            namespace: Some(namespace.clone()),
+            name: target.name.clone(),
         };
-        validate_target(&target, true)?;
-        state.policy.check_scope(&session.scope, &target)?;
-        if state.policy.access(&target, true) != DataAccess::Content {
+        validate_target(&pvc_target, true)?;
+        state.policy.check_scope(&session.scope, &pvc_target)?;
+        if state.policy.access(&pvc_target, true) != DataAccess::Content {
             return Err("PVC diagnostics require content access".into());
         }
-        let root=self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":"PersistentVolumeClaim","namespace":args.namespace,"name":args.name,"fields":["spec.volumeName","spec.storageClassName","spec.resources.requests.storage","spec.accessModes","status.phase","status.capacity","status.conditions"]})).await?;
+        let root=self.linked_read(session,"get_resource",json!({"group":"","version":"v1","kind":"PersistentVolumeClaim","namespace":namespace,"name":pvc_target.name,"fields":["spec.volumeName","spec.storageClassName","spec.resources.requests.storage","spec.accessModes","status.phase","status.capacity","status.conditions"]})).await?;
         let pvc = &root["resource"];
         let mut components = json!({});
         let mut pv = None;
@@ -2845,7 +3888,7 @@ impl KubernetesTools {
         if state.policy.events {
             if let Some(uid) = pvc["metadata"]["uid"].as_str().filter(|s| !s.is_empty()) {
                 let selector = format!("involvedObject.uid={uid}");
-                match self.linked_read(session,"list_resources",json!({"group":"","version":"v1","kind":"Event","namespace":args.namespace,"labelSelector":"","fieldSelector":selector,"pageSize":20,"fields":["involvedObject.uid","reason","message","type","lastTimestamp","eventTime"]})).await {
+                match self.linked_read(session,"list_resources",json!({"group":"","version":"v1","kind":"Event","namespace":namespace,"labelSelector":"","fieldSelector":selector,"pageSize":20,"fields":["involvedObject.uid","reason","message","type","lastTimestamp","eventTime"]})).await {
                     Ok(mut page)=> {
                         events=page["items"].as_array().map(|items|items.iter().filter(|item|item["involvedObject"]["uid"]==uid).cloned().collect::<Vec<_>>());
                         page.as_object_mut().unwrap().remove("items");
@@ -2862,23 +3905,412 @@ impl KubernetesTools {
         }
         let diag = pvc_diagnostics(pvc, pv.as_ref(), events.as_deref());
         bounded_result(
-            json!({"diagnostic":"pvc_diagnostics","pvc":diag,"components":components,"evidence":{"context":session.scope.context,"kind":"PersistentVolumeClaim","namespace":args.namespace,"name":args.name,"uid":pvc["metadata"]["uid"],"resourceVersion":pvc["metadata"]["resourceVersion"],"capturedAt":root["capturedAt"],"completeness":"partial","coverage":"Projected claim, exact volume/class and UID-bound Events; unavailable fields do not establish absence"}}),
+            json!({"diagnostic":"pvc_diagnostics","pvc":diag,"components":components,"evidence":{"context":session.scope.context,"kind":"PersistentVolumeClaim","namespace":namespace,"name":pvc_target.name,"uid":pvc["metadata"]["uid"],"resourceVersion":pvc["metadata"]["resourceVersion"],"capturedAt":root["capturedAt"],"completeness":"partial","coverage":"Projected claim, exact volume/class and UID-bound Events; unavailable fields do not establish absence"}}),
         )
     }
 
-    async fn list_helm_releases(
+    pub(crate) async fn read_node_diagnostics_for(
+        &self,
+        session: &Session,
+        target: &Target,
+    ) -> Result<Value, String> {
+        let page = self
+            .linked_read(
+                session,
+                "get_resource",
+                json!({
+                    "group": "",
+                    "version": "v1",
+                    "kind": "Node",
+                    "namespace": null,
+                    "name": target.name,
+                    "fields": [
+                        "metadata.labels",
+                        "spec.unschedulable",
+                        "spec.taints",
+                        "status.conditions",
+                        "status.capacity",
+                        "status.allocatable",
+                        "status.nodeInfo"
+                    ]
+                }),
+            )
+            .await?;
+        let mut node = node_diagnostics(&page["resource"]);
+        if let Some(info) = page["resource"]["status"].get("nodeInfo").filter(|v| !v.is_null()) {
+            node["nodeInfo"] = info.clone();
+        }
+        if let Some(labels) = page["resource"]["metadata"].get("labels").filter(|v| !v.is_null()) {
+            node["labels"] = labels.clone();
+        }
+        bounded_result(json!({
+            "diagnostic": "node_diagnostics",
+            "node": node,
+            "evidence": {
+                "context": session.scope.context,
+                "kind": "Node",
+                "name": page["resource"]["metadata"]["name"],
+                "uid": page["resource"]["metadata"]["uid"],
+                "capturedAt": page["capturedAt"],
+                "completeness": "partial"
+            }
+        }))
+    }
+
+    pub(crate) async fn read_config_diagnostics_for(
+        &self,
+        session: &Session,
+        target: &Target,
+    ) -> Result<Value, String> {
+        if !matches!(
+            target.kind.as_str(),
+            "Pod"
+                | "Deployment"
+                | "StatefulSet"
+                | "DaemonSet"
+                | "ReplicaSet"
+                | "Job"
+                | "CronJob"
+        ) {
+            return Err("Configuration diagnostics supports Pods and workloads".into());
+        }
+        let state = session.control()?;
+        let prefix = match target.kind.as_str() {
+            "Pod" => "spec",
+            "CronJob" => "spec.jobTemplate.spec.template.spec",
+            _ => "spec.template.spec",
+        };
+        let fields = [
+            "containers[*].name",
+            "containers[*].envFrom",
+            "containers[*].env[*].valueFrom",
+            "initContainers[*].name",
+            "initContainers[*].envFrom",
+            "initContainers[*].env[*].valueFrom",
+            "ephemeralContainers[*].name",
+            "ephemeralContainers[*].envFrom",
+            "ephemeralContainers[*].env[*].valueFrom",
+            "volumes[*].configMap",
+            "volumes[*].secret",
+            "volumes[*].projected",
+            "imagePullSecrets",
+        ]
+        .into_iter()
+        .map(|field| format!("{prefix}.{field}"))
+        .collect::<Vec<_>>();
+        let page = self
+            .linked_read(
+                session,
+                "get_resource",
+                json!({
+                    "group": target.group,
+                    "version": target.version,
+                    "kind": target.kind,
+                    "namespace": target.namespace,
+                    "name": target.name,
+                    "fields": fields
+                }),
+            )
+            .await?;
+        let root = &page["resource"];
+        let pod_spec = if target.kind == "Pod" {
+            &root["spec"]
+        } else if target.kind == "CronJob" {
+            &root["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        } else {
+            &root["spec"]["template"]["spec"]
+        };
+        let references = config_reference_diagnostics(pod_spec);
+        let mut checks = Vec::new();
+        let mut examined = 0;
+        let mut seen = std::collections::BTreeSet::new();
+        for (key, kind) in [("configMaps", "ConfigMap"), ("secrets", "Secret")] {
+            for reference in references[key].as_array().into_iter().flatten() {
+                if examined >= 20 {
+                    break;
+                }
+                let Some(name) = reference["name"].as_str() else {
+                    continue;
+                };
+                if !seen.insert((
+                    kind.to_owned(),
+                    name.to_owned(),
+                    reference["key"].as_str().map(str::to_owned),
+                )) {
+                    continue;
+                }
+                examined += 1;
+                let ref_target = Target {
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: kind.into(),
+                    namespace: target.namespace.clone(),
+                    name: name.into(),
+                };
+                let content = state.policy.access(&ref_target, true) == DataAccess::Content;
+                let check_fields = if content && reference["key"].is_string() {
+                    json!(["data", "binaryData"])
+                } else {
+                    json!(["metadata.name"])
+                };
+                match self
+                    .linked_read(
+                        session,
+                        "get_resource",
+                        json!({
+                            "group": "",
+                            "version": "v1",
+                            "kind": kind,
+                            "namespace": target.namespace,
+                            "name": name,
+                            "fields": check_fields
+                        }),
+                    )
+                    .await
+                {
+                    Ok(found) => {
+                        let item = &found["resource"];
+                        let k = reference["key"].as_str();
+                        let present = k.is_some_and(|k| {
+                            item["data"].get(k).is_some() || item["binaryData"].get(k).is_some()
+                        });
+                        checks.push(json!({
+                            "kind": kind,
+                            "name": name,
+                            "key": k,
+                            "object": "observed",
+                            "keyStatus": if k.is_none() { "notApplicable" } else if present { "present" } else { "unknownOrMissing" },
+                            "capturedAt": found["capturedAt"]
+                        }));
+                    }
+                    Err(error) => checks.push(json!({
+                        "kind": kind,
+                        "name": name,
+                        "key": reference["key"].as_str(),
+                        "object": if error.contains("HTTP 404") { "notFound" } else { "unavailableOrDenied" },
+                        "reason": error
+                    })),
+                }
+            }
+        }
+        bounded_result(json!({
+            "references": references,
+            "checks": checks,
+            "examined": examined,
+            "evidence": {
+                "context": session.scope.context,
+                "kind": target.kind,
+                "namespace": target.namespace,
+                "name": target.name,
+                "capturedAt": page["capturedAt"],
+                "completeness": "partial",
+                "coverage": "Projected references and at most 20 distinct exact checks; secret/configuration values are never returned, absent/filtered keys remain unknown"
+            }
+        }))
+    }
+
+    pub(crate) async fn read_workload_revision_diff(
+        &self,
+        session: &Session,
+        target: &Target,
+    ) -> Result<Value, String> {
+        let namespace = target
+            .namespace
+            .clone()
+            .ok_or("Revision diff requires a namespaced workload")?;
+        if !matches!(
+            target.kind.as_str(),
+            "Deployment" | "StatefulSet" | "DaemonSet"
+        ) {
+            return Err("Revision diff supports Deployment, StatefulSet and DaemonSet".into());
+        }
+        let parent = self
+            .linked_read(
+                session,
+                "get_resource",
+                json!({
+                    "group": target.group,
+                    "version": target.version,
+                    "kind": target.kind,
+                    "namespace": namespace,
+                    "name": target.name,
+                    "fields": ["metadata", "spec.selector"]
+                }),
+            )
+            .await?;
+        let parent_uid = parent["resource"]["metadata"]["uid"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or("Workload UID unavailable for revision diff")?
+            .to_owned();
+        let selector = diagnostic_selector(&parent["resource"]["spec"]["selector"])?;
+        if target.kind == "Deployment" {
+            let list = self
+                .linked_read(
+                    session,
+                    "list_resources",
+                    json!({
+                        "group": "apps",
+                        "version": "v1",
+                        "kind": "ReplicaSet",
+                        "namespace": namespace,
+                        "labelSelector": selector,
+                        "pageSize": 20,
+                        "profile": "full"
+                    }),
+                )
+                .await?;
+            let mut owned: Vec<&Value> = list["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|item| {
+                    item["metadata"]["ownerReferences"]
+                        .as_array()
+                        .is_some_and(|refs| {
+                            refs.iter()
+                                .any(|r| r["controller"] == true && r["uid"] == parent_uid)
+                        })
+                })
+                .collect();
+            owned.sort_by(|a, b| {
+                let rev_a = a
+                    .pointer("/metadata/annotations/deployment.kubernetes.io~1revision")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse::<u64>().ok());
+                let rev_b = b
+                    .pointer("/metadata/annotations/deployment.kubernetes.io~1revision")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse::<u64>().ok());
+                match (rev_b, rev_a) {
+                    (Some(rb), Some(ra)) => rb.cmp(&ra),
+                    _ => b["metadata"]["creationTimestamp"]
+                        .as_str()
+                        .unwrap_or("")
+                        .cmp(a["metadata"]["creationTimestamp"].as_str().unwrap_or("")),
+                }
+            });
+            if owned.len() < 2 {
+                return Ok(json!({
+                    "kind": target.kind,
+                    "namespace": namespace,
+                    "name": target.name,
+                    "revisionsObserved": owned.len(),
+                    "diff": Value::Null,
+                    "note": "Fewer than 2 owned ReplicaSet revisions observed; no revision diff available"
+                }));
+            }
+            let current = owned[0];
+            let previous = owned[1];
+            let diff = crate::diagnostics::diff_pod_templates(
+                &current["spec"]["template"]["spec"],
+                &previous["spec"]["template"]["spec"],
+            );
+            return bounded_result(json!({
+                "kind": "Deployment",
+                "namespace": namespace,
+                "name": target.name,
+                "currentRevision": {
+                    "name": current["metadata"]["name"],
+                    "revision": current.pointer("/metadata/annotations/deployment.kubernetes.io~1revision"),
+                    "creationTimestamp": current["metadata"]["creationTimestamp"]
+                },
+                "previousRevision": {
+                    "name": previous["metadata"]["name"],
+                    "revision": previous.pointer("/metadata/annotations/deployment.kubernetes.io~1revision"),
+                    "creationTimestamp": previous["metadata"]["creationTimestamp"]
+                },
+                "diff": diff,
+                "coverage": "Diff computed strictly over policy-projected ReplicaSet PodTemplates; omitted/redacted fields (e.g. command/args/env.value when workloadConfiguration is off) are excluded"
+            }));
+        }
+        // StatefulSet / DaemonSet: ControllerRevisions
+        let list = self
+            .linked_read(
+                session,
+                "list_resources",
+                json!({
+                    "group": "apps",
+                    "version": "v1",
+                    "kind": "ControllerRevision",
+                    "namespace": namespace,
+                    "labelSelector": selector,
+                    "pageSize": 20,
+                    "profile": "full"
+                }),
+            )
+            .await?;
+        let mut owned: Vec<&Value> = list["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|item| {
+                item["metadata"]["ownerReferences"]
+                    .as_array()
+                    .is_some_and(|refs| {
+                        refs.iter()
+                            .any(|r| r["controller"] == true && r["uid"] == parent_uid)
+                    })
+            })
+            .collect();
+        owned.sort_by(|a, b| {
+            let rev_a = a["revision"].as_i64().unwrap_or(0);
+            let rev_b = b["revision"].as_i64().unwrap_or(0);
+            rev_b.cmp(&rev_a)
+        });
+        if owned.len() < 2 {
+            return Ok(json!({
+                "kind": target.kind,
+                "namespace": namespace,
+                "name": target.name,
+                "revisionsObserved": owned.len(),
+                "diff": Value::Null,
+                "note": "Fewer than 2 owned ControllerRevisions observed; no revision diff available"
+            }));
+        }
+        let current = owned[0];
+        let previous = owned[1];
+        let diff = crate::diagnostics::diff_pod_templates(
+            &current["data"]["spec"]["template"]["spec"],
+            &previous["data"]["spec"]["template"]["spec"],
+        );
+        bounded_result(json!({
+            "kind": target.kind,
+            "namespace": namespace,
+            "name": target.name,
+            "currentRevision": {
+                "name": current["metadata"]["name"],
+                "revision": current["revision"],
+                "creationTimestamp": current["metadata"]["creationTimestamp"]
+            },
+            "previousRevision": {
+                "name": previous["metadata"]["name"],
+                "revision": previous["revision"],
+                "creationTimestamp": previous["metadata"]["creationTimestamp"]
+            },
+            "diff": diff,
+            "coverage": "Diff computed strictly over policy-projected ControllerRevision PodTemplates; omitted/redacted fields are excluded"
+        }))
+    }
+
+    async fn execute_helm(
         &self,
         session: &Session,
         call: &ToolCall,
-        _client: Client,
+        client: Client,
     ) -> Result<Value, String> {
         #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Args {
+            action: String,
             namespace: Option<String>,
+            name: Option<String>,
+            chart: Option<String>,
+            version: Option<String>,
+            values: Option<Value>,
         }
         let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid list_helm_releases arguments")?;
+            .map_err(|_| "Invalid helm arguments")?;
         let state = session.control()?;
         if !state.policy.is_helm_active(&state.capabilities) {
             return Err("Helm operations are disabled by policy or not detected in cluster".into());
@@ -2887,343 +4319,664 @@ impl KubernetesTools {
             .namespace
             .or_else(|| session.working_scope.lock().ok()?.namespace.clone())
             .ok_or("Choose one namespace for Helm inspection")?;
-        let target = Target {
-            group: "helm.sh".into(),
-            version: "v1".into(),
-            kind: "Release".into(),
-            namespace: Some(namespace.clone()),
-            name: "".into(),
-        };
-        state.policy.check_scope(&session.scope, &target)?;
-        // Helm inventory needs only storage labels, never Secret bodies/chart values.
-        let query = ResourceQuery {
-            context: session.scope.context.clone(),
-            group: "".into(),
-            version: "v1".into(),
-            kind: "Secret".into(),
-            namespace: Some(namespace.clone()),
-        };
-        let reader = kubiki_core::core::access::ResourceAccess::new(_client, &query, false).await?;
-        let page = reader
-            .page(&ListParams::default().labels("owner=helm").limit(50), true)
-            .await
-            .map_err(query_list_error)?;
-        let mut releases = std::collections::BTreeMap::<String, (u64, Value)>::new();
-        for storage in page.items {
-            let labels = &storage["metadata"]["labels"];
-            let Some(name) = labels["name"].as_str() else {
-                continue;
-            };
-            let revision = labels["version"]
-                .as_str()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(0);
-            let actual = Target {
-                name: name.into(),
-                ..target.clone()
-            };
-            if state.policy.access(&actual, false) == DataAccess::None {
-                continue;
-            }
-            let value = json!({"apiVersion":"helm.sh/v1","kind":"Release","metadata":{"name":name,"namespace":namespace,"labels":{"storageRevision":labels["version"],"status":labels["status"]}}});
-            let projected = state.policy.project(&actual, &value, false)?;
-            if releases.get(name).is_none_or(|(old, _)| revision > *old) {
-                releases.insert(name.into(), (revision, projected));
-            }
-        }
-        let items: Vec<_> = releases.into_values().map(|(_, item)| item).collect();
-        bounded_result(
-            json!({"releases":items,"count":items.len(),"hasMore":page.continuation.is_some(),"evidence":{"context":session.scope.context,"namespace":namespace,"capturedAt":stamp(),"completeness":"partial","coverage":"Policy-projected Release metadata from at most 50 Helm storage metadata entries; revision is highest observed in this page, not a complete history. No Secret bodies fetched."}}),
-        )
-    }
 
-    async fn get_helm_release(
-        &self,
-        session: &Session,
-        call: &ToolCall,
-        _client: Client,
-    ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            namespace: String,
-            name: String,
-            #[serde(default, rename = "storageOnly")]
-            storage_only: bool,
-        }
-        let args: Args = serde_json::from_value(call.arguments.clone())
-            .map_err(|_| "Invalid get_helm_release arguments")?;
-        let state = session.control()?;
-        if !state.policy.is_helm_active(&state.capabilities) {
-            return Err("Helm operations are disabled by policy or not detected in cluster".into());
-        }
-        let target = Target {
-            group: "helm.sh".into(),
-            version: "v1".into(),
-            kind: "Release".into(),
-            namespace: Some(args.namespace.clone()),
-            name: args.name.clone(),
-        };
-        validate_target(&target, true)?;
-        state.policy.check_scope(&session.scope, &target)?;
-
-        let access = state.policy.access(&target, false);
-        if access == DataAccess::None {
-            return Err("Helm release access is denied by policy".into());
-        }
-        if access == DataAccess::Metadata || args.storage_only {
-            let query = ResourceQuery {
-                context: session.scope.context.clone(),
-                group: "".into(),
-                version: "v1".into(),
-                kind: "Secret".into(),
-                namespace: Some(args.namespace.clone()),
-            };
-            let reader =
-                kubiki_core::core::access::ResourceAccess::new(_client, &query, false).await?;
-            let selector = format!("owner=helm,name={}", args.name);
-            let page = reader
-                .page(&ListParams::default().labels(&selector).limit(50), true)
-                .await
-                .map_err(query_list_error)?;
-            let mut latest: Option<(u64, Value)> = None;
-            for storage in page.items {
-                let labels = &storage["metadata"]["labels"];
-                if labels["name"].as_str() != Some(args.name.as_str()) {
-                    continue;
-                }
-                let rev = labels["version"]
-                    .as_str()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0);
-                if args.storage_only
-                    && (rev == 0
-                        || storage["metadata"]["name"]
-                            != format!("sh.helm.release.v1.{}.v{rev}", args.name))
+        match args.action.as_str() {
+            "list" => {
+                if args.name.is_some()
+                    || args.chart.is_some()
+                    || args.version.is_some()
+                    || args.values.is_some()
                 {
-                    continue;
+                    return Err("helm action='list' only accepts optional namespace".into());
                 }
-                let value = json!({
-                    "apiVersion": "helm.sh/v1",
-                    "kind": "Release",
-                    "metadata": {
-                        "name": args.name,
-                        "namespace": args.namespace,
-                        "labels": {
-                            "storageRevision": labels["version"],
-                            "status": labels["status"]
-                        }
+                let target = Target {
+                    group: "helm.sh".into(),
+                    version: "v1".into(),
+                    kind: "Release".into(),
+                    namespace: Some(namespace.clone()),
+                    name: "".into(),
+                };
+                state.policy.check_scope(&session.scope, &target)?;
+                // Helm inventory needs only storage labels, never Secret bodies/chart values.
+                let query = ResourceQuery {
+                    context: session.scope.context.clone(),
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: "Secret".into(),
+                    namespace: Some(namespace.clone()),
+                };
+                let reader =
+                    kubiki_core::core::access::ResourceAccess::new(client, &query, false).await?;
+                let page = reader
+                    .page(&ListParams::default().labels("owner=helm").limit(50), true)
+                    .await
+                    .map_err(query_list_error)?;
+                let mut releases = std::collections::BTreeMap::<String, (u64, Value)>::new();
+                for storage in page.items {
+                    let labels = &storage["metadata"]["labels"];
+                    let Some(name) = labels["name"].as_str() else {
+                        continue;
+                    };
+                    let revision = labels["version"]
+                        .as_str()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    let actual = Target {
+                        name: name.into(),
+                        ..target.clone()
+                    };
+                    if state.policy.access(&actual, false) == DataAccess::None {
+                        continue;
                     }
+                    let value = json!({"apiVersion":"helm.sh/v1","kind":"Release","metadata":{"name":name,"namespace":namespace,"labels":{"storageRevision":labels["version"],"status":labels["status"]}}});
+                    let projected = state.policy.project(&actual, &value, false)?;
+                    if releases.get(name).is_none_or(|(old, _)| revision > *old) {
+                        releases.insert(name.into(), (revision, projected));
+                    }
+                }
+                let items: Vec<_> = releases.into_values().map(|(_, item)| item).collect();
+                bounded_result(json!({
+                    "action": "list",
+                    "releases": items,
+                    "count": items.len(),
+                    "hasMore": page.continuation.is_some(),
+                    "evidence": {
+                        "context": session.scope.context,
+                        "namespace": namespace,
+                        "capturedAt": stamp(),
+                        "completeness": "partial",
+                        "coverage": "Policy-projected Release metadata from at most 50 Helm storage metadata entries; revision is highest observed in this page, not a complete history. No Secret bodies fetched."
+                    }
+                }))
+            }
+            "storage" => {
+                if args.chart.is_some() || args.version.is_some() || args.values.is_some() {
+                    return Err("helm action='storage' only accepts namespace and name".into());
+                }
+                let name = args
+                    .name
+                    .filter(|n| !n.is_empty())
+                    .ok_or("Release name is required for helm action='storage'")?;
+                let target = Target {
+                    group: "helm.sh".into(),
+                    version: "v1".into(),
+                    kind: "Release".into(),
+                    namespace: Some(namespace.clone()),
+                    name: name.clone(),
+                };
+                validate_target(&target, true)?;
+                state.policy.check_scope(&session.scope, &target)?;
+                if state.policy.access(&target, false) == DataAccess::None {
+                    return Err("Helm release access is denied by policy".into());
+                }
+                let query = ResourceQuery {
+                    context: session.scope.context.clone(),
+                    group: "".into(),
+                    version: "v1".into(),
+                    kind: "Secret".into(),
+                    namespace: Some(namespace.clone()),
+                };
+                let reader =
+                    kubiki_core::core::access::ResourceAccess::new(client, &query, false).await?;
+                let selector = format!("owner=helm,name={name}");
+                let page = reader
+                    .page(&ListParams::default().labels(&selector).limit(50), true)
+                    .await
+                    .map_err(query_list_error)?;
+                let mut revisions: Vec<(u64, Value)> = Vec::new();
+                for storage in page.items {
+                    let labels = &storage["metadata"]["labels"];
+                    if labels["name"].as_str() != Some(name.as_str()) {
+                        continue;
+                    }
+                    let rev = labels["version"]
+                        .as_str()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    let expected_secret = format!("sh.helm.release.v1.{name}.v{rev}");
+                    if rev == 0 || storage["metadata"]["name"] != expected_secret {
+                        continue;
+                    }
+                    let status = labels["status"].as_str().unwrap_or("unknown");
+                    let value = json!({
+                        "apiVersion": "helm.sh/v1",
+                        "kind": "Release",
+                        "metadata": {
+                            "name": name,
+                            "namespace": namespace,
+                            "creationTimestamp": storage["metadata"]["creationTimestamp"],
+                            "labels": {
+                                "storageRevision": labels["version"],
+                                "status": status
+                            }
+                        }
+                    });
+                    let projected = state.policy.project(&target, &value, false)?;
+                    revisions.push((
+                        rev,
+                        json!({
+                            "revision": rev,
+                            "status": status,
+                            "secretName": expected_secret,
+                            "creationTimestamp": projected["metadata"]["creationTimestamp"],
+                        }),
+                    ));
+                }
+                revisions.sort_by(|a, b| b.0.cmp(&a.0));
+                let has_pending = revisions.iter().any(|(_, r)| {
+                    matches!(
+                        r["status"].as_str(),
+                        Some(
+                            "pending-install"
+                                | "pending-upgrade"
+                                | "pending-rollback"
+                                | "uninstalling"
+                        )
+                    )
                 });
+                let latest_failed_with_deployed = revisions
+                    .first()
+                    .is_some_and(|(_, r)| r["status"] == "failed")
+                    && revisions.iter().skip(1).any(|(_, r)| r["status"] == "deployed");
+                let has_conflict = has_pending || latest_failed_with_deployed;
+                let conflict_summary = if has_pending {
+                    Some("Release has pending/in-progress Helm storage revision (possible install/upgrade lock or interrupted operation)")
+                } else if latest_failed_with_deployed {
+                    Some("Latest Helm storage revision failed while an earlier deployed revision remains in storage")
+                } else {
+                    None
+                };
+                let latest = revisions.first().map(|(_, r)| r.clone());
+                let rev_values: Vec<Value> = revisions.into_iter().map(|(_, r)| r).collect();
+                bounded_result(json!({
+                    "action": "storage",
+                    "release": name,
+                    "namespace": namespace,
+                    "storagePresent": if !rev_values.is_empty() {
+                        Some(true)
+                    } else if page.continuation.is_none() {
+                        Some(false)
+                    } else {
+                        None
+                    },
+                    "latest": latest,
+                    "revisions": rev_values,
+                    "hasConflict": has_conflict,
+                    "conflictSummary": conflict_summary,
+                    "hasMore": page.continuation.is_some(),
+                    "evidence": {
+                        "context": session.scope.context,
+                        "capturedAt": stamp(),
+                        "completeness": if page.continuation.is_some() { "partial" } else { "metadata_only" },
+                        "coverage": "All observed sh.helm.release.v1.<name>.v* storage Secret metadata labels (up to 50); no Secret bodies fetched."
+                    }
+                }))
+            }
+            "values" => {
+                if args.chart.is_some() || args.version.is_some() || args.values.is_some() {
+                    return Err("helm action='values' only accepts namespace and name".into());
+                }
+                let name = args
+                    .name
+                    .filter(|n| !n.is_empty())
+                    .ok_or("Release name is required for helm action='values'")?;
+                let target = Target {
+                    group: "helm.sh".into(),
+                    version: "v1".into(),
+                    kind: "Release".into(),
+                    namespace: Some(namespace.clone()),
+                    name: name.clone(),
+                };
+                validate_target(&target, true)?;
+                state.policy.check_scope(&session.scope, &target)?;
+                if !state.policy.helm_values {
+                    return Err("Reading Helm release values is disabled by policy (enable helmValues to allow Helm release values; use helm action='storage' for metadata-only revision checks)".into());
+                }
+                if state.policy.access(&target, false) == DataAccess::None {
+                    return Err("Helm release access is denied by policy".into());
+                }
+                let manager = self.pool.get_config_manager().clone();
+                let reader = tokio::task::spawn_blocking(move || {
+                    kubiki_core::helm::reader::HelmReader::default().with_config_manager(&manager)
+                })
+                .await
+                .map_err(|_| "Cannot prepare Helm configuration")?
+                .map_err(error_message)?
+                .with_read_timeout(Duration::from_secs(20));
+                self.ensure_connection(session).await?;
+                let history = reader
+                    .history(&session.scope.context, &namespace, &name)
+                    .await
+                    .map_err(error_message)?;
+                let revision = history
+                    .iter()
+                    .map(|h| h.revision)
+                    .max()
+                    .filter(|r| *r > 0)
+                    .ok_or("Helm release history has no revision")? as u32;
+                self.ensure_connection(session).await?;
+                let values = reader
+                    .content(
+                        &session.scope.context,
+                        &namespace,
+                        &name,
+                        revision,
+                        kubiki_core::helm::reader::HelmDocument::Values,
+                    )
+                    .await
+                    .map_err(error_message)?;
+                let values: Value = serde_yaml::from_str(&values)
+                    .map_err(|_| "Cannot parse Helm values for policy projection")?;
+                let value = json!({"apiVersion":"helm.sh/v1","kind":"Release","metadata":{"name":name,"namespace":namespace},"spec":{"values":values},"status":{"history":history}});
                 let projected = state.policy.project(&target, &value, false)?;
-                if latest.as_ref().is_none_or(|(old, _)| rev > *old) {
-                    latest = Some((rev, projected));
-                }
+                bounded_result(json!({
+                    "action": "values",
+                    "release": name,
+                    "namespace": namespace,
+                    "values": projected["spec"]["values"],
+                    "history": projected["status"]["history"],
+                    "evidence": {
+                        "context": session.scope.context,
+                        "revision": revision,
+                        "capturedAt": stamp(),
+                        "completeness": "partial",
+                        "coverage": "Context-pinned, policy-projected Helm release values and history; sensitive keys and denied paths are scrubbed."
+                    }
+                }))
             }
-            if args.storage_only {
-                return bounded_result(json!({
-                    "storagePresent": if latest.is_some() { Some(true) } else if page.continuation.is_none() { Some(false) } else { None },
-                    "metadata": latest.map(|(_, value)| value["metadata"].clone()),
-                    "hasMore": page.continuation.is_some()
-                }));
-            }
-            let (revision, projected) =
-                latest.ok_or("Helm release not found in namespace")?;
-            return bounded_result(json!({
-                "release": args.name,
-                "namespace": args.namespace,
-                "metadata": projected["metadata"],
-                "values": Value::Null,
-                "history": [],
-                "evidence": {
-                    "context": session.scope.context,
-                    "revision": revision,
-                    "capturedAt": stamp(),
-                    "completeness": "metadata_only",
-                    "coverage": "Helm release chart values and full revision history are omitted under metadata-only custom resource policy; only storage label metadata is available without a content access grant for helm.sh/Release"
+            "preview" => {
+                let name = args
+                    .name
+                    .filter(|n| !n.is_empty())
+                    .ok_or("Release name is required for helm action='preview'")?;
+                let chart = args
+                    .chart
+                    .filter(|c| !c.is_empty())
+                    .ok_or("chart is required for helm action='preview'")?;
+                let version = args
+                    .version
+                    .filter(|v| !v.is_empty())
+                    .ok_or("version is required for helm action='preview'")?;
+                let values = args.values.unwrap_or_else(|| json!({}));
+                let release = Target {
+                    group: "helm.sh".into(),
+                    version: "v1".into(),
+                    kind: "Release".into(),
+                    namespace: Some(namespace.clone()),
+                    name: name.clone(),
+                };
+                validate_target(&release, true)?;
+                state.policy.check_scope(&session.scope, &release)?;
+                if !state.policy.resources || state.policy.access(&release, false) == DataAccess::None {
+                    return Err("Helm preview requires resource and Helm Release access".into());
                 }
-            }));
+                let manager = self.pool.get_config_manager().clone();
+                let read = async {
+                    let reader = tokio::task::spawn_blocking(move || {
+                        kubiki_core::helm::reader::HelmReader::default().with_config_manager(&manager)
+                    })
+                    .await
+                    .map_err(|_| "Cannot prepare Helm configuration")?
+                    .map_err(error_message)?
+                    .with_read_timeout(Duration::from_secs(20));
+                    let yaml = reader
+                        .preview(&session.scope.context, &namespace, &name, &chart, &version, &values)
+                        .await
+                        .map_err(|_| "Helm render failed; check repository, version, values and Helm availability")?;
+                    let mut items = Vec::new();
+                    let mut omitted = 0;
+                    for document in serde_yaml::Deserializer::from_str(&yaml) {
+                        let value =
+                            Value::deserialize(document).map_err(|_| "Invalid rendered manifest")?;
+                        if value.is_null() {
+                            continue;
+                        }
+                        let kind = value["kind"]
+                            .as_str()
+                            .ok_or("Rendered resource has no kind")?;
+                        let Some(def) = kubiki_core::core::api::resource_type(kind) else {
+                            omitted += 1;
+                            continue;
+                        };
+                        let api = value["apiVersion"].as_str().unwrap_or("");
+                        let (group, version) = api.split_once('/').unwrap_or(("", api));
+                        if group != def.group || version != def.version || kind == "Secret" {
+                            omitted += 1;
+                            continue;
+                        }
+                        let target = Target {
+                            group: group.into(),
+                            version: version.into(),
+                            kind: kind.into(),
+                            namespace: def.namespaced.then(|| {
+                                value["metadata"]["namespace"]
+                                    .as_str()
+                                    .unwrap_or(&namespace)
+                                    .into()
+                            }),
+                            name: value["metadata"]["name"].as_str().unwrap_or("").into(),
+                        };
+                        if validate_target(&target, true).is_err()
+                            || state.policy.check_scope(&session.scope, &target).is_err()
+                            || state.policy.access(&target, true) == DataAccess::None
+                        {
+                            omitted += 1;
+                            continue;
+                        }
+                        items.push(state.policy.project(&target, &value, true)?);
+                    }
+                    bounded_result(json!({
+                        "action": "preview",
+                        "items": items,
+                        "omitted": omitted,
+                        "source": "client-side Helm template"
+                    }))
+                };
+                timed_read(
+                    session,
+                    "Helm preview cancelled",
+                    "Helm preview timed out",
+                    read,
+                )
+                .await
+            }
+            _ => Err("Unsupported helm action; choose list, storage, values or preview".into()),
         }
-        let manager = self.pool.get_config_manager().clone();
-        let reader = tokio::task::spawn_blocking(move || {
-            kubiki_core::helm::reader::HelmReader::default().with_config_manager(&manager)
-        })
-        .await
-        .map_err(|_| "Cannot prepare Helm configuration")?
-        .map_err(error_message)?
-        .with_read_timeout(Duration::from_secs(20));
-        self.ensure_connection(session).await?;
-        let history = reader
-            .history(&session.scope.context, &args.namespace, &args.name)
-            .await
-            .map_err(error_message)?;
-        let revision = history
-            .iter()
-            .map(|h| h.revision)
-            .max()
-            .filter(|r| *r > 0)
-            .ok_or("Helm release history has no revision")? as u32;
-        self.ensure_connection(session).await?;
-        let values = reader
-            .content(
-                &session.scope.context,
-                &args.namespace,
-                &args.name,
-                revision,
-                kubiki_core::helm::reader::HelmDocument::Values,
-            )
-            .await
-            .map_err(error_message)?;
-        let values: Value = serde_yaml::from_str(&values)
-            .map_err(|_| "Cannot parse Helm values for policy projection")?;
-        let value = json!({"apiVersion":"helm.sh/v1","kind":"Release","metadata":{"name":args.name,"namespace":args.namespace},"spec":{"values":values},"status":{"history":history}});
-        let projected = state.policy.project(&target, &value, false)?;
-        bounded_result(
-            json!({"release":args.name,"namespace":args.namespace,"values":projected["spec"]["values"],"history":projected["status"]["history"],"evidence":{"context":session.scope.context,"revision":revision,"capturedAt":stamp(),"completeness":"partial","coverage":"Context-pinned, policy-projected Helm release; omitted configuration is unknown"}}),
-        )
     }
 
-    async fn list_argocd_apps(
+    async fn execute_gitops(
         &self,
         session: &Session,
         call: &ToolCall,
-        _client: Client,
+        client: Client,
     ) -> Result<Value, String> {
         #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Args {
-            namespace: Option<String>,
-        }
-        let args: Args =
-            serde_json::from_value(call.arguments.clone()).map_err(|_| "Invalid Argo CD query")?;
-        let namespace = args
-            .namespace
-            .or_else(|| session.working_scope.lock().ok()?.namespace.clone())
-            .ok_or("Choose one namespace for Argo CD inspection")?;
-        let query = ToolCall {
-            id: call.id.clone(),
-            name: "list_resources".into(),
-            arguments: json!({"group":"argoproj.io","version":"v1alpha1","kind":"Application","namespace":namespace,"fields":["metadata.name","status.health.status","status.sync.status","spec.source.repoURL","spec.source.path","spec.destination.namespace"]}),
-        };
-        let page = Box::pin(self.execute_inner(session, &query, &silent_events())).await?;
-        let apps=page["items"].as_array().ok_or("Invalid Argo CD page")?.iter().map(|item| json!({"name":item["metadata"]["name"],"namespace":item["metadata"]["namespace"],"health":item["status"]["health"]["status"],"sync":item["status"]["sync"]["status"],"repoURL":item["spec"]["source"]["repoURL"],"path":item["spec"]["source"]["path"],"destinationNamespace":item["spec"]["destination"]["namespace"]})).collect::<Vec<_>>();
-        bounded_result(
-            json!({"applications":apps,"count":apps.len(),"hasMore":page["hasMore"],"evidence":{"capturedAt":page["capturedAt"],"completeness":"partial","coverage":"Policy-projected bounded GitOps inspection; use generic list_resources for further pages"}}),
-        )
-    }
-
-    async fn get_argocd_app(
-        &self,
-        session: &Session,
-        call: &ToolCall,
-        _client: Client,
-    ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            namespace: String,
-            name: String,
-        }
-        let args: Args =
-            serde_json::from_value(call.arguments.clone()).map_err(|_| "Invalid Argo CD query")?;
-        let query = ToolCall {
-            id: call.id.clone(),
-            name: "get_resource".into(),
-            arguments: json!({"group":"argoproj.io","version":"v1alpha1","kind":"Application","namespace":args.namespace,"name":args.name,"fields":["status.health","status.sync","spec.source","spec.destination","status.conditions","status.resources"]}),
-        };
-        let page = Box::pin(self.execute_inner(session, &query, &silent_events())).await?;
-        let item = &page["resource"];
-        bounded_result(
-            json!({"application":args.name,"namespace":args.namespace,"health":item["status"]["health"],"sync":item["status"]["sync"],"source":item["spec"]["source"],"destination":item["spec"]["destination"],"conditions":item["status"]["conditions"],"managedResources":item["status"]["resources"],"evidence":{"capturedAt":page["capturedAt"],"completeness":"partial","coverage":"Policy-projected GitOps resource; omitted fields are unknown"}}),
-        )
-    }
-
-    async fn list_flux_resources(
-        &self,
-        session: &Session,
-        call: &ToolCall,
-        _client: Client,
-    ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
+            provider: String,
+            action: String,
             namespace: Option<String>,
             kind: Option<String>,
+            name: Option<String>,
         }
-        let args: Args =
-            serde_json::from_value(call.arguments.clone()).map_err(|_| "Invalid Flux query")?;
+        let args: Args = serde_json::from_value(call.arguments.clone())
+            .map_err(|_| "Invalid gitops arguments")?;
+        let state = session.control()?;
         let namespace = args
             .namespace
             .or_else(|| session.working_scope.lock().ok()?.namespace.clone())
-            .ok_or("Choose one namespace for Flux inspection")?;
-        let kinds = match args.kind.as_deref() {
-            Some(kind @ ("HelmRelease" | "Kustomization" | "GitRepository" | "OCIRepository" | "HelmRepository" | "HelmChart" | "Bucket")) => vec![kind],
-            None => vec!["HelmRelease", "Kustomization", "GitRepository"],
-            _ => return Err("Unsupported Flux kind".into()),
-        };
-        let mut items = Vec::new();
-        let mut unavailable = Vec::new();
-        for kind in kinds {
-            let (group, version) = flux_gvk(kind)?;
-            let query = ToolCall {
-                id: call.id.clone(),
-                name: "list_resources".into(),
-                arguments: json!({"group":group,"version":version,"kind":kind,"namespace":namespace,"fields":["metadata.name","spec.suspend","status.conditions","status.lastAppliedRevision","status.lastAttemptedRevision","status.artifact"]}),
-            };
-            match Box::pin(self.execute_inner(session, &query, &silent_events())).await {
-                Ok(page) => {
-                    if page["hasMore"] == true {
-                        unavailable.push(format!("{kind}: additional pages"));
-                    }
-                    if page["fieldAccess"]["denied"]
-                        .as_array()
-                        .is_some_and(|fields| {
-                            fields.iter().any(|field| field == "status.conditions")
+            .ok_or("Choose one namespace (or '*' for list) for GitOps inspection")?;
+
+        match (args.provider.as_str(), args.action.as_str()) {
+            ("argocd", "list") => {
+                if !state.policy.is_argocd_active(&state.capabilities) {
+                    return Err("Argo CD operations are disabled by policy or not detected in cluster".into());
+                }
+                if args.name.is_some() {
+                    return Err("gitops action='list' does not accept name".into());
+                }
+                let query = ToolCall {
+                    id: call.id.clone(),
+                    name: "list_resources".into(),
+                    arguments: json!({
+                        "group": "argoproj.io",
+                        "version": "v1alpha1",
+                        "kind": "Application",
+                        "namespace": namespace,
+                        "fields": [
+                            "metadata.name",
+                            "status.health.status",
+                            "status.sync.status",
+                            "spec.source.repoURL",
+                            "spec.source.path",
+                            "spec.destination.namespace"
+                        ]
+                    }),
+                };
+                let page = Box::pin(self.execute_inner(session, &query, &silent_events())).await?;
+                let apps = page["items"]
+                    .as_array()
+                    .ok_or("Invalid Argo CD page")?
+                    .iter()
+                    .map(|item| {
+                        json!({
+                            "name": item["metadata"]["name"],
+                            "namespace": item["metadata"]["namespace"],
+                            "health": item["status"]["health"]["status"],
+                            "sync": item["status"]["sync"]["status"],
+                            "repoURL": item["spec"]["source"]["repoURL"],
+                            "path": item["spec"]["source"]["path"],
+                            "destinationNamespace": item["spec"]["destination"]["namespace"]
                         })
-                    {
-                        unavailable.push(format!("{kind}: status.conditions denied by policy"));
+                    })
+                    .collect::<Vec<_>>();
+                bounded_result(json!({
+                    "provider": "argocd",
+                    "action": "list",
+                    "applications": apps,
+                    "count": apps.len(),
+                    "hasMore": page["hasMore"],
+                    "evidence": {
+                        "capturedAt": page["capturedAt"],
+                        "completeness": "partial",
+                        "coverage": "Policy-projected bounded GitOps inspection; use generic list_resources for further pages"
                     }
-                    for item in page["items"].as_array().ok_or("Invalid Flux page")? {
-                        let ready = item["status"]["conditions"]
-                            .as_array()
-                            .and_then(|cs| cs.iter().find(|c| c["type"] == "Ready"));
-                        items.push(json!({"kind":kind,"name":item["metadata"]["name"],"namespace":item["metadata"]["namespace"],"conditions":item["status"]["conditions"],"ready":ready.map(|c|&c["status"]),"message":ready.map(|c|&c["message"]),"suspended":item["spec"]["suspend"],"lastAppliedRevision":item["status"]["lastAppliedRevision"],"lastAttemptedRevision":item["status"]["lastAttemptedRevision"],"artifact":item["status"]["artifact"]}));
+                }))
+            }
+            ("argocd", "get") => {
+                if !state.policy.is_argocd_active(&state.capabilities) {
+                    return Err("Argo CD operations are disabled by policy or not detected in cluster".into());
+                }
+                let name = args
+                    .name
+                    .filter(|n| !n.is_empty())
+                    .ok_or("Application name is required for gitops action='get'")?;
+                let query = ToolCall {
+                    id: call.id.clone(),
+                    name: "get_resource".into(),
+                    arguments: json!({
+                        "group": "argoproj.io",
+                        "version": "v1alpha1",
+                        "kind": "Application",
+                        "namespace": namespace,
+                        "name": name,
+                        "fields": [
+                            "status.health",
+                            "status.sync",
+                            "status.operationState",
+                            "spec.source",
+                            "spec.destination",
+                            "status.conditions",
+                            "status.resources"
+                        ]
+                    }),
+                };
+                let page = Box::pin(self.execute_inner(session, &query, &silent_events())).await?;
+                let item = &page["resource"];
+                bounded_result(json!({
+                    "provider": "argocd",
+                    "action": "get",
+                    "application": name,
+                    "namespace": namespace,
+                    "health": item["status"]["health"],
+                    "sync": item["status"]["sync"],
+                    "operationState": item["status"]["operationState"],
+                    "source": item["spec"]["source"],
+                    "destination": item["spec"]["destination"],
+                    "conditions": item["status"]["conditions"],
+                    "managedResources": item["status"]["resources"],
+                    "fieldAccess": page["fieldAccess"],
+                    "evidence": {
+                        "capturedAt": page["capturedAt"],
+                        "completeness": "partial",
+                        "coverage": "Policy-projected GitOps resource; omitted fields are unknown"
+                    }
+                }))
+            }
+            ("flux", "list") => {
+                if !state.policy.is_flux_active(&state.capabilities) {
+                    return Err("Flux operations are disabled by policy or not detected in cluster".into());
+                }
+                if args.name.is_some() {
+                    return Err("gitops action='list' does not accept name".into());
+                }
+                let kinds = match args.kind.as_deref() {
+                    Some(
+                        kind @ ("HelmRelease"
+                        | "Kustomization"
+                        | "GitRepository"
+                        | "OCIRepository"
+                        | "HelmRepository"
+                        | "HelmChart"
+                        | "Bucket"),
+                    ) => vec![kind],
+                    None => vec!["HelmRelease", "Kustomization", "GitRepository"],
+                    _ => return Err("Unsupported Flux kind".into()),
+                };
+                let mut items = Vec::new();
+                let mut unavailable = Vec::new();
+                for kind in kinds {
+                    let (group, version) = resolve_flux_gvk(&client, kind).await?;
+                    let query = ToolCall {
+                        id: call.id.clone(),
+                        name: "list_resources".into(),
+                        arguments: json!({
+                            "group": group,
+                            "version": version,
+                            "kind": kind,
+                            "namespace": namespace,
+                            "fields": [
+                                "metadata.name",
+                                "spec.suspend",
+                                "status.conditions",
+                                "status.lastAppliedRevision",
+                                "status.lastAttemptedRevision",
+                                "status.artifact"
+                            ]
+                        }),
+                    };
+                    match Box::pin(self.execute_inner(session, &query, &silent_events())).await {
+                        Ok(page) => {
+                            if page["hasMore"] == true {
+                                unavailable.push(format!("{kind}: additional pages"));
+                            }
+                            if page["fieldAccess"]["denied"]
+                                .as_array()
+                                .is_some_and(|fields| {
+                                    fields.iter().any(|field| field == "status.conditions")
+                                })
+                            {
+                                unavailable
+                                    .push(format!("{kind}: status.conditions denied by policy"));
+                            }
+                            for item in page["items"].as_array().ok_or("Invalid Flux page")? {
+                                let ready = item["status"]["conditions"]
+                                    .as_array()
+                                    .and_then(|cs| cs.iter().find(|c| c["type"] == "Ready"));
+                                items.push(json!({
+                                    "kind": kind,
+                                    "apiVersion": format!("{group}/{version}"),
+                                    "name": item["metadata"]["name"],
+                                    "namespace": item["metadata"]["namespace"],
+                                    "conditions": item["status"]["conditions"],
+                                    "ready": ready.map(|c| &c["status"]),
+                                    "message": ready.map(|c| &c["message"]),
+                                    "suspended": item["spec"]["suspend"],
+                                    "lastAppliedRevision": item["status"]["lastAppliedRevision"],
+                                    "lastAttemptedRevision": item["status"]["lastAttemptedRevision"],
+                                    "artifact": item["status"]["artifact"]
+                                }));
+                            }
+                        }
+                        Err(_) => unavailable.push(format!("{kind}: unavailable or denied")),
                     }
                 }
-                Err(_) => unavailable.push(format!("{kind}: unavailable or denied")),
+                bounded_result(json!({
+                    "provider": "flux",
+                    "action": "list",
+                    "resources": items,
+                    "count": items.len(),
+                    "unavailable": unavailable,
+                    "evidence": {
+                        "capturedAt": stamp(),
+                        "completeness": "partial",
+                        "coverage": "Bounded policy-projected Flux inspection; unavailable is not an empty healthy result"
+                    }
+                }))
             }
+            ("flux", "get") => {
+                if !state.policy.is_flux_active(&state.capabilities) {
+                    return Err("Flux operations are disabled by policy or not detected in cluster".into());
+                }
+                let kind = args
+                    .kind
+                    .filter(|k| !k.is_empty())
+                    .ok_or("Flux kind is required for gitops action='get'")?;
+                let name = args
+                    .name
+                    .filter(|n| !n.is_empty())
+                    .ok_or("Resource name is required for gitops action='get'")?;
+                let (group, version) = resolve_flux_gvk(&client, &kind).await?;
+                let query = ToolCall {
+                    id: call.id.clone(),
+                    name: "get_resource".into(),
+                    arguments: json!({
+                        "group": group,
+                        "version": version,
+                        "kind": kind,
+                        "namespace": namespace,
+                        "name": name,
+                        "fields": [
+                            "spec.suspend",
+                            "spec.sourceRef",
+                            "status.conditions",
+                            "status.lastAppliedRevision",
+                            "status.lastAttemptedRevision",
+                            "status.inventory",
+                            "status.artifact",
+                            "spec.dependsOn",
+                            "spec.path",
+                            "status.failures",
+                            "status.installFailures",
+                            "status.upgradeFailures",
+                            "status.lastHandledReconcileAt",
+                            "status.lastHandledResetAt"
+                        ]
+                    }),
+                };
+                let page = Box::pin(self.execute_inner(session, &query, &silent_events())).await?;
+                let item = &page["resource"];
+                bounded_result(json!({
+                    "provider": "flux",
+                    "action": "get",
+                    "kind": kind,
+                    "apiVersion": format!("{group}/{version}"),
+                    "name": name,
+                    "namespace": namespace,
+                    "suspended": item["spec"]["suspend"],
+                    "sourceRef": item["spec"]["sourceRef"],
+                    "conditions": item["status"]["conditions"],
+                    "lastAppliedRevision": item["status"]["lastAppliedRevision"],
+                    "lastAttemptedRevision": item["status"]["lastAttemptedRevision"],
+                    "inventory": item["status"]["inventory"],
+                    "artifact": item["status"]["artifact"],
+                    "dependsOn": item["spec"]["dependsOn"],
+                    "path": item["spec"]["path"],
+                    "failures": item["status"]["failures"],
+                    "installFailures": item["status"]["installFailures"],
+                    "upgradeFailures": item["status"]["upgradeFailures"],
+                    "lastHandledReconcileAt": item["status"]["lastHandledReconcileAt"],
+                    "lastHandledResetAt": item["status"]["lastHandledResetAt"],
+                    "fieldAccess": page["fieldAccess"],
+                    "evidence": {
+                        "capturedAt": page["capturedAt"],
+                        "completeness": "partial",
+                        "coverage": "Policy-projected GitOps resource; omitted fields are unknown"
+                    }
+                }))
+            }
+            _ => Err("Unsupported gitops provider/action; provider must be argocd or flux, action must be list or get".into()),
         }
-        bounded_result(
-            json!({"resources":items,"count":items.len(),"unavailable":unavailable,"evidence":{"capturedAt":stamp(),"completeness":"partial","coverage":"Bounded policy-projected Flux inspection; unavailable is not an empty healthy result"}}),
-        )
-    }
-
-    async fn get_flux_resource(
-        &self,
-        session: &Session,
-        call: &ToolCall,
-        _client: Client,
-    ) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Args {
-            kind: String,
-            namespace: String,
-            name: String,
-        }
-        let args: Args =
-            serde_json::from_value(call.arguments.clone()).map_err(|_| "Invalid Flux query")?;
-        let (group, version) = flux_gvk(&args.kind)?;
-        let query = ToolCall {
-            id: call.id.clone(),
-            name: "get_resource".into(),
-            arguments: json!({"group":group,"version":version,"kind":args.kind,"namespace":args.namespace,"name":args.name,"fields":["spec.suspend","spec.sourceRef","status.conditions","status.lastAppliedRevision","status.lastAttemptedRevision","status.inventory","status.artifact","spec.dependsOn","spec.path","status.failures","status.installFailures","status.upgradeFailures","status.lastHandledReconcileAt","status.lastHandledResetAt"]}),
-        };
-        let page = Box::pin(self.execute_inner(session, &query, &silent_events())).await?;
-        let item = &page["resource"];
-        bounded_result(
-            json!({"kind":args.kind,"name":args.name,"namespace":args.namespace,"suspended":item["spec"]["suspend"],"sourceRef":item["spec"]["sourceRef"],"conditions":item["status"]["conditions"],"lastAppliedRevision":item["status"]["lastAppliedRevision"],"lastAttemptedRevision":item["status"]["lastAttemptedRevision"],"inventory":item["status"]["inventory"],"artifact":item["status"]["artifact"],"dependsOn":item["spec"]["dependsOn"],"path":item["spec"]["path"],"failures":item["status"]["failures"],"installFailures":item["status"]["installFailures"],"upgradeFailures":item["status"]["upgradeFailures"],"lastHandledReconcileAt":item["status"]["lastHandledReconcileAt"],"lastHandledResetAt":item["status"]["lastHandledResetAt"],"fieldAccess":page["fieldAccess"],"evidence":{"capturedAt":page["capturedAt"],"completeness":"partial","coverage":"Policy-projected GitOps resource; omitted fields are unknown"}}),
-        )
     }
 
     pub async fn review_plan_call(
@@ -3369,39 +5122,6 @@ impl KubernetesTools {
                     resource: pinned.clone(),
                     resource_version: version,
                 },
-                WriteOperation::Update if call.name == "sync_argocd_app" => {
-                    let hard = call
-                        .arguments
-                        .get("hard")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    MutationIntent::Action {
-                        resource: pinned.clone(),
-                        resource_version: version,
-                        action: ResourceAction::ArgoRefresh { hard },
-                    }
-                }
-                WriteOperation::Update if call.name == "reconcile_flux_resource" => {
-                    let mut after = before.as_ref().cloned().ok_or("Target not found")?;
-                    let now = chrono::Utc::now().to_rfc3339();
-                    if after.data.get("metadata").is_none() {
-                        after.data["metadata"] = json!({});
-                    }
-                    if after.data["metadata"].get("annotations").is_none() {
-                        after.data["metadata"]["annotations"] = json!({});
-                    }
-                    after.data["metadata"]["annotations"]["reconcile.fluxcd.io/requestedAt"] =
-                        json!(now);
-                    MutationIntent::Manifest {
-                        context: session.scope.context.clone(),
-                        manifest: serde_yaml::to_string(&after.data)
-                            .map_err(|_| "Failed to format manifest")?,
-                        target: Some(ManifestTarget {
-                            resource: pinned.clone(),
-                            resource_version: version.clone(),
-                        }),
-                    }
-                }
                 _ => return Err("Unsupported AI mutation".into()),
             }
         };
@@ -3557,18 +5277,24 @@ fn reject_privileged_manifest(value: &Value) -> Result<(), String> {
                     "hostNetwork",
                     "hostPID",
                     "hostIPC",
+                    "shareProcessNamespace",
                     "privileged",
                     "allowPrivilegeEscalation",
                 ]
                 .contains(&k.as_str())
                     && v == true)
                     || (k == "automountServiceAccountToken" && v != false)
+                    || (k == "runAsUser" && v.as_i64() == Some(0))
+                    || (k == "procMount" && v.as_str() != Some("Default"))
+                    || (k == "seccompProfile"
+                        && v.get("type").and_then(Value::as_str) == Some("Unconfined"))
                     || [
                         "hostPath",
                         "nodeName",
                         "capabilities",
                         "hostPort",
                         "serviceAccountName",
+                        "serviceAccount",
                         "serviceAccountToken",
                         "csi",
                     ]
@@ -3591,6 +5317,34 @@ fn check_manifest_data_access(
     scope: &AgentScope,
     target: &Target,
 ) -> Result<(), String> {
+    let check = |kind: &str, name: Option<&str>| -> Result<(), String> {
+        let referenced = Target {
+            group: String::new(),
+            version: "v1".into(),
+            kind: kind.into(),
+            namespace: target.namespace.clone(),
+            name: name
+                .filter(|name| !name.is_empty())
+                .ok_or("A referenced Secret/ConfigMap must have a name")?
+                .into(),
+        };
+        policy.check_scope(scope, &referenced)?;
+        if policy.access(&referenced, true) != DataAccess::Content {
+            return Err("This workload would consume Secret/ConfigMap contents that the AI policy does not permit. Grant an exact content-access rule or review the manifest manually".into());
+        }
+        Ok(())
+    };
+    if target.kind == "Ingress" {
+        if let Some(tls_entries) = value.pointer("/spec/tls").and_then(Value::as_array) {
+            for entry in tls_entries {
+                if let Some(secret_name) = entry.get("secretName").and_then(Value::as_str) {
+                    if !secret_name.is_empty() {
+                        check("Secret", Some(secret_name))?;
+                    }
+                }
+            }
+        }
+    }
     if value.pointer("/spec/template/spec").is_some()
         && value.pointer("/spec/template/spec/automountServiceAccountToken")
             != Some(&Value::Bool(false))
@@ -3604,27 +5358,46 @@ fn check_manifest_data_access(
     // SecretProjection uses name. Unknown fields must never select the grant.
     let pod: k8s_openapi::api::core::v1::PodSpec = serde_json::from_value(spec.clone())
         .map_err(|_| "Invalid workload Pod spec")?;
-    let check = |kind: &str, name: Option<&str>| -> Result<(), String> {
-        let referenced = Target {
-            group: String::new(),
-            version: "v1".into(),
-            kind: kind.into(),
-            namespace: target.namespace.clone(),
-            name: name.filter(|name| !name.is_empty())
-                .ok_or("A referenced Secret/ConfigMap must have a name")?.into(),
-        };
-        policy.check_scope(scope, &referenced)?;
-        if policy.access(&referenced, true) != DataAccess::Content {
-            return Err("This workload would consume Secret/ConfigMap contents that the AI policy does not permit. Grant an exact content-access rule or review the manifest manually".into());
-        }
-        Ok(())
-    };
+    for pull_secret in pod.image_pull_secrets.iter().flatten() {
+        check("Secret", Some(&pull_secret.name))?;
+    }
     for volume in pod.volumes.iter().flatten() {
         if let Some(secret) = &volume.secret {
             check("Secret", secret.secret_name.as_deref())?;
         }
         if let Some(config) = &volume.config_map {
             check("ConfigMap", Some(&config.name))?;
+        }
+        if let Some(af) = &volume.azure_file {
+            check("Secret", Some(&af.secret_name))?;
+        }
+        if let Some(ceph) = &volume.cephfs {
+            if let Some(sr) = &ceph.secret_ref {
+                check("Secret", Some(&sr.name))?;
+            }
+        }
+        if let Some(flex) = &volume.flex_volume {
+            if let Some(sr) = &flex.secret_ref {
+                check("Secret", Some(&sr.name))?;
+            }
+        }
+        if let Some(iscsi) = &volume.iscsi {
+            if let Some(sr) = &iscsi.secret_ref {
+                check("Secret", Some(&sr.name))?;
+            }
+        }
+        if let Some(rbd) = &volume.rbd {
+            if let Some(sr) = &rbd.secret_ref {
+                check("Secret", Some(&sr.name))?;
+            }
+        }
+        if let Some(sio) = &volume.scale_io {
+            check("Secret", Some(&sio.secret_ref.name))?;
+        }
+        if let Some(sos) = &volume.storageos {
+            if let Some(sr) = &sos.secret_ref {
+                check("Secret", Some(&sr.name))?;
+            }
         }
         for source in volume.projected.iter().flat_map(|p| p.sources.iter().flatten()) {
             if let Some(secret) = &source.secret {
@@ -3636,6 +5409,26 @@ fn check_manifest_data_access(
         }
     }
     for container in pod.containers.iter().chain(pod.init_containers.iter().flatten()) {
+        for env in container.env.iter().flatten() {
+            if let Some(source) = &env.value_from {
+                if let Some(secret) = &source.secret_key_ref {
+                    check("Secret", Some(&secret.name))?;
+                }
+                if let Some(config) = &source.config_map_key_ref {
+                    check("ConfigMap", Some(&config.name))?;
+                }
+            }
+        }
+        for source in container.env_from.iter().flatten() {
+            if let Some(secret) = &source.secret_ref {
+                check("Secret", Some(&secret.name))?;
+            }
+            if let Some(config) = &source.config_map_ref {
+                check("ConfigMap", Some(&config.name))?;
+            }
+        }
+    }
+    for container in pod.ephemeral_containers.iter().flatten() {
         for env in container.env.iter().flatten() {
             if let Some(source) = &env.value_from {
                 if let Some(secret) = &source.secret_key_ref {
@@ -3706,7 +5499,12 @@ mod tests {
             namespace: Some("apps".into()),
             name: "".into(),
         };
-        let reader = resource_access(client, &target).await.unwrap();
+        let scope = AgentScope {
+            context: "prod".into(),
+            namespaces: vec!["apps".into()],
+            all_namespaces: false,
+        };
+        let reader = resource_access(client.clone(), &target).await.unwrap();
         let policy = AgentPolicy {
             rules: vec![ResourceRule {
                 group: "".into(),
@@ -3719,8 +5517,10 @@ mod tests {
             ..Default::default()
         };
         let page = projected_page(
+            &client,
             &reader,
             &policy,
+            &scope,
             &target,
             &ListParams::default().limit(20),
             false,
@@ -3735,8 +5535,10 @@ mod tests {
             ..Default::default()
         };
         let page = projected_page(
+            &client,
             &reader,
             &policy,
+            &scope,
             &target,
             &ListParams::default().limit(20),
             false,
@@ -3871,17 +5673,22 @@ mod tests {
         for spec in [
             json!({"hostNetwork":true}),
             json!({"hostPID":true}),
+            json!({"shareProcessNamespace":true}),
             json!({"containers":[{"securityContext":{"privileged":true}}]}),
+            json!({"containers":[{"securityContext":{"runAsUser":0}}]}),
+            json!({"containers":[{"securityContext":{"procMount":"Unmasked"}}]}),
+            json!({"containers":[{"securityContext":{"seccompProfile":{"type":"Unconfined"}}}]}),
             json!({"containers":[{"ports":[{"hostPort":8080}]}]}),
             json!({"volumes":[{"hostPath":{"path":"/"}}]}),
             json!({"serviceAccountName":"admin"}),
+            json!({"serviceAccount":"admin"}),
             json!({"automountServiceAccountToken":true}),
         ] {
             assert!(
                 reject_privileged_manifest(&json!({"spec":{"template":{"spec":spec}}})).is_err()
             );
         }
-        assert!(reject_privileged_manifest(&json!({"spec":{"template":{"spec":{"automountServiceAccountToken":false,"containers":[{"name":"app","image":"example:1","securityContext":{"allowPrivilegeEscalation":false}}]}}}})).is_ok());
+        assert!(reject_privileged_manifest(&json!({"spec":{"template":{"spec":{"automountServiceAccountToken":false,"containers":[{"name":"app","image":"example:1","securityContext":{"allowPrivilegeEscalation":false,"runAsUser":1000,"procMount":"Default","seccompProfile":{"type":"RuntimeDefault"}}}]}}}})).is_ok());
     }
 
     #[test]
@@ -3934,11 +5741,23 @@ mod tests {
     fn workload_references_check_schema_fields_even_when_unknown_fields_spoof_a_grant() {
         let scope = AgentScope { context: "prod".into(), namespaces: vec!["apps".into()], all_namespaces: false };
         let target = Target { group: "apps".into(), version: "v1".into(), kind: "Deployment".into(), namespace: Some("apps".into()), name: "web".into() };
-        let policy = AgentPolicy {
+        // secrets: None is a hard ceiling; per-Secret exceptions require secrets >= Metadata + rules.
+        let hard_denied = AgentPolicy {
+            secrets: DataAccess::None,
             rules: vec![ResourceRule { group: "".into(), kind: "Secret".into(), namespace: "apps".into(), name: "allowed".into(), read: DataAccess::Content, writes: vec![] }],
             ..Default::default()
         };
         let manifest = |volume: Value| json!({"spec":{"template":{"spec":{"automountServiceAccountToken":false,"containers":[{"name":"app"}],"volumes":[volume]}}}});
+        assert!(check_manifest_data_access(&manifest(json!({"name":"data","secret":{"secretName":"allowed"}})), &hard_denied, &scope, &target).is_err());
+
+        let policy = AgentPolicy {
+            secrets: DataAccess::Metadata,
+            rules: vec![
+                ResourceRule { group: "".into(), kind: "Secret".into(), namespace: "apps".into(), name: "allowed".into(), read: DataAccess::Content, writes: vec![] },
+                ResourceRule { group: "".into(), kind: "Secret".into(), namespace: "*".into(), name: "*".into(), read: DataAccess::None, writes: vec![] },
+            ],
+            ..Default::default()
+        };
         for volume in [
             json!({"name":"data","secret":{"secretName":"allowed"}}),
             json!({"name":"data","projected":{"sources":[{"secret":{"name":"allowed"}}]}}),
@@ -3953,6 +5772,15 @@ mod tests {
         ] {
             assert!(check_manifest_data_access(&manifest(volume), &policy, &scope, &target).is_err());
         }
+        // imagePullSecrets and Ingress TLS secretName must also be authorized.
+        let pull_manifest = json!({"spec":{"template":{"spec":{"automountServiceAccountToken":false,"imagePullSecrets":[{"name":"denied"}],"containers":[{"name":"app"}]}}}});
+        assert!(check_manifest_data_access(&pull_manifest, &policy, &scope, &target).is_err());
+        let ingress_target = Target { group: "networking.k8s.io".into(), version: "v1".into(), kind: "Ingress".into(), namespace: Some("apps".into()), name: "web".into() };
+        let ingress_manifest = json!({"spec":{"tls":[{"secretName":"denied"}]}});
+        assert!(check_manifest_data_access(&ingress_manifest, &policy, &scope, &ingress_target).is_err());
+        let ingress_allowed = json!({"spec":{"tls":[{"secretName":"allowed"}]}});
+        assert!(check_manifest_data_access(&ingress_allowed, &policy, &scope, &ingress_target).is_ok());
+
         let full = AgentPolicy { secrets: DataAccess::Content, config_maps: DataAccess::Content, ..Default::default() };
         assert!(check_manifest_data_access(&manifest(json!({"name":"data","projected":{"sources":[{"secret":{"name":"creds"}},{"configMap":{"name":"config"}}]}})), &full, &scope, &target).is_ok());
         // Arbitrary ConfigMap payload keys are data, not workload references.
@@ -3970,6 +5798,28 @@ impl KubernetesTools {
         consent: std::sync::Arc<dyn Consent>,
         journal: PathBuf,
         read_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    ) -> Result<Self, String> {
+        Self::scoped_with_cache(
+            session,
+            pool,
+            client,
+            generation,
+            consent,
+            journal,
+            read_permits,
+            std::sync::Arc::new(kubiki_core::core::read_cache::ReadCache::default()),
+        )
+    }
+
+    pub fn scoped_with_cache(
+        session: &Session,
+        pool: kubiki_core::cluster::client::ClusterClientPool,
+        client: Option<Client>,
+        generation: Option<u64>,
+        consent: std::sync::Arc<dyn Consent>,
+        journal: PathBuf,
+        read_permits: std::sync::Arc<tokio::sync::Semaphore>,
+        cache: std::sync::Arc<kubiki_core::core::read_cache::ReadCache>,
     ) -> Result<Self, String> {
         let budget = std::sync::Arc::new(kubiki_core::core::read_budget::ReadBudget::new(
             128,
@@ -4005,10 +5855,7 @@ impl KubernetesTools {
                         valid
                     }),
                 );
-                Some(
-                    std::sync::Arc::new(kubiki_core::core::read_cache::ReadCache::default())
-                        .wrap(budget.wrap(pinned)),
-                )
+                Some(cache.wrap(budget.wrap(pinned)))
             }
             None => None,
         };

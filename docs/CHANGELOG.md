@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Target/pinned Node resolution for unscheduled Pending Pods (DaemonSet `nodeAffinity` `matchFields: metadata.name`, `kubernetes.io/hostname` affinity/`nodeSelector`, and preemption `nominatedNodeName`) in the Pods table, Pod details (including a clickable `Target node` link and rendered `Node Affinity` / `Pod Affinity` / `Pod Anti-Affinity`), Workload child pods, Node details (`Pending pods targeting this node`), resource search, topology/neighborhood graphs, and MCP (`diagnose_resource`, `cluster_info(problems)`, `list_resources(health)`, and `summarize_resources(groupBy: "nodeName")`).
+- MCP Resources (`kubiki://session/info`, `kubiki://evidence/{id}`) and built-in debugging Prompts (`investigate-resource`, `triage-namespace`, `debug-node-pressure`, `debug-rollout-regression`) alongside accurate MCP `serverInfo` and `ToolAnnotations`.
+- Dedicated `helmValues` policy toggle separating Helm release chart values (`helm action=values`) from custom resource defaults, while keeping metadata-only release listings (`helm action=list`) and multi-revision storage conflict diagnostics (`helm action=storage`) available without Secret access.
+- Cross-namespace `namespace: "*"` support in `list_resources`, `summarize_resources` (including `groupBy: "reason"`), and `get_events` (`raw` and `timeline` modes), plus `cluster_info` (`session`, `namespaces`, `catalog`, `problems`) triage, `diagnose_resource` sections (`config`, `diff`, `metrics`, describe-equivalent Pod fields, Node events), `propose_manifests` optional `dryRun` validation, and `topPodsByCpuRequest` on Node metrics.
+- Expanded `diagnostic` CRD field projections for Argo CD (`Application`, `ApplicationSet`, `Rollout`), `cert-manager.io`, Gateway API, and KEDA, with automatic Flux served API version resolution (`v2`/`v2beta2`/`v2beta1`, `v1`/`v1beta2`/`v1beta1`).
 - MCP cluster selection per HTTP profile and named standalone connections with independent scope and policy.
 - Incident diagnostics for nominated Pod nodes, Flux conditions, node grouping, cross-namespace Events, Helm storage checks and client-side chart previews.
 - Historical Pod and Node CPU/memory reads from session observations or a configured Prometheus service.
@@ -35,11 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Consolidated the MCP tool catalog from 32 fragmented tools into 19 universal, orthogonal tools (15 read/inspection tools + 4 write tools: `cluster_info`, `diagnose_resource`, `get_events`, `helm`, `gitops`, etc.) and enabled concurrent read execution, shared discovery caching, and background Argo CD/Flux capability detection on external MCP sessions.
+- Expanded `get_logs` tail ceiling to 5000 lines, added `ignoreCase` and `contextLines` in `lines` mode, and broadened diagnostic log error pattern matching (klog, logfmt, JSON severity, network/TLS/OOM failures).
 - Refined Helm Overview layout and density to match the application's overview cards, with a compact header strip, uniform card surfaces, monospace summary metrics, evenly distributed inventory facts, aligned namespace and chart panels, and single-line release change rows.
 - Updated the project website with bundled JetBrains Mono Variable display typography, concise Hero copy with `#download` anchor links, a unified FAQ and Get Kubiki constellation closing band with smooth section gradients, reordered MCP topology and resource workbench sections without redundant labels, keyboard and triage workflow bars, and a non-scrolling interactive Pod inspector card.
 
 ### Fixed
 
+- Propagated shared `schemaVersion`, `ruleResolution`, and `allowedFields` into effective Kubiki Agent policies, cleared per-rule writes in MCP `Clear writes` and blank read-only profile creation, corrected the manual OpenCode JSON snippet to use `disabled: false`, fixed `summarize_resources` evidence persistence, and cleaned up HTTP MCP peer/subscription tracking and session pruning.
 - Desktop Pod tables fetch their initial inventory in one collection request per scope. Sidebar counts skip duplicate probes while a covering watch initializes.
 
 - Pod requests remain visible without usage samples. Pending Pod summaries include scheduler placement details.
@@ -48,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Limit Pod Environment tab Secret status notices to unresolved or restricted `env`/`envFrom` references while moving volume Secret availability indicators to Pod `Overview` and `Related`.
 - Allow direct Helm upgrade, rollback and uninstall for Flux-managed releases while preserving backend confirmation.
 - Resolve explicitly requested served CRD API versions even when a more stable version exists, and match Flux Helm storage namespaces correctly.
+
+### Security
+
+- Made `secrets: none` a hard policy ceiling that blocks all Secret reads and `list_resources` membership/label oracles before any Kubernetes API call, even when wildcard rules exist.
+- Fixed `RuleResolution::DenyOverrides` to enforce minimum `DataAccess` and write-set intersection across all matching rules, added wildcard `*` support to `deniedPaths` scrubbing, scrubbed probe `httpHeaders[].value` when `workloadConfiguration` is disabled, and broadened sensitive key redaction without breaking Kubernetes volume Secret references.
+- Hardened `apply_manifest` checks to cover `serviceAccount`, `runAsUser: 0`, `shareProcessNamespace`, `procMount`, `Unconfined` seccomp, `Ingress` TLS secrets, `imagePullSecrets`, ephemeral containers, and legacy volume Secret references.
+- Hardened MCP transports with constant-time attached bridge token checks, `reject_remote_clients(true)` on Windows named pipes, HTTP/1 header read timeout, `503` backpressure, `WWW-Authenticate: Bearer` on `401`, private `0o700` standalone journal directories, and 1 MiB `--connections` size limits.
 
 ## [1.4.0] - 2026-11-17
 

@@ -137,6 +137,7 @@ fn secrets_and_configs_have_independent_defaults_and_exact_exceptions() {
         policy.access(&target("ConfigMap"), true),
         DataAccess::Metadata
     );
+    // secrets: DataAccess::None is a hard ceiling that rules cannot bypass.
     policy.rules.push(ResourceRule {
         group: "".into(),
         kind: "Secret".into(),
@@ -146,6 +147,18 @@ fn secrets_and_configs_have_independent_defaults_and_exact_exceptions() {
         writes: vec![],
     });
     let source = json!({"kind":"Secret","apiVersion":"v1","metadata":{"name":"web","namespace":"apps","annotations":{"private":"value"}},"data":{"token":"encoded-secret"}});
+    assert!(policy.project(&target("Secret"), &source, true).is_err());
+
+    // Opting into per-Secret rules requires raising secrets from None (e.g. Metadata + fallback None rule).
+    policy.secrets = DataAccess::Metadata;
+    policy.rules.push(ResourceRule {
+        group: "".into(),
+        kind: "Secret".into(),
+        namespace: "*".into(),
+        name: "*".into(),
+        read: DataAccess::None,
+        writes: vec![],
+    });
     assert_eq!(
         policy.project(&target("Secret"), &source, true).unwrap()["data"]["token"],
         "encoded-secret"
@@ -336,7 +349,10 @@ fn prompt_policy_summary_stays_small_without_disclosing_exact_resource_rules() {
 
 #[test]
 fn policy_explain_access_and_validate_rules_detect_shadowing_and_provide_rationale() {
-    let mut policy = AgentPolicy::default();
+    let mut policy = AgentPolicy {
+        secrets: DataAccess::Metadata,
+        ..Default::default()
+    };
     policy.rules.push(ResourceRule {
         group: "".into(),
         kind: "Secret".into(),
@@ -511,7 +527,7 @@ fn confirmation_mode_applies_to_reads_and_writes_without_granting_access() {
 #[test]
 fn actions_only_consent_preserves_mandatory_read_prompts_and_write_protection() {
     let mut policy = AgentPolicy { confirm_reads: false, ..Default::default() };
-    for tool in ["get_resource", "get_logs", "get_workload_diagnostics", "propose_plan"] {
+    for tool in ["get_resource", "get_logs", "diagnose_resource", "propose_plan"] {
         assert!(!policy.requires_confirmation(AgentMode::Ask, tool));
     }
     for tool in ["apply_manifest", "scale_workload", "restart_workload", "delete_resource"] {

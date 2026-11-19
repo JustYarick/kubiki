@@ -690,12 +690,12 @@ test('rule matching help follows the selected policy and persists its semantics'
   const matching = dialog.getByRole('combobox', {name: 'AI rule matching'});
   await expect(dialog.getByText('The first matching rule applies.', {exact: false})).toBeVisible();
   await matching.selectOption('deny_overrides');
-  await expect(dialog.getByText('Rules that deny both reading and changes', {exact: false})).toBeVisible();
+  await expect(dialog.getByText('All matching rules apply: the strictest read level', {exact: false})).toBeVisible();
   await expect(dialog.getByText('The first matching rule applies.', {exact: false})).toHaveCount(0);
   await dialog.getByRole('button', {name: 'Save agent permissions'}).click();
   await expect.poll(() => page.evaluate(() => (window as any).__aiHarness.settings().policy)).toMatchObject({schemaVersion: 2, ruleResolution: 'deny_overrides'});
   await matching.selectOption('first_match');
-  await expect(dialog.getByText('Rules that deny both reading and changes', {exact: false})).toHaveCount(0);
+  await expect(dialog.getByText('All matching rules apply: the strictest read level', {exact: false})).toHaveCount(0);
   await expect(dialog.getByText('The first matching rule applies.', {exact: false})).toBeVisible();
   expect(errors).toEqual([]);
 });

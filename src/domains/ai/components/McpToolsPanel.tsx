@@ -176,7 +176,12 @@ export function McpToolsPanel({
             size="sm"
             variant="secondary"
             disabled={disabled}
-            onClick={() => void onChange({ ...policy, readOnly: false, writes: [] })}
+            onClick={() => void onChange({
+              ...policy,
+              readOnly: false,
+              writes: [],
+              rules: (policy.rules ?? []).map(r => ({ ...r, writes: [] })),
+            })}
             title="Disable all cluster mutations in this profile while keeping customizations"
           >
             Clear writes
@@ -210,8 +215,9 @@ export function McpToolsPanel({
             { key: 'logs', label: 'Logs', title: 'Allow streaming container and previous crash logs' },
             { key: 'metrics', label: 'Metrics', title: 'Allow querying CPU and memory usage statistics' },
             { key: 'clusterResources', label: 'Cluster resources', title: 'Allow reading non-namespaced resources (Nodes, Namespaces, StorageClasses)' },
-            { key: 'workloadConfiguration', label: 'Inline env & commands', title: 'Expose Pod container environment variables and startup commands' },
+            { key: 'workloadConfiguration', label: 'Inline env & commands', title: 'Expose Pod container environment variables, startup commands and probe header values' },
             { key: 'annotations', label: 'Annotations', title: 'Include Kubernetes object annotations in responses' },
+            { key: 'helmValues', label: 'Helm release values', title: 'Allow reading Helm release chart values and full revision history (helm action=values). Metadata-only list and storage revision checks work without this toggle.' },
           ] as const).map(({ key, label, title: tip }) => (
             <CheckboxRow
               key={key}

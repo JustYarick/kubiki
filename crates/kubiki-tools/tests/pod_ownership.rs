@@ -87,15 +87,15 @@ async fn pod_diagnostics_preserve_exact_owners_without_guessing_or_extra_reads()
                     &session,
                     &ToolCall {
                         id: "diagnose".into(),
-                        name: "get_pod_diagnostics".into(),
-                        arguments: json!({"namespace":"apps","name":"agent-abcde"}),
+                        name: "diagnose_resource".into(),
+                        arguments: json!({"group":"","version":"v1","kind":"Pod","namespace":"apps","name":"agent-abcde","sections":["health"]}),
                     },
                     &emit,
                 )
                 .await
                 .unwrap();
-            assert_eq!(result["ownerReferences"], expected);
-            assert_eq!(result["evidence"]["uid"], "pod-uid");
+            assert_eq!(result["diagnostic"]["ownerReferences"], expected);
+            assert_eq!(result["diagnostic"]["evidence"]["uid"], "pod-uid");
         }
     }
 }
@@ -113,14 +113,14 @@ async fn missing_ownership_remains_unknown() {
             &session,
             &ToolCall {
                 id: "diagnose".into(),
-                name: "get_pod_diagnostics".into(),
-                arguments: json!({"namespace":"apps","name":"agent-abcde"}),
+                name: "diagnose_resource".into(),
+                arguments: json!({"group":"","version":"v1","kind":"Pod","namespace":"apps","name":"agent-abcde","sections":["health"]}),
             },
             &emit,
         )
         .await
         .unwrap();
-    assert!(result["ownerReferences"].is_null());
+    assert!(result["diagnostic"]["ownerReferences"].is_null());
 }
 
 #[tokio::test]
@@ -133,14 +133,62 @@ async fn pending_pod_preserves_nomination_and_scheduler_explanation() {
             &session,
             &ToolCall {
                 id: "placement".into(),
-                name: "get_pod_diagnostics".into(),
-                arguments: json!({"namespace":"apps","name":"agent-abcde"}),
+                name: "diagnose_resource".into(),
+                arguments: json!({"group":"","version":"v1","kind":"Pod","namespace":"apps","name":"agent-abcde","sections":["health"]}),
             },
             &(Arc::new(|_| {}) as EventSink),
         )
         .await
         .unwrap();
-    assert!(result["nodeName"].is_null());
-    assert_eq!(result["nominatedNodeName"], "candidate");
-    assert_eq!(result["conditions"][0]["message"], message);
+    assert!(result["diagnostic"]["nodeName"].is_null());
+    assert_eq!(result["diagnostic"]["nominatedNodeName"], "candidate");
+    assert_eq!(result["diagnostic"]["conditions"][0]["message"], message);
+}
+
+#[tokio::test]
+async fn daemonset_pending_pod_reports_target_node_from_node_affinity() {
+    let session = session(vec![]);
+    let pod = json!({
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "agent-abcde",
+            "namespace": "apps",
+            "ownerReferences": [{"apiVersion": "apps/v1", "kind": "DaemonSet", "name": "agent", "uid": "ds-1", "controller": true}]
+        },
+        "spec": {
+            "affinity": {
+                "nodeAffinity": {
+                    "requiredDuringSchedulingIgnoredDuringExecution": {
+                        "nodeSelectorTerms": [{
+                            "matchFields": [{
+                                "key": "metadata.name",
+                                "operator": "In",
+                                "values": ["worker-3"]
+                            }]
+                        }]
+                    }
+                }
+            }
+        },
+        "status": {
+            "phase": "Pending",
+            "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": "0/5 nodes are available: 1 node(s) had untolerated taint, 4 node(s) didn't match pod affinity"}]
+        }
+    });
+    let result = tools(&session, pod)
+        .execute(
+            &session,
+            &ToolCall {
+                id: "ds-pending".into(),
+                name: "diagnose_resource".into(),
+                arguments: json!({"group":"","version":"v1","kind":"Pod","namespace":"apps","name":"agent-abcde","sections":["health"]}),
+            },
+            &(Arc::new(|_| {}) as EventSink),
+        )
+        .await
+        .unwrap();
+    assert!(result["diagnostic"]["nodeName"].is_null());
+    assert_eq!(result["diagnostic"]["targetNode"], "worker-3");
+    assert_eq!(result["diagnostic"]["targetNodeSource"], "nodeAffinity");
 }

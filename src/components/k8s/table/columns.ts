@@ -4,6 +4,7 @@ import { resourceType, apiVersionFor as typeApiVersion } from '../../../core/res
 import { memoryText, quantity } from '../../../core/resources/quantities';
 import type { WorkloadPodActivity } from '../../../core/resources/workload_pod_activity';
 import { helmUpdatedAt } from '../../../providers/helm_types';
+import { podNodeInfo } from '../../../core/resources/pod_node';
 
 export interface ColumnDef {
   id: string;
@@ -58,7 +59,15 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
         BASE_COLUMNS[1],
         { id: 'containers', label: 'Containers', get: (i) => String(i.containers?.length ?? 0) },
         { id: 'ip', label: 'IP', mono: true, get: (i) => i.ip },
-        { id: 'node', label: 'Node', mono: true, get: (i) => i.node },
+        {
+          id: 'node',
+          label: 'Node',
+          mono: true,
+          get: (i) => {
+            const info = podNodeInfo(i);
+            return info.assigned ?? info.pendingNode ?? i.node;
+          },
+        },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
       ];
     case 'Deployment':

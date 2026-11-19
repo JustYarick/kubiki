@@ -48,7 +48,7 @@ impl Drop for HttpMcpServer {
     }
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -74,9 +74,13 @@ fn authorized(headers: &HeaderMap, expected_token: &str) -> bool {
 
 fn json_error(status: StatusCode, message: &str) -> Response<HttpBody> {
     let body = serde_json::json!({ "error": message }).to_string();
-    Response::builder()
+    let mut builder = Response::builder()
         .status(status)
-        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_TYPE, "application/json");
+    if status == StatusCode::UNAUTHORIZED {
+        builder = builder.header(header::WWW_AUTHENTICATE, "Bearer");
+    }
+    builder
         .body(Full::new(Bytes::from(body)).boxed())
         .unwrap()
 }
@@ -128,10 +132,20 @@ pub async fn start_http(
                 _ = accept_cancel.cancelled() => break,
                 res = listener.accept() => res,
             };
-            let Ok((stream, _)) = accepted else {
+            let Ok((mut stream, _)) = accepted else {
                 break;
             };
             let Ok(permit) = permits.clone().try_acquire_owned() else {
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(1),
+                        stream.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 41\r\nConnection: close\r\n\r\n{\"error\":\"Too many concurrent connections\"}",
+                        ),
+                    )
+                    .await;
+                });
                 continue;
             };
             let service = service.clone();
@@ -164,7 +178,11 @@ pub async fn start_http(
                         Ok(service.handle(req).await)
                     }
                 });
-                let builder = ConnBuilder::new(TokioExecutor::new());
+                let mut builder = ConnBuilder::new(TokioExecutor::new());
+                builder
+                    .http1()
+                    .timer(hyper_util::rt::TokioTimer::new())
+                    .header_read_timeout(std::time::Duration::from_secs(15));
                 let conn = builder.serve_connection_with_upgrades(io, svc);
                 tokio::pin!(conn);
                 tokio::select! {
@@ -246,13 +264,17 @@ mod tests {
             .unwrap();
         let port = server.port;
 
-        // 1. Missing token -> 401
+        // 1. Missing token -> 401 with WWW-Authenticate: Bearer
         let unauth = raw_http(
             port,
             &format!("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"),
         )
         .await;
         assert!(unauth.starts_with("HTTP/1.1 401"), "got: {unauth}");
+        assert!(
+            unauth.to_ascii_lowercase().contains("www-authenticate: bearer"),
+            "missing WWW-Authenticate header: {unauth}"
+        );
 
         // 2. Wrong token -> 401
         let wrong = raw_http(

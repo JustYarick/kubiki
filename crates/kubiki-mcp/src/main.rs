@@ -17,6 +17,13 @@ struct ConnectionProfile {
 
 #[tokio::main]
 async fn main() {
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .try_init();
     if let Err(error) = run().await {
         eprintln!("kubiki-mcp: {error}");
         std::process::exit(1);
@@ -75,6 +82,9 @@ async fn run() -> Result<(), String> {
                 );
             }
             let bytes = tokio::fs::read(&file).await.map_err(|e| e.to_string())?;
+            if bytes.len() > 1024 * 1024 {
+                return Err("Connections file exceeds 1 MiB".into());
+            }
             let mut profiles: std::collections::BTreeMap<String, ConnectionProfile> =
                 serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
             let selected = profiles.remove(&name).ok_or("Unknown connection profile")?;
@@ -125,16 +135,31 @@ async fn run() -> Result<(), String> {
     );
     session.mode(AgentMode::Accept)?;
     session.phase(AgentPhase::Action)?;
-    let journal = std::env::temp_dir().join(format!(
-        "kubiki-mcp-{}-operations.jsonl",
-        std::process::id()
+    let journal_dir = std::env::temp_dir().join(format!(
+        "kubiki-mcp-{}",
+        uuid::Uuid::new_v4().simple()
     ));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&journal_dir)
+            .map_err(|e| format!("Cannot create private journal directory: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir(&journal_dir)
+            .map_err(|e| format!("Cannot create private journal directory: {e}"))?;
+    }
+    let journal = journal_dir.join("operations.jsonl");
     let executor = Arc::new(ConnectionExecutor {
         pool,
         journal,
         consent: Arc::new(kubernetes::HostConsent::default()),
         generation: std::sync::Mutex::new(None),
-        permits: Arc::new(tokio::sync::Semaphore::new(2)),
+        permits: Arc::new(tokio::sync::Semaphore::new(4)),
+        cache: Arc::new(kubiki_core::core::read_cache::ReadCache::default()),
     });
     let server = ClusterServer::new(session, executor, Arc::new(|_| {}), true);
     let draining = server.clone();
@@ -146,6 +171,7 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|e| e.to_string());
     draining.shutdown().await;
+    let _ = std::fs::remove_dir_all(&journal_dir);
     result?;
     Ok(())
 }

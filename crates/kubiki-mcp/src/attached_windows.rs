@@ -8,6 +8,7 @@ pub async fn start(server: crate::ClusterServer) -> Result<AttachedEndpoint, Str
     let bootstrap = directory.join("connection.json");
     let listener = ServerOptions::new()
         .first_pipe_instance(true)
+        .reject_remote_clients(true)
         .create(&endpoint)
         .map_err(|e| e.to_string())?;
     tokio::fs::write(
@@ -31,7 +32,10 @@ pub async fn start(server: crate::ClusterServer) -> Result<AttachedEndpoint, Str
                 break;
             }
             let mut stream = listener;
-            listener = match ServerOptions::new().create(&endpoint) {
+            listener = match ServerOptions::new()
+                .reject_remote_clients(true)
+                .create(&endpoint)
+            {
                 Ok(next) => next,
                 Err(_) => break,
             };
@@ -51,7 +55,7 @@ pub async fn start(server: crate::ClusterServer) -> Result<AttachedEndpoint, Str
                     )
                     .await,
                     Ok(Ok(_))
-                ) || supplied != format!("{token}\n").as_bytes()
+                ) || !crate::http::constant_time_eq(&supplied, format!("{token}\n").as_bytes())
                 {
                     return;
                 }

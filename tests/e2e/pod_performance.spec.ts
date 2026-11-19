@@ -29,7 +29,34 @@ async function setup(page: Page, unavailable = false) {
       ];
       return route.fulfill({ json: { context: 'test', namespace, pods: unavailable ? { items: null, error: { code: 'forbidden', message: 'Pod metrics access denied', operation: 'metrics', retryable: false } } : { items: metrics.filter(item => !namespace || item.namespace === namespace), error: null }, nodes: { items: null, error: null } } });
     }
-    const items = kind === 'Namespace' ? namespaceList(['alpha', 'beta']).items : kind === 'Pod' ? [pod('web-alpha', 'alpha'), pod('neighbor', 'alpha'), pod('qdrant-0', 'alpha'), pod('web-alpha', 'beta')] : [];
+    const dsPendingPod = {
+      apiVersion: 'v1',
+      kind: 'Pod',
+      metadata: {
+        uid: 'alpha-ds-agent-worker-c',
+        name: 'ds-agent-worker-c',
+        namespace: 'alpha',
+        creationTimestamp: new Date(base - 1800000).toISOString(),
+        ownerReferences: [{ apiVersion: 'apps/v1', kind: 'DaemonSet', name: 'ds-agent', uid: 'ds-uid', controller: true }],
+      },
+      spec: {
+        affinity: {
+          nodeAffinity: {
+            requiredDuringSchedulingIgnoredDuringExecution: {
+              nodeSelectorTerms: [
+                { matchFields: [{ key: 'metadata.name', operator: 'In', values: ['worker-c'] }] },
+              ],
+            },
+          },
+        },
+        containers: [{ name: 'agent', image: 'agent:latest' }],
+      },
+      status: {
+        phase: 'Pending',
+        conditions: [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable', message: '0/3 nodes are available: 1 node(s) were unschedulable' }],
+      },
+    };
+    const items = kind === 'Namespace' ? namespaceList(['alpha', 'beta']).items : kind === 'Pod' ? [pod('web-alpha', 'alpha'), pod('neighbor', 'alpha'), pod('qdrant-0', 'alpha'), dsPendingPod, pod('web-alpha', 'beta')] : [];
     return route.fulfill({ json: { items: items.filter(item => !namespace || !('namespace' in item.metadata) || item.metadata.namespace === namespace) } });
   });
   await page.goto('/');
@@ -186,4 +213,24 @@ test('selecting a matching Pod preserves its literal filter', async ({ page }) =
   await expect(summary).toContainText('Awaiting assignment');
   await expect(summary).toContainText('worker-b');
   await expect(summary).toContainText('Waiting for preemption on worker-b');
+});
+
+test('pending DaemonSet pod displays its pinned target node in both table and Pod details', async ({ page }) => {
+  await setup(page);
+  const filter = page.getByTestId('resource-search-toolbar').getByRole('textbox');
+  await filter.fill('worker-c');
+  const table = page.getByTestId('resource-table');
+  await expect(table).toContainText('ds-agent-worker-c');
+  await expect(table).toContainText('worker-c');
+  await table.getByText('ds-agent-worker-c', { exact: true }).click();
+  const details = page.getByTestId('resource-details');
+  await expect(details.locator('.details-title')).toHaveText('ds-agent-worker-c');
+  const summary = details.getByRole('region', { name: 'Pod summary' });
+  await expect(summary).toContainText('Awaiting assignment');
+  await expect(summary).toContainText('Target node');
+  await expect(summary).toContainText('worker-c');
+  await expect(summary).toContainText('pinned via nodeAffinity');
+  const scheduling = details.getByRole('region', { name: 'Scheduling constraints' });
+  await expect(scheduling).toContainText('Node Affinity');
+  await expect(scheduling).toContainText('metadata.name=worker-c');
 });

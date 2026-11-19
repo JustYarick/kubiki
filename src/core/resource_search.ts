@@ -1,5 +1,6 @@
 import type { ResourceItem } from '../types/k8s';
 import { resourceKey } from './resources/identity';
+import { podNodeInfo } from './resources/pod_node';
 
 export interface SearchDocument { id: string; fields: Record<string, string[]> }
 export interface SearchOptions { query: string; regex: boolean; caseSensitive: boolean }
@@ -17,12 +18,16 @@ export function searchDocument(item: ResourceItem): SearchDocument {
   const pairs = (values: Record<string, unknown> = {}) => Object.entries(values).map(([key, value]) => `${key}=${String(value)}`);
   const annotations = Object.entries(meta.annotations ?? {}).map(([key, value]) => key === 'kubectl.kubernetes.io/last-applied-configuration' ? key : `${key}=${String(value)}`);
   const pod = item.kind === 'Pod' ? raw.spec : raw.spec?.template?.spec ?? raw.spec?.jobTemplate?.spec?.template?.spec;
+  const podNode = item.kind === 'Pod' ? podNodeInfo(item) : undefined;
+  const nodeValues = item.kind === 'Pod'
+    ? [podNode?.assigned, podNode?.target, podNode?.nominated].filter((value): value is string => !!value)
+    : [String(raw.spec?.nodeName ?? item.node ?? '')];
   return { id: searchId(item), fields: {
     name: [item.name], kind: [item.kind], ns: [item.namespace ?? 'cluster'], api: [item.apiVersion], uid: [item.uid],
     status: [item.status ?? '', raw.status?.phase ?? '', ...(raw.status?.conditions ?? []).map((condition: any) => `${condition.type}=${condition.status} ${condition.reason ?? ''}`)],
     label: pairs(meta.labels ?? item.labels), annotation: annotations,
     image: [...(pod?.containers ?? []), ...(pod?.initContainers ?? [])].map((container: any) => String(container.image ?? '')),
-    node: [String(raw.spec?.nodeName ?? item.node ?? '')],
+    node: nodeValues,
   } };
 }
 

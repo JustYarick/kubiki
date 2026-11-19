@@ -66,6 +66,9 @@ export interface ResourceItem extends ResourceIdentity {
   memory?: string;
   ip?: string;
   node?: string;
+  /** Target or nominated node when a Pending Pod is not yet bound via spec.nodeName. */
+  targetNode?: string;
+  targetNodeSource?: 'nodeAffinity' | 'nodeSelector' | 'nominated';
   age?: string;
   rawYaml?: string;
   /** ConfigMap/Secret: when a writer last changed its payload (from managedFields). */

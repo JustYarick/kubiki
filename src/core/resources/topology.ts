@@ -3,6 +3,7 @@ import { resourceKey } from './identity';
 import { buildResourceGraph, matchesSelector, type ResourceGraph } from './relationships';
 import { namespaceNames } from './namespace_scope';
 import { resourceBucket } from './custom_resource_types';
+import { podNodeInfo } from './pod_node';
 
 export function topologyNamespaces(scope: string): string[] {
   return scope.startsWith('namespace:') ? [scope.slice(10)] : scope.startsWith('namespaces:') ? namespaceNames(scope.slice(11)) ?? [] : [];
@@ -18,7 +19,9 @@ function dependencyDirections(graph: ResourceGraph): ResourceGraph {
   return { ...graph, relations: graph.relations.map(edge => {
     const source = graph.items.get(edge.source); const target = graph.items.get(edge.target);
     if (!source || source.namespace || !target?.namespace) return edge;
-    const label = edge.type === 'schedules' ? 'scheduled on' : edge.type === 'owns' ? 'owned by' : edge.type === 'manages' ? 'managed by' : edge.label;
+    const label = edge.type === 'schedules'
+      ? edge.label === 'targets' ? 'targets node' : edge.label === 'nominated' ? 'nominated on' : 'scheduled on'
+      : edge.type === 'owns' ? 'owned by' : edge.type === 'manages' ? 'managed by' : edge.label;
     return { ...edge, source: edge.target, target: edge.source, id: JSON.stringify([edge.target, edge.source, edge.type]), label };
   }) };
 }
@@ -66,7 +69,10 @@ export function buildTopology(input: Record<ResourceKind, Map<string, ResourceIt
     if (!needed.has(kind)) needed.set(kind, new Set());
     needed.get(kind)!.add(name);
   };
-  for (const pod of scoped.Pod.values()) need('Node', pod.raw?.spec?.nodeName ?? pod.node);
+  for (const pod of scoped.Pod.values()) {
+    const nodeInfo = podNodeInfo(pod);
+    need('Node', nodeInfo.assigned ?? nodeInfo.pendingNode);
+  }
   for (const map of Object.values(scoped)) for (const item of map.values()) {
     const spec = item.raw?.spec ?? item.spec ?? {};
     const podSpec = item.kind === 'Pod' ? spec : item.kind === 'CronJob' ? spec.jobTemplate?.spec?.template?.spec : ['Deployment', 'ReplicaSet', 'ReplicationController', 'DaemonSet', 'StatefulSet', 'Job'].includes(item.kind) ? spec.template?.spec : undefined;

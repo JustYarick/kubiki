@@ -364,7 +364,28 @@ pub fn service_diagnostics(
             if ready == Some(false) {
                 issues.push("An observed matching Pod has Ready=False; inspect conditions to determine the cause".into());
             }
-            pods_summary.push(json!({"name":pod["metadata"]["name"],"uid":pod["metadata"]["uid"],"phase":pod["status"]["phase"],"ready":ready,"containersReady":condition("ContainersReady")}));
+            let pod_ports: Vec<Value> = pod
+                .pointer("/spec/containers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|c| {
+                    json!({
+                        "container": c.get("name"),
+                        "ports": c.get("ports"),
+                        "readinessProbe": c.get("readinessProbe"),
+                    })
+                })
+                .filter(|entry| {
+                    entry.get("ports").is_some_and(|v| !v.is_null())
+                        || entry.get("readinessProbe").is_some_and(|v| !v.is_null())
+                })
+                .collect();
+            let mut pod_entry = json!({"name":pod["metadata"]["name"],"uid":pod["metadata"]["uid"],"phase":pod["status"]["phase"],"ready":ready,"containersReady":condition("ContainersReady")});
+            if !pod_ports.is_empty() {
+                pod_entry["containers"] = json!(pod_ports);
+            }
+            pods_summary.push(pod_entry);
         }
     }
     let endpoints=endpoint_slices.and_then(Value::as_array).map(|slices| {
@@ -576,13 +597,17 @@ pub fn config_reference_diagnostics(spec: &Value) -> Value {
         if let Some(obj) = value.as_object() {
             for (key, item) in obj {
                 let reference = match key.as_str() {
-                    "configMapRef" | "configMapKeyRef" | "configMap" => Some((false, "name")),
-                    "secretRef" | "secretKeyRef" => Some((true, "name")),
-                    "secret" => Some((true, "secretName")),
+                    "configMapRef" | "configMapKeyRef" | "configMap" => Some((false, &["name"][..])),
+                    "secretRef" | "secretKeyRef" => Some((true, &["name"][..])),
+                    // Volume uses secret.secretName; projected.sources[*].secret uses secret.name.
+                    "secret" => Some((true, &["secretName", "name"][..])),
                     _ => None,
                 };
-                if let Some((secret, name_key)) = reference {
-                    if let Some(name) = item[name_key].as_str().filter(|s| !s.is_empty()) {
+                if let Some((secret, name_keys)) = reference {
+                    if let Some(name) = name_keys
+                        .iter()
+                        .find_map(|name_key| item[*name_key].as_str().filter(|s| !s.is_empty()))
+                    {
                         let out = json!({"name":name,"key":item.get("key"),"optional":item.get("optional"),"source":format!("{path}/{key}")});
                         if secret {
                             secrets.push(out)
@@ -909,7 +934,7 @@ mod accepted_revision_tests {
 }
 
 static LOG_ERROR_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?i)(\bERROR\b|\bFATAL\b|\bWARN(?:ING)?\b|\bException\b|\bpanic:|\bpanicked at\b|\bTraceback\b|\bCRITICAL\b|\bSIG(?:SEGV|ABRT|BUS|ILL|FPE)\b|segmentation fault|"level"\s*:\s*"(?:error|fatal|warn)"|(?-i:\b[A-Z][A-Za-z]*(?:Error|Exception)[:)]))"#).unwrap()
+    regex::Regex::new(r#"(?i)(\bERROR\b|\bFATAL\b|\bWARN(?:ING)?\b|\bException\b|\bpanic:|\bpanicked at\b|\bTraceback\b|\bCRITICAL\b|\bSIG(?:SEGV|ABRT|BUS|ILL|FPE)\b|segmentation fault|"(?:level|lvl|severity)"\s*:\s*"(?:err|error|fatal|crit|critical|warn|warning)"|\b(?:level|lvl)=(?:err|error|fatal|crit|critical|warn|warning)\b|(?-i:(?:^|\s)[EWF]\d{4}\s|\b[A-Z][A-Za-z]*(?:Error|Exception)[:)])|dial tcp|connection refused|connection reset|no such host|x509:|context deadline exceeded|OOMKilled|out of memory|permission denied|HTTP/[0-9.]+"\s+5\d\d)"#).unwrap()
 });
 
 static POD_HASH_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -975,8 +1000,8 @@ pub fn filter_logs_for_ai(raw_logs: &str, tail_fallback: usize) -> (String, usiz
     let matched_count = matched.len();
     if matched_count > 0 {
         let truncate_line = |l: &str| -> String {
-            if l.chars().count() > 400 {
-                let mut s: String = l.chars().take(400).collect();
+            if l.chars().count() > 2000 {
+                let mut s: String = l.chars().take(2000).collect();
                 s.push_str("... [truncated]");
                 s
             } else {
@@ -984,32 +1009,35 @@ pub fn filter_logs_for_ai(raw_logs: &str, tail_fallback: usize) -> (String, usiz
             }
         };
 
-        let selected: Vec<String> = if matched_count <= 50 {
+        let selected: Vec<String> = if matched_count <= 80 {
             matched
                 .into_iter()
                 .map(|(num, l)| format!("[L{}] {}", num, truncate_line(l)))
                 .collect()
         } else {
             let mut out = Vec::new();
-            for (num, l) in matched.iter().take(30) {
+            for (num, l) in matched.iter().take(40) {
                 out.push(format!("[L{}] {}", num, truncate_line(l)));
             }
-            out.push(format!("... [{} intermediate matching error lines omitted] ...", matched_count - 50));
-            for (num, l) in matched.iter().skip(matched_count - 20) {
+            out.push(format!(
+                "... [{} intermediate matching error lines omitted] ...",
+                matched_count - 80
+            ));
+            for (num, l) in matched.iter().skip(matched_count - 40) {
                 out.push(format!("[L{}] {}", num, truncate_line(l)));
             }
             out
         };
         (selected.join("\n"), total, matched_count, true)
     } else {
-        let fallback_count = tail_fallback.clamp(1, 30).min(total);
+        let fallback_count = tail_fallback.clamp(1, 150).min(total);
         let start = total.saturating_sub(fallback_count);
         let selected: Vec<String> = lines[start..]
             .iter()
             .enumerate()
             .map(|(offset, l)| {
-                let text = if l.chars().count() > 400 {
-                    let mut s: String = l.chars().take(400).collect();
+                let text = if l.chars().count() > 2000 {
+                    let mut s: String = l.chars().take(2000).collect();
                     s.push_str("... [truncated]");
                     s
                 } else {
@@ -1020,6 +1048,140 @@ pub fn filter_logs_for_ai(raw_logs: &str, tail_fallback: usize) -> (String, usiz
             .collect();
         (selected.join("\n"), total, 0, false)
     }
+}
+
+/// Pure structural diff between two policy-projected PodTemplateSpec objects (e.g. current vs previous ReplicaSet).
+/// Never inspects unprojected fields; hidden values stay absent.
+pub fn diff_pod_templates(current: &Value, previous: &Value) -> Value {
+    fn container_map<'a>(spec: &'a Value, key: &str) -> std::collections::BTreeMap<String, &'a Value> {
+        spec.get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c.get("name").and_then(Value::as_str).map(|n| (n.to_owned(), c)))
+            .collect()
+    }
+    let mut changes = Vec::new();
+    for section in ["initContainers", "containers"] {
+        let cur_map = container_map(current, section);
+        let prev_map = container_map(previous, section);
+        let all_names: std::collections::BTreeSet<&String> =
+            cur_map.keys().chain(prev_map.keys()).collect();
+        for name in all_names {
+            match (cur_map.get(name), prev_map.get(name)) {
+                (Some(c), None) => {
+                    changes.push(json!({"field": format!("{section}.{name}"), "change": "added", "currentImage": c.get("image")}));
+                }
+                (None, Some(p)) => {
+                    changes.push(json!({"field": format!("{section}.{name}"), "change": "removed", "previousImage": p.get("image")}));
+                }
+                (Some(c), Some(p)) => {
+                    for attr in [
+                        "image",
+                        "imagePullPolicy",
+                        "resources",
+                        "ports",
+                        "livenessProbe",
+                        "readinessProbe",
+                        "startupProbe",
+                        "command",
+                        "args",
+                    ] {
+                        if c.get(attr) != p.get(attr) {
+                            changes.push(json!({
+                                "field": format!("{section}.{name}.{attr}"),
+                                "previous": p.get(attr),
+                                "current": c.get(attr),
+                            }));
+                        }
+                    }
+                    let env_names = |v: &Value| -> std::collections::BTreeSet<String> {
+                        v.get("env")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|e| e.get("name").and_then(Value::as_str).map(str::to_owned))
+                            .collect()
+                    };
+                    let cur_env = env_names(c);
+                    let prev_env = env_names(p);
+                    let added_env: Vec<_> = cur_env.difference(&prev_env).cloned().collect();
+                    let removed_env: Vec<_> = prev_env.difference(&cur_env).cloned().collect();
+                    if !added_env.is_empty() || !removed_env.is_empty() {
+                        changes.push(json!({
+                            "field": format!("{section}.{name}.envNames"),
+                            "added": added_env,
+                            "removed": removed_env,
+                        }));
+                    }
+                    if c.get("envFrom") != p.get("envFrom") {
+                        changes.push(json!({
+                            "field": format!("{section}.{name}.envFrom"),
+                            "previous": p.get("envFrom"),
+                            "current": c.get("envFrom"),
+                        }));
+                    }
+                }
+                (None, None) => {}
+            }
+        }
+    }
+    for attr in [
+        "serviceAccountName",
+        "nodeSelector",
+        "tolerations",
+        "affinity",
+        "topologySpreadConstraints",
+        "priorityClassName",
+        "volumes",
+    ] {
+        if current.get(attr) != previous.get(attr) {
+            changes.push(json!({
+                "field": attr,
+                "previous": previous.get(attr),
+                "current": current.get(attr),
+            }));
+        }
+    }
+    json!({
+        "changed": !changes.is_empty(),
+        "changeCount": changes.len(),
+        "changes": changes,
+        "coverage": "Policy-projected PodTemplateSpec comparison; omitted fields (such as inline env values or commands when workloadConfiguration is disabled) are not compared."
+    })
+}
+
+/// Extract a single explicitly pinned target Node from a policy-projected Pod JSON
+/// when `spec.nodeName` is not yet assigned (e.g. DaemonSet `matchFields: metadata.name In [node]`,
+/// `matchExpressions: kubernetes.io/hostname In [node]`, or `nodeSelector["kubernetes.io/hostname"]`).
+pub fn extract_pod_target_node(pod: &Value) -> Option<(String, &'static str)> {
+    kubiki_core::core::relationships::pinned_pod_node(pod.get("spec")?)
+}
+
+/// Group label for `summarize_resources(groupBy: "nodeName")`:
+/// keeps bound Pods under `<node>`, distinguishes pinned unscheduled Pods as `unscheduled:<node>`,
+/// and preemption candidates as `nominated:<node>`.
+pub fn pod_node_group(pod: &Value) -> String {
+    if let Some(node) = pod
+        .pointer("/spec/nodeName")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return node.to_owned();
+    }
+    if let Some((target, _)) = extract_pod_target_node(pod) {
+        return format!("unscheduled:{target}");
+    }
+    if let Some(nominated) = pod
+        .pointer("/status/nominatedNodeName")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return format!("nominated:{nominated}");
+    }
+    "unknown".into()
 }
 
 pub fn normalize_event_message(msg: &str) -> String {

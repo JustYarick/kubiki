@@ -239,10 +239,13 @@ impl AiSettings {
         resolved.always_ask = self.policy.always_ask.clone();
         resolved.plan_disabled_tools = self.policy.plan_disabled_tools.clone();
         resolved.action_disabled_tools = self.policy.action_disabled_tools.clone();
+        resolved.schema_version = self.policy.schema_version;
+        resolved.rule_resolution = self.policy.rule_resolution;
         resolved.contexts = self.policy.contexts.clone();
         resolved.namespaces = self.policy.namespaces.clone();
         resolved.rules = self.policy.rules.clone();
         resolved.denied_paths = self.policy.denied_paths.clone();
+        resolved.allowed_fields = self.policy.allowed_fields.clone();
         if phase == AgentPhase::Plan {
             resolved.writes.clear();
         }
@@ -340,6 +343,18 @@ mod live_policy_tests {
         assert_eq!(
             settings.effective_kubiki_policy(AgentPhase::Action).writes,
             vec![WriteOperation::Restart]
+        );
+
+        // Shared schema_version, rule_resolution and allowed_fields must propagate into effective_kubiki_policy.
+        settings.policy.schema_version = 2;
+        settings.policy.rule_resolution = RuleResolution::DenyOverrides;
+        settings.policy.allowed_fields = vec!["metadata.name".into(), "status.phase".into()];
+        let plan_effective = settings.effective_kubiki_policy(AgentPhase::Plan);
+        assert_eq!(plan_effective.schema_version, 2);
+        assert_eq!(plan_effective.rule_resolution, RuleResolution::DenyOverrides);
+        assert_eq!(
+            plan_effective.allowed_fields,
+            vec!["metadata.name".to_string(), "status.phase".to_string()]
         );
     }
 

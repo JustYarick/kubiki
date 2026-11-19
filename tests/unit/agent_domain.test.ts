@@ -570,12 +570,12 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
   expect(defaultMcpPolicy().writes).toEqual([]);
   const base = { ...defaultMcpPolicy(), logs: true, clusterResources: true, writes: ['create', 'update', 'delete', 'scale', 'restart'] as import('../../src/domains/ai/types').WriteOperation[] };
   const activeAll = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, base));
-  expect(activeAll.length).toBe(32);
+  expect(activeAll.length).toBe(19);
 
-  // Toggling to readOnly blocks all 4 write tools, leaving exactly 28 active read tools
+  // Toggling to readOnly blocks all 4 write tools, leaving exactly 15 active read tools
   const readOnlyPolicy = toggleReadOnlyMcpPolicy(true, base);
   const activeReadOnly = MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, readOnlyPolicy));
-  expect(activeReadOnly.length).toBe(28);
+  expect(activeReadOnly.length).toBe(15);
   expect(isToolActiveInPolicy('apply_manifest', readOnlyPolicy)).toBe(false);
   expect(isToolActiveInPolicy('scale_workload', readOnlyPolicy)).toBe(false);
   expect(isToolActiveInPolicy('restart_workload', readOnlyPolicy)).toBe(false);
@@ -625,9 +625,10 @@ it('correctly calculates live active MCP tools and synchronizes read-only mode a
   // Explicit empty writes (e.g. unchecking all 5 write ops) is preserved when already configured
   const configuredNoWrites = normalizeMcpPolicy({ ...base, readOnly: false, writes: [] });
   expect(configuredNoWrites.writes).toEqual([]);
+  expect(configuredNoWrites.helmValues).toBe(false);
   expect(isToolActiveInPolicy('apply_manifest', configuredNoWrites)).toBe(false);
   expect(isToolActiveInPolicy('scale_workload', configuredNoWrites)).toBe(false);
-  expect(MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, configuredNoWrites)).length).toBe(28);
+  expect(MCP_TOOL_CATALOG.filter(t => isToolActiveInPolicy(t.id, configuredNoWrites)).length).toBe(15);
 
   // Enabling a tool on the Global tab (phase === undefined) clears phase-specific disable lists for that tool
   const reenabledGlobal = patchToolInPolicy('scale_workload', true, actionDisabledPolicy);
@@ -680,6 +681,21 @@ it('defaults to read-only MCP profile, resolves shared permissions for action, a
   // Kubiki Agent Plan/Action profile bindings resolve Plan -> read-only and Action -> action
   expect(resolveEffectiveKubikiPolicy(baseSettings, 'plan').writes).toEqual([]);
   expect(resolveEffectiveKubikiPolicy(baseSettings, 'action').writes).toEqual(['restart', 'scale']);
+
+  // Shared schemaVersion, ruleResolution and allowedFields propagate into resolveEffectiveKubikiPolicy
+  const v2Settings = {
+    ...baseSettings,
+    policy: {
+      ...baseSettings.policy,
+      schemaVersion: 2,
+      ruleResolution: 'deny_overrides' as const,
+      allowedFields: ['metadata.name', 'status.phase'],
+    },
+  };
+  const resolvedV2 = resolveEffectiveKubikiPolicy(v2Settings, 'plan');
+  expect(resolvedV2.schemaVersion).toBe(2);
+  expect(resolvedV2.ruleResolution).toBe('deny_overrides');
+  expect(resolvedV2.allowedFields).toEqual(['metadata.name', 'status.phase']);
 
   // Default Read-only profile blocks all writes even when Shared Permissions permit writes
   const defaultEffective = resolveEffectiveMcpPolicy(baseSettings);

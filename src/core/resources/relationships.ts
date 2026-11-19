@@ -3,6 +3,7 @@ import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { matchesResourceRef, resourceKey } from './identity';
 import { RESOURCE_TYPES, apiVersionFor, parseApiVersion } from './resource_types';
 import { gitOpsReferences, gitOpsFamily } from './gitops';
+import { podNodeInfo } from './pod_node';
 
 export type RelationType = 'owns' | 'selects' | 'routes' | 'schedules' | 'uses' | 'binds' | 'contains' | 'manages';
 export interface ResourceRelation {
@@ -148,7 +149,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     }
     relations.set(id, { id, source, target, type, label, missing });
   };
-  const reference = (from: ResourceItem, kind: string, name: string | undefined, namespace: string | null = from.namespace ?? null, type: RelationType = 'uses', reverse = false, uid?: string, apiVersion?: string) => {
+  const reference = (from: ResourceItem, kind: string, name: string | undefined, namespace: string | null = from.namespace ?? null, type: RelationType = 'uses', reverse = false, uid?: string, apiVersion?: string, label?: string) => {
     if (!name || name === '-' || kind === 'Event') return;
     const group = apiVersion === undefined ? undefined : parseApiVersion(apiVersion).group;
     const builtin = RESOURCE_TYPES.find((resource) => resource.kind === kind && (group === undefined || group === resource.group));
@@ -159,7 +160,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     const valid = target && matchesResourceRef(target, reference);
     const targetKey = valid ? resourceKey(target) : key;
     const missing = valid ? undefined : reference;
-    link(reverse ? targetKey : resourceKey(from), reverse ? resourceKey(from) : targetKey, type, type, missing);
+    link(reverse ? targetKey : resourceKey(from), reverse ? resourceKey(from) : targetKey, type, label ?? type, missing);
   };
 
   for (const item of all) {
@@ -271,7 +272,14 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     const podTemplateKind = native && ['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController', 'Job', 'CronJob'].includes(item.kind);
     const template = podTemplateKind ? item.kind === 'CronJob' ? spec.jobTemplate?.spec?.template?.spec : spec.template?.spec : undefined;
     if (native && item.kind === 'Pod') {
-      reference(item, 'Node', spec.nodeName ?? item.node, null, 'schedules', true);
+      const nodeInfo = podNodeInfo(item);
+      if (nodeInfo.assigned) {
+        reference(item, 'Node', nodeInfo.assigned, null, 'schedules', true);
+      } else if (nodeInfo.target) {
+        reference(item, 'Node', nodeInfo.target, null, 'schedules', true, undefined, undefined, 'targets');
+      } else if (nodeInfo.nominated) {
+        reference(item, 'Node', nodeInfo.nominated, null, 'schedules', true, undefined, undefined, 'nominated');
+      }
     }
     const podSpec = native && item.kind === 'Pod' ? spec : template;
     if (podSpec) {

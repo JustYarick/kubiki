@@ -79,6 +79,7 @@ struct DynamicConnectionExecutor {
     consent: Arc<dyn kubiki_tools::kubernetes::Consent>,
     permits: Arc<tokio::sync::Semaphore>,
     pinned: StdMutex<Option<(String, u64)>>,
+    cache: Arc<kubiki_core::core::read_cache::ReadCache>,
 }
 
 #[async_trait::async_trait]
@@ -89,11 +90,26 @@ impl ToolExecutor for DynamicConnectionExecutor {
         call: &ToolCall,
         emit: &EventSink,
     ) -> Result<Value, String> {
-        if session.scope.context.is_empty() {
+        if session.scope.context.is_empty()
+            && !matches!(call.name.as_str(), "propose_manifests" | "cluster_info")
+        {
             return Err(
                 "No cluster is currently selected in Kubiki Desktop. Select a cluster in Kubiki and retry."
                     .into(),
             );
+        }
+        if session.scope.context.is_empty() {
+            let tools = kubiki_tools::kubernetes::KubernetesTools::scoped_with_cache(
+                session,
+                self.pool.clone(),
+                None,
+                None,
+                self.consent.clone(),
+                self.journal.clone(),
+                self.permits.clone(),
+                self.cache.clone(),
+            )?;
+            return tools.execute(session, call, emit).await;
         }
         let (client, generation) = self
             .pool
@@ -109,13 +125,20 @@ impl ToolExecutor for DynamicConnectionExecutor {
                 .as_ref()
                 .is_some_and(|(ctx, pinned_gen)| ctx != &session.scope.context || *pinned_gen != generation);
             if changed {
+                self.cache.clear();
                 if let Ok(mut accepted) = session.accepted_operations.lock() {
                     *accepted = AcceptedOperations::default();
+                }
+                if let Ok(mut ev) = session.evidence.lock() {
+                    ev.clear();
+                }
+                if let Ok(mut cursors) = session.query_cursors.lock() {
+                    *cursors = CursorStore::default();
                 }
             }
             *guard = Some((session.scope.context.clone(), generation));
         }
-        let tools = kubiki_tools::kubernetes::KubernetesTools::scoped(
+        let tools = kubiki_tools::kubernetes::KubernetesTools::scoped_with_cache(
             session,
             self.pool.clone(),
             Some(client),
@@ -123,6 +146,7 @@ impl ToolExecutor for DynamicConnectionExecutor {
             self.consent.clone(),
             self.journal.clone(),
             self.permits.clone(),
+            self.cache.clone(),
         )?;
         tools.execute(session, call, emit).await
     }
@@ -134,6 +158,8 @@ pub struct PersistentMcpManager {
     scope: Arc<StdMutex<AgentScope>>,
     routing: Arc<StdMutex<ScopeRouting>>,
     policy: Arc<StdMutex<AgentPolicy>>,
+    capabilities: Arc<StdMutex<ClusterCapabilities>>,
+    pool: Arc<StdMutex<Option<ClusterClientPool>>>,
     servers: Arc<StdMutex<Vec<kubiki_mcp::ClusterServer>>>,
 }
 
@@ -177,6 +203,8 @@ impl Default for PersistentMcpManager {
             policy: Arc::new(StdMutex::new(crate::opencode::sanitize_mcp_policy(
                 &AgentPolicy::default(),
             ))),
+            capabilities: Arc::new(StdMutex::new(ClusterCapabilities::all())),
+            pool: Arc::new(StdMutex::new(None)),
             servers: Arc::new(StdMutex::new(Vec::new())),
         }
     }
@@ -274,8 +302,13 @@ fn register_server_with_limit(
     server: kubiki_mcp::ClusterServer,
 ) {
     if let Ok(mut list) = servers.lock() {
+        list.retain(|s| !s.is_invalidated());
         if list.len() >= 16 {
-            let evicted = list.remove(0);
+            let evict_idx = list
+                .iter()
+                .position(|s| !s.has_live_peers())
+                .unwrap_or(0);
+            let evicted = list.remove(evict_idx);
             evicted.session.invalidate();
         }
         list.push(server);
@@ -288,6 +321,9 @@ impl PersistentMcpManager {
         app: &tauri::AppHandle,
     ) -> Result<Arc<dyn Fn() -> kubiki_mcp::ClusterServer + Send + Sync>, String> {
         let pool = app.state::<ClusterClientPool>().inner().clone();
+        if let Ok(mut slot) = self.pool.lock() {
+            *slot = Some(pool.clone());
+        }
         let guard = app
             .state::<crate::mutation_guard::MutationGuard>()
             .inner()
@@ -299,6 +335,7 @@ impl PersistentMcpManager {
         let journal = data.join("ai").join("mcp-http.jsonl");
         let scope_ref = self.scope.clone();
         let policy_ref = self.policy.clone();
+        let caps_ref = self.capabilities.clone();
         let servers_ref = self.servers.clone();
 
         Ok(Arc::new(move || {
@@ -307,16 +344,16 @@ impl PersistentMcpManager {
                 .lock()
                 .map(|g| g.clone())
                 .unwrap_or_else(|_| crate::opencode::sanitize_mcp_policy(&AgentPolicy::default()));
+            let capabilities = caps_ref
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| ClusterCapabilities::all());
             let session = Session::new(
                 format!("mcp-http-{}", kubiki_mcp::http::generate_bearer_token()),
                 "desktop-http".into(),
                 scope,
                 policy,
-                ClusterCapabilities {
-                    helm: true,
-                    argocd: true,
-                    flux: true,
-                },
+                capabilities,
             );
             let _ = session.mode(AgentMode::Accept);
             let _ = session.phase(AgentPhase::Action);
@@ -325,7 +362,8 @@ impl PersistentMcpManager {
                 journal: journal.clone(),
                 consent: Arc::new(crate::agent_tools::SharedHostConsent(guard.clone())),
                 pinned: StdMutex::new(None),
-                permits: Arc::new(tokio::sync::Semaphore::new(2)),
+                permits: Arc::new(tokio::sync::Semaphore::new(4)),
+                cache: Arc::new(kubiki_core::core::read_cache::ReadCache::default()),
             });
             let server =
                 kubiki_mcp::ClusterServer::new(session, executor, Arc::new(|_| {}), true)
@@ -335,12 +373,82 @@ impl PersistentMcpManager {
         }))
     }
 
+    fn probe_capabilities_for_context(&self, context: String) {
+        if context.is_empty() {
+            return;
+        }
+        let Some(pool) = self.pool.lock().ok().and_then(|g| g.clone()) else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let caps_ref = self.capabilities.clone();
+        let servers_ref = self.servers.clone();
+        let scope_ref = self.scope.clone();
+        handle.spawn(async move {
+            let Ok(Ok((client, _))) = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                pool.get_client_with_generation(&context),
+            )
+            .await
+            else {
+                return;
+            };
+            let discovery = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                kube::discovery::Discovery::new(client)
+                    .filter(&[
+                        "argoproj.io",
+                        "helm.toolkit.fluxcd.io",
+                        "kustomize.toolkit.fluxcd.io",
+                        "source.toolkit.fluxcd.io",
+                    ])
+                    .run(),
+            )
+            .await;
+            let Ok(Ok(discovery)) = discovery else {
+                return;
+            };
+            let active_ctx = scope_ref.lock().ok().map(|s| s.context.clone());
+            if active_ctx.as_deref() != Some(context.as_str()) {
+                return;
+            }
+            let argocd = discovery.groups().any(|g| g.name() == "argoproj.io");
+            let flux = discovery.groups().any(|g| {
+                matches!(
+                    g.name(),
+                    "helm.toolkit.fluxcd.io"
+                        | "kustomize.toolkit.fluxcd.io"
+                        | "source.toolkit.fluxcd.io"
+                )
+            });
+            let detected = ClusterCapabilities {
+                helm: true,
+                argocd,
+                flux,
+            };
+            if let Ok(mut guard) = caps_ref.lock() {
+                *guard = detected.clone();
+            }
+            let servers = servers_ref.lock().map(|g| g.clone()).unwrap_or_default();
+            for server in servers {
+                server.update_capabilities(detected.clone());
+            }
+        });
+    }
+
     pub async fn reconcile(
         &self,
         app: &tauri::AppHandle,
         settings: &crate::agent_commands::AiSettings,
     ) -> Result<(), String> {
         settings.mcp_server.validate()?;
+        if let Ok(mut slot) = self.pool.lock() {
+            if slot.is_none() {
+                *slot = Some(app.state::<ClusterClientPool>().inner().clone());
+            }
+        }
         let effective = settings.effective_mcp_policy();
         {
             let mut routing = self.routing.lock().map_err(|_| "MCP routing unavailable")?;
@@ -432,15 +540,16 @@ impl PersistentMcpManager {
     }
 
     fn rebind(&self, next: AgentScope) {
-        let changed = if let Ok(mut current) = self.scope.lock() {
+        let (changed, context_changed) = if let Ok(mut current) = self.scope.lock() {
             if *current == next {
-                false
+                (false, false)
             } else {
+                let ctx_changed = current.context != next.context;
                 *current = next.clone();
-                true
+                (true, ctx_changed)
             }
         } else {
-            false
+            (false, false)
         };
         if changed {
             let servers = self
@@ -450,6 +559,9 @@ impl PersistentMcpManager {
                 .unwrap_or_default();
             for server in servers {
                 server.rebind_scope(&next);
+            }
+            if context_changed && !next.context.is_empty() {
+                self.probe_capabilities_for_context(next.context);
             }
         }
     }

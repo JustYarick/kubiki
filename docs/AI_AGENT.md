@@ -103,29 +103,40 @@ Access controls are independent:
   discovery only returns names allowed by the conversation scope, namespace
   patterns and resource rules; it does not return namespace contents.
 - Secrets and ConfigMaps have **No access**, **Metadata only**, and **Contents**
-  levels. Custom resources also offer **Diagnostic fields** (`diagnostic`), the
-  default for new policies and the Diagnostic preset. This projects selected Flux
-  conditions, revisions, artifacts, dependencies, paths, reconciliation markers and
-  failure counters, and external-secrets conditions/refresh state. Chart values,
+  levels. Setting Secrets to **No access** (`none`) is a hard ceiling that blocks
+  every Secret read and list across all rules (no API call or membership oracle).
+  Custom resources also offer **Diagnostic fields** (`diagnostic`), the
+  default for new policies and the Diagnostic preset. This projects selected Flux,
+  Argo CD (`Application`, `ApplicationSet`, `Rollout`), `external-secrets.io`,
+  `cert-manager.io`, Gateway API (`Gateway`, `HTTPRoute`, `GRPCRoute`, `GatewayClass`),
+  and KEDA (`ScaledObject`, `ScaledJob`) status/condition fields. Chart values,
   credential/provider configuration and unrecognized CRD bodies remain hidden.
   Existing saved Metadata-only/No-access settings and exact rules are preserved.
   Metadata reads use Kubernetes metadata APIs rather than downloading and then
   hiding Secret/ConfigMap bodies. Conditions/messages remain untrusted text and can
   contain application-sensitive information; excluded paths still apply.
-- Inline environment values/commands and annotations have separate switches.
+- Inline environment values/commands/probe headers, annotations, and **Helm release values**
+  (`helmValues`, off by default) have separate switches. Metadata-only Helm release
+  listings (`helm action=list`) and storage revision checks (`helm action=storage`)
+  remain available without enabling `helmValues` or Secret contents.
 - Context and namespace patterns bound every cluster tool. `*` matches any text;
   empty lists deny access. A conversation's pinned scope remains an upper bound.
-- Resource rules match group, kind, namespace and name. The **first matching rule**
-  overrides read/write defaults for that object. Put exact exceptions first.
-  Global tool switches and scope limits still apply.
+- Resource rules match group, kind, namespace and name. In schema v1 (**first matching rule**),
+  put exact exceptions first. In schema v2 with **Deny overrides** (`deny_overrides`),
+  every matching rule applies: the most restrictive `DataAccess` level wins and write
+  operations are intersected across matching rules. Global tool switches, hard category
+  ceilings (`events: false`, `metrics: false`, `secrets: none`), and scope limits always apply.
 - Excluded JSON pointer paths remove fields/subtrees from resource responses,
-  including explicitly permitted Secret contents. They are not regular expressions.
+  including explicitly permitted Secret contents, and support `*` wildcards over
+  array indices or object keys (for example `/spec/containers/*/env`). They are not regular expressions.
 - Write controls independently allow create, update, delete, scale and restart.
   The replica limit also applies to explicit workload replicas in manifests.
 
-For example, keep Secret access disabled and add a rule for group `""`, kind
-`Secret`, namespace `backend`, name `nexus-credentials`, read `Contents`, with
-no writes. That permits this one Secret without opening all Secret contents.
+For example, to allow one specific Secret while blocking all other Secrets, set
+Secret access to **Metadata only** and add an exact rule for group `""`, kind
+`Secret`, namespace `backend`, name `nexus-credentials`, read `Contents`, followed
+by a catch-all rule for `Secret` `*/*` with read `No access`. Keeping Secret
+access at **No access** guarantees that no rule can expose Secret reads or lists.
 Changing data policy cancels current work and applies the new policy to the same
 native session. Evidence, query cursors and reviewed plans are revoked; delayed
 read results cannot repopulate those stores. The transcript remains visible, but
@@ -134,11 +145,12 @@ are not replayed under the new policy. The interface identifies this context res
 Instructions, provider endpoints and credential changes still invalidate sessions.
 Changing only default model/options does not retarget existing conversations.
 
-Event and Metrics category denials apply to generic resource reads and lists too,
-including `events.k8s.io/Event` and `metrics.k8s.io` resources. Per-resource content
-grants do not override these category denials. Explicit empty write permissions
-and disabled log/cluster access survive loading and saving unchanged; disabling
-Read-only does not add write grants.
+Event, Metrics and Secret (`secrets: none`) category denials apply to generic
+resource reads and lists too, including `events.k8s.io/Event`, `metrics.k8s.io`,
+and `v1/Secret` resources, blocking list requests before any Kubernetes API call.
+Per-resource content grants do not override these category denials. Explicit empty
+write permissions and disabled log/cluster access survive loading and saving
+unchanged; disabling Read-only does not add write grants.
 
 Logs, Events, labels and arbitrary configuration can contain sensitive text.
 Filtering is not a general data-loss-prevention system. Read permissions govern
@@ -252,11 +264,14 @@ require uniform collection content access.
 Lists now return an opaque `cursor` with `hasMore`. Repeat identical arguments plus
 that cursor to continue. Cursors expire after five minutes, are local to the native
 session/revision, and retain byte-limited page tails before fetching the next API
-page. The store is bounded to 16 entries/1 MiB per session. `list_namespaces` now has
-matching cursor/pageSize support (1–200); explicit conversation namespaces do not
-trigger global namespace discovery. Names pass field policy before egress. Unknown/expired cursors
-and Kubernetes 410 require an explicit new scan; old/new snapshots are not silently
-combined. A single oversized selected object requires narrower fields.
+page. The store is bounded to 16 entries/1 MiB per session. `cluster_info`
+(`view: "session" | "namespaces" | "catalog" | "problems"`) consolidates session/policy
+orientation, cursor-paginated namespace discovery (1–200; explicit conversation
+namespaces do not trigger global namespace discovery), built-in and live CRD
+catalog discovery, and bounded cluster/namespace problem triage. Names pass field
+policy before egress. Unknown/expired cursors and Kubernetes 410 require an
+explicit new scan; old/new snapshots are not silently combined. A single oversized
+selected object requires narrower fields.
 
 For example, request images and restart counts without full Pod bodies in the model:
 
@@ -279,20 +294,25 @@ For example, request images and restart counts without full Pod bodies in the mo
 
 This is a `list_resources` argument. Arbitrary spec/status projection reduces model
 context; the API still returns full objects unless only metadata was requested.
+`list_resources` also supports `namespace: "*"` for cross-namespace queries (using
+a single cluster-wide list when unrestricted or bounded fan-out across up to 10
+permitted namespaces).
 
-`summarize_resources` groups permitted objects by phase/node/image/health over
-1–10 bounded pages (default five, at most 20 seconds), returning counts and up to
+`summarize_resources` groups permitted objects by `phase`, `node`/`nodeName`,
+`image`, `health` or `reason` over 1–10 bounded pages (default five, at most 20
+seconds), supporting explicit namespaces or `"*"` and returning counts and up to
 five example identities. Counts cover that invocation only. Follow its cursor to
 continue the same snapshot; expired snapshots require a new scan. It does not send
 all scanned objects to the model.
 
 Namespaces are capped at 200 per page. Logs default to 150 tail lines; callers may
-choose `tailLines` 1–500 and `sinceSeconds` 1–604800. The shared log reader bounds API
-bytes and validates Pod UID/container. Diagnostic output selects matching error and
-stacktrace lines, or up to 30 tail lines when none match; individual lines and the
-number of matching lines are bounded. To read exact lines, use `get_logs` with
-`mode: "lines"`: `contains` applies a case-sensitive literal substring filter within
-the fetched slice, and `pageSize` selects 1–100 lines (default 50). Responses contain
+choose `tailLines` 1–5000 and `sinceSeconds` 1–604800. The shared log reader bounds API
+bytes and validates Pod UID/container. Diagnostic output selects matching error,
+klog, logfmt/JSON severity, network-failure and stacktrace lines (up to 80 lines,
+2000 chars each), or up to 150 tail lines when none match. To read exact lines,
+use `get_logs` with `mode: "lines"`: `contains` applies a literal substring filter
+within the fetched slice (with optional `ignoreCase` and `contextLines` 0–10), and
+`pageSize` selects 1–100 lines (default 50). Responses contain
 `lines` with original slice line numbers and text. Repeat identical arguments with
 the returned `cursor` to continue the captured slice without another cluster read.
 Pages also respect a 48 KB serialized line budget. Cursors expire after five minutes,
@@ -302,30 +322,32 @@ Oversized lines or remaining snapshots fail explicitly; narrow the tail/time win
 `sinceTime` accepts an RFC3339 start time, mutually exclusive with `sinceSeconds`,
 in either mode. Rotation, restarts, the selected tail/time window and the core API
 byte ceiling can omit logs; no durable log archive or lossless live resume is promised.
-`contains`, `pageSize` and log cursors require `lines` mode; existing calls retain
-diagnostic output.
+`contains`, `ignoreCase`, `contextLines`, `pageSize` and log cursors require `lines`
+mode; existing calls retain diagnostic output.
 
-`get_events` pages Events in API order in the requested namespace scope. It supports involved
-object name/UID, `type` (`Normal`/`Warning`), `reason`, `pageSize` (1–100, default
-50), and inclusive RFC3339 `sinceTime`/`untilTime`. Name/UID/type/reason filters run
-in Kubernetes. Time filters run after policy projection on each bounded page,
-using the latest occurrence: series last-observed time, last timestamp, event time,
-first timestamp, then creation timestamp. Unavailable timestamps are excluded;
-`timeFilterOmitted` counts excluded items. An empty page can still have a cursor:
-continue until `hasMore` is false. These are occurrence windows, not a full history
-of every repeated Event. Repeat the same
-arguments with its `cursor`; cursors are session-local, expire after five minutes and
-are invalidated by policy changes. Kubernetes may expire a continuation, requiring a
-new scan. Pages do not promise chronological ordering. `get_events_timeline`
-normalizes dynamic identifiers (Pod suffixes, IPs, UUIDs, ports) to deduplicate
-repeated events (`deduplicate_events`) and sorts only its bounded page, not the whole
-namespace. It accepts the same object/type/reason/time filters, with `limit` in place
-of `pageSize`, and does not expose a continuation cursor. `diagnose_resource` extracts server-side
-container `crashCauses` (including `waiting` reasons alongside `lastTermination`
-exit codes/reasons on Pods and workload `childPods`), and policy scrubbing removes
-boilerplate `kubectl.kubernetes.io/last-applied-configuration` and `deployment.kubernetes.io/revision`
-annotations unless explicitly selected. For Anthropic Messages, the static system
-prefix and tool catalog use ephemeral prompt caching (`cache_control`).
+`get_events` supports `mode: "raw"` (default, paginated with `cursor`) and
+`mode: "timeline"` (deduplicated, newest-first sorted timeline scanning up to
+`maxPages` 1–5 pages, default 2). Both modes support explicit namespaces or
+`namespace: "*"`, involved object `name`/`uid`/`involvedKind`, `type`
+(`Normal`/`Warning`), `reason`, and inclusive RFC3339 `sinceTime`/`untilTime`.
+Name/UID/kind/type/reason filters run in Kubernetes. Time filters run after policy
+projection on each bounded page, using the latest occurrence: series last-observed
+time, last timestamp, event time, first timestamp, then creation timestamp.
+Unavailable timestamps are excluded; `timeFilterOmitted` counts excluded items.
+An empty raw page can still have a cursor: continue until `hasMore` is false.
+`mode: "timeline"` normalizes dynamic identifiers (Pod suffixes, IPs, UUIDs, ports)
+to deduplicate repeated events (`deduplicate_events`) and accepts `limit` (1–100,
+default 40) without a cursor. `diagnose_resource` consolidates kind-specific
+health/describe (`Pod`, `Deployment`/`StatefulSet`/`DaemonSet`/`ReplicaSet`/`Job`/`CronJob`,
+`Service` with probes and `NetworkPolicy` presence, `PersistentVolumeClaim`, `Node`),
+ConfigMap/Secret reference checks (`sections: ["config"]`), controller PodTemplate
+revision diffs (`sections: ["diff"]`), neighborhood graph, UID-bound events
+(including Node/PV events in `default`), metrics and failing container logs
+(with `previous -> current` fallback). Policy scrubbing removes boilerplate
+`kubectl.kubernetes.io/*` and `control-plane.alpha.kubernetes.io/*` annotations
+and sensitive keys while keeping `deployment.kubernetes.io/revision` when
+annotations are enabled. For Anthropic Messages, the static system prefix and
+tool catalog use ephemeral prompt caching (`cache_control`).
 `get_metrics` defaults to `kind: "Pod"` and keeps its existing per-container CPU
 and memory quantities. It adds numeric `usage` and effective `budgets` (requests and
 limits), in CPU cores and memory bytes. Exact names are required with per-resource
@@ -505,8 +527,9 @@ Permission settings now provide diagnostic/metadata/workload/network/storage/lim
 action presets and a native-only effective-access/rule preview. `allowedFields`
 restricts egress after data permissions and denied paths; hidden fields cannot be
 queried through selectors. Existing schema-v1 first-match rules retain their meaning.
-Users can explicitly choose schema v2 `deny_overrides`: matching no-access/no-write
-rules then override grants regardless of order. Preview precedes saving; settings
+Users can explicitly choose schema v2 `deny_overrides`: all matching rules apply,
+taking the most restrictive `DataAccess` level and intersecting allowed write
+operations regardless of rule order. Preview precedes saving; settings
 changes invalidate native sessions and their old context rather than silently
 continuing under changed permissions.
 
@@ -617,30 +640,50 @@ selection and the active profile's policy still apply.
 
 ## Scheduling and incident diagnostics
 
-- `get_pod_diagnostics` returns the assigned `nodeName`, scheduler candidate
-  `nominatedNodeName`, and projected conditions, including scheduler messages.
-  Unassigned Pending Pods can have neither node. Check field access before
-  interpreting omissions. Strings longer than 8,000 characters are marked as truncated.
-- Use `summarize_resources` with `groupBy: "nodeName"` for counts. For the Pods on
-  one node use `list_resources` with `fieldSelector: "spec.nodeName=worker-a"`
-  and `profile: "resources"`. Node `get_metrics` also ranks up to 20 observed Pods by memory request under `allocations.topPodsByMemoryRequest`. Use Pod metrics for measured usage.
-- `get_events` accepts `namespace: "*"` with unrestricted namespace access and
-  no matching per-resource Event rules. Use `uid` to follow one involved object
-  across bounded pages. `list_flux_resources` includes projected conditions for
-  HelmRelease, Kustomization and GitRepository. Saved metadata-only policies
-  require an explicit change to diagnostic access to read status.
-- `get_helm_release` with `storageOnly: true` checks the named release using
-  Helm storage metadata labels; RBAC failures are errors. `preview_helm_chart`
-  takes namespace, release name, chart (`repository/chart`), version and a values
-  object. It runs client-side Helm rendering using a configured HTTPS repository.
-  It requires Release content and resource access and returns policy-projected
-  built-in objects, omitting Secrets and custom resources.
+- `diagnose_resource` (with `sections: ["health"]` or the default bundle) returns
+  Pod `nodeName`, scheduler candidate `nominatedNodeName`, `status.reason`/`message`
+  (e.g. `Evicted`), `qosClass`, projected scheduling constraints (`nodeSelector`,
+  `tolerations`, `affinity`, `topologySpreadConstraints`), probes, resources, and
+  full condition/scheduler messages. Unassigned Pending Pods can have neither node.
+  Check `fieldAccess` before interpreting omissions. Strings longer than 8,000
+  characters are marked as truncated.
+- Use `summarize_resources` with `namespace: "*"` and `groupBy: "nodeName"` (or
+  `"reason"`) for cross-namespace counts. For Pods on one node use `list_resources`
+  with `namespace: "*"`, `fieldSelector: "spec.nodeName=worker-a"` and
+  `profile: "resources"` or `"scheduling"`. Node `get_metrics` ranks up to 20
+  observed Pods by memory and CPU request under `allocations.topPodsByMemoryRequest`
+  and `allocations.topPodsByCpuRequest`. Use Pod metrics for measured usage.
+- `get_events` accepts `namespace: "*"` in both `raw` and `timeline` modes across
+  all permitted namespaces (cluster-wide list when unrestricted, or bounded fan-out
+  across up to 10 permitted namespaces). Use `uid` and `involvedKind` to follow
+  one involved object. `gitops` (`provider: "argocd" | "flux"`, `action: "list" | "get"`)
+  inspects Argo CD Applications and Flux `HelmRelease`/`Kustomization`/source
+  resources under default `diagnostic` custom-resource access, auto-resolving
+  served Flux API versions (`v2`/`v2beta2`/`v2beta1`, `v1`/`v1beta2`/`v1beta1`).
+- `helm` consolidates release inspection: `action: "list"` lists releases from
+  storage labels; `action: "storage"` returns all observed `sh.helm.release.v1.<name>.v*`
+  revisions and flags pending/failed install-vs-upgrade conflicts without Secret
+  bodies; `action: "values"` reads policy-projected chart values and history when
+  the dedicated `helmValues` policy toggle is enabled; `action: "preview"` runs
+  client-side `helm template` using the pinned kubeconfig and returns projected
+  built-in objects while omitting Secrets and custom resources.
+- `propose_manifests` supports optional `dryRun: true` to validate YAML against
+  Kubiki policy and live API discovery (and execute Kubernetes Server-Side Apply
+  `dryRun=All` when Action write mode is enabled; ReadOnly/Plan never sends
+  non-GET requests).
+- The MCP server (`kubiki-mcp`) advertises `serverInfo: kubiki-mcp`, accurate MCP
+  `ToolAnnotations`, concurrent read execution on host-owned sessions, MCP Resources
+  (`kubiki://session/info`, `kubiki://evidence/{id}`), and built-in MCP Prompts
+  (`investigate-resource`, `triage-namespace`, `debug-node-pressure`,
+  `debug-rollout-regression`).
 - For historical usage, pass an exact Pod or Node to `get_metrics` with
-  `historyMinutes` (1–1440) and optional RFC3339 `historyEnd`. The default
-  source retains up to 4,096 observations per session and returns up to 200
-  samples for the current UID and session revision. To query earlier history,
-  set `KUBIKI_PROMETHEUS_SERVICES` on the desktop or stdio host to a JSON map,
-  for example `{"staging":{"namespace":"monitoring","service":"prometheus","port":9090}}`.
+  `historyMinutes` (1–1440) and optional RFC3339 `historyEnd`. The response
+  explicitly reports `source` (`"Prometheus"` vs `"sessionMemory"`) and
+  `prometheusConfigured`. The default source retains up to 4,096 observations per
+  session and returns up to 200 samples for the current UID and session revision.
+  To query earlier history, set `KUBIKI_PROMETHEUS_SERVICES` on the desktop or
+  stdio host to a JSON map, for example
+  `{"staging":{"namespace":"monitoring","service":"prometheus","port":9090}}`.
   The selected Kubernetes client needs GET access to that service proxy. Configure
   a single-cluster HTTP Prometheus endpoint with cAdvisor namespace/pod/container
   labels and node-exporter series labeled by Kubernetes node name. CPU uses a

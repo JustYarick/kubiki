@@ -30,6 +30,77 @@ fn pod_rules() -> &'static Vec<PodRule> {
             .expect("valid shared Pod reference rules")
     })
 }
+/// Extract a single explicitly pinned Node from a PodSpec when `spec.nodeName` is unset:
+/// 1. DaemonSet / required `nodeAffinity` `matchFields` (`metadata.name In [node]`) across every term
+/// 2. Required `nodeAffinity` `matchExpressions` (`kubernetes.io/hostname In [node]`) across every term
+/// 3. `spec.nodeSelector["kubernetes.io/hostname"]`
+pub fn pinned_pod_node(pod_spec: &Value) -> Option<(String, &'static str)> {
+    fn single_pinned_value(terms: &[Value], field: &str, key: &str) -> Option<String> {
+        if terms.is_empty() {
+            return None;
+        }
+        let mut pinned: Option<String> = None;
+        for term in terms {
+            let mut allowed: Option<std::collections::BTreeSet<String>> = None;
+            for req in term.get(field).and_then(Value::as_array).into_iter().flatten() {
+                if req.get("key").and_then(Value::as_str) != Some(key)
+                    || req.get("operator").and_then(Value::as_str) != Some("In")
+                {
+                    continue;
+                }
+                let values: std::collections::BTreeSet<String> = req
+                    .get("values")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                allowed = Some(match allowed {
+                    None => values,
+                    Some(prev) => prev.intersection(&values).cloned().collect(),
+                });
+            }
+            let set = allowed?;
+            if set.len() != 1 {
+                return None;
+            }
+            let candidate = set.into_iter().next()?;
+            match &pinned {
+                None => pinned = Some(candidate),
+                Some(existing) if *existing == candidate => {}
+                Some(_) => return None,
+            }
+        }
+        pinned
+    }
+
+    if let Some(terms) = pod_spec
+        .pointer("/affinity/nodeAffinity/requiredDuringSchedulingIgnoredDuringExecution/nodeSelectorTerms")
+        .and_then(Value::as_array)
+    {
+        if let Some(node) = single_pinned_value(terms, "matchFields", "metadata.name") {
+            return Some((node, "nodeAffinity"));
+        }
+        if let Some(node) = single_pinned_value(terms, "matchExpressions", "kubernetes.io/hostname")
+        {
+            return Some((node, "nodeAffinity"));
+        }
+    }
+    if let Some(host) = pod_spec
+        .get("nodeSelector")
+        .and_then(|s| s.get("kubernetes.io/hostname"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some((host.to_owned(), "nodeSelector"));
+    }
+    None
+}
+
 fn path_values<'a>(value: &'a Value, path: &str) -> Vec<&'a Value> {
     let mut values = vec![value];
     for part in path.split('.') {
@@ -121,14 +192,23 @@ pub fn references(object: &Value) -> Vec<RelatedResource> {
         _ => None,
     };
     if let Some(pod) = pod {
-        add(
-            "v1",
-            "Node",
-            pod["nodeName"].as_str(),
-            None,
-            None,
-            "scheduledOn",
-        );
+        let scheduled = pod["nodeName"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(node) = scheduled {
+            add("v1", "Node", Some(node), None, None, "scheduledOn");
+        } else if let Some((target, _)) = pinned_pod_node(pod) {
+            add("v1", "Node", Some(target.as_str()), None, None, "targetsNode");
+        } else if kind == "Pod" {
+            let nominated = object["status"]["nominatedNodeName"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if let Some(node) = nominated {
+                add("v1", "Node", Some(node), None, None, "nominatedNode");
+            }
+        }
         for rule in pod_rules() {
             for name in path_values(pod, &rule.path) {
                 add(
@@ -298,5 +378,60 @@ mod tests {
     #[test]
     fn custom_kinds_only_use_explicit_owner_references() {
         assert!(references(&json!({"apiVersion":"example.io/v1","kind":"Pod","spec":{"nodeName":"not-a-reference"}})).is_empty());
+    }
+    #[test]
+    fn daemonset_pending_pod_extracts_pinned_node_affinity_and_rejects_multi_node_or() {
+        let daemonset_pod = json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": "agent-abc", "namespace": "kube-system"},
+            "spec": {
+                "affinity": {
+                    "nodeAffinity": {
+                        "requiredDuringSchedulingIgnoredDuringExecution": {
+                            "nodeSelectorTerms": [
+                                {
+                                    "matchExpressions": [{"key": "role", "operator": "In", "values": ["infra"]}],
+                                    "matchFields": [{"key": "metadata.name", "operator": "In", "values": ["worker-3"]}]
+                                },
+                                {
+                                    "matchExpressions": [{"key": "role", "operator": "In", "values": ["edge"]}],
+                                    "matchFields": [{"key": "metadata.name", "operator": "In", "values": ["worker-3"]}]
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "status": {"phase": "Pending"}
+        });
+        assert_eq!(
+            pinned_pod_node(&daemonset_pod["spec"]),
+            Some(("worker-3".into(), "nodeAffinity"))
+        );
+        let refs = references(&daemonset_pod);
+        assert!(refs.iter().any(|r| r.kind == "Node" && r.name == "worker-3" && r.relation == "targetsNode"));
+
+        // Multiple candidate nodes in OR terms must NOT be reported as pinned to a single node.
+        let multi_or = json!({
+            "affinity": {
+                "nodeAffinity": {
+                    "requiredDuringSchedulingIgnoredDuringExecution": {
+                        "nodeSelectorTerms": [
+                            {"matchFields": [{"key": "metadata.name", "operator": "In", "values": ["worker-1"]}]},
+                            {"matchFields": [{"key": "metadata.name", "operator": "In", "values": ["worker-2"]}]}
+                        ]
+                    }
+                }
+            }
+        });
+        assert_eq!(pinned_pod_node(&multi_or), None);
+
+        // Hostname nodeSelector fallback.
+        let selector_spec = json!({"nodeSelector": {"kubernetes.io/hostname": "worker-9"}});
+        assert_eq!(
+            pinned_pod_node(&selector_spec),
+            Some(("worker-9".into(), "nodeSelector"))
+        );
     }
 }

@@ -1,6 +1,12 @@
 import { HardDrive, ShieldCheck } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { ownerMatches } from '../../../../core/resources/owner_references';
+import {
+  formatAffinityRequirement,
+  podNodeInfo,
+  podNodeSourceLabel,
+  summarizePodAffinity,
+} from '../../../../core/resources/pod_node';
 import { referenceAvailabilityNote, useDetailReadStates, useMergedDetailResources } from '../../../../state/detail_cache';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { PodRuntimeBlock } from '../blocks/PodRuntimeBlock';
@@ -25,11 +31,17 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
   const volumes: any[] = spec.volumes ?? [];
   const tolerations: any[] = spec.tolerations ?? [];
   const nodeSelector: Record<string, string> = spec.nodeSelector ?? {};
+  const affinitySummary = summarizePodAffinity(spec.affinity);
 
   // Lens-matching metadata properties
-  const nodeName = spec.nodeName || (item.node === '-' ? undefined : item.node);
+  const nodeInfo = podNodeInfo(item);
+  const nodeName = nodeInfo.assigned;
   const scheduler = status.phase === 'Pending' ? status.conditions?.find((c: { type?: string }) => c.type === 'PodScheduled') : undefined;
-  const linkedNode = nodeName ? [...resources.Node.values()].find((n) => n.name === nodeName) : undefined;
+  const findNode = (name: string | undefined) =>
+    name ? [...resources.Node.values()].find((n) => n.name === name) : undefined;
+  const linkedNode = findNode(nodeName);
+  const linkedTargetNode = !nodeName ? findNode(nodeInfo.target) : undefined;
+  const linkedNominatedNode = !nodeName ? findNode(nodeInfo.nominated) : undefined;
   const qosClass = status.qosClass || spec.qosClass || item.qosClass || 'Unknown';
   const ownerRef = raw.metadata?.ownerReferences?.[0];
   const linkedOwner = ownerRef
@@ -83,9 +95,46 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
             )}
           </dd>
 
-          {status.phase === 'Pending' && !nodeName && status.nominatedNodeName && <>
-            <dt>Nominated node</dt><dd>{status.nominatedNodeName}</dd>
-          </>}
+          {!nodeName && nodeInfo.target && (
+            <>
+              <dt>Target node</dt>
+              <dd className="flex flex-wrap items-center gap-1.5">
+                {linkedTargetNode ? (
+                  <button
+                    type="button"
+                    className="details-link font-mono"
+                    onClick={() => onNavigate(linkedTargetNode)}
+                  >
+                    {nodeInfo.target}
+                  </button>
+                ) : (
+                  <span className="font-mono text-[var(--text-primary)]">{nodeInfo.target}</span>
+                )}
+                <span className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)]">
+                  ({podNodeSourceLabel(nodeInfo.targetSource)})
+                </span>
+              </dd>
+            </>
+          )}
+
+          {status.phase === 'Pending' && !nodeName && nodeInfo.nominated && (
+            <>
+              <dt>Nominated node</dt>
+              <dd>
+                {linkedNominatedNode ? (
+                  <button
+                    type="button"
+                    className="details-link font-mono"
+                    onClick={() => onNavigate(linkedNominatedNode)}
+                  >
+                    {nodeInfo.nominated}
+                  </button>
+                ) : (
+                  <span className="font-mono text-[var(--text-secondary)]">{nodeInfo.nominated}</span>
+                )}
+              </dd>
+            </>
+          )}
 
           {scheduler && (scheduler.message || scheduler.reason) && <>
             <dt>Scheduling</dt><dd className="break-words">{scheduler.message || scheduler.reason}</dd>
@@ -228,8 +277,8 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
         </section>
       )}
 
-      {/* 7. Tolerations & Node Selector */}
-      {(tolerations.length > 0 || Object.keys(nodeSelector).length > 0) && (
+      {/* 7. Scheduling constraints: Node Selector, Affinity & Tolerations */}
+      {(tolerations.length > 0 || Object.keys(nodeSelector).length > 0 || !!affinitySummary) && (
         <section aria-label="Scheduling constraints" className="details-section">
           <div className="details-section-heading bg-[var(--bg-secondary)] border-b border-[var(--border-default)] flex items-center gap-2">
             <ShieldCheck size="calc(13px * var(--ui-factor))" className="text-[var(--accent)]" />
@@ -248,6 +297,61 @@ export function PodDetails({ item, onNavigate, onLogs, onShell }: PodDetailsProp
                 </div>
               </div>
             )}
+            {affinitySummary?.nodeAffinity && (
+              <div>
+                <span className="text-[var(--text-muted)] block mb-1">Node Affinity:</span>
+                <div className="space-y-1">
+                  {affinitySummary.nodeAffinity.requiredTerms.map((term, ti) => (
+                    <div key={`req-${ti}`} className="font-mono text-[length:calc(10.5px*var(--ui-factor))] px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex flex-wrap items-center gap-1.5">
+                      <span className="text-[length:calc(9.5px*var(--ui-factor))] uppercase tracking-wide text-[var(--text-muted)] shrink-0">
+                        {ti > 0 ? 'OR required' : 'Required'}
+                      </span>
+                      {term.map((req, ri) => (
+                        <span key={ri} className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--text-secondary)] break-all">
+                          {formatAffinityRequirement(req)}
+                        </span>
+                      ))}
+                    </div>
+                  ))}
+                  {affinitySummary.nodeAffinity.preferredTerms.map((term, ti) => (
+                    <div key={`pref-${ti}`} className="font-mono text-[length:calc(10.5px*var(--ui-factor))] px-2 py-1 rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)] flex flex-wrap items-center gap-1.5">
+                      <span className="text-[length:calc(9.5px*var(--ui-factor))] uppercase tracking-wide text-[var(--text-muted)] shrink-0">
+                        Preferred ({term.weight})
+                      </span>
+                      {term.requirements.map((req, ri) => (
+                        <span key={ri} className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] break-all">
+                          {formatAffinityRequirement(req)}
+                        </span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(['podAffinity', 'podAntiAffinity'] as const).map((kindKey) => {
+              const summary = affinitySummary?.[kindKey];
+              if (!summary) return null;
+              const title = kindKey === 'podAffinity' ? 'Pod Affinity:' : 'Pod Anti-Affinity:';
+              return (
+                <div key={kindKey}>
+                  <span className="text-[var(--text-muted)] block mb-1">{title}</span>
+                  <div className="space-y-1">
+                    {summary.required.map((term, i) => (
+                      <div key={`r-${i}`} className="font-mono text-[length:calc(10.5px*var(--ui-factor))] px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)] flex flex-wrap justify-between gap-2">
+                        <span className="break-all">Required: {term.selector}</span>
+                        <span className="text-[var(--text-muted)] shrink-0">{term.topologyKey}</span>
+                      </div>
+                    ))}
+                    {summary.preferred.map((term, i) => (
+                      <div key={`p-${i}`} className="font-mono text-[length:calc(10.5px*var(--ui-factor))] px-2 py-1 rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)] flex flex-wrap justify-between gap-2">
+                        <span className="break-all">Preferred ({term.weight}): {term.selector}</span>
+                        <span className="text-[var(--text-muted)] shrink-0">{term.topologyKey}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
             {tolerations.length > 0 && (
               <div className="mt-2">
                 <span className="text-[var(--text-muted)] block mb-1">Tolerations ({tolerations.length}):</span>

@@ -234,6 +234,7 @@ export function McpAccessSettings({
       : {
           ...ensured.activeProfile.policy,
           writes: [],
+          rules: (ensured.activeProfile.policy.rules ?? []).map(r => ({ ...r, writes: [] })),
           readOnly: false,
           confirmReads: false,
           alwaysAsk: [],
@@ -352,7 +353,7 @@ export function McpAccessSettings({
       const openCodeEntry: Record<string, unknown> = {
         type: 'remote',
         url,
-        enabled: true,
+        disabled: false,
       };
       if (requireAuthDraft) {
         openCodeEntry.headers = { Authorization: `Bearer ${token}` };
@@ -384,7 +385,7 @@ export function McpAccessSettings({
   const snippetEntry: Record<string, unknown> = {
     type: 'remote',
     url: displayUrl,
-    enabled: true,
+    disabled: false,
   };
   if (requireAuthDraft) {
     snippetEntry.headers = { Authorization: `Bearer ${displayToken}` };
@@ -662,7 +663,7 @@ export function McpAccessSettings({
         <div className="ai-form-grid-3">
           <DataSelect
             label="Secrets"
-            title="Control exposure of Secret keys and payloads to MCP"
+            title="Control exposure of Secret keys and payloads to MCP. Setting None blocks Secrets across all rules."
             value={policyDraft.secrets}
             onChange={secrets => void persistProfilePolicy({ ...policyDraft, secrets })}
           />
@@ -709,7 +710,7 @@ export function McpAccessSettings({
         <div className="flex flex-col">
           <OptionalToolRow
             title="Helm"
-            description="Read releases, values and revision history."
+            description="Inspect releases, storage revisions and chart previews (values require the Helm release values toggle)."
             value={integrationVal(policyDraft.helm)}
             onChange={helm => void persistProfilePolicy({ ...policyDraft, helm }, 'Integration settings saved.')}
             disabled={saving}
@@ -771,7 +772,7 @@ export function McpAccessSettings({
             />
           </label>
           <p className="ai-help">
-            Click <strong>Save cluster access</strong> next to Done to persist context, namespace, replica limit, or excluded field edits. Resource rules from Scope &amp; rules are also enforced on MCP.
+            Click <strong>Save cluster access</strong> next to Done to persist context, namespace, replica limit, or excluded field edits. Detached profiles use their own rules; enable <strong>Follow shared Permissions &amp; Scope</strong> above to inherit Scope &amp; rules.
           </p>
         </div>
       </details>

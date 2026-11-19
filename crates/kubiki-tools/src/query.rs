@@ -108,11 +108,14 @@ impl FieldSelection {
         visit(&self.0, target)
     }
     pub fn has_workload_configuration(&self) -> bool {
-        fn visit(node: &Selection, in_env: bool) -> bool {
+        fn visit(node: &Selection, in_env_or_headers: bool) -> bool {
             node.children.iter().any(|(key, child)| {
                 matches!(key.as_str(), "command" | "args")
-                    || (in_env && key == "value")
-                    || visit(child, in_env || key == "env")
+                    || (in_env_or_headers && key == "value")
+                    || visit(
+                        child,
+                        in_env_or_headers || matches!(key.as_str(), "env" | "httpHeaders"),
+                    )
             })
         }
         visit(&self.0, false)
@@ -256,9 +259,14 @@ pub fn profile_fields(profile: &str) -> Result<Option<Vec<String>>, String> {
             ],
             "health" => &[
                 "spec.nodeName",
+                "spec.nodeSelector",
+                "spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution",
                 "status.nominatedNodeName",
                 "metadata.generation",
                 "status.phase",
+                "status.reason",
+                "status.message",
+                "status.qosClass",
                 "status.conditions",
                 "spec.replicas",
                 "status.replicas",
@@ -278,11 +286,8 @@ pub fn profile_fields(profile: &str) -> Result<Option<Vec<String>>, String> {
                 "status.succeeded",
                 "status.failed",
                 "spec.suspend",
-                "status.containerStatuses[*].name",
-                "status.containerStatuses[*].ready",
-                "status.containerStatuses[*].restartCount",
-                "status.containerStatuses[*].state",
-                "status.containerStatuses[*].lastState",
+                "status.initContainerStatuses",
+                "status.containerStatuses",
             ],
             "images" => &[
                 "spec.containers[*].name",

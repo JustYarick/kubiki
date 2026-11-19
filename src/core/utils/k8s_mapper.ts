@@ -1,6 +1,7 @@
 import { resourceStatus } from '../resources/gitops';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { mapPodContainers } from '../resources/containers';
+import { podNodeInfo } from '../resources/pod_node';
 import { stringify } from 'yaml';
 import { apiVersionFor, resourceType } from '../resources/resource_types';
 
@@ -58,6 +59,7 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
       const qosClass = status.qosClass || spec.qosClass || undefined;
 
       const containers = mapPodContainers(spec, status);
+      const nodeInfo = podNodeInfo(raw);
 
       return {
         ...base,
@@ -66,6 +68,8 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
         restarts,
         ip: status.podIP || '-',
         node: spec.nodeName || '-',
+        targetNode: nodeInfo.pendingNode,
+        targetNodeSource: nodeInfo.pendingSource,
         containers,
         image: containers[0]?.image || '',
         controlledBy,

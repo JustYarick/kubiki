@@ -223,9 +223,15 @@ impl KubernetesTools {
                 .lock()
                 .map_err(|_| "Metrics history unavailable")?
                 .range(state.revision, uid, minutes, end.timestamp_millis());
-            return Ok(
-                json!({"kind":kind,"samples":samples,"units":{"cpu":"cores","memory":"bytes"},"coverage":"Up to 200 previously observed Metrics API samples for this resource UID in the current session and scope. Gaps are unknown."}),
-            );
+            return Ok(json!({
+                "kind": kind,
+                "uid": uid,
+                "samples": samples,
+                "source": "sessionMemory",
+                "prometheusConfigured": false,
+                "units": {"cpu": "cores", "memory": "bytes"},
+                "coverage": "Up to 200 previously observed Metrics API samples for this resource UID in the current session and scope. Set KUBIKI_PROMETHEUS_SERVICES to query historical Prometheus series; gaps are unknown."
+            }));
         }
         let mut metrics = Vec::new();
         let mut has_more = false;
@@ -354,7 +360,11 @@ impl KubernetesTools {
             names
         } else {
             match self
-                .linked_read(session, "list_namespaces", json!({"pageSize":20}))
+                .linked_read(
+                    session,
+                    "cluster_info",
+                    json!({"view":"namespaces","pageSize":20}),
+                )
                 .await
             {
                 Ok(page) => {
@@ -380,7 +390,8 @@ impl KubernetesTools {
         let mut count = 0;
         let mut pages = 0;
         let mut successful_pages = 0;
-        let mut ranked_pods = Vec::new();
+        let mut ranked_memory = Vec::new();
+        let mut ranked_cpu = Vec::new();
         for ns in &names {
             let mut query = json!({"group":"","version":"v1","kind":"Pod","namespace":ns,"fieldSelector":format!("spec.nodeName={name}"),"fields":["metadata","spec.nodeName","spec.containers","spec.initContainers","spec.resources","spec.overhead","status.phase"],"pageSize":50});
             loop {
@@ -427,11 +438,25 @@ impl KubernetesTools {
                         name: pod["metadata"]["name"].as_str().unwrap_or_default().into(),
                     };
                     let known = budgets(&state.policy, &target, pod);
-                    if let (Some(memory), Some(pod_name)) = (
-                        known["memory"]["requests"].as_f64(),
-                        pod["metadata"]["name"].as_str(),
-                    ) {
-                        ranked_pods.push((memory, json!({"namespace":pod["metadata"]["namespace"],"name":pod_name,"uid":pod["metadata"]["uid"],"budgets":known})));
+                    let owner = pod["metadata"]["ownerReferences"]
+                        .as_array()
+                        .and_then(|refs| refs.iter().find(|r| r["controller"] == true))
+                        .map(|r| json!({"kind": r["kind"], "name": r["name"]}));
+                    if let Some(pod_name) = pod["metadata"]["name"].as_str() {
+                        let entry = json!({
+                            "namespace": pod["metadata"]["namespace"],
+                            "name": pod_name,
+                            "uid": pod["metadata"]["uid"],
+                            "phase": pod["status"]["phase"],
+                            "owner": owner,
+                            "budgets": known,
+                        });
+                        if let Some(memory) = known["memory"]["requests"].as_f64() {
+                            ranked_memory.push((memory, entry.clone()));
+                        }
+                        if let Some(cpu) = known["cpu"]["requests"].as_f64() {
+                            ranked_cpu.push((cpu, entry));
+                        }
                     }
                     if known["status"] == "unknown"
                         || known["cpu"]["requests"].is_null()
@@ -466,13 +491,19 @@ impl KubernetesTools {
         if successful_pages == 0 && !names.is_empty() {
             return json!({"status":"unavailable","namespaces":names,"pages":pages,"activePods":null,"cpu":{"requests":null,"limits":null},"memory":{"requests":null,"limits":null},"reasons":reasons});
         }
-        ranked_pods.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let top: Vec<_> = ranked_pods
+        ranked_memory.sort_by(|a, b| b.0.total_cmp(&a.0));
+        ranked_cpu.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let top_mem: Vec<_> = ranked_memory
             .into_iter()
             .take(20)
             .map(|(_, pod)| pod)
             .collect();
-        json!({"topPodsByMemoryRequest":top,"status":if complete {"complete"} else {"partial"},"namespaces":names,"pages":pages,"activePods":count,"cpu":{"requests":totals[0][0],"limits":totals[0][1]},"memory":{"requests":totals[1][0],"limits":totals[1][1]},"reasons":reasons})
+        let top_cpu: Vec<_> = ranked_cpu
+            .into_iter()
+            .take(20)
+            .map(|(_, pod)| pod)
+            .collect();
+        json!({"topPodsByMemoryRequest":top_mem,"topPodsByCpuRequest":top_cpu,"status":if complete {"complete"} else {"partial"},"namespaces":names,"pages":pages,"activePods":count,"cpu":{"requests":totals[0][0],"limits":totals[0][1]},"memory":{"requests":totals[1][0],"limits":totals[1][1]},"reasons":reasons})
     }
 }
 
