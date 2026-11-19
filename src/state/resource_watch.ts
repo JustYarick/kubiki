@@ -39,9 +39,11 @@ export function syncResourceCounts(context: string, namespace: string): Promise<
     .filter(type => {
       if (available && !available.includes(type.kind)) return false;
       const snapshot = watchStates[type.kind];
-      return !snapshot?.hasSnapshot || snapshot.query.context !== context || type.namespaced && !namespaceScopeCovers(snapshot.query.namespace ?? 'all', namespace);
+      const suppliesCount = snapshot && (snapshot.hasSnapshot || snapshot.phase === 'connecting' || snapshot.phase === 'syncing');
+      return !suppliesCount || snapshot.query.context !== context || type.namespaced && !namespaceScopeCovers(snapshot.query.namespace ?? 'all', namespace);
     })
     .map(type => type.kind as ResourceKind);
+  if (!kinds.length) return Promise.resolve();
   return k8s.getResourceCounts(context, kinds, namespace, controller.signal).then((counts) => {
     if (controller.signal.aborted || useClusterStore.getState().currentContext !== context || useClusterStore.getState().selectedNamespace !== namespace) return;
     useResourceStore.getState().setResourceCounts(counts);
@@ -158,15 +160,16 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
   unsubscribers = [useClusterStore.subscribe((state, previous) => {
     if (session === next && state.currentContext === context && state.selectedNamespace !== previous.selectedNamespace) {
       void next.setNamespace(state.selectedNamespace);
-      schedule();
+      void synchronize();
       void syncResourceCounts(context, state.selectedNamespace);
     }
   }), useWorkspaceStore.subscribe(schedule), useUiStore.subscribe(schedule), useDockStore.subscribe(schedule), useResourceRequirements.subscribe(schedule), useResourceStore.subscribe((state, previous) => {
     if (state.selectedItem !== previous.selectedItem) schedule();
   })];
   useResourceStore.getState().setSyncMode(k8s.supportsResourceWatch ? 'watch' : 'snapshot');
+  const ready = synchronize();
   void syncResourceCounts(context, useClusterStore.getState().selectedNamespace);
-  return synchronize();
+  return ready;
 }
 export async function refreshResourceWatches(kind?: ResourceKind): Promise<boolean> {
   if (!session) return false;

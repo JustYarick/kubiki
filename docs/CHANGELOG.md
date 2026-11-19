@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Desktop Pod tables fetch their initial inventory in one collection request per scope. Sidebar counts skip duplicate probes while a covering watch initializes.
+
 - Pod requests remain visible without usage samples. Pending Pod summaries include scheduler placement details.
 - Resource name filters disable spelling corrections. Ready watch snapshots appear immediately and idle status sorting skips an initial table scan.
 

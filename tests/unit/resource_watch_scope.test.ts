@@ -48,6 +48,7 @@ it('subscribes to selected namespace, preserves cluster watches and removes the 
   });
   const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(50); await ready;
   expect(queries.map(query => query.kind)).toEqual(['Namespace', 'CustomResourceDefinition', 'Pod']);
+  expect(mock.getResourceCounts).toHaveBeenLastCalledWith('test', expect.not.arrayContaining(['Pod']), 'backend', expect.any(AbortSignal));
   for (const query of queries) expect(query.namespace).toBe(!resourceType(query.kind as any).namespaced ? null : 'backend');
   const cluster = queries.filter((query) => !resourceType(query.kind as any).namespaced);
   useClusterStore.getState().selectNamespace('other'); await vi.advanceTimersByTimeAsync(50);

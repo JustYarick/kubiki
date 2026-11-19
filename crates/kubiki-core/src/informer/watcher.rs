@@ -406,6 +406,9 @@ async fn run_watch<F>(
         }
     };
     let mut config = watcher::Config::default().timeout(WATCH_TIMEOUT_SECONDS);
+    if scope.query.kind == "Pod" && scope.query.group.is_empty() {
+        config.page_size = None;
+    }
     if let Some(labels) = filter
         .label_selector
         .as_deref()

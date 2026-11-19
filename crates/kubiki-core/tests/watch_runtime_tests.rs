@@ -76,6 +76,29 @@ async fn api(
 }
 
 #[tokio::test]
+async fn pod_table_loads_more_than_one_default_page_in_one_list() {
+    let items: Vec<_> = (0..750).map(|i| pod(&format!("pod-{i}"))).collect();
+    let list = json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"10"},"items":items});
+    let (client, requests, server) = api(vec![(200, list.to_string()), (200, "HOLD".into())]).await;
+    let manager = InformerManager::new(ResourceStore::new());
+    let mut rx = manager.start_watch("main", "pods", query(), async move { Ok(client) }).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let WatchEvent::Delta(ResourceDelta::Restarted { items }) = rx.recv().await.unwrap().event {
+                assert_eq!(items.len(), 750);
+                break;
+            }
+        }
+    }).await.unwrap();
+    let requests = requests.lock().unwrap().clone();
+    let lists: Vec<_> = requests.iter().filter(|req| !req.contains("watch=true")).collect();
+    assert_eq!(lists.len(), 1);
+    assert!(!lists[0].contains("limit="));
+    manager.stop_owner("main").await;
+    server.abort();
+}
+
+#[tokio::test]
 async fn expired_watch_relists_atomically_and_removes_offline_deletions() {
     let list = |items: Vec<Value>, rv: &str| {
         json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":rv},"items":items})
