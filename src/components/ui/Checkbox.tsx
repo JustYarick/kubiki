@@ -1,9 +1,17 @@
-import type { InputHTMLAttributes, ReactNode } from 'react';
+import { useEffect, useRef, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cx } from '../../core/utils/cx';
 import './responsive.css';
 
-export function Checkbox({ className, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>) {
-  return <input {...props} type="checkbox" className={cx('ui-checkbox', className)} />;
+export interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
+  indeterminate?: boolean;
+}
+
+export function Checkbox({ className, indeterminate, ...props }: CheckboxProps) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate;
+  }, [indeterminate]);
+  return <input ref={ref} {...props} type="checkbox" className={cx('ui-checkbox', className)} />;
 }
 
 /** The control and trailing value keep their space; only the label may truncate. */
@@ -13,7 +21,7 @@ export function CheckboxRow({
   className,
   title,
   ...props
-}: Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'className'> & {
+}: Omit<CheckboxProps, 'className'> & {
   label: string;
   trailing?: ReactNode;
   className?: string;

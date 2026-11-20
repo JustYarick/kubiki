@@ -1,7 +1,8 @@
 import { selectedFirst } from '../../core/utils/selected_first';
 import { useId, useState } from 'react';
-import { Check, ChevronDown, Search, type LucideIcon } from 'lucide-react';
+import { Check, ChevronDown, type LucideIcon } from 'lucide-react';
 import { Popover } from './Dropdown';
+import { SearchInput } from './Input';
 import { cx } from '../../core/utils/cx';
 
 export interface SelectOption { value: string; label: string }
@@ -28,15 +29,19 @@ function SelectMenu({ label, value, options, onSelect, customOption, customHint 
   const filtered = selectedFirst(candidates.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase())), option => option.value === value);
   return <div role="dialog" aria-label={`Choose ${label}`}>
     <div className="px-2 pb-2 pt-1">
-      <div className="relative"><Search size="calc(13px * var(--ui-factor))" className="absolute left-2 top-2 text-[var(--text-muted)]" />
-        <input autoFocus type="search" aria-label={`Filter ${label} by name`} placeholder="Filter by name…" value={query} aria-controls={listId}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') { event.preventDefault(); document.getElementById(listId)?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(); }
-            if (event.key === 'Enter' && filtered.length) { event.preventDefault(); onSelect(filtered[0].value); }
-          }}
-          className="h-7 w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] pl-7 pr-2 text-xs outline-none focus:border-[var(--accent)]" />
-      </div>
+      <SearchInput
+        size="sm"
+        value={query}
+        onChange={setQuery}
+        placeholder="Filter by name…"
+        ariaLabel={`Filter ${label} by name`}
+        clearable={false}
+        inputProps={{ autoFocus: true, type: 'search', 'aria-controls': listId }}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown') { event.preventDefault(); document.getElementById(listId)?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(); }
+          if (event.key === 'Enter' && filtered.length) { event.preventDefault(); onSelect(filtered[0].value); }
+        }}
+      />
       <div className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mt-1">{filtered.length} matching</div>
       {customHint && <p className="text-[length:calc(10px*var(--ui-factor))] text-[var(--text-muted)] mt-1">{customHint}</p>}
     </div>

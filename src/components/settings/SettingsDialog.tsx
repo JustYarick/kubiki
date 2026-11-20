@@ -1,12 +1,8 @@
-import { Select } from '../ui/Select';
 import './settings.css';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, Save, Search, X } from 'lucide-react';
+import { RotateCcw, Save, Search } from 'lucide-react';
 import packageJson from '../../../package.json';
-import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
-import { Checkbox } from '../ui/Checkbox';
+import { Button, Checkbox, Input, Modal, SearchInput, Select } from '../ui';
 import { UpdateSettings } from '../updates/AppUpdates';
 import { TerminalFontSettings } from '../TerminalFontSettings';
 import { LogTimeZoneSelect } from '../k8s/LogTimeZoneSelect';
@@ -802,35 +798,19 @@ function SettingsSearch({ value, onChange, onKeyDown }: {
   onKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
 }) {
   return (
-    <div className="relative flex items-center w-full">
-      <Search size="calc(13px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          /* Escape first clears the query; the dialog closes on the next press. */
-          if (event.key === 'Escape' && value) event.stopPropagation();
-          onKeyDown?.(event);
-        }}
-        aria-label="Search settings"
-        placeholder="Search settings"
-        spellCheck={false}
-        className={cx(
-          'h-[calc(28px*var(--ui-factor))] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border outline-none transition-colors pl-7 pr-7',
-          'placeholder:text-[var(--text-muted)] border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)]'
-        )}
-      />
-      {value && (
-        <button
-          type="button"
-          aria-label="Clear search"
-          onClick={() => onChange('')}
-          className="absolute right-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 rounded"
-        >
-          <X size="calc(12px * var(--ui-factor))" />
-        </button>
-      )}
-    </div>
+    <SearchInput
+      size="md"
+      className="w-full"
+      value={value}
+      onChange={onChange}
+      ariaLabel="Search settings"
+      placeholder="Search settings"
+      onKeyDown={(event) => {
+        /* Escape first clears the query; the dialog closes on the next press. */
+        if (event.key === 'Escape' && value) event.stopPropagation();
+        onKeyDown?.(event);
+      }}
+    />
   );
 }
 

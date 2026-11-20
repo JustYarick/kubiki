@@ -19,6 +19,19 @@ useUiStore.subscribe((state, previous) => {
   }
 });
 
+// Prevent WebKit/macOS spelling autocorrection from rewriting literal Kubernetes names on blur/focus changes.
+const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'email']);
+document.addEventListener('focusin', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.dataset.allowAutocorrect === 'true') return;
+  const type = (target.getAttribute('type') ?? '').toLowerCase();
+  if (!TEXT_INPUT_TYPES.has(type)) return;
+  if (!target.hasAttribute('autocorrect')) target.setAttribute('autocorrect', 'off');
+  if (!target.hasAttribute('autocapitalize')) target.setAttribute('autocapitalize', 'none');
+  if (!target.hasAttribute('spellcheck')) target.spellcheck = false;
+}, true);
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorBoundary fallbackTitle="Kubiki Application Crash">

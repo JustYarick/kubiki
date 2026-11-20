@@ -4,7 +4,6 @@ import {
   EyeOff,
   Copy,
   Check,
-  Search,
   AlertTriangle,
   FileText,
   KeyRound,
@@ -17,7 +16,7 @@ import { podContainers } from '../../../core/resources/containers';
 import { resolveContainerEnv, findResourceInMap, type PodEnvEntry } from '../../../core/resources/pod_env';
 import { referenceAvailabilityNote, useDetailReadStates, useMergedDetailResources } from '../../../state/detail_cache';
 import { useUiStore } from '../../../state/ui_store';
-import { Button } from '../../ui/Button';
+import { Button, SearchInput } from '../../ui';
 import { toast } from '../../../state/notifications_store';
 import { ContainerSelect } from '../ContainerSelect';
 import { cx } from '../../../core/utils/cx';
@@ -305,16 +304,14 @@ export function PodEnvironmentTab({ item, onNavigate }: PodEnvironmentTabProps) 
         </div>
 
         {/* Search input */}
-        <div className="relative min-w-[180px] max-w-xs flex-1">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search variables or sources..."
-            className="w-full h-7 pl-8 pr-3 bg-[var(--bg-canvas)] border border-[var(--border-default)] rounded text-[11px] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)]"
-          />
-        </div>
+        <SearchInput
+          size="sm"
+          variant="subtle"
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search variables or sources..."
+          className="min-w-[160px] max-w-xs flex-1"
+        />
       </div>
 
       {/* Restricted/Missing envFrom Secret Notice */}

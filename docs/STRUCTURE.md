@@ -42,7 +42,7 @@ kubiki/
 
 ## Frontend
 
-The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Monaco provides code editors and document viewers, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
+The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Reusable adaptive UI/UX controls (`Button`, `Input`, `SearchInput`, `Textarea`, `Select`, `Checkbox`, `Badge`, `DataTable`, `Field`, `SectionCard`, `EmptyState`, `KeyValueList`, `Modal`, `Popover`, `ResponsiveToolbar`, `CodeEditor`) live in `src/components/ui/` (re-exported via `src/components/ui/index.ts`; see [Shared UI/UX module](UI_KIT.md)). Monaco provides code editors and document viewers, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
 
 `src/components/ui/CodeEditor.tsx` is the shared embedded editor for Helm documents and values, Secret and ConfigMap values, new resource manifests, nested YAML fields, and annotation source. It includes search, replacement in editable fields, line numbers, wrapping, and explicit YAML/JSON formatting. `core/code_language.ts` detects syntax from data key filenames or valid JSON objects/arrays. Models belong to individual mounted fields and are disposed on unmount; hidden Secret values do not mount an editor. `views/monaco_setup.ts` shares the theme, bundled workers, and language registration with the full resource YAML editor, which retains its resource draft/apply workflow.
 

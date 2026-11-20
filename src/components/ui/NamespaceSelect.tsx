@@ -1,9 +1,10 @@
 import { useId, useLayoutEffect, useMemo, useState } from 'react';
 import { selectedFirst } from '../../core/utils/selected_first';
-import { Check, ChevronDown, Layers, Search } from 'lucide-react';
+import { Check, ChevronDown, Layers } from 'lucide-react';
 import { namespaceNames, namespaceScope, namespaceScopeLabel } from '../../core/resources/namespace_scope';
 import { Popover } from './Dropdown';
 import { Button } from './Button';
+import { SearchInput } from './Input';
 import { cx } from '../../core/utils/cx';
 
 /** Selection is applied once, so a batch of checkboxes starts one new data generation. */
@@ -38,13 +39,19 @@ function NamespaceMenu({ label, value, options, onApply }: { label: string; valu
   });
   return <div role="dialog" aria-label={`Choose ${label}`} className="text-xs">
     <div className="px-2 pb-2 pt-1">
-      <div className="relative"><Search size="calc(13px * var(--ui-factor))" className="absolute left-2 top-2 text-[var(--text-muted)]" />
-        <input autoFocus type="search" aria-label={`Filter ${label} by name`} aria-controls={id} placeholder="Filter by name…" value={query}
-          onChange={event => setQuery(event.target.value)} onKeyDown={event => {
-            if (event.key === 'ArrowDown') { event.preventDefault(); document.getElementById(id)?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(); }
-            if (event.key === 'Enter' && filtered.length === 1) { event.preventDefault(); toggle(filtered[0]); }
-          }} className="h-7 w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] pl-7 pr-2 text-xs outline-none focus:border-[var(--accent)]" />
-      </div>
+      <SearchInput
+        size="sm"
+        value={query}
+        onChange={setQuery}
+        placeholder="Filter by name…"
+        ariaLabel={`Filter ${label} by name`}
+        clearable={false}
+        inputProps={{ autoFocus: true, type: 'search', 'aria-controls': id }}
+        onKeyDown={event => {
+          if (event.key === 'ArrowDown') { event.preventDefault(); document.getElementById(id)?.querySelector<HTMLButtonElement>('[role="option"]')?.focus(); }
+          if (event.key === 'Enter' && filtered.length === 1) { event.preventDefault(); toggle(filtered[0]); }
+        }}
+      />
       <p className="mt-1 text-[var(--text-secondary)] text-[length:calc(10px*var(--ui-factor))]">{filtered.length} matching · {selected === null ? 'All namespaces selected' : `${selected.length} selected`}</p>
     </div>
     <div id={id} role="listbox" aria-label={label} aria-multiselectable="true" className="max-h-[calc(240px*var(--ui-factor))] overflow-y-auto kubiki-scrollbar" onKeyDown={event => {

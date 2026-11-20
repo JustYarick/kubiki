@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Check, CheckCircle2, HelpCircle, Send } from 'lucide-react';
-import { Button } from '../../../components/ui/Button';
+import { Button, Input } from '../../../components/ui';
 import { useAiStore } from '../store';
 import type { ChatMessage, Conversation } from '../types';
 
@@ -131,9 +131,10 @@ export function QuestionCard({ message: m, conversation: c }: { message: ChatMes
 
           {allowOther && (
             <form onSubmit={handleOtherSubmit} className="ai-question-other">
-              <input
-                type="text"
-                className="ide-input ai-question-other-input"
+              <Input
+                size="sm"
+                className="flex-1 min-w-0"
+                inputClassName="ai-question-other-input"
                 placeholder="Type custom response…"
                 value={otherText}
                 disabled={c.busy}

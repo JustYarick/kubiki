@@ -5,6 +5,7 @@ import { useResourceStore } from '../../../../state/resource_store';
 import { summaryTitle } from '../../../../core/resources/kind_labels';
 import { resourceIcon } from '../../../../core/resource_icons';
 import { DetailsSection } from '../DetailsSection';
+import { DetailTable } from '../blocks/DetailTable';
 import { KindSummary } from '../blocks/KindSummary';
 import { StructuredFields } from '../blocks/StructuredFields';
 import { ConditionsTable } from '../blocks/ConditionsTable';
@@ -19,13 +20,18 @@ function MetricValue({ value }: { value: any }) {
 function AutoscalingMetrics({ raw }: { raw: any }) {
   const metrics: any[] = raw.spec?.metrics ?? (raw.spec?.targetCPUUtilizationPercentage != null ? [{ type: 'Resource', resource: { name: 'cpu', target: { averageUtilization: raw.spec.targetCPUUtilizationPercentage } } }] : []);
   if (!metrics.length) return null;
-  return <DetailsSection title="Metrics · current / target"><div className="details-table-scroll"><table className="details-table"><thead><tr><th>Metric</th><th>Current</th><th>Target</th></tr></thead><tbody>{metrics.map((metric, index) => {
+  const rows = metrics.map((metric) => {
     const type = String(metric.type ?? 'Resource'); const key = type.charAt(0).toLowerCase() + type.slice(1);
     const spec = metric[key] ?? {}; const name = spec.name ?? spec.metric?.name ?? type;
     const currentMetric = (raw.status?.currentMetrics ?? []).find((candidate: any) => candidate.type === type && (candidate[key]?.name ?? candidate[key]?.metric?.name ?? type) === name);
     const current = currentMetric?.[key]?.current ?? (name === 'cpu' ? { averageUtilization: raw.status?.currentCPUUtilizationPercentage } : undefined);
-    return <tr key={index}><td>{name}{spec.container ? ` · ${spec.container}` : ''}<span className="block text-[var(--text-muted)]">{type}</span></td><td><MetricValue value={current} /></td><td><MetricValue value={spec.target} /></td></tr>;
-  })}</tbody></table></div></DetailsSection>;
+    return [
+      <>{name}{spec.container ? ` · ${spec.container}` : ''}<span className="block text-[var(--text-muted)]">{type}</span></>,
+      <MetricValue value={current} />,
+      <MetricValue value={spec.target} />,
+    ];
+  });
+  return <DetailsSection title="Metrics · current / target"><DetailTable columns={['Metric', 'Current', 'Target']} rows={rows} /></DetailsSection>;
 }
 
 /** Fallback panel for kinds that only have a field presentation. */

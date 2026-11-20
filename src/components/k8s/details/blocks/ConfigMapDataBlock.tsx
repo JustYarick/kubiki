@@ -1,16 +1,13 @@
 import { performResourceAction } from '../../../../providers/resource_actions';
 import { useRef, useState } from 'react';
-import { FileCode, Copy, Plus, Trash2, Search, RotateCw } from 'lucide-react';
+import { FileCode, Copy, Plus, Trash2, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
-import { Button } from '../../../ui/Button';
-import { CodeEditor } from '../../../ui/CodeEditor';
+import { Button, CodeEditor, Input, SearchInput } from '../../../ui';
 import { codeLanguage } from '../../../../core/code_language';
 import { toast } from '../../../../state/notifications_store';
 import { k8s } from '../../../../providers/k8s_provider';
 import { useClusterStore } from '../../../../state/cluster_store';
 import { useResourceStore } from '../../../../state/resource_store';
-
-const field = 'w-full min-w-0 rounded border border-[var(--border-default)] bg-[var(--bg-canvas)] px-2 py-1.5 font-mono text-xs';
 
 export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: ResourceItem; onRestartConsumers?: () => void }) {
   const [filter, setFilter] = useState('');
@@ -92,15 +89,12 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
       <div className="p-2 bg-[var(--bg-canvas)] flex flex-col gap-3">
         {changed && <p role="alert" className="text-xs text-[var(--status-warn)]">The ConfigMap changed while editing. Cancel and edit again to load the latest version.</p>}
         {entries.length > 3 && !editing && (
-          <div className="relative flex items-center">
-            <Search size="calc(12px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
-            <input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter keys…"
-              className="h-7 w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded border border-[var(--border-default)] pl-7 pr-2 outline-none focus:border-[var(--accent)]"
-            />
-          </div>
+          <SearchInput
+            size="sm"
+            value={filter}
+            onChange={setFilter}
+            placeholder="Filter keys…"
+          />
         )}
 
         {editing ? (
@@ -108,10 +102,13 @@ export function ConfigMapDataBlock({ item, onRestartConsumers }: { item: Resourc
             {draft.map((d, idx) => (
               <div key={d.id} className="p-2 rounded bg-[var(--bg-secondary)]/40 border border-[var(--border-subtle)] space-y-1.5">
                 <div className="flex items-center gap-2">
-                  <input
+                  <Input
+                    size="sm"
+                    variant="subtle"
+                    mono
                     aria-label={`Key ${idx + 1}`}
                     disabled={saving}
-                    className={`${field} py-1 flex-1`}
+                    className="flex-1"
                     value={d.key}
                     placeholder="Key"
                     onChange={(e) => {
