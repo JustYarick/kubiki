@@ -56,6 +56,17 @@ pub async fn get_helm_inventory(
             "helm",
             Duration::from_secs(65),
             async {
+                if let Ok(client) = pool.get_client(&context).await {
+                    if let Some(releases) = kubiki_core::helm::storage::list_releases_fast(
+                        &client,
+                        &context,
+                        namespace.as_deref(),
+                    )
+                    .await
+                    {
+                        return Ok(releases);
+                    }
+                }
                 cluster_reader(&pool)
                     .await?
                     .inventory(&context, namespace.as_deref())
@@ -83,6 +94,15 @@ pub async fn get_helm_history(
             "helm",
             Duration::from_secs(65),
             async {
+                if let Ok(client) = pool.get_client(&context).await {
+                    if let Some(history) = kubiki_core::helm::storage::release_history_fast(
+                        &client, &context, &namespace, &name,
+                    )
+                    .await
+                    {
+                        return Ok(history);
+                    }
+                }
                 cluster_reader(&pool)
                     .await?
                     .history(&context, &namespace, &name)
@@ -112,6 +132,15 @@ pub async fn get_helm_content(
             "helm",
             Duration::from_secs(65),
             async {
+                if let Ok(client) = pool.get_client(&context).await {
+                    if let Some(content) = kubiki_core::helm::storage::release_content_fast(
+                        &client, &context, &namespace, &name, revision, document,
+                    )
+                    .await
+                    {
+                        return Ok(content);
+                    }
+                }
                 cluster_reader(&pool)
                     .await?
                     .content(&context, &namespace, &name, revision, document)

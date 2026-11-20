@@ -3,6 +3,7 @@
 pub mod client;
 pub mod model;
 pub mod reader;
+pub mod storage;
 pub mod mutations;
 mod kubeconfig;
 

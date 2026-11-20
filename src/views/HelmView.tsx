@@ -5,16 +5,15 @@ import type { ColumnFilters } from '../core/resources/column_filters';
 import { FluxHelmRetry } from '../components/k8s/FluxHelmRetry';
 import { resourceBucket } from '../core/resources/custom_resource_types';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Copy, RefreshCw, Search, GitBranch, ArrowUpCircle, RotateCcw, Trash2, MoreHorizontal, Package, Boxes, FileCode, Plus } from 'lucide-react';
+import { Anchor, Copy, RefreshCw, GitBranch, ArrowUpCircle, RotateCcw, Trash2, MoreHorizontal, Package, Boxes, FileCode, Plus } from 'lucide-react';
 import { useClusterStore } from '../state/cluster_store';
 import { k8s } from '../providers/k8s_provider';
 import { normalizeK8sError, type K8sRequestError } from '../providers/errors';
 import { helmStatusTone, type HelmDocument, type HelmHistory, type HelmRelease, type HelmSection } from '../providers/helm_types';
-import { Button, IconButton } from '../components/ui/Button';
+import { Button, DataTable, FixedMenu, IconButton, MenuList, Popover, ResourceLoading, SearchInput, type MenuItem } from '../components/ui';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { toast } from '../state/notifications_store';
 import { HelmActionDialog, type HelmAction } from '../components/dialogs/HelmActionDialog';
-import { FixedMenu, MenuList, Popover, type MenuItem } from '../components/ui/Dropdown';
 import { useResourceStore } from '../state/resource_store';
 import { retainResourceKinds } from '../state/resource_requirements';
 import { useWorkspaceStore } from '../state/workspace_store';
@@ -23,7 +22,6 @@ import type { ResourceItem } from '../types/k8s';
 import { DetailsPanel } from '../components/k8s/details/DetailsPanel';
 import { DetailsSection } from '../components/k8s/details/DetailsSection';
 import { ResourceKindBadge } from '../components/k8s/ResourceKindBadge';
-import { ResourceLoading } from '../components/ui/ResourceLoading';
 import { Fragment } from 'react';
 import type { ResourceDetailsProps } from '../components/layout/InspectorPanel';
 import { useTableViewStore } from '../state/table_view_store';
@@ -35,7 +33,8 @@ import { useFluxHelmOwners } from '../providers/use_flux_helm_owners';
 import { fluxReleaseOwner, helmOperation, parseReleaseManifest, releaseDiagnosticObjects, releaseHealth, releaseObjects } from '../core/resources/helm_diagnostics';
 import { deliveryActivity } from '../core/resources/delivery_activity';
 import { resourceIssues } from '../core/resources/diagnostics';
-import { resourceEvents } from '../core/resources/resource_events';
+import { namespaceScopeCovers } from '../core/resources/namespace_scope';
+import { refreshResourceWatches } from '../state/resource_watch';
 import './helm.css';
 import './delivery.css';
 
@@ -62,16 +61,64 @@ function useHelmRead<T>(key: string | null, load: (signal: AbortSignal) => Promi
 
 const releaseKey = (release: HelmRelease) => JSON.stringify([release.namespace, release.name, release.revision]);
 const helmDocumentCache = new Map<string, string>();
-subscribeHelmChanges(() => helmDocumentCache.clear());
+const inFlightHelmDocuments = new Map<string, { promise: Promise<string>; controller: AbortController; waiters: number }>();
+subscribeHelmChanges(() => {
+  helmDocumentCache.clear();
+  for (const entry of inFlightHelmDocuments.values()) entry.controller.abort();
+  inFlightHelmDocuments.clear();
+});
 
 async function readHelmDocument(context: string, namespace: string, name: string, revision: number, document: HelmDocument, signal: AbortSignal): Promise<string> {
   const key = JSON.stringify([context, namespace, name, revision, document]);
   const cached = helmDocumentCache.get(key);
   if (cached !== undefined) return cached;
-  const content = await k8s.getHelmContent(context, namespace, name, revision, document, signal);
-  helmDocumentCache.set(key, content);
-  if (helmDocumentCache.size > 64) helmDocumentCache.delete(helmDocumentCache.keys().next().value!);
-  return content;
+
+  let entry = inFlightHelmDocuments.get(key);
+  if (!entry) {
+    const controller = new AbortController();
+    const promise = k8s.getHelmContent(context, namespace, name, revision, document, controller.signal).then(content => {
+      helmDocumentCache.set(key, content);
+      if (helmDocumentCache.size > 64) helmDocumentCache.delete(helmDocumentCache.keys().next().value!);
+      return content;
+    }).finally(() => {
+      if (inFlightHelmDocuments.get(key) === entry) inFlightHelmDocuments.delete(key);
+    });
+    entry = { promise, controller, waiters: 0 };
+    inFlightHelmDocuments.set(key, entry);
+  }
+  entry.waiters++;
+
+  return new Promise<string>((resolve, reject) => {
+    const onAbort = () => {
+      entry.waiters--;
+      // Defer aborting the shared fetch by a microtask so React StrictMode remounts or
+      // concurrent panes reading the same revision document reuse the single in-flight request.
+      queueMicrotask(() => {
+        if (entry.waiters <= 0 && inFlightHelmDocuments.get(key) === entry) {
+          inFlightHelmDocuments.delete(key);
+          entry.controller.abort();
+        }
+      });
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    entry.promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort);
+        entry.waiters--;
+        resolve(value);
+      },
+      error => {
+        signal.removeEventListener('abort', onAbort);
+        entry.waiters--;
+        reject(error);
+      },
+    );
+  });
 }
 
 export function HelmView({ section }: { section: HelmSection }) {
@@ -239,19 +286,38 @@ function HelmHistoryPane({ result, release, onSelect, onRestore, canRestore }: {
     {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}
     {result.data && <DetailsSection title="Revision history">
       <p className="details-caption mb-1">Inspect values or restore a revision. Restoring creates a new revision.</p>
-      <table className="helm-table helm-history" aria-label="Helm release history">
-        <thead><tr><th>Rev.</th><th>Status</th><th>Chart</th><th>Updated</th><th><span className="sr-only">Actions</span></th></tr></thead>
-        <tbody>{rows.map((row: HelmHistory) => <tr key={row.revision}>
-          <td className="font-mono">{row.revision}<span className="helm-history-current">{row.revision === Number(release?.revision) ? 'Current' : '\u00a0'}</span></td>
-          <td><Status status={row.status} /></td>
-          <td><span className="helm-history-chart" title={row.chart}>{row.chart}</span><span className="helm-history-status-compact"><Status status={row.status} /></span><span className="helm-history-description" title={row.description}>{row.description || '\u00a0'}</span></td>
-          <td title={row.updated}>{row.updated}</td>
-          <td><div className="helm-history-actions">
-            <IconButton icon={FileCode} size="sm" aria-label={`Inspect Helm revision ${row.revision}`} tooltip={`Values for revision ${row.revision}`} onClick={() => onSelect(row.revision)} />
-            <IconButton icon={RotateCcw} size="sm" disabled={!canRestore || row.revision === Number(release?.revision) || !k8s.supportsHelmMutations || !!result.error || result.loading} aria-label={`Restore Helm revision ${row.revision}`} tooltip={`Restore revision ${row.revision}`} onClick={() => onRestore(row.revision)} />
-          </div></td>
-        </tr>)}</tbody>
-      </table>{!rows.length && <p className="details-empty">No revision history available.</p>}
+      <DataTable
+        ariaLabel="Helm release history"
+        tableClassName="helm-table helm-history"
+        rows={rows}
+        rowKey={(row) => row.revision}
+        empty={<p className="details-empty">No revision history available.</p>}
+        columns={[
+          {
+            id: 'rev',
+            header: 'Rev.',
+            mono: true,
+            cell: (row) => <>{row.revision}<span className="helm-history-current">{row.revision === Number(release?.revision) ? 'Current' : '\u00a0'}</span></>,
+          },
+          { id: 'status', header: 'Status', cell: (row) => <Status status={row.status} /> },
+          {
+            id: 'chart',
+            header: 'Chart',
+            cell: (row) => <><span className="helm-history-chart" title={row.chart}>{row.chart}</span><span className="helm-history-status-compact"><Status status={row.status} /></span><span className="helm-history-description" title={row.description}>{row.description || '\u00a0'}</span></>,
+          },
+          { id: 'updated', header: 'Updated', cell: (row) => <span title={row.updated}>{row.updated}</span> },
+          {
+            id: 'actions',
+            header: <span className="sr-only">Actions</span>,
+            cell: (row) => (
+              <div className="helm-history-actions">
+                <IconButton icon={FileCode} size="sm" aria-label={`Inspect Helm revision ${row.revision}`} tooltip={`Values for revision ${row.revision}`} onClick={() => onSelect(row.revision)} />
+                <IconButton icon={RotateCcw} size="sm" disabled={!canRestore || row.revision === Number(release?.revision) || !k8s.supportsHelmMutations || !!result.error || result.loading} aria-label={`Restore Helm revision ${row.revision}`} tooltip={`Restore revision ${row.revision}`} onClick={() => onRestore(row.revision)} />
+              </div>
+            ),
+          },
+        ]}
+      />
     </DetailsSection>}
   </div>;
 }
@@ -285,7 +351,21 @@ function HelmRepositories() {
       {close => <div role="menu" aria-label="Repository actions"><MenuList autoFocus items={[{ id: 'update', label: 'Update indexes', disabled: !k8s.supportsHelmMutations, onSelect: () => setAction({ action: 'repository_update' }) }]} onSelect={action => { close(); action.onSelect?.(); }} /></div>}
     </Popover>
     <IconButton icon={RefreshCw} size="sm" disabled={result.loading} onClick={result.refresh} aria-label="Refresh Helm repositories" tooltip="Refresh repositories" />
-    </div><div className="helm-filterbar"><label className="helm-search"><Search size={13} aria-hidden="true" /><input aria-label="Search Helm repositories by name" placeholder="Filter repositories…" value={query} onChange={event => setQuery(event.target.value)} /></label></div><p className="helm-scope">{k8s.demo ? 'Demo · ' : ''}Local Helm configuration · Shared across clusters · {k8s.supportsHelmMutations ? 'Backend-confirmed changes' : 'Read only'}</p>{result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}{result.loading && !result.data && <ResourceLoading label="Loading repositories…" />}{result.data && <div className="helm-table-scroll kubiki-scrollbar">{rows.length ? <table className="helm-table helm-repo-table" aria-label="Helm repository list"><thead><tr><th>Name</th><th>URL</th></tr></thead><tbody>{rows.map(repo => <tr key={repo.name} tabIndex={0} aria-label={`Helm repository ${repo.name}`} onContextMenu={event => { event.preventDefault(); setMenu({ repo, x: event.clientX, y: event.clientY }); }}><td className="font-mono">{repo.name}</td><td className="break-all">{displayUrl(repo.url)}</td></tr>)}</tbody></table> : <p role="status" className="p-6 text-[var(--text-secondary)]">{result.data.length ? 'No repositories match this name.' : 'No repositories configured in the local Helm CLI.'}</p>}</div>}{menu && <FixedMenu rect={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} items={([
+    </div><div className="helm-filterbar"><SearchInput size="sm" className="helm-search flex-1 min-w-0" clearable={false} ariaLabel="Search Helm repositories by name" placeholder="Filter repositories…" value={query} onChange={setQuery} /></div><p className="helm-scope">{k8s.demo ? 'Demo · ' : ''}Local Helm configuration · Shared across clusters · {k8s.supportsHelmMutations ? 'Backend-confirmed changes' : 'Read only'}</p>{result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}{result.loading && !result.data && <ResourceLoading label="Loading repositories…" />}{result.data && <DataTable
+      className="helm-table-scroll"
+      tableClassName="helm-table helm-repo-table"
+      ariaLabel="Helm repository list"
+      rows={rows}
+      rowKey={(repo) => repo.name}
+      rowTabIndex={0}
+      rowAriaLabel={(repo) => `Helm repository ${repo.name}`}
+      onRowContextMenu={(repo, _, event) => { event.preventDefault(); setMenu({ repo, x: event.clientX, y: event.clientY }); }}
+      empty={<p role="status" className="p-6 text-[var(--text-secondary)]">{result.data.length ? 'No repositories match this name.' : 'No repositories configured in the local Helm CLI.'}</p>}
+      columns={[
+        { id: 'name', header: 'Name', mono: true, cell: (repo) => repo.name },
+        { id: 'url', header: 'URL', cellClassName: 'break-all', cell: (repo) => displayUrl(repo.url) },
+      ]}
+    />}{menu && <FixedMenu rect={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} items={([
     { id: 'edit', label: 'Edit repository…', disabled: !k8s.supportsHelmMutations, onSelect: () => setAction({ action: 'repository_set', repo: menu.repo }) },
     { id: 'update', label: 'Update cached index…', disabled: !k8s.supportsHelmMutations, onSelect: () => setAction({ action: 'repository_update', repo: menu.repo }) },
     { id: 'remove', label: 'Remove repository…', danger: true, disabled: !k8s.supportsHelmMutations, onSelect: () => setAction({ action: 'repository_remove', repo: menu.repo }) },
@@ -314,16 +394,42 @@ function ReleaseEvidence({ context, release, history, resources, events, onNavig
   const hooks = useMemo(() => releaseHealth(result.data?.hooks ?? [], resources), [result.data?.hooks, resources]);
   const targets = useMemo(() => releaseDiagnosticObjects(release, [...(result.data?.objects ?? []), ...(result.data?.hooks ?? [])], resources), [release, result.data, resources]);
   const eventNamespaces = useMemo(() => [...new Set([release.namespace, ...targets.flatMap(item => item.namespace ? [item.namespace] : [])])].sort(), [release.namespace, targets]);
-  const activity = useHelmRead(JSON.stringify([context, releaseKey(release), 'events', eventNamespaces]), async signal => {
-    const results = await Promise.allSettled(eventNamespaces.map(namespace => k8s.getResources(context, 'Event', namespace, signal)));
-    return { events: results.flatMap(result => result.status === 'fulfilled' ? result.value : []), errors: results.flatMap((result, index) => result.status === 'rejected' ? [{ namespace: eventNamespaces[index], error: normalizeK8sError(result.reason) }] : []) };
-  });
-  const relatedEvents = useMemo(() => deliveryActivity(activity.data?.events ?? events, targets), [activity.data, events, targets]);
+  const eventWatch = useResourceStore(state => state.watchStates.Event);
+  const watchCoversEvents = Boolean(
+    eventWatch?.hasSnapshot
+    && eventWatch.query.context === context
+    && eventNamespaces.every(ns => namespaceScopeCovers(eventWatch.query.namespace ?? 'all', ns))
+  );
+  const activity = useHelmRead(
+    watchCoversEvents ? null : JSON.stringify([context, releaseKey(release), 'events', eventNamespaces]),
+    async signal => {
+      const results = await Promise.allSettled(
+        eventNamespaces.map(namespace => k8s.getResources(context, 'Event', namespace, signal, { priority: 'low' })),
+      );
+      return {
+        events: results.flatMap(result => result.status === 'fulfilled' ? result.value : []),
+        errors: results.flatMap((result, index) => result.status === 'rejected' ? [{ namespace: eventNamespaces[index], error: normalizeK8sError(result.reason) }] : []),
+      };
+    },
+  );
+  const activeEvents = watchCoversEvents ? events : (activity.data?.events ?? events);
+  const relatedEvents = useMemo(() => deliveryActivity(activeEvents, targets), [activeEvents, targets]);
+  const hookEventsByUid = useMemo(() => {
+    const hookItems = hooks.slice(0, 50).flatMap(row => row.item ? [row.item] : []);
+    const byUid = new Map<string, ReturnType<typeof deliveryActivity>>();
+    if (!hookItems.length) return byUid;
+    for (const entry of deliveryActivity(activeEvents, hookItems)) {
+      const list = byUid.get(entry.item.uid);
+      if (list) list.push(entry);
+      else byUid.set(entry.item.uid, [entry]);
+    }
+    return byUid;
+  }, [activeEvents, hooks]);
   return <>
     {(operation.pending || operation.failed) && <DetailsSection title={operation.label}><p role={operation.failed ? 'alert' : 'status'} className="details-caption whitespace-pre-wrap break-words">{operation.message}</p>{operation.started > 0 && <p className="details-caption">Started {new Date(operation.started).toLocaleString()}{operation.longRunning ? ' · Pending for over 10 minutes' : ''}</p>}</DetailsSection>}
     <DetailsSection title={`Release events (${relatedEvents.length})`}>
       <p className="details-caption">Events for observed release objects, hooks and their loaded descendants. Unloaded objects and expired events may leave gaps.</p>
-      <Button size="sm" disabled={activity.loading} onClick={activity.refresh}>Refresh release events</Button>
+      <Button size="sm" disabled={activity.loading} onClick={() => { if (watchCoversEvents) void refreshResourceWatches('Event'); else activity.refresh(); }}>Refresh release events</Button>
       {activity.loading && <ResourceLoading compact label="Loading release events…" />}
       {activity.error && <RequestErrorNotice error={activity.error} onRetry={activity.refresh} retainedData={!!activity.data} />}
       {activity.data?.errors.map(({ namespace, error }) => <div key={namespace}><p className="details-caption">Events unavailable in {namespace}.</p><RequestErrorNotice error={error} onRetry={activity.refresh} /></div>)}
@@ -339,7 +445,7 @@ function ReleaseEvidence({ context, release, history, resources, events, onNavig
       <DetailsSection title={`Hooks${result.data ? ` (${hooks.length})` : ''}`}>
         {result.data?.hookError && <RequestErrorNotice error={result.data.hookError} onRetry={result.refresh} />}
         {!hooks.length && result.data && !result.data.hookError && <p className="details-caption">No hooks in this revision.</p>}
-        {hooks.slice(0, 50).map(row => <div key={`${row.reference.kind}/${row.reference.name}`} className="helm-hook"><button className="details-resource-row helm-evidence-row" disabled={!row.item} onClick={() => row.item && onNavigate(row.item)}><ResourceKindBadge kind={row.reference.kind} /><span>{row.reference.name}</span><span className={row.issues.length ? 'text-[var(--status-warn)]' : 'details-caption'}>{row.item ? row.label : 'No live object loaded'}</span></button><p className="details-caption">{row.reference.raw?.metadata?.annotations?.['helm.sh/hook'] ?? 'Hook'} · weight {row.reference.raw?.metadata?.annotations?.['helm.sh/hook-weight'] ?? '0'} · {row.reference.raw?.metadata?.annotations?.['helm.sh/hook-delete-policy'] ?? 'before-hook-creation'}</p>{!row.item && <p className="details-caption">The hook may have been cleaned up, or its namespace is outside the loaded scope.</p>}{row.item && resourceEvents(events, row.item).slice(0, 3).map(event => <p key={event.event.uid} className="details-caption">{event.reason}: {event.message}</p>)}</div>)}
+        {hooks.slice(0, 50).map(row => <div key={`${row.reference.kind}/${row.reference.name}`} className="helm-hook"><button className="details-resource-row helm-evidence-row" disabled={!row.item} onClick={() => row.item && onNavigate(row.item)}><ResourceKindBadge kind={row.reference.kind} /><span>{row.reference.name}</span><span className={row.issues.length ? 'text-[var(--status-warn)]' : 'details-caption'}>{row.item ? row.label : 'No live object loaded'}</span></button><p className="details-caption">{row.reference.raw?.metadata?.annotations?.['helm.sh/hook'] ?? 'Hook'} · weight {row.reference.raw?.metadata?.annotations?.['helm.sh/hook-weight'] ?? '0'} · {row.reference.raw?.metadata?.annotations?.['helm.sh/hook-delete-policy'] ?? 'before-hook-creation'}</p>{!row.item && <p className="details-caption">The hook may have been cleaned up, or its namespace is outside the loaded scope.</p>}{row.item && (hookEventsByUid.get(row.item.uid) ?? []).slice(0, 3).map(event => <p key={event.event.uid} className="details-caption">{event.reason}: {event.message}</p>)}</div>)}
       </DetailsSection>
     </>}
   </>;

@@ -244,7 +244,7 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
   await expect(workspace.getByRole('tablist', { name: 'Resource details', exact: true })).toHaveCount(2);
   await captureScreenshot(page, { path: 'test-results/helm-shared-details.png' });
   await page.reload();
-  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toHaveCount(2);
   expect(errors).toEqual([]);
 });
 
