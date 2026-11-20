@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { DataTable, type DataTableColumn } from '../../../ui/DataTable';
 
 export interface DetailTableProps {
   columns: string[];
@@ -10,31 +11,23 @@ export interface DetailTableProps {
 
 /**
  * Dense read-only table used by every details panel.
- *
- * Keeps one visual language for tabular data: the same header, row height and
- * scroll container everywhere, instead of per-panel ad-hoc markup.
+ * Backed by the shared `DataTable` primitive (`variant="detail"`).
  */
 export function DetailTable({ columns, rows, empty, caption }: DetailTableProps) {
-  if (!rows.length) {
-    return empty ? <p className="details-caption">{empty}</p> : null;
-  }
+  const tableColumns: DataTableColumn<ReactNode[]>[] = columns.map((column, cellIndex) => ({
+    id: `${cellIndex}-${column}`,
+    header: column,
+    cell: (row) => row[cellIndex],
+  }));
+
   return (
-    <div className="details-table-scroll">
-      <table className="details-table">
-        {caption && <caption className="details-caption">{caption}</caption>}
-        <thead>
-          <tr>
-            {columns.map(column => <th key={column} scope="col">{column}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index}>
-              {row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      variant="detail"
+      columns={tableColumns}
+      rows={rows}
+      rowKey={(_, index) => index}
+      caption={caption}
+      empty={empty ? <p className="details-caption">{empty}</p> : undefined}
+    />
   );
 }

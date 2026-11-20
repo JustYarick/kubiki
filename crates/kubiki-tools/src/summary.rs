@@ -11,8 +11,11 @@ pub struct ResourceSummary {
 }
 impl ResourceSummary {
     pub fn new(group_by: &str) -> Result<Self, String> {
-        if !matches!(group_by, "phase" | "node" | "image" | "health") {
-            return Err("groupBy must be phase, node, image or health".into());
+        if !matches!(
+            group_by,
+            "phase" | "node" | "nodeName" | "image" | "health" | "reason"
+        ) {
+            return Err("groupBy must be phase, nodeName, image, health or reason".into());
         }
         Ok(Self {
             group_by: group_by.into(),
@@ -30,11 +33,40 @@ impl ResourceSummary {
                 .unwrap_or("unknown")
                 .to_owned()]
             .into(),
-            "node" => [item["spec"]["nodeName"]
-                .as_str()
-                .unwrap_or("unknown")
-                .to_owned()]
-            .into(),
+            "node" | "nodeName" => [crate::diagnostics::pod_node_group(item)].into(),
+            "reason" => {
+                let reason = item["status"]["reason"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        item["status"]["initContainerStatuses"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .chain(item["status"]["containerStatuses"].as_array().into_iter().flatten())
+                            .find_map(|c| {
+                                c.pointer("/state/waiting/reason")
+                                    .or_else(|| c.pointer("/state/terminated/reason"))
+                                    .or_else(|| c.pointer("/lastState/terminated/reason"))
+                                    .and_then(Value::as_str)
+                                    .filter(|s| !s.is_empty() && *s != "Completed")
+                            })
+                    })
+                    .or_else(|| {
+                        item["status"]["conditions"]
+                            .as_array()
+                            .and_then(|cs| {
+                                cs.iter().find_map(|c| {
+                                    (c["status"] == "False")
+                                        .then(|| c["reason"].as_str())
+                                        .flatten()
+                                        .filter(|s| !s.is_empty())
+                                })
+                            })
+                    })
+                    .unwrap_or("none");
+                [reason.to_owned()].into()
+            }
             "image" => {
                 let containers = item
                     .pointer("/spec/containers")
@@ -54,14 +86,26 @@ impl ResourceSummary {
             _ => {
                 let kind = item["kind"].as_str().unwrap_or("");
                 let key = if kind == "Pod" {
-                    item["status"]["containerStatuses"]
-                        .as_array()
-                        .and_then(|cs| {
-                            cs.iter().find_map(|c| {
-                                c.pointer("/state/waiting/reason").and_then(Value::as_str)
-                            })
-                        })
+                    item["status"]["reason"]
+                        .as_str()
+                        .filter(|r| !r.is_empty())
                         .map(str::to_owned)
+                        .or_else(|| {
+                            item["status"]["initContainerStatuses"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .chain(
+                                    item["status"]["containerStatuses"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten(),
+                                )
+                                .find_map(|c| {
+                                    c.pointer("/state/waiting/reason").and_then(Value::as_str)
+                                })
+                                .map(str::to_owned)
+                        })
                         .or_else(|| {
                             item["status"]["phase"]
                                 .as_str()

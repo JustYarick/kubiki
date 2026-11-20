@@ -8,6 +8,9 @@ use std::collections::{HashSet, VecDeque};
 const FIELDS: &[&str] = &[
     "metadata",
     "spec.nodeName",
+    "spec.nodeSelector",
+    "spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution",
+    "status.nominatedNodeName",
     "spec.serviceAccountName",
     "spec.imagePullSecrets",
     "spec.priorityClassName",
@@ -338,6 +341,7 @@ impl KubernetesTools {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Args {
+            #[serde(default)]
             group: String,
             version: String,
             kind: String,
@@ -345,82 +349,169 @@ impl KubernetesTools {
             name: String,
             uid: Option<String>,
             include_logs: Option<bool>,
+            sections: Option<Vec<String>>,
         }
+        let had_namespace = arguments.get("namespace").is_some();
         let mut a: Args =
             serde_json::from_value(arguments).map_err(|_| "Invalid diagnosis arguments")?;
         if a.version == "v1" && matches!(a.group.as_str(), "v1" | "core") {
             a.group.clear();
         }
+        let builtin_type = kubiki_core::core::api::resource_type(&a.kind)
+            .filter(|r| r.group == a.group);
+        let builtin = builtin_type.is_some();
+        if !had_namespace && builtin_type.is_none_or(|r| r.namespaced) {
+            a.namespace = session
+                .working_scope
+                .lock()
+                .ok()
+                .and_then(|w| w.namespace.clone());
+        }
+        let requested_sections: std::collections::BTreeSet<String> = match &a.sections {
+            Some(list) => {
+                if list.is_empty() || list.len() > 7 {
+                    return Err("sections must contain 1–7 valid section names".into());
+                }
+                for s in list {
+                    if !matches!(
+                        s.as_str(),
+                        "health" | "config" | "neighborhood" | "events" | "logs" | "metrics" | "diff"
+                    ) {
+                        return Err(format!("Unsupported diagnostic section: {s}"));
+                    }
+                }
+                list.iter().cloned().collect()
+            }
+            None => {
+                let mut set = std::collections::BTreeSet::from([
+                    "health".to_owned(),
+                    "neighborhood".to_owned(),
+                    "events".to_owned(),
+                ]);
+                if a.include_logs != Some(false) {
+                    set.insert("logs".to_owned());
+                }
+                set
+            }
+        };
+        let want_health = requested_sections.contains("health")
+            || requested_sections.contains("events")
+            || requested_sections.contains("logs");
+        let want_neighborhood = requested_sections.contains("neighborhood");
+        let want_events = requested_sections.contains("events");
+        let want_logs = requested_sections.contains("logs") && a.include_logs != Some(false);
+        let want_config = requested_sections.contains("config");
+        let want_metrics = requested_sections.contains("metrics");
+        let want_diff = requested_sections.contains("diff");
+
         let root = json!({"group":a.group,"version":a.version,"kind":a.kind,"namespace":a.namespace,"name":a.name});
+        let target = Target {
+            group: a.group.clone(),
+            version: a.version.clone(),
+            kind: a.kind.clone(),
+            namespace: a.namespace.clone(),
+            name: a.name.clone(),
+        };
         let mut graph = root.clone();
         graph["uid"] = json!(a.uid);
         graph["hops"] = json!(2);
         graph["maxNodes"] = json!(12);
-        let builtin =
-            kubiki_core::core::api::resource_type(&a.kind).is_some_and(|r| r.group == a.group);
-        let (tool, args) = match if builtin { a.kind.as_str() } else { "" } {
-            "Pod" => (
-                "get_pod_diagnostics",
-                json!({"namespace":a.namespace,"name":a.name}),
-            ),
-            "Service" => (
-                "get_service_diagnostics",
-                json!({"namespace":a.namespace,"name":a.name}),
-            ),
-            "PersistentVolumeClaim" => (
-                "get_pvc_diagnostics",
-                json!({"namespace":a.namespace,"name":a.name}),
-            ),
-            "Node" => ("get_node_diagnostics", json!({"name":a.name})),
-            "Deployment" | "DaemonSet" | "StatefulSet" | "ReplicaSet" | "Job" | "CronJob" => {
-                ("get_workload_diagnostics", root.clone())
+
+        let health_fut = async {
+            if !want_health {
+                return Ok(Value::Null);
             }
-            _ => {
-                let mut q = root.clone();
-                q["profile"] = json!("health");
-                ("get_resource", q)
+            match if builtin { a.kind.as_str() } else { "" } {
+                "Pod" => self.read_pod_diagnostics_for(session, &target).await,
+                "Service" => self.read_service_diagnostics_for(session, &target).await,
+                "PersistentVolumeClaim" => self.read_pvc_diagnostics_for(session, &target).await,
+                "Node" => self.read_node_diagnostics_for(session, &target).await,
+                "Deployment" | "DaemonSet" | "StatefulSet" | "ReplicaSet" | "Job" | "CronJob" => {
+                    self.read_workload_diagnostics_for(session, &target).await
+                }
+                _ => {
+                    let mut q = root.clone();
+                    q["profile"] = json!("health");
+                    self.linked_read(session, "get_resource", q).await
+                }
             }
         };
-        let (diagnosis, neighborhood) = tokio::join!(
-            self.linked_read(session, tool, args),
-            self.neighborhood(session, graph)
-        );
+        let neighborhood_fut = async {
+            if want_neighborhood {
+                self.neighborhood(session, graph).await
+            } else {
+                Ok(Value::Null)
+            }
+        };
+        let (diagnosis, neighborhood) = tokio::join!(health_fut, neighborhood_fut);
         let diagnosis = diagnosis?;
         let uid = diagnosis
             .pointer("/evidence/uid")
             .or_else(|| diagnosis.pointer("/resource/metadata/uid"))
             .and_then(Value::as_str);
-        if a.uid
-            .as_deref()
-            .is_some_and(|expected| uid != Some(expected))
+        if want_health
+            && a.uid
+                .as_deref()
+                .is_some_and(|expected| uid != Some(expected))
         {
             return Err("Diagnostic root UID changed or is unavailable".into());
         }
-        let neighborhood = neighborhood.and_then(|value| {
-            if uid.is_some() && value.pointer("/nodes/0/uid").and_then(Value::as_str) != uid {
-                Err("Root changed between health and graph reads; refresh before combining evidence".into())
-            } else { Ok(value) }
-        });
+        let neighborhood = if want_neighborhood {
+            Some(neighborhood.and_then(|value| {
+                if uid.is_some()
+                    && value.pointer("/nodes/0/uid").and_then(Value::as_str) != uid
+                {
+                    Err("Root changed between health and graph reads; refresh before combining evidence".into())
+                } else {
+                    Ok(value)
+                }
+            }))
+        } else {
+            None
+        };
         let state = session.control()?;
-        let events = async {
-            if state.policy.events && uid.is_some() && a.namespace.is_some() {
-                self.linked_read(
-                    session,
-                    "get_events_timeline",
-                    json!({"namespace":a.namespace,"name":a.name,"uid":uid,"limit":20}),
+        let events_fut = async {
+            if !want_events {
+                return None;
+            }
+            let event_ns = a
+                .namespace
+                .as_deref()
+                .or_else(|| (a.kind == "Node" || a.kind == "PersistentVolume").then_some("default"));
+            if state.policy.events && uid.is_some() && event_ns.is_some() {
+                Some(
+                    self.linked_read(
+                        session,
+                        "get_events",
+                        json!({
+                            "namespace": event_ns,
+                            "mode": "timeline",
+                            "name": a.name,
+                            "uid": uid,
+                            "involvedKind": a.kind,
+                            "limit": 20,
+                            "maxPages": 1
+                        }),
+                    )
+                    .await,
                 )
-                .await
             } else {
-                Err("Events unavailable: policy, namespace or UID".into())
+                Some(Err("Events unavailable: policy, namespace or UID".into()))
             }
         };
-        let logs = async {
-            if !builtin || a.include_logs == Some(false) {
-                return json!({"collected":false,"reason":"Not requested for this target"});
+        let logs_fut = async {
+            if !want_logs {
+                if a.sections.is_none() {
+                    return Some(json!({"collected":false,"reason":"Not requested for this target"}));
+                }
+                return None;
+            }
+            if !builtin {
+                return Some(json!({"collected":false,"reason":"Not requested for this target"}));
             }
             if a.kind == "Pod" {
                 if !state.policy.logs || uid.is_none() {
-                    return json!({"collected":false,"reason":"Logs unavailable: policy or UID"});
+                    return Some(json!({"collected":false,"reason":"Logs unavailable: policy or UID"}));
                 }
                 let mut out = vec![];
                 for c in diagnosis["initContainers"]
@@ -450,14 +541,13 @@ impl KubernetesTools {
                         )
                         .await;
                     if want_prev
-                        && result
-                            .as_ref()
-                            .is_ok_and(|v| {
+                        && (result.is_err()
+                            || result.as_ref().is_ok_and(|v| {
                                 v["logs"]
                                     .as_str()
                                     .unwrap_or("")
                                     .contains("unable to retrieve container logs")
-                            })
+                            }))
                     {
                         if let Ok(curr) = self
                             .linked_read(
@@ -472,14 +562,14 @@ impl KubernetesTools {
                     }
                     out.push(json!({"container":container,"result":compact_observation(session,observation(result))}));
                 }
-                return json!({"containers":out,"coverage":"Up to two failing containers, up to 80 lines each. Use get_logs for additional evidence."});
+                return Some(json!({"containers":out,"coverage":"Up to two failing containers, up to 80 lines each. Use get_logs for additional evidence."}));
             }
             if matches!(
                 a.kind.as_str(),
                 "Deployment" | "DaemonSet" | "StatefulSet" | "ReplicaSet" | "Job"
             ) {
                 if !state.policy.logs {
-                    return json!({"collected":false,"reason":"Logs unavailable: policy or UID"});
+                    return Some(json!({"collected":false,"reason":"Logs unavailable: policy or UID"}));
                 }
                 let mut out = vec![];
                 for pod in diagnosis["childPods"].as_array().into_iter().flatten() {
@@ -505,14 +595,13 @@ impl KubernetesTools {
                             )
                             .await;
                         if want_prev
-                            && result
-                                .as_ref()
-                                .is_ok_and(|v| {
+                            && (result.is_err()
+                                || result.as_ref().is_ok_and(|v| {
                                     v["logs"]
                                         .as_str()
                                         .unwrap_or("")
                                         .contains("unable to retrieve container logs")
-                                })
+                                }))
                         {
                             if let Ok(curr) = self
                                 .linked_read(
@@ -532,24 +621,89 @@ impl KubernetesTools {
                     }
                 }
                 if !out.is_empty() {
-                    return json!({"containers":out,"coverage":"Up to two failing child pod containers, up to 80 lines each. Use get_logs for additional evidence."});
+                    return Some(json!({"containers":out,"coverage":"Up to two failing child pod containers, up to 80 lines each. Use get_logs for additional evidence."}));
                 }
             }
-            json!({"collected":false,"reason":"Not requested for this target"})
+            Some(json!({"collected":false,"reason":"Not requested for this target"}))
         };
-        let crash_causes = crate::diagnostics::extract_crash_causes(&diagnosis);
-        let (events, logs) = tokio::join!(events, logs);
-        Ok(
-            json!({
-                "diagnostic": compact_observation(session, diagnosis),
-                "crashCauses": crash_causes,
-                "neighborhood": compact_observation(session, observation(neighborhood)),
-                "events": compact_observation(session, observation(events)),
-                "logs": compact_observation(session, logs),
-                "completeness": "partial",
-                "next": "Follow exact graph references; use get_config_diagnostics on the root for config issues. Expand graph or logs for unresolved hypotheses."
-            }),
-        )
+        let config_fut = async {
+            if want_config {
+                Some(self.read_config_diagnostics_for(session, &target).await)
+            } else {
+                None
+            }
+        };
+        let metrics_fut = async {
+            if !want_metrics {
+                return None;
+            }
+            if !state.policy.metrics {
+                return Some(Err("Metrics are disabled by policy".into()));
+            }
+            if builtin && a.kind == "Pod" {
+                Some(
+                    self.linked_read(
+                        session,
+                        "get_metrics",
+                        json!({"kind":"Pod","namespace":a.namespace,"name":a.name}),
+                    )
+                    .await,
+                )
+            } else if builtin && a.kind == "Node" {
+                Some(
+                    self.linked_read(
+                        session,
+                        "get_metrics",
+                        json!({"kind":"Node","namespace":null,"name":a.name}),
+                    )
+                    .await,
+                )
+            } else {
+                Some(Err("Metrics section supports Pod and Node targets".into()))
+            }
+        };
+        let diff_fut = async {
+            if want_diff {
+                Some(self.read_workload_revision_diff(session, &target).await)
+            } else {
+                None
+            }
+        };
+
+        let crash_causes = if want_health {
+            crate::diagnostics::extract_crash_causes(&diagnosis)
+        } else {
+            Vec::new()
+        };
+        let (events, logs, config, metrics, diff) =
+            tokio::join!(events_fut, logs_fut, config_fut, metrics_fut, diff_fut);
+        let mut out = json!({
+            "completeness": "partial",
+            "next": "Follow exact graph references; call diagnose_resource with sections=['config'] for ConfigMap/Secret checks, sections=['diff'] for rollout revision diffs, or sections=['metrics'] for usage/budgets."
+        });
+        if requested_sections.contains("health") {
+            out["diagnostic"] = compact_observation(session, diagnosis);
+            out["crashCauses"] = json!(crash_causes);
+        }
+        if let Some(neighborhood) = neighborhood {
+            out["neighborhood"] = compact_observation(session, observation(neighborhood));
+        }
+        if let Some(events) = events {
+            out["events"] = compact_observation(session, observation(events));
+        }
+        if let Some(logs) = logs {
+            out["logs"] = compact_observation(session, logs);
+        }
+        if let Some(config) = config {
+            out["config"] = compact_observation(session, observation(config));
+        }
+        if let Some(metrics) = metrics {
+            out["metrics"] = compact_observation(session, observation(metrics));
+        }
+        if let Some(diff) = diff {
+            out["revisionDiff"] = compact_observation(session, observation(diff));
+        }
+        Ok(out)
     }
 }
 fn observation(result: Result<Value, String>) -> Value {

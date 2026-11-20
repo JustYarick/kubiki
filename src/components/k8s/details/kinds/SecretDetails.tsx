@@ -1,4 +1,5 @@
 import type { ResourceItem } from '../../../../types/k8s';
+import { FullManifest } from '../../../../views/FullManifest';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { SecretDataEditorBlock } from '../blocks/SecretDataEditorBlock';
 import { UsedByList } from '../blocks/UsedByList';
@@ -18,8 +19,10 @@ export function SecretDetails({ item, onNavigate }: SecretDetailsProps) {
 
       <SecretOriginBlock item={item} onNavigate={onNavigate} />
 
-      {/* 2. Secret Data Editor (Lens-grade) */}
-      <SecretDataEditorBlock item={item} />
+      {/* 2. Secret Data Editor (hydrates full Secret payload on demand) */}
+      <FullManifest item={item} loadingLabel="Loading Secret data…">
+        {(hydrated) => <SecretDataEditorBlock item={hydrated} />}
+      </FullManifest>
 
       {/* 3. Used by consumers (who uses this secret) */}
       <UsedByList item={item} onNavigate={onNavigate} />

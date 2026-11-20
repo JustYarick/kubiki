@@ -580,7 +580,8 @@ async fn prepare_external_agent(
         journal: data.join("ai").join(format!("opencode-{session_id}.jsonl")),
         consent: Arc::new(crate::agent_tools::DesktopHostConsent(window.clone())),
         generation: std::sync::Mutex::new(None),
-        permits: Arc::new(tokio::sync::Semaphore::new(2)),
+        permits: Arc::new(tokio::sync::Semaphore::new(4)),
+        cache: Arc::new(kubiki_core::core::read_cache::ReadCache::default()),
     });
     let server = kubiki_mcp::ClusterServer::new(session, executor, Arc::new(|_| {}), true);
     let endpoint = kubiki_mcp::attached::start(server.clone()).await?;
@@ -1122,17 +1123,17 @@ mod tests {
             .count()
         };
         let full = AgentPolicy { logs:true, cluster_resources:true, writes:vec![WriteOperation::Create,WriteOperation::Update,WriteOperation::Delete,WriteOperation::Scale,WriteOperation::Restart], ..Default::default() };
-        assert_eq!(count_external(&sanitize_mcp_policy(&full)), 31);
+        assert_eq!(count_external(&sanitize_mcp_policy(&full)), 19);
 
         let mut read_only = full.clone();
         read_only.read_only = true;
-        assert_eq!(count_external(&sanitize_mcp_policy(&read_only)), 27);
+        assert_eq!(count_external(&sanitize_mcp_policy(&read_only)), 15);
 
         let mut explicit_no_writes = full.clone();
         explicit_no_writes.writes.clear();
         let preserved = sanitize_mcp_policy(&explicit_no_writes);
         assert!(preserved.writes.is_empty());
-        assert_eq!(count_external(&preserved), 27);
+        assert_eq!(count_external(&preserved), 15);
     }
     #[test]
     fn installation_requires_an_executable_path_not_a_shell_command() {

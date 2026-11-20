@@ -7,8 +7,6 @@ import {
   ChevronDown,
   ChevronRight,
   Lock,
-  Search as SearchIcon,
-  X,
   FolderMinus,
   FolderPlus,
   Columns2,
@@ -21,8 +19,7 @@ import { useResourceStore } from '../../state/resource_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useUiStore } from '../../state/ui_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
-import { FixedMenu, type MenuItem } from '../ui/Dropdown';
-import { Tooltip, IconButton } from '../ui/Button';
+import { FixedMenu, IconButton, SearchInput, Tooltip, type MenuItem } from '../ui';
 import { cx } from '../../core/utils/cx';
 import { groupTone } from '../../core/palette';
 import type { ResourceKind } from '../../types/k8s';
@@ -249,24 +246,13 @@ export const Sidebar: React.FC = () => {
 
       {/* Filter as you type */}
       <div className="px-2 py-1.5 shrink-0 border-b border-[var(--border-subtle)]/60">
-        <div className="relative flex items-center">
-          <SearchIcon size="calc(12px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
-          <input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            onKeyDown={(e) => e.key === 'Escape' && setFilter('')}
-            placeholder="Filter tree (e.g. pods, cm)…"
-            className="w-full h-[var(--control-h-sm)] bg-[var(--bg-canvas)] text-[length:var(--font-size-sm)] text-[var(--text-primary)] rounded-[var(--radius-sm)] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] pl-7 pr-6"
-          />
-          {filter && (
-            <button
-              onClick={() => setFilter('')}
-              className="absolute right-1 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] rounded-[var(--radius-xs)]"
-            >
-              <X size="calc(11px * var(--ui-factor))" />
-            </button>
-          )}
-        </div>
+        <SearchInput
+          size="sm"
+          variant="subtle"
+          value={filter}
+          onChange={setFilter}
+          placeholder="Filter tree (e.g. pods, cm)…"
+        />
       </div>
 
       {(!searching || 'overview'.includes(q)) && <button aria-label="Open Overview" aria-pressed={overviewActive} onClick={openOverview} className={cx('flex items-center gap-2 px-3 py-2 text-xs text-left shrink-0 border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]', overviewActive ? 'text-[var(--accent)] bg-[var(--bg-hover)]' : 'text-[var(--text-secondary)]')}><LayoutDashboard size={14} />Overview</button>}

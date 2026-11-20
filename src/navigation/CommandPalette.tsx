@@ -320,6 +320,9 @@ export const CommandPalette: React.FC = () => {
           <Command size="calc(14px * var(--ui-factor))" className="text-[var(--text-muted)]" />
           <input
             autoFocus
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
             aria-label="Master search query"
             role="combobox"
             aria-autocomplete="list"

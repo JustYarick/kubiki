@@ -51,8 +51,8 @@ export interface ResourceIdentity {
 }
 
 export interface ResourceItem extends ResourceIdentity {
-  /** Projection of a built-in read; metadata does not establish payload availability. */
-  readProjection?: 'metadata' | 'search';
+  /** Projection of a built-in read; metadata/summary does not include Secret/ConfigMap payload bytes. */
+  readProjection?: 'metadata' | 'search' | 'summary';
   creationTimestamp?: string;
   status?: string;
   /** Readiness/completion ratio for Pods and workloads only. */
@@ -66,6 +66,9 @@ export interface ResourceItem extends ResourceIdentity {
   memory?: string;
   ip?: string;
   node?: string;
+  /** Target or nominated node when a Pending Pod is not yet bound via spec.nodeName. */
+  targetNode?: string;
+  targetNodeSource?: 'nodeAffinity' | 'nodeSelector' | 'nominated';
   age?: string;
   rawYaml?: string;
   /** ConfigMap/Secret: when a writer last changed its payload (from managedFields). */

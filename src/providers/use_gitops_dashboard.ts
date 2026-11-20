@@ -38,6 +38,10 @@ const subscriptions = new ReadSubscriptions<Data>(async (key, signal, previous) 
   return { entries: entries.sort((a, b) => a.type.name.localeCompare(b.type.name)), events, eventError };
 });
 
+export function clearGitOpsDashboardCache(refreshActive = false): void {
+  subscriptions.clearCache({ refreshActive });
+}
+
 export function useGitOpsDashboard(family: 'flux' | 'argocd') {
   const context = useClusterStore(state => state.currentContext);
   const scope = useClusterStore(state => state.selectedNamespace);
@@ -64,6 +68,16 @@ export function useGitOpsDashboard(family: 'flux' | 'argocd') {
     });
   }, [key]);
   const refresh = useCallback(() => { if (key) subscriptions.refresh(key); }, [key]);
-  const current = state.key === key ? state : { loading: !!key, data: undefined, updated: undefined, error: undefined };
-  return { entries: current.data?.entries ?? [], events: current.data?.events ?? [], eventError: current.data?.eventError, loading: current.loading, updated: current.updated, error: current.error, definitions, context, scope, refresh };
+  const discardStale = useCallback(() => {
+    if (!key) return;
+    subscriptions.discardStale(key, (previous) => {
+      if (!previous) return undefined;
+      const failedEntries = previous.entries.filter(entry => entry.error).map(entry => ({ type: entry.type, error: entry.error }));
+      return failedEntries.length || previous.eventError
+        ? { entries: failedEntries, eventError: previous.eventError }
+        : undefined;
+    });
+  }, [key]);
+  const current = state.key === key ? state : { loading: !!key, data: undefined, updated: undefined, error: undefined, fromCache: false };
+  return { entries: current.data?.entries ?? [], events: current.data?.events ?? [], eventError: current.data?.eventError, loading: current.loading, updated: current.updated, fromCache: Boolean(current.fromCache), error: current.error, definitions, context, scope, refresh, discardStale };
 }

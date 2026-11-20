@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryState } from '../../src/core/resources/delivery';
+import { deliveryReason, deliveryState } from '../../src/core/resources/delivery';
+import { resourceStatus } from '../../src/core/resources/gitops';
 import type { ResourceItem } from '../../src/types/k8s';
 
 const flux = (status: any, extra: any = {}): ResourceItem => ({ uid: 'flux', name: 'app', kind: 'Kustomization', apiVersion: 'kustomize.toolkit.fluxcd.io/v1', raw: { status, ...extra } });
@@ -26,5 +27,24 @@ describe('delivery state', () => {
     expect(deliveryState(flux({ conditions }, { spec: { suspend: true } }))).toBe('suspended');
     expect(deliveryState(flux({ conditions: [...conditions, { type: 'Reconciling', status: 'True' }] }))).toBe('progressing');
     expect(deliveryState(flux({ conditions: [...conditions, { type: 'Stalled', status: 'True' }] }))).toBe('attention');
+  });
+  it('treats static Flux OCI HelmRepository objects without conditions as Ready/healthy unless suspended', () => {
+    const ociRepo: ResourceItem = {
+      uid: 'oci-1',
+      name: 'ghcr-charts',
+      kind: 'HelmRepository',
+      apiVersion: 'source.toolkit.fluxcd.io/v1',
+      raw: { apiVersion: 'source.toolkit.fluxcd.io/v1', kind: 'HelmRepository', spec: { type: 'oci', url: 'oci://ghcr.io/org' }, status: {} },
+    };
+    expect(resourceStatus(ociRepo.raw)).toBe('Ready');
+    expect(deliveryState(ociRepo)).toBe('healthy');
+    expect(deliveryReason(ociRepo)).toContain('Static OCI');
+
+    const suspendedOci: ResourceItem = {
+      ...ociRepo,
+      raw: { ...ociRepo.raw, spec: { type: 'oci', url: 'oci://ghcr.io/org', suspend: true } },
+    };
+    expect(resourceStatus(suspendedOci.raw)).toBe('Suspended');
+    expect(deliveryState(suspendedOci)).toBe('suspended');
   });
 });

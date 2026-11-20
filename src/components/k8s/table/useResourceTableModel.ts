@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { ResourceItem, ResourceKind } from '../../../types/k8s';
 import { useResourceStore } from '../../../state/resource_store';
 import { inNamespaceScope } from '../../../core/resources/namespace_scope';
@@ -236,9 +236,9 @@ export function useResourceTableModel({ resources, effectiveKind, tableColumns, 
   }, [namespaceScopedItems, searchQuery, searchRegex, effectiveKind, sorts, hiddenColumns, columnFilters, issueRanks, tableColumns, columnOrder]);
   // Sort choices follow the actual filtered rows; the filter popup intentionally
   // ignores its own column's filter to keep other choices reachable.
-  const statusValues = useMemo(() => {
+  const getStatusValues = useCallback(() => {
     const column = tableColumns.find(c => c.id === 'status');
     return column ? statusChoices(rows.list.map(item => column.get(item))) : [];
   }, [rows.list, tableColumns]);
-  return { allItems, rows, columnValues, statusValues };
+  return { allItems, rows, columnValues, getStatusValues };
 }

@@ -1,5 +1,7 @@
-import { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { recordDiagnostic } from '../../core/diagnostics/collector';
+import { diagnosticErrorAttributes } from '../../core/diagnostics/model';
 
 interface Props {
   children: ReactNode;
@@ -21,8 +23,8 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Uncaught component error in Kubiki:', error, errorInfo);
+  public componentDidCatch(error: Error) {
+    recordDiagnostic('render.failed', 'ERROR', diagnosticErrorAttributes(error));
   }
 
   public render() {

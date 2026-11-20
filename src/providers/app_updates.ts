@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import type { UpdateAdapter, UpdateCheck, UpdatePreferences, UpdateProgress } from '../core/app_updates';
 
 export const desktopUpdateAdapter: UpdateAdapter = {
@@ -5,11 +6,11 @@ export const desktopUpdateAdapter: UpdateAdapter = {
     if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
       return { status: 'disabled', reason: 'In-app updates are available in the desktop application.' };
     }
-    const { invoke } = await import('@tauri-apps/api/core');
+    const invoke = diagnosticInvoke;
     return invoke<UpdateCheck>('check_app_update');
   },
   async download(version, progress) {
-    const { invoke, Channel } = await import('@tauri-apps/api/core');
+    const { Channel } = await import('@tauri-apps/api/core'); const invoke = diagnosticInvoke;
     const onProgress = new Channel<UpdateProgress>();
     onProgress.onmessage = progress;
     try {
@@ -21,7 +22,7 @@ export const desktopUpdateAdapter: UpdateAdapter = {
     }
   },
   async install(version) {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const invoke = diagnosticInvoke;
     await invoke('install_app_update', { version });
   },
 };

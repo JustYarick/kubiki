@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { PodEnvironmentTab } from '../../src/components/k8s/details/PodEnvironmentTab';
@@ -71,7 +71,7 @@ describe('PodEnvironmentTab', () => {
   });
 
   it('hides Source column when show_source is false in localStorage', () => {
-    const originalGetItem = globalThis.localStorage?.getItem;
+    const originalStorage = (globalThis as any).localStorage;
     const mockStorage = {
       getItem: (key: string) => (key === 'kubiki.pod_env.show_source' ? 'false' : null),
       setItem: () => {},
@@ -87,9 +87,8 @@ describe('PodEnvironmentTab', () => {
       // In 2-column mode with +- equal values, columns are 50% / 50%
       expect(html).toContain('style="width:50%"');
     } finally {
-      if (originalGetItem) {
-        (globalThis as any).localStorage.getItem = originalGetItem;
-      }
+      if (originalStorage === undefined) delete (globalThis as any).localStorage;
+      else (globalThis as any).localStorage = originalStorage;
     }
   });
 
@@ -116,7 +115,7 @@ describe('PodEnvironmentTab', () => {
       },
     };
 
-    const originalGetItem = globalThis.localStorage?.getItem;
+    const originalStorage = (globalThis as any).localStorage;
     (globalThis as any).localStorage = {
       getItem: (key: string) => (key === 'kubiki.pod_env.show_source' ? 'false' : null),
       setItem: () => {},
@@ -129,9 +128,98 @@ describe('PodEnvironmentTab', () => {
       expect(html).toContain('style="width:32%"');
       expect(html).toContain('style="width:68%"');
     } finally {
-      if (originalGetItem) {
-        (globalThis as any).localStorage.getItem = originalGetItem;
-      }
+      if (originalStorage === undefined) delete (globalThis as any).localStorage;
+      else (globalThis as any).localStorage = originalStorage;
+    }
+  });
+
+  it('omits volume-only Secrets from Environment and surfaces unavailable env Secret states in place', async () => {
+    const actualCache = await vi.importActual<typeof import('../../src/state/detail_cache')>('../../src/state/detail_cache');
+    const volumeSecret: ResourceItem = {
+      uid: 'sec-vol',
+      name: 'chaos-mesh-webhook-certs',
+      namespace: 'chaos-mesh',
+      kind: 'Secret',
+      apiVersion: 'v1',
+      readProjection: 'metadata',
+      raw: { metadata: { uid: 'sec-vol', name: 'chaos-mesh-webhook-certs', namespace: 'chaos-mesh' } },
+    };
+    const bulkSecret: ResourceItem = {
+      uid: 'sec-bulk',
+      name: 'bulk-secret',
+      namespace: 'prod',
+      kind: 'Secret',
+      apiVersion: 'v1',
+      readProjection: 'metadata',
+      raw: { metadata: { uid: 'sec-bulk', name: 'bulk-secret', namespace: 'prod' } },
+    };
+    const merged = {
+      Secret: new Map<string, ResourceItem>([
+        ['sec-vol', volumeSecret],
+        ['sec-bulk', bulkSecret],
+      ]),
+    } as any;
+    const reads = new Map<string, 'notFound' | 'unavailable'>([
+      [actualCache.detailReadKey('Secret', 'missing-secret', 'prod'), 'notFound'],
+      [actualCache.detailReadKey('Secret', 'denied-secret', 'prod'), 'unavailable'],
+    ]);
+
+    vi.resetModules();
+    vi.doMock('../../src/state/detail_cache', () => ({
+      ...actualCache,
+      useMergedDetailResources: () => merged,
+      useDetailReadStates: () => reads,
+    }));
+
+    try {
+      const { PodEnvironmentTab: MockedEnvTab } = await import('../../src/components/k8s/details/PodEnvironmentTab');
+      const volumeOnlyPod: ResourceItem = {
+        uid: 'pod-vol',
+        name: 'chaos-pod',
+        namespace: 'chaos-mesh',
+        kind: 'Pod',
+        apiVersion: 'v1',
+        raw: {
+          metadata: { name: 'chaos-pod', namespace: 'chaos-mesh' },
+          spec: {
+            volumes: [{ name: 'certs', secret: { secretName: 'chaos-mesh-webhook-certs' } }],
+            containers: [{ name: 'app', env: [{ name: 'BURST', value: '50' }] }],
+          },
+        },
+      };
+      const volHtml = renderToString(React.createElement(MockedEnvTab, { item: volumeOnlyPod }));
+      expect(volHtml).not.toContain('chaos-mesh-webhook-certs');
+      expect(volHtml).not.toContain('Unavailable envFrom Secrets');
+
+      const envSecretPod: ResourceItem = {
+        uid: 'pod-env-sec',
+        name: 'api-pod',
+        namespace: 'prod',
+        kind: 'Pod',
+        apiVersion: 'v1',
+        raw: {
+          metadata: { name: 'api-pod', namespace: 'prod' },
+          spec: {
+            containers: [{
+              name: 'app',
+              envFrom: [{ secretRef: { name: 'bulk-secret' } }],
+              env: [
+                { name: 'API_TOKEN', valueFrom: { secretKeyRef: { name: 'missing-secret', key: 'token' } } },
+                { name: 'DENIED_KEY', valueFrom: { secretKeyRef: { name: 'denied-secret', key: 'pw' } } },
+              ],
+            }],
+          },
+        },
+      };
+      const envHtml = renderToString(React.createElement(MockedEnvTab, { item: envSecretPod }));
+      expect(envHtml).toContain('bulk-secret');
+      expect(envHtml).toContain('Exists · contents unavailable');
+      expect(envHtml).toContain('Not found');
+      expect(envHtml).toContain('Existence unknown · access unavailable');
+      expect(envHtml).not.toContain('••••••••••••');
+    } finally {
+      vi.doUnmock('../../src/state/detail_cache');
+      vi.resetModules();
     }
   });
 });

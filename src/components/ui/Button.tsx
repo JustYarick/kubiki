@@ -4,17 +4,19 @@ import type { LucideIcon } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
 import { uiPixels } from '../../core/appearance';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
-type Size = 'sm' | 'md';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg';
 
-interface BaseProps {
-  variant?: Variant;
-  size?: Size;
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   loading?: boolean;
+  fullWidth?: boolean;
+  icon?: LucideIcon;
   className?: string;
 }
 
-const variantCls: Record<Variant, string> = {
+const variantCls: Record<ButtonVariant, string> = {
   primary: 'bg-[var(--accent-fill)] text-white hover:bg-[var(--accent-fill-hover)] active:bg-[#2e63d4] border border-transparent',
   secondary:
     'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-strong)]',
@@ -22,32 +24,39 @@ const variantCls: Record<Variant, string> = {
   danger: 'bg-transparent text-[var(--status-danger)] border border-[var(--status-danger)]/40 hover:bg-[var(--status-danger)]/15',
 };
 
-const sizeCls: Record<Size, string> = {
+const sizeCls: Record<ButtonSize, string> = {
+  xs: 'h-[var(--control-h-xs)] px-1.5 text-[length:var(--font-size-2xs)] gap-1 rounded-[var(--radius-xs)]',
   sm: 'h-[var(--control-h-sm)] px-2 text-[length:var(--font-size-xs)] gap-1.5 rounded-[var(--radius-sm)]',
   md: 'h-[var(--control-h-md)] px-2.5 text-[length:var(--font-size-sm)] gap-1.5 rounded-[var(--radius-sm)]',
+  lg: 'h-[var(--control-h-lg)] px-3 text-[length:var(--font-size-base)] gap-2 rounded-[var(--radius-sm)]',
 };
 
-export const Button = React.forwardRef<
-  HTMLButtonElement,
-  BaseProps & React.ButtonHTMLAttributes<HTMLButtonElement>
->(({ variant = 'secondary', size = 'md', loading, className, children, disabled, ...rest }, ref) => (
-  <button
-    ref={ref}
-    disabled={disabled || loading}
-    className={cx(
-      'inline-flex items-center justify-center font-medium select-none transition-colors shrink-0',
-      'focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--focus-ring)]',
-      variantCls[variant],
-      sizeCls[size],
-      (disabled || loading) && 'opacity-45 cursor-not-allowed',
-      className
-    )}
-    {...rest}
-  >
-    {loading ? <span className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full" /> : null}
-    {children}
-  </button>
-));
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ variant = 'secondary', size = 'md', loading, fullWidth, icon: Icon, className, children, disabled, type = 'button', ...rest }, ref) => (
+    <button
+      ref={ref}
+      type={type}
+      disabled={disabled || loading}
+      className={cx(
+        'inline-flex items-center justify-center font-medium select-none transition-colors shrink-0',
+        'focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--focus-ring)]',
+        variantCls[variant],
+        sizeCls[size],
+        fullWidth && 'w-full',
+        (disabled || loading) && 'opacity-45 cursor-not-allowed',
+        className
+      )}
+      {...rest}
+    >
+      {loading ? (
+        <span className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full" />
+      ) : Icon ? (
+        <Icon size={uiPixels(size === 'xs' ? 11 : size === 'sm' ? 12 : 14)} aria-hidden="true" className="shrink-0" />
+      ) : null}
+      {children}
+    </button>
+  )
+);
 Button.displayName = 'Button';
 
 /** Delayed CSS-free tooltip that follows the trigger position. */
@@ -104,20 +113,25 @@ export function Tooltip({
   );
 }
 
-interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon: LucideIcon;
-  size?: Size;
+  size?: 'xs' | 'sm' | 'md';
   active?: boolean;
   danger?: boolean;
   tooltip?: React.ReactNode;
   tooltipSide?: 'top' | 'bottom';
 }
 
-const iconSizeCls = { sm: 'h-6 w-6', md: 'h-7 w-7' } as const;
+const iconSizeCls = {
+  xs: 'h-[var(--control-h-xs)] w-[var(--control-h-xs)]',
+  sm: 'h-[var(--control-h-sm)] w-[var(--control-h-sm)]',
+  md: 'h-[var(--control-h-md)] w-[var(--control-h-md)]',
+} as const;
 
-export const IconButton = ({ icon: Icon, size = 'md', active, danger, tooltip, tooltipSide = 'bottom', className, ...rest }: IconButtonProps) => {
+export const IconButton = ({ icon: Icon, size = 'md', active, danger, tooltip, tooltipSide = 'bottom', className, type = 'button', ...rest }: IconButtonProps) => {
   const btn = (
     <button
+      type={type}
       className={cx(
         'inline-flex items-center justify-center rounded-[calc(4px*var(--ui-factor))] transition-colors shrink-0',
         'hover:bg-[var(--bg-hover)] active:bg-[var(--bg-elevated)]',
@@ -129,7 +143,7 @@ export const IconButton = ({ icon: Icon, size = 'md', active, danger, tooltip, t
       )}
       {...rest}
     >
-      <Icon size={uiPixels(size === 'sm' ? 13 : 15)} strokeWidth={1.75} />
+      <Icon size={uiPixels(size === 'xs' ? 11 : size === 'sm' ? 13 : 15)} strokeWidth={1.75} />
     </button>
   );
   return tooltip ? <Tooltip label={tooltip} side={tooltipSide}>{btn}</Tooltip> : btn;

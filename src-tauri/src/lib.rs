@@ -23,6 +23,7 @@ mod helm_commands;
 mod host_terminal_commands;
 mod k8s_commands;
 mod read_tasks;
+mod diagnostics;
 mod log_commands;
 mod node_commands;
 mod terminal_commands;
@@ -91,6 +92,7 @@ pub fn run() {
         .manage(mcp_http::PersistentMcpManager::default())
         .manage(update_commands::DesktopUpdater::default())
         .setup(|app| {
+            diagnostics::initialize(app.path().app_log_dir().ok().map(|root| root.join("diagnostics")));
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Ok(settings) = agent_commands::load(&handle).await {
@@ -106,6 +108,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            diagnostics::diagnostics_configure,
+            diagnostics::diagnostics_exchange,
+            diagnostics::diagnostics_clear,
             opencode::ai_test_opencode,
             opencode::ai_test_external_agent,
             opencode::ai_detect_system_terminal,
@@ -200,6 +205,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 mutation_guard::cancel_owner(window.label());
+                diagnostics::stop_owner(window.label());
                 window.state::<agent_commands::AgentManager>().stop_owner(window.label());
                 let extensions = window.state::<ExtensionManager>().inner().clone();
                 let manager = window.state::<InformerManager>().inner().clone();

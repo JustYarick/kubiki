@@ -5,6 +5,7 @@ import { namespaceScopeCovers } from '../core/resources/namespace_scope';
 import { buildResourceGraph } from '../core/resources/relationships';
 import { useResourceStore } from '../state/resource_store';
 import { useDetailCache, detailReadKey } from '../state/detail_cache';
+import { useUiStore } from '../state/ui_store';
 import { normalizeK8sError } from './errors';
 import { k8s } from './k8s_provider';
 
@@ -86,20 +87,28 @@ export async function prefetchDetailDependencies(
 
   const store = useResourceStore.getState();
   const cache = useDetailCache.getState();
+  const alwaysFresh = useUiStore.getState().resourceCacheMode === 'always-fresh';
+  const needsFullPayload = (target: PrefetchTarget) =>
+    !target.metadataOnly && (target.kind === 'Secret' || target.kind === 'ConfigMap');
+
   const alreadyCached = (target: PrefetchTarget) => {
-    const live = [...(store.resources[target.kind]?.values() ?? [])].some(
-      r => r.name === target.name && (!target.namespace || r.namespace === target.namespace),
+    const requireFull = needsFullPayload(target);
+    const liveAllowed = !alwaysFresh || store.watchStates[target.kind]?.phase === 'live';
+    const live = liveAllowed && [...(store.resources[target.kind]?.values() ?? [])].some(
+      r => r.name === target.name && (!target.namespace || r.namespace === target.namespace)
+        && (!requireFull || !r.readProjection),
     );
     if (live) return true;
-    if (cache.context !== context) return false;
+    if (alwaysFresh || cache.context !== context) return false;
     return [...(cache.byKind[target.kind]?.values() ?? [])].some(
       r => r.name === target.name && (!target.namespace || r.namespace === target.namespace)
-        && (options.includeSecretPayloads ? !r.readProjection : true),
+        && (!requireFull || !r.readProjection),
     );
   };
 
   const fetchTarget = async (target: PrefetchTarget): Promise<ResourceItem | null> => {
-    if (signal.aborted || isKindCovered(target.kind, context, target.namespace) || alreadyCached(target)) return null;
+    const coveredWithoutFetch = isKindCovered(target.kind, context, target.namespace) && !needsFullPayload(target);
+    if (signal.aborted || coveredWithoutFetch || alreadyCached(target)) return null;
     try {
       const fetched = await k8s.getResource!(
         context,

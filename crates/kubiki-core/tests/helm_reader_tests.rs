@@ -273,3 +273,33 @@ print('[]')
     drop(reader);
     assert!(!path.exists());
 }
+
+#[tokio::test]
+async fn preview_uses_registered_repo_and_passes_values_on_stdin() {
+    let fixture = Fixture::new(
+        r#"
+if a[0] == 'repo':
+    print(json.dumps([dict(name='charts',url='https://charts.example.test')]))
+else:
+    assert 'template' in a and '--repo=https://charts.example.test' in a and '--version=1.2.3' in a
+    assert '--namespace=apps' in a and json.load(sys.stdin) == {'replicas': 3}
+    print('kind: Deployment')
+"#,
+    );
+    let values = serde_json::json!({"replicas":3});
+    assert!(
+        fixture
+            .reader()
+            .preview("fixture", "apps", "web", "charts/web", "1.2.3", &values)
+            .await
+            .unwrap()
+            .contains("Deployment")
+    );
+    assert!(
+        fixture
+            .reader()
+            .preview("fixture", "apps", "web", "../local", "1.2.3", &values)
+            .await
+            .is_err()
+    );
+}

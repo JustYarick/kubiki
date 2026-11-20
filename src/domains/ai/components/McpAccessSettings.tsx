@@ -3,6 +3,8 @@ import { Copy, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { CheckboxRow } from '../../../components/ui/Checkbox';
 import { Input } from '../../../components/ui/Input';
+import { Select } from '../../../components/ui/Select';
+import { useClusterStore } from '../../../state/cluster_store';
 import { useAiStore } from '../store';
 import { agentError, agentTransport, desktopAiAvailable } from '../transport';
 import {
@@ -30,6 +32,7 @@ export function McpAccessSettings({
   onSaveActionChange?: (action: AgentSettingsSaveAction | null) => void;
   onResetActionChange?: (action: AgentSettingsResetAction | null) => void;
 } = {}) {
+  const contexts = useClusterStore(state => state.contexts);
   const settings = useAiStore(s => s.settings);
   const saving = useAiStore(s => s.saving);
   const { profiles, activeId, activeProfile } = ensureMcpProfiles(settings);
@@ -231,6 +234,7 @@ export function McpAccessSettings({
       : {
           ...ensured.activeProfile.policy,
           writes: [],
+          rules: (ensured.activeProfile.policy.rules ?? []).map(r => ({ ...r, writes: [] })),
           readOnly: false,
           confirmReads: false,
           alwaysAsk: [],
@@ -239,7 +243,7 @@ export function McpAccessSettings({
       const next = updateAiMcpSettings(cur, {
         profiles: [
           ...ensured.profiles,
-          { id: nextId, name: nextName, inheritShared: false, policy: nextPolicy },
+          { id: nextId, name: nextName, inheritShared: false, policy: nextPolicy, pinnedContext: mode === 'duplicate' ? ensured.activeProfile.pinnedContext : null },
         ],
         activeProfileId: nextId,
       });
@@ -349,7 +353,7 @@ export function McpAccessSettings({
       const openCodeEntry: Record<string, unknown> = {
         type: 'remote',
         url,
-        enabled: true,
+        disabled: false,
       };
       if (requireAuthDraft) {
         openCodeEntry.headers = { Authorization: `Bearer ${token}` };
@@ -381,7 +385,7 @@ export function McpAccessSettings({
   const snippetEntry: Record<string, unknown> = {
     type: 'remote',
     url: displayUrl,
-    enabled: true,
+    disabled: false,
   };
   if (requireAuthDraft) {
     snippetEntry.headers = { Authorization: `Bearer ${displayToken}` };
@@ -445,7 +449,7 @@ export function McpAccessSettings({
         </div>
 
         <p className="ai-help">
-          Binds strictly to <code>127.0.0.1</code> with Host validation and browser <code>Origin</code> rejection, dynamically routing tool calls to whichever cluster &amp; namespace are active in Kubiki without dropping connections.
+          Binds strictly to <code>127.0.0.1</code> with Host validation and browser <code>Origin</code> rejection, dynamically routing tool calls to the selected MCP cluster and workspace namespace scope without dropping connections.
         </p>
 
         <div className="ai-field-row">
@@ -597,6 +601,15 @@ export function McpAccessSettings({
 
         <div className="pt-2.5 border-t border-[var(--border-subtle)] flex flex-wrap items-end gap-3">
           <label className="ai-field w-56">
+            MCP cluster
+            <Select aria-label="MCP cluster" value={activeProfile.pinnedContext ?? ''} disabled={saving || !desktopAiAvailable()}
+              onChange={event => void updateActiveProfileMeta({ pinnedContext: event.target.value || null }, 'MCP cluster updated.')}>
+              <option value="">Follow workspace cluster</option>
+              {activeProfile.pinnedContext && !contexts.some(c => c.name === activeProfile.pinnedContext) && <option>{activeProfile.pinnedContext}</option>}
+              {contexts.map(context => <option key={context.name}>{context.name}</option>)}
+            </Select>
+          </label>
+          <label className="ai-field w-56">
             Profile name
             <Input
               aria-label="MCP profile name"
@@ -650,7 +663,7 @@ export function McpAccessSettings({
         <div className="ai-form-grid-3">
           <DataSelect
             label="Secrets"
-            title="Control exposure of Secret keys and payloads to MCP"
+            title="Control exposure of Secret keys and payloads to MCP. Setting None blocks Secrets across all rules."
             value={policyDraft.secrets}
             onChange={secrets => void persistProfilePolicy({ ...policyDraft, secrets })}
           />
@@ -697,7 +710,7 @@ export function McpAccessSettings({
         <div className="flex flex-col">
           <OptionalToolRow
             title="Helm"
-            description="Read releases, values and revision history."
+            description="Inspect releases, storage revisions and chart previews (values require the Helm release values toggle)."
             value={integrationVal(policyDraft.helm)}
             onChange={helm => void persistProfilePolicy({ ...policyDraft, helm }, 'Integration settings saved.')}
             disabled={saving}
@@ -759,7 +772,7 @@ export function McpAccessSettings({
             />
           </label>
           <p className="ai-help">
-            Click <strong>Save cluster access</strong> next to Done to persist context, namespace, replica limit, or excluded field edits. Resource rules from Scope &amp; rules are also enforced on MCP.
+            Click <strong>Save cluster access</strong> next to Done to persist context, namespace, replica limit, or excluded field edits. Detached profiles use their own rules; enable <strong>Follow shared Permissions &amp; Scope</strong> above to inherit Scope &amp; rules.
           </p>
         </div>
       </details>

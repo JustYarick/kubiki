@@ -1,0 +1,273 @@
+/* Shared adaptive UI/UX module styles (src/components/ui).
+ * Every control scales via --ui-factor and adapts to pane width via CSS container queries. */
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(4px * var(--ui-factor));
+  max-width: 100%;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.ui-badge[data-size="xs"] {
+  padding: calc(1px * var(--ui-factor)) calc(5px * var(--ui-factor));
+  font-size: var(--font-size-2xs);
+}
+.ui-badge[data-size="sm"] {
+  padding: calc(2px * var(--ui-factor)) calc(6px * var(--ui-factor));
+  font-size: var(--font-size-xs);
+}
+.ui-badge[data-tone="ok"] {
+  background: color-mix(in srgb, var(--status-ok) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok) 32%, transparent);
+  color: var(--status-ok);
+}
+.ui-badge[data-tone="warn"] {
+  background: color-mix(in srgb, var(--status-warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn) 32%, transparent);
+  color: var(--status-warn);
+}
+.ui-badge[data-tone="danger"] {
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-danger) 32%, transparent);
+  color: var(--status-danger);
+}
+.ui-badge[data-tone="info"] {
+  background: color-mix(in srgb, var(--status-info) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-info) 32%, transparent);
+  color: var(--accent-text);
+}
+.ui-badge[data-tone="accent"] {
+  background: var(--accent-subtle);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent-text);
+}
+.ui-badge-dot {
+  width: calc(6px * var(--ui-factor));
+  height: calc(6px * var(--ui-factor));
+  border-radius: 9999px;
+  background: currentColor;
+  flex: none;
+}
+
+/* Adaptive Section Card */
+.ui-section-card {
+  container-type: inline-size;
+  min-width: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-canvas);
+  overflow: hidden;
+}
+.ui-section-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: calc(6px * var(--ui-factor)) calc(10px * var(--ui-factor));
+  padding: calc(6px * var(--ui-factor)) calc(10px * var(--ui-factor));
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  min-width: 0;
+}
+.ui-section-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--ui-factor));
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.ui-section-card-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-section-card-subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.ui-section-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(4px * var(--ui-factor));
+  min-width: 0;
+}
+.ui-section-card-body[data-padded="true"] {
+  padding: calc(10px * var(--ui-factor));
+}
+
+/* Adaptive Form Field & Group */
+.ui-field-group {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(220px * var(--ui-factor))), 1fr));
+  gap: calc(10px * var(--ui-factor));
+  min-width: 0;
+}
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4px * var(--ui-factor));
+  min-width: 0;
+}
+.ui-field[data-horizontal="true"] {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(10px * var(--ui-factor));
+}
+.ui-field-label {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.ui-field-hint {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.ui-field-error {
+  font-size: var(--font-size-2xs);
+  color: var(--status-danger);
+  line-height: 1.4;
+}
+@container (max-width: 340px) {
+  .ui-field[data-horizontal="true"] {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* Adaptive Key-Value List */
+.ui-kv-list {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(calc(90px * var(--ui-factor)), max-content) minmax(0, 1fr);
+  gap: calc(6px * var(--ui-factor)) calc(12px * var(--ui-factor));
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+.ui-kv-list dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  align-self: baseline;
+}
+.ui-kv-list dd {
+  margin: 0;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@container (max-width: 280px) {
+  .ui-kv-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: calc(2px * var(--ui-factor));
+  }
+  .ui-kv-list dd {
+    margin-bottom: calc(6px * var(--ui-factor));
+  }
+}
+
+/* Adaptive Empty State */
+.ui-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: calc(6px * var(--ui-factor));
+  padding: calc(20px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.ui-empty-state[data-compact="true"] {
+  padding: calc(12px * var(--ui-factor)) calc(10px * var(--ui-factor));
+  gap: calc(4px * var(--ui-factor));
+}
+.ui-empty-state-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.ui-empty-state-description {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* Adaptive DataTable */
+.ui-data-table-wrap {
+  container-type: inline-size;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+}
+.ui-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+.ui-data-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  padding: calc(5px * var(--ui-factor)) calc(8px * var(--ui-factor));
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-secondary);
+  white-space: nowrap;
+}
+.ui-data-table[data-sticky="true"] thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.ui-data-table td {
+  padding: calc(5px * var(--ui-factor)) calc(8px * var(--ui-factor));
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+.ui-data-table[data-variant="compact"] th,
+.ui-data-table[data-variant="compact"] td {
+  padding: calc(3.5px * var(--ui-factor)) calc(7px * var(--ui-factor));
+  font-size: var(--font-size-xs);
+}
+.ui-data-table tbody tr[data-interactive="true"] {
+  cursor: pointer;
+}
+.ui-data-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+.ui-data-table tbody tr[aria-selected="true"] {
+  background: var(--bg-selection-subtle);
+}
+.ui-data-table [data-align="right"] {
+  text-align: right;
+}
+@container (max-width: 480px) {
+  .ui-data-table [data-hide-below="sm"] {
+    display: none;
+  }
+}
+@container (max-width: 680px) {
+  .ui-data-table [data-hide-below="md"] {
+    display: none;
+  }
+}

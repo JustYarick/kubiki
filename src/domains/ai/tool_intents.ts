@@ -67,11 +67,103 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
         color: 'emerald',
       };
     }
+    case 'cluster_info': {
+      const view = args.view || 'session';
+      if (view === 'problems') {
+        const ns = args.namespace ? ` in "${args.namespace}"` : '';
+        return {
+          title: `Triage cluster problems${ns}`,
+          description: `Scans bounded pages of unhealthy Pods, degraded workloads, non-Bound PVCs, unhealthy Nodes and recent Warning Events.`,
+          badge: 'TRIAGE',
+          color: 'amber',
+        };
+      }
+      if (view === 'namespaces') {
+        return {
+          title: 'Discover permitted namespaces',
+          description: `Lists accessible namespace names in the connected cluster context under current RBAC and conversation scope.`,
+          badge: 'DISCOVERY',
+          color: 'slate',
+        };
+      }
+      if (view === 'catalog') {
+        return {
+          title: args.discover ? 'Discover cluster API resources & CRDs' : 'Inspect built-in resource catalog',
+          description: `Lists available Kubernetes API groups, versions, kinds, and namespace scope.`,
+          badge: 'CATALOG',
+          color: 'slate',
+        };
+      }
+      return {
+        title: 'Inspect active session & policy',
+        description: `Reads active Kubernetes context, namespace scope, working scope, policy summary and detected cluster integrations.`,
+        badge: 'SESSION',
+        color: 'slate',
+      };
+    }
+    case 'helm': {
+      const action = args.action || 'list';
+      const ns = args.namespace ? ` in "${args.namespace}"` : '';
+      if (action === 'storage') {
+        return {
+          title: `Inspect Helm storage revisions for "${args.name || ''}"${ns}`,
+          description: `Reads all sh.helm.release.v1.* storage metadata revisions and statuses to diagnose install/upgrade conflicts without reading Secret payloads.`,
+          badge: 'HELM',
+          color: 'sky',
+        };
+      }
+      if (action === 'values') {
+        return {
+          title: `Read Helm release values for "${args.name || ''}"${ns}`,
+          description: `Reads policy-projected chart values and revision history for the specified Helm release.`,
+          badge: 'HELM',
+          color: 'sky',
+        };
+      }
+      if (action === 'preview') {
+        return {
+          title: `Preview Helm chart "${args.chart || args.name || ''}"${ns}`,
+          description: `Renders a Helm chart client-side with supplied values without mutating the cluster.`,
+          badge: 'HELM',
+          color: 'sky',
+        };
+      }
+      return {
+        title: `List Helm releases${ns}`,
+        description: `Discovers Helm releases from storage metadata labels without reading Secret bodies.`,
+        badge: 'HELM',
+        color: 'sky',
+      };
+    }
+    case 'gitops': {
+      const provider = args.provider === 'flux' ? 'Flux' : 'Argo CD';
+      const ns = args.namespace ? ` in "${args.namespace}"` : '';
+      const badge = args.provider === 'flux' ? 'FLUX' : 'ARGOCD';
+      const color = args.provider === 'flux' ? 'indigo' : 'amber';
+      if (args.action === 'get') {
+        return {
+          title: `Inspect ${provider} ${args.kind || (args.provider === 'flux' ? 'resource' : 'Application')} "${args.name || ''}"${ns}`,
+          description: `Retrieves policy-projected reconciliation status, conditions, source/revisions and managed inventory.`,
+          badge,
+          color,
+        };
+      }
+      return {
+        title: `List ${provider} ${args.kind || 'resources'}${ns}`,
+        description: `Discovers ${provider} delivery resources, sync/ready conditions and revisions.`,
+        badge,
+        color,
+      };
+    }
     case 'propose_manifests': {
       return {
-        title: `Propose YAML manifest: ${args.title || 'Resources'}`,
-        description: `Generates Kubernetes YAML resources as a review proposal without executing them on the cluster. You can inspect, copy, or instruct the agent to apply it.`,
-        badge: 'PROPOSAL',
+        title: args.dryRun
+          ? `Dry-run validate YAML manifest: ${args.title || 'Resources'}`
+          : `Propose YAML manifest: ${args.title || 'Resources'}`,
+        description: args.dryRun
+          ? `Validates proposed Kubernetes YAML against Kubiki policy and (when permitted) server-side dry-run without applying changes.`
+          : `Generates Kubernetes YAML resources as a review proposal without executing them on the cluster. You can inspect, copy, or instruct the agent to apply it.`,
+        badge: args.dryRun ? 'DRY-RUN' : 'PROPOSAL',
         color: 'emerald',
       };
     }
@@ -311,6 +403,14 @@ export function getToolIntent(name: string, args: Record<string, any> = {}): Too
     case 'get_events': {
       const ns = args.namespace ? ` in namespace "${args.namespace}"` : '';
       const name = args.name ? ` for "${args.name}"` : '';
+      if (args.mode === 'timeline') {
+        return {
+          title: `Chronological events timeline${name}${ns}`,
+          description: `Builds a deduplicated, newest-first timeline of Warning and Normal events across bounded pages.`,
+          badge: 'TIMELINE',
+          color: 'amber',
+        };
+      }
       return {
         title: `Inspect cluster events${name}${ns}`,
         description: `Reads recent Kubernetes events (scheduling warnings, volume failures, OOMKilled, BackOffs) to diagnose workload health.`,
@@ -373,6 +473,58 @@ export function getToolCallSummary(name: string, args: Record<string, any> = {},
 
 
   switch (name) {
+    case 'cluster_info': {
+      const view = result.view || args.view || 'session';
+      if (view === 'problems') {
+        const pods = Array.isArray(result.pods) ? result.pods.length : 0;
+        const workloads = Array.isArray(result.workloads) ? result.workloads.length : 0;
+        const nodes = Array.isArray(result.nodes) ? result.nodes.length : 0;
+        return `Triage complete · ${pods} pod, ${workloads} workload, ${nodes} node issue(s)`;
+      }
+      if (view === 'namespaces') {
+        const nss = Array.isArray(result.namespaces) ? result.namespaces : [];
+        return `${nss.length} namespace${nss.length === 1 ? '' : 's'} discovered`;
+      }
+      if (view === 'catalog') {
+        const kinds = Array.isArray(result.resources) ? result.resources.length : 0;
+        return kinds > 0 ? `${kinds} resource type${kinds === 1 ? '' : 's'} discovered` : 'Resource catalog loaded';
+      }
+      return `Session context: ${result.context || 'unbound'}`;
+    }
+    case 'helm': {
+      const action = result.action || args.action || 'list';
+      if (action === 'storage') {
+        const revs = Array.isArray(result.revisions) ? result.revisions.length : 0;
+        return result.hasConflict
+          ? `${revs} storage revision(s) · conflict detected`
+          : `${revs} storage revision(s) inspected`;
+      }
+      if (action === 'values') {
+        return `Release "${typeof result.release === 'string' ? result.release : args.name ?? ''}" permitted values retrieved`;
+      }
+      if (action === 'preview') {
+        const items = Array.isArray(result.items) ? result.items.length : 0;
+        return `Rendered ${items} permitted manifest(s)`;
+      }
+      const releases = Array.isArray(result.releases) ? result.releases : [];
+      const status = (release: any) => typeof release.status === 'string' ? release.status : release.metadata?.labels?.status;
+      const deployed = releases.filter((r: any) => status(r) === 'deployed').length;
+      const failed = releases.filter((r: any) => ['failed', 'pending-install', 'pending-upgrade', 'pending-rollback'].includes(status(r))).length;
+      return `${releases.length} release${releases.length === 1 ? '' : 's'} inspected · ${deployed} observed deployed · ${failed} reported failed/pending${result.evidence?.completeness === 'partial' ? ' (partial coverage)' : ''}`;
+    }
+    case 'gitops': {
+      if (args.action === 'get' || result.action === 'get') {
+        return `${result.provider === 'flux' ? 'Flux' : 'Argo CD'} "${args.name || result.name || result.application || ''}" inspected`;
+      }
+      if (result.provider === 'flux' || args.provider === 'flux') {
+        const res = Array.isArray(result.resources) ? result.resources : [];
+        const ready = res.filter((r: any) => r.ready === 'True').length;
+        return `${res.length} Flux resource${res.length === 1 ? '' : 's'} discovered (${ready} ready)`;
+      }
+      const apps = Array.isArray(result.applications) ? result.applications : [];
+      const healthy = apps.filter((a: any) => a.health === 'Healthy').length;
+      return `${apps.length} Argo CD application${apps.length === 1 ? '' : 's'} discovered (${healthy} healthy)`;
+    }
     case 'list_helm_releases': {
       const releases = Array.isArray(result.releases) ? result.releases : [];
       const status = (release: any) => typeof release.status === 'string' ? release.status : release.metadata?.labels?.status;
@@ -476,6 +628,9 @@ export function getToolCallSummary(name: string, args: Record<string, any> = {},
       return `${count} timeline event${count === 1 ? '' : 's'} analyzed`;
     }
     case 'get_events': {
+      if (Array.isArray(result.timeline)) {
+        return `${result.timeline.length} timeline event${result.timeline.length === 1 ? '' : 's'} analyzed`;
+      }
       const events = Array.isArray(result.events) ? result.events : Array.isArray(result.items) ? result.items : [];
       return `${events.length} event${events.length === 1 ? '' : 's'} analyzed`;
     }

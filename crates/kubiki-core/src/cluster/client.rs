@@ -216,10 +216,12 @@ impl ClusterClientPool {
                 message: format!("Failed to create client config: {e}"),
             })?;
 
-        Client::try_from(config).map_err(|e| KubikiError::ClusterConnectionFailed {
-            context: context.to_string(),
-            message: format!("Failed to build K8s client: {e}"),
-        })
+        Client::try_from(config)
+            .map(|client| super::http_diagnostics::instrument_client(client, context))
+            .map_err(|e| KubikiError::ClusterConnectionFailed {
+                context: context.to_string(),
+                message: format!("Failed to build K8s client: {e}"),
+            })
     }
 
     /// Query the cluster's /version endpoint to verify connectivity

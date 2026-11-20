@@ -114,10 +114,20 @@ export async function prepareDesktopRelease(root, tag, env, { signed = true } = 
   return release;
 }
 
-export const UPDATE_TARGETS = ['linux-x86_64', 'darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'];
+export const UPDATE_TARGETS = [
+  'linux-x86_64',
+  'linux-aarch64',
+  'darwin-aarch64',
+  'darwin-x86_64',
+  'windows-x86_64',
+  'windows-aarch64',
+];
 
-/** Build once, after all matrix jobs finish. Never infer one Mac architecture
- * from the other, or use a DMG as an updater archive. */
+/** Build once, after all matrix jobs finish. Never infer one architecture from
+ * another, or use a DMG as an updater archive. Publishes both generic targets
+ * (`linux-x86_64`, `linux-aarch64`, `windows-x86_64`, `windows-aarch64`) for
+ * backwards compatibility and bundle-specific targets (`*-appimage`, `*-deb`,
+ * `*-nsis`, `*-msi`) when matching signed assets exist. */
 export function reconcileUpdateManifest(manifest, tag, assets, signatures = {}) {
   const release = desktopRelease(tag);
   const result = {
@@ -126,22 +136,44 @@ export function reconcileUpdateManifest(manifest, tag, assets, signatures = {}) 
     pub_date: manifest?.pub_date || new Date().toISOString(),
     platforms: {},
   };
-  const patterns = {
-    'linux-x86_64': /\.AppImage$/,
+  const requiredPatterns = {
+    'linux-x86_64': /(?:^|[_\-.])(amd64|x86_64|x64)\.AppImage$/i,
+    'linux-aarch64': /(?:^|[_\-.])(aarch64|arm64)\.AppImage$/i,
     'darwin-aarch64': /_aarch64\.app\.tar\.gz$/,
     'darwin-x86_64': /_x64\.app\.tar\.gz$/,
-    'windows-x86_64': /[-_]setup\.exe$/,
+    'windows-x86_64': /(?:^|[_\-.])(x64|x86_64|amd64)[-_]setup\.exe$/i,
+    'windows-aarch64': /(?:^|[_\-.])(arm64|aarch64)[-_]setup\.exe$/i,
   };
+  const optionalBundlePatterns = {
+    'linux-x86_64-appimage': /(?:^|[_\-.])(amd64|x86_64|x64)\.AppImage$/i,
+    'linux-x86_64-deb': /(?:^|[_\-.])(amd64|x86_64|x64)\.deb$/i,
+    'linux-aarch64-appimage': /(?:^|[_\-.])(aarch64|arm64)\.AppImage$/i,
+    'linux-aarch64-deb': /(?:^|[_\-.])(aarch64|arm64)\.deb$/i,
+    'windows-x86_64-nsis': /(?:^|[_\-.])(x64|x86_64|amd64)[-_]setup\.exe$/i,
+    'windows-x86_64-msi': /(?:^|[_\-.])(x64|x86_64|amd64)(?:[_\-.][^/]+)?\.msi$/i,
+    'windows-aarch64-nsis': /(?:^|[_\-.])(arm64|aarch64)[-_]setup\.exe$/i,
+    'windows-aarch64-msi': /(?:^|[_\-.])(arm64|aarch64)(?:[_\-.][^/]+)?\.msi$/i,
+  };
+  const platformEntry = (pkg, signature) => ({
+    signature,
+    url: `https://github.com/JustYarick/kubiki/releases/download/${tag}/${encodeURIComponent(pkg.name)}`,
+  });
+
   for (const target of UPDATE_TARGETS) {
-    const packages = assets.filter(a => patterns[target].test(a.name) && a.size > 0);
+    const packages = assets.filter(a => requiredPatterns[target].test(a.name) && a.size > 0);
     if (packages.length !== 1) throw new Error(`Expected exactly one updater package for ${target}, found ${packages.length}.`);
     const pkg = packages[0];
     const signature = signatures[`${pkg.name}.sig`]?.trim();
     if (!signature) throw new Error(`Missing signature contents for ${pkg.name}.`);
-    result.platforms[target] = {
-      signature,
-      url: `https://github.com/JustYarick/kubiki/releases/download/${tag}/${encodeURIComponent(pkg.name)}`,
-    };
+    result.platforms[target] = platformEntry(pkg, signature);
+  }
+  for (const [target, pattern] of Object.entries(optionalBundlePatterns)) {
+    const packages = assets.filter(a => pattern.test(a.name) && a.size > 0);
+    if (packages.length !== 1) continue;
+    const pkg = packages[0];
+    const signature = signatures[`${pkg.name}.sig`]?.trim();
+    if (!signature) continue;
+    result.platforms[target] = platformEntry(pkg, signature);
   }
   return result;
 }
@@ -149,8 +181,11 @@ export function reconcileUpdateManifest(manifest, tag, assets, signatures = {}) 
 export function validateUpdateManifest(manifest, tag, assets) {
   const release = desktopRelease(tag);
   if (manifest.version !== release.version && manifest.version !== tag) throw new Error('Update manifest version does not match the release tag.');
+  const platforms = manifest.platforms ?? {};
   for (const target of UPDATE_TARGETS) {
-    const platform = manifest.platforms?.[target];
+    if (!platforms[target]) throw new Error(`Missing signed updater artifact for ${target}.`);
+  }
+  for (const [target, platform] of Object.entries(platforms)) {
     if (!platform?.signature?.trim() || !platform.url) throw new Error(`Missing signed updater artifact for ${target}.`);
     const url = new URL(platform.url);
     if (url.origin !== 'https://github.com' || !decodeURIComponent(url.pathname).startsWith(`/JustYarick/kubiki/releases/download/${tag}/`)) {

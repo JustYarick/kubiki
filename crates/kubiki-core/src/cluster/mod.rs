@@ -1,4 +1,5 @@
 pub mod client;
+pub mod http_diagnostics;
 pub mod kubeconfig;
 pub mod namespaces;
 

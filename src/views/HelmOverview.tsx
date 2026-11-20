@@ -13,6 +13,7 @@ interface Props {
   loading: boolean;
   partial: boolean;
   stale: boolean;
+  fromCache?: boolean;
   actions: ReactNode;
   onBrowse: (filters?: ColumnFilters) => void;
   onInspect: (release: HelmRelease) => void;
@@ -30,7 +31,7 @@ const groups = [
   { label: 'Other', tone: 'neutral', color: 'var(--text-muted)' },
 ] as const;
 
-export function HelmOverview({ context, releases, updated, loading, partial, stale, actions, onBrowse, onInspect }: Props) {
+export function HelmOverview({ context, releases, updated, loading, partial, stale, fromCache = false, actions, onBrowse, onInspect }: Props) {
   const summary = useMemo(() => {
     const namespaces = new Map<string, { name: string; total: number; counts: number[] }>();
     const charts = new Map<string, number>();
@@ -61,7 +62,17 @@ export function HelmOverview({ context, releases, updated, loading, partial, sta
   const value = (count: number) => known ? count.toLocaleString() : '—';
   const deployedPercent = total ? Math.round(summary.counts[0] / total * 100) : 0;
   const pending = summary.statuses[1].length ? summary.statuses[1] : pendingStatuses;
-  const readState = stale && known ? 'Last available snapshot' : partial ? 'Partial inventory' : loading ? 'Refreshing inventory' : updated ? 'Updated' : 'Inventory unavailable';
+  const readState = stale && known
+    ? 'Last available snapshot'
+    : fromCache && loading && known
+      ? 'Cached · updating…'
+      : partial
+        ? 'Partial inventory'
+        : loading
+          ? 'Refreshing inventory'
+          : updated
+            ? 'Updated'
+            : 'Inventory unavailable';
   const topChartCount = summary.charts[0]?.[1] ?? 1;
 
   return <div className="overview-page helm-overview-page kubiki-scrollbar">
@@ -74,10 +85,10 @@ export function HelmOverview({ context, releases, updated, loading, partial, sta
         </div>
       </div>
       <div className="helm-dashboard-controls">
-        <div className="helm-snapshot" data-warning={partial || stale} role="status">
+        <div className="helm-snapshot" data-warning={partial || stale || (fromCache && loading && known)} role="status">
           <span className="helm-status-dot" aria-hidden="true" />
           <span>{readState}</span>
-          {updated && !loading ? <time dateTime={new Date(updated).toISOString()} title={new Date(updated).toLocaleString()}>{new Date(updated).toLocaleTimeString()}</time> : null}
+          {updated && (!loading || fromCache) ? <time dateTime={new Date(updated).toISOString()} title={new Date(updated).toLocaleString()}>{new Date(updated).toLocaleTimeString()}</time> : null}
         </div>
         <div className="helm-dashboard-actions">{actions}</div>
       </div>

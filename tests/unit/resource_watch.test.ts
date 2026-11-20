@@ -28,7 +28,9 @@ describe('Resource watch session', () => {
     const first = session.refresh('Pod'); await Promise.resolve();
     expect(useResourceStore.getState().syncMode).toBe('snapshot');
     expect(useResourceStore.getState().loadingKinds.Pod).toBe(true);
-    connections[0].emit(delta([pod('existing')]), live); await flush(); await first;
+    connections[0].emit(delta([pod('existing')]), live);
+    expect(useResourceStore.getState().resources.Pod.has('existing')).toBe(true);
+    await first;
     expect(useResourceStore.getState().loadingKinds.Pod).toBe(false);
     const refresh = session.refresh('Pod'); await Promise.resolve();
     expect(useResourceStore.getState().loadingKinds.Pod).toBe(true);

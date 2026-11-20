@@ -99,15 +99,39 @@ test('publication requires matching version, all platforms, signatures and tag-p
   assert.throws(() => validateUpdateManifest(other.manifest, 'v0.2.0', other.assets), /pinned/);
 });
 
-test('manifest requires distinct Mac archives and a matching signature for each platform', () => {
-  const packages = ['kubiki_0.2.0_amd64.AppImage', 'kubiki_0.2.0_x64-setup.exe', 'kubiki_aarch64.app.tar.gz', 'kubiki_x64.app.tar.gz'];
+test('manifest requires distinct architectures and publishes bundle-specific DEB/AppImage/NSIS/MSI entries when signed', () => {
+  const packages = [
+    'kubiki_0.2.0_amd64.AppImage',
+    'kubiki_0.2.0_amd64.deb',
+    'kubiki_0.2.0_aarch64.AppImage',
+    'kubiki_0.2.0_arm64.deb',
+    'kubiki_0.2.0_x64-setup.exe',
+    'kubiki_0.2.0_x64_en-US.msi',
+    'kubiki_0.2.0_arm64-setup.exe',
+    'kubiki_aarch64.app.tar.gz',
+    'kubiki_x64.app.tar.gz',
+  ];
   const assets = packages.flatMap(name => [{ name, size: 1000 }, { name: `${name}.sig`, size: 100 }]);
   const signatures = Object.fromEntries(packages.map(name => [`${name}.sig`, `sig-${name}`]));
   const manifest = reconcileUpdateManifest(null, 'v0.2.0', assets, signatures);
   validateUpdateManifest(manifest, 'v0.2.0', assets);
   assert.match(manifest.platforms['darwin-aarch64'].url, /_aarch64\.app\.tar\.gz$/);
   assert.match(manifest.platforms['darwin-x86_64'].url, /_x64\.app\.tar\.gz$/);
+  assert.match(manifest.platforms['linux-x86_64'].url, /_amd64\.AppImage$/);
+  assert.match(manifest.platforms['linux-x86_64-appimage'].url, /_amd64\.AppImage$/);
+  assert.match(manifest.platforms['linux-x86_64-deb'].url, /_amd64\.deb$/);
+  assert.match(manifest.platforms['linux-aarch64'].url, /_aarch64\.AppImage$/);
+  assert.match(manifest.platforms['linux-aarch64-appimage'].url, /_aarch64\.AppImage$/);
+  assert.match(manifest.platforms['linux-aarch64-deb'].url, /_arm64\.deb$/);
+  assert.match(manifest.platforms['windows-x86_64'].url, /_x64-setup\.exe$/);
+  assert.match(manifest.platforms['windows-x86_64-nsis'].url, /_x64-setup\.exe$/);
+  assert.match(manifest.platforms['windows-x86_64-msi'].url, /_x64_en-US\.msi$/);
+  assert.match(manifest.platforms['windows-aarch64'].url, /_arm64-setup\.exe$/);
+  assert.match(manifest.platforms['windows-aarch64-nsis'].url, /_arm64-setup\.exe$/);
+  assert.equal(manifest.platforms['linux-x86_64-rpm'], undefined);
+  assert.equal(manifest.platforms['linux-aarch64-rpm'], undefined);
   assert.throws(() => reconcileUpdateManifest(manifest, 'v0.2.0', assets.filter(a => !a.name.includes('_x64.app')), signatures), /darwin-x86_64/);
+  assert.throws(() => reconcileUpdateManifest(manifest, 'v0.2.0', assets.filter(a => !a.name.includes('_arm64-setup.exe')), signatures), /windows-aarch64/);
   assert.throws(() => reconcileUpdateManifest(null, 'v0.2.0', assets, {}), /signature contents/);
-  assert.throws(() => reconcileUpdateManifest(null, 'v0.2.0', [...assets, { name: 'old.AppImage', size: 10 }], signatures), /exactly one/);
+  assert.throws(() => reconcileUpdateManifest(null, 'v0.2.0', [...assets, { name: 'old_amd64.AppImage', size: 10 }], signatures), /exactly one/);
 });

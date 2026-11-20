@@ -3,6 +3,7 @@ use kubiki_core::core::api::{ApiError, ResourceQuery};
 use kubiki_core::{InformerManager, WatchBatch};
 use std::time::Duration;
 use tauri::ipc::Channel;
+use tracing::Instrument;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +32,7 @@ pub async fn watch_resources(
         label_selector,
         field_selector,
     };
+    let watch_span = crate::diagnostics::watch_span(&subscription_id);
     let mut rx = if let Some(definition) = custom_resource {
         let expected = query.clone();
         manager
@@ -68,6 +70,7 @@ pub async fn watch_resources(
                     Ok((client, Some((resource, namespaced))))
                 },
             )
+            .instrument(watch_span)
             .await?
     } else {
         manager
@@ -76,6 +79,7 @@ pub async fn watch_resources(
                     .await
                     .map_err(|error| ApiError::from_core(error, "watch", Some(&context)))
             })
+            .instrument(watch_span)
             .await?
     };
     tauri::async_runtime::spawn(async move {

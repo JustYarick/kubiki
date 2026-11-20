@@ -6,3 +6,4 @@ pub mod budget;
 pub use client::{ContainerMetric, MetricsService, NodeMetricsInfo, PodMetricsInfo};
 
 pub mod overview;
+pub mod history;

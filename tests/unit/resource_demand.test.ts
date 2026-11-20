@@ -110,7 +110,7 @@ it('opening a Secret resource-list tab demands only Secret without workloads or 
   expect(result.kinds).not.toContain('Event');
 });
 
-it('selecting a Secret in inspector demands detail dependencies for that item only', () => {
+it('selecting a Secret in inspector demands detail dependencies at low priority while active tab stays high', () => {
   const secret = { uid: 'sec-1', name: 'app-secret', namespace: 'prod', kind: 'Secret', apiVersion: 'v1' };
   const input = {
     context: 'test',
@@ -126,5 +126,22 @@ it('selecting a Secret in inspector demands detail dependencies for that item on
   expect(result.kinds).toEqual(expect.arrayContaining(['Secret', 'Pod', 'Deployment', 'Event']));
   expect(result.scopes.get('Secret')).toBe('prod');
   expect(result.scopes.get('Pod')).toBe('prod');
+  expect(result.priorities.get('Secret')).toBe('high');
+  expect(result.priorities.get('CustomResourceDefinition')).toBe('low');
+  expect(result.priorities.get('Pod')).toBe('low');
+  expect(result.priorities.get('Deployment')).toBe('low');
+  expect(result.priorities.get('Event')).toBe('low');
+});
+
+/**
+ * WHY THIS TEST EXISTS:
+ * Opening the Ports picker in the bottom dock needs live Pod and Service targets,
+ * but closing the dock MUST immediately release those watches so background streams
+ * do not accumulate indefinitely.
+ */
+it('keeps targets current while the Ports picker is visible and releases them when it closes', () => {
+  const workspace = { context: 'test', tabs: [], activeTabId: '', splitTabId: null, selectedItem: null, inspectorCollapsed: true, rightTab: 'overview' };
+  expect(resourceDemand({ ...workspace, portsVisible: true }).kinds).toEqual(['Namespace', 'CustomResourceDefinition', 'Pod', 'Service']);
+  expect(resourceDemand({ ...workspace, portsVisible: false }).kinds).toEqual(['Namespace', 'CustomResourceDefinition']);
 });
 

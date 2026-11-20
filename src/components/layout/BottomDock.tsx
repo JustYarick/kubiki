@@ -30,9 +30,7 @@ import { useDockStore, type DockSession } from '../../state/dock_store';
 import { useWorkspaceStore } from '../../state/workspace_store';
 import { useUiStore } from '../../state/ui_store';
 import { uiPixels, uiFactor } from '../../core/appearance';
-import { IconButton } from '../ui/Button';
-import { Button } from '../ui/Button';
-import { Popover } from '../ui/Dropdown';
+import { Button, DataTable, EmptyState, IconButton, Popover } from '../ui';
 import { Modal } from '../ui/Modal';
 import { SearchInput } from '../ui/Input';
 import { toast } from '../../state/notifications_store';
@@ -439,47 +437,63 @@ function PortsPane() {
       </div>
 
       <div className="flex-1 overflow-auto kubiki-scrollbar p-2">
-        {sessions.length === 0 ? (
-          <div className="text-center py-8 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">
-            No active port forward sessions. Forward ports from Pods/Services or click Add Tunnel above.
-          </div>
-        ) : (
-          <table className="datagrip-grid w-full table-fixed" aria-label="Port forward sessions">
-            <thead>
-              <tr>
-                <th className="datagrip-th">Target / selected Pod</th>
-                <th className="datagrip-th">Local URL / traffic</th>
-                <th className="datagrip-th" style={{ width: uiPixels(58) }}><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((s) => (
-                <tr key={s.id} className="datagrip-row">
-                  <td className="datagrip-cell font-mono text-[var(--text-primary)] font-medium">
-                    {s.targetKind}/{s.targetName}
-                    <span className="block text-xs text-[var(--text-secondary)] whitespace-normal break-all">{s.namespace} · {s.context ?? 'Demo'}</span>
-                    <span className="block text-xs text-[var(--text-secondary)] whitespace-normal break-all">{s.live ? `${s.phase} · ${s.podName}:${s.podPort}` : 'Demo · simulated'} · requested :{s.remotePort}</span>
-                    {s.error && <span role="status" className="block text-xs text-[var(--status-warn)] whitespace-normal max-w-80">{s.error}</span>}
-                  </td>
-                  <td className="datagrip-cell font-mono">
-                    <button className="text-[var(--accent)] hover:underline whitespace-normal break-all text-left" onClick={() => { if (!s.live) toast.info('Demo tunnel', 'No real listener is open'); else void openForwardUrl(s.localPort).catch(failure => toast.error('Could not open URL', String(failure))); }}>http://127.0.0.1:{s.localPort}</button>
-                    <span className="block text-xs text-[var(--text-secondary)] whitespace-normal mt-1">TX {fmtBytes(s.bytesOut)} · RX {fmtBytes(s.bytesIn)}</span>
-                    <span className="block text-xs text-[var(--text-secondary)]">{fmtElapsed(Math.max(0, Date.now() - s.startedAt))}</span>
-                  </td>
-                  <td className="datagrip-cell text-right">
-                    <button
-                      disabled={stopping === s.id} aria-label={`Stop forward ${s.targetName}`}
-                      onClick={() => { setStopping(s.id); void (s.live ? stopPortForward(s.id) : Promise.resolve()).then(() => remove(s.id)).catch(failure => toast.error('Could not stop tunnel', String(failure))).finally(() => setStopping(undefined)); }}
-                      className="px-1.5 py-0.5 rounded text-[length:calc(10.5px*var(--ui-factor))] text-[var(--status-danger)] hover:bg-[var(--status-danger)]/15"
-                    >
-                      Stop
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <DataTable
+          variant="grid"
+          ariaLabel="Port forward sessions"
+          tableClassName="table-fixed"
+          rows={sessions}
+          rowKey={(s) => s.id}
+          rowClassName={() => 'datagrip-row'}
+          empty={<EmptyState compact title="No active port forward sessions" description="Forward ports from Pods/Services or click Add Tunnel above." />}
+          columns={[
+            {
+              id: 'target',
+              header: 'Target / selected Pod',
+              headerClassName: 'datagrip-th',
+              cellClassName: 'datagrip-cell font-mono text-[var(--text-primary)] font-medium',
+              cell: (s) => (
+                <>
+                  {s.targetKind}/{s.targetName}
+                  <span className="block text-xs text-[var(--text-secondary)] whitespace-normal break-all">{s.namespace} · {s.context ?? 'Demo'}</span>
+                  <span className="block text-xs text-[var(--text-secondary)] whitespace-normal break-all">{s.live ? `${s.phase} · ${s.podName}:${s.podPort}` : 'Demo · simulated'} · requested :{s.remotePort}</span>
+                  {s.error && <span role="status" className="block text-xs text-[var(--status-warn)] whitespace-normal max-w-80">{s.error}</span>}
+                </>
+              ),
+            },
+            {
+              id: 'url',
+              header: 'Local URL / traffic',
+              headerClassName: 'datagrip-th',
+              cellClassName: 'datagrip-cell font-mono',
+              cell: (s) => (
+                <>
+                  <button type="button" className="text-[var(--accent)] hover:underline whitespace-normal break-all text-left" onClick={() => { if (!s.live) toast.info('Demo tunnel', 'No real listener is open'); else void openForwardUrl(s.localPort).catch(failure => toast.error('Could not open URL', String(failure))); }}>http://127.0.0.1:{s.localPort}</button>
+                  <span className="block text-xs text-[var(--text-secondary)] whitespace-normal mt-1">TX {fmtBytes(s.bytesOut)} · RX {fmtBytes(s.bytesIn)}</span>
+                  <span className="block text-xs text-[var(--text-secondary)]">{fmtElapsed(Math.max(0, Date.now() - s.startedAt))}</span>
+                </>
+              ),
+            },
+            {
+              id: 'actions',
+              header: <span className="sr-only">Actions</span>,
+              width: uiPixels(58),
+              align: 'right',
+              headerClassName: 'datagrip-th',
+              cellClassName: 'datagrip-cell',
+              cell: (s) => (
+                <Button
+                  size="xs"
+                  variant="danger"
+                  disabled={stopping === s.id}
+                  aria-label={`Stop forward ${s.targetName}`}
+                  onClick={() => { setStopping(s.id); void (s.live ? stopPortForward(s.id) : Promise.resolve()).then(() => remove(s.id)).catch(failure => toast.error('Could not stop tunnel', String(failure))).finally(() => setStopping(undefined)); }}
+                >
+                  Stop
+                </Button>
+              ),
+            },
+          ]}
+        />
       </div>
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Choose a port-forward target" width={500}>

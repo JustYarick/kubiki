@@ -9,6 +9,27 @@ const MAX_CACHE_ITEMS = 96;
 const MAX_EVENT_ENTRIES = 16;
 export const detailReadKey = (kind: string, name: string, namespace?: string) => JSON.stringify([kind, namespace ?? null, name]);
 
+export function referenceAvailabilityNote(
+  kind: string,
+  name: string,
+  namespace: string | undefined,
+  target: ResourceItem | undefined,
+  reads: ReadonlyMap<string, 'notFound' | 'unavailable'> | undefined,
+): 'Exists · contents unavailable' | 'Not found' | 'Existence unknown · access unavailable' | undefined {
+  if (target) return kind === 'Secret' && target.readProjection === 'metadata' ? 'Exists · contents unavailable' : undefined;
+  const observed = reads?.get(detailReadKey(kind, name, namespace));
+  if (observed === 'notFound') return 'Not found';
+  if (observed === 'unavailable') return 'Existence unknown · access unavailable';
+  return undefined;
+}
+
+export function useDetailReadStates(): ReadonlyMap<string, 'notFound' | 'unavailable'> | undefined {
+  const currentContext = useClusterStore((s) => s.currentContext);
+  const cacheContext = useDetailCache((s) => s.context);
+  const readStates = useDetailCache((s) => s.readStates);
+  return currentContext && cacheContext === currentContext ? readStates : undefined;
+}
+
 interface DetailCacheState {
   context: string | null;
   items: Map<string, ResourceItem>;
@@ -118,7 +139,16 @@ export function useMergedDetailResources(): Record<ResourceKind, Map<string, Res
         continue;
       }
       const next = new Map(cached);
-      for (const [uid, item] of live) next.set(uid, item);
+      for (const [uid, item] of live) {
+        const existing = next.get(uid);
+        // Never overwrite a full on-demand Secret/ConfigMap copy with a summary watch row.
+        if (existing && !existing.readProjection && item.readProjection) {
+          const existingRv = existing.raw?.metadata?.resourceVersion;
+          const liveRv = item.raw?.metadata?.resourceVersion;
+          if (!existingRv || !liveRv || existingRv === liveRv) continue;
+        }
+        next.set(uid, item);
+      }
       merged[kind] = next;
     }
     return merged;

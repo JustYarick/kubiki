@@ -1,0 +1,169 @@
+.update-notes-box {
+  max-height: calc(288px * var(--ui-factor));
+  overflow-y: auto;
+  border-radius: calc(6px * var(--ui-factor));
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  padding: calc(12px * var(--ui-factor)) calc(14px * var(--ui-factor));
+}
+
+.update-notes-markdown {
+  font-size: calc(12px * var(--ui-factor));
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.update-notes-markdown > :first-child {
+  margin-top: 0;
+}
+
+.update-notes-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.update-notes-markdown h1,
+.update-notes-markdown h2,
+.update-notes-markdown h3,
+.update-notes-markdown h4 {
+  color: var(--text-primary);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.update-notes-markdown h1 {
+  font-size: calc(14px * var(--ui-factor));
+  margin: calc(14px * var(--ui-factor)) 0 calc(8px * var(--ui-factor));
+}
+
+.update-notes-markdown h2 {
+  font-size: calc(13px * var(--ui-factor));
+  margin: calc(14px * var(--ui-factor)) 0 calc(6px * var(--ui-factor));
+  padding-bottom: calc(4px * var(--ui-factor));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.update-notes-markdown h3 {
+  font-size: calc(12px * var(--ui-factor));
+  margin: calc(12px * var(--ui-factor)) 0 calc(6px * var(--ui-factor));
+  letter-spacing: 0.01em;
+}
+
+.update-notes-markdown h4 {
+  font-size: calc(11.5px * var(--ui-factor));
+  margin: calc(10px * var(--ui-factor)) 0 calc(4px * var(--ui-factor));
+}
+
+.update-notes-markdown p,
+.update-notes-markdown ul,
+.update-notes-markdown ol,
+.update-notes-markdown blockquote,
+.update-notes-markdown pre,
+.update-notes-markdown table {
+  margin: 0 0 calc(8px * var(--ui-factor));
+}
+
+.update-notes-markdown ul {
+  list-style: disc;
+  padding-left: calc(18px * var(--ui-factor));
+}
+
+.update-notes-markdown ol {
+  list-style: decimal;
+  padding-left: calc(18px * var(--ui-factor));
+}
+
+.update-notes-markdown li + li {
+  margin-top: calc(4px * var(--ui-factor));
+}
+
+.update-notes-markdown li::marker {
+  color: var(--text-muted);
+}
+
+.update-notes-markdown li > ul,
+.update-notes-markdown li > ol {
+  margin-top: calc(4px * var(--ui-factor));
+  margin-bottom: 0;
+}
+
+.update-notes-markdown strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.update-notes-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.update-notes-markdown a:hover {
+  opacity: 0.9;
+}
+
+.update-notes-markdown :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0.5px 4px;
+}
+
+.update-notes-markdown pre {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-factor));
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(5px * var(--ui-factor));
+  padding: calc(8px * var(--ui-factor)) calc(10px * var(--ui-factor));
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-notes-markdown pre > code {
+  font-family: inherit;
+  font-size: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.update-notes-markdown blockquote {
+  padding: calc(2px * var(--ui-factor)) 0 calc(2px * var(--ui-factor)) calc(10px * var(--ui-factor));
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.update-notes-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: calc(10px * var(--ui-factor)) 0;
+}
+
+.update-notes-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: calc(11px * var(--ui-factor));
+}
+
+.update-notes-markdown th,
+.update-notes-markdown td {
+  border: 1px solid var(--border-default);
+  padding: calc(4px * var(--ui-factor)) calc(8px * var(--ui-factor));
+  text-align: left;
+}
+
+.update-notes-markdown th {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+}

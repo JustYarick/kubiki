@@ -1,19 +1,18 @@
-import { Select } from '../ui/Select';
 import './settings.css';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, Save, Search, X } from 'lucide-react';
+import { RotateCcw, Save, Search } from 'lucide-react';
 import packageJson from '../../../package.json';
-import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
-import { Checkbox } from '../ui/Checkbox';
+import { Button, Checkbox, Input, Modal, SearchInput, Select } from '../ui';
 import { UpdateSettings } from '../updates/AppUpdates';
 import { TerminalFontSettings } from '../TerminalFontSettings';
 import { LogTimeZoneSelect } from '../k8s/LogTimeZoneSelect';
 import { toast } from '../../state/notifications_store';
+import { clearAllResourceCaches } from '../../state/cache_control';
 import { useClusterStore } from '../../state/cluster_store';
 import { useTableViewStore } from '../../state/table_view_store';
 import { k8s } from '../../providers/k8s_provider';
+import { diagnosticPanel } from '../../core/diagnostics/runtime';
+import { openWorkspacePanel } from '../../core/workspace_panels';
 import {
   DEFAULT_SCROLLBACK,
   LOG_BUFFER_PRESETS,
@@ -22,6 +21,7 @@ import {
   TERMINAL_ACK_TIMEOUT_PRESETS,
   TERMINAL_SCROLLBACK_PRESETS,
   useUiStore,
+  type ResourceCacheMode,
 } from '../../state/ui_store';
 import { DEFAULT_TERMINAL_FONT, DEFAULT_TERMINAL_BACKGROUND, TERMINAL_BACKGROUND_PRESETS } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
@@ -532,8 +532,30 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   const setPortForwardLocalRange = useUiStore((s) => s.setPortForwardLocalRange);
   const portForwardAutoOpen = useUiStore((s) => s.portForwardAutoOpen);
   const setPortForwardAutoOpen = useUiStore((s) => s.setPortForwardAutoOpen);
+  const resourceCacheMode = useUiStore((s) => s.resourceCacheMode);
+  const setResourceCacheMode = useUiStore((s) => s.setResourceCacheMode);
   const [kubeconfigPath, setKubeconfigPath] = useState('');
   const [loading, setLoading] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  const handleCacheModeChange = (mode: ResourceCacheMode) => {
+    setResourceCacheMode(mode);
+    if (mode === 'always-fresh') {
+      void clearAllResourceCaches({ refreshActive: false });
+    }
+  };
+
+  const handleClearCache = async () => {
+    try {
+      setClearingCache(true);
+      await clearAllResourceCaches({ refreshActive: true });
+      toast.success('Cache cleared', 'Cached snapshots removed and active views are refreshing.');
+    } catch (err) {
+      toast.error('Failed to clear cache', String(err));
+    } finally {
+      setClearingCache(false);
+    }
+  };
 
   React.useEffect(() => {
     void k8s.getKubeconfigPath().then((path) => {
@@ -590,6 +612,22 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
           checked={rememberNamespaceScope}
           onChange={(event) => setRememberNamespaceScope(event.target.checked)}
         />
+      </Row>
+      <Row entry={findEntry('kubernetes.cache-mode')}>
+        <Segmented
+          ariaLabel="Cached data on tab reopen"
+          value={resourceCacheMode}
+          onChange={(value) => handleCacheModeChange(value as ResourceCacheMode)}
+          options={[
+            { value: 'stale-while-revalidate', label: 'Show cached' },
+            { value: 'always-fresh', label: 'Always fresh' },
+          ]}
+        />
+      </Row>
+      <Row entry={findEntry('kubernetes.clear-cache')}>
+        <Button size="sm" variant="secondary" loading={clearingCache} disabled={clearingCache} onClick={() => void handleClearCache()}>
+          Clear cache now
+        </Button>
       </Row>
       <Row entry={findEntry('kubernetes.kubeconfig')} wide>
         <div className="flex flex-col gap-2 w-full max-w-lg">
@@ -703,6 +741,11 @@ function DeveloperPage({ sectionTitle }: { sectionTitle: string }) {
         <Row entry={findEntry('developer.mode')}>
           <Checkbox aria-label="Developer mode" checked={enabled} onChange={event => setEnabled(event.target.checked)} />
         </Row>
+        <p className="text-xs text-[var(--text-muted)] px-3 pb-3">Capture structured application metadata in Application Logs and the console. Desktop capture also writes a private JSONL journal with a 6 MiB rotation limit. Resource contents, credentials and conversation text are excluded.</p>
+        {enabled && <div className="px-3 pb-3"><Button size="sm" onClick={() => {
+          if (!useUiStore.getState().developerMode) return;
+          openWorkspacePanel(diagnosticPanel); useUiStore.getState().setSettingsOpen(false);
+        }}>Open Application Logs</Button></div>}
       </div>
     </div>
   );
@@ -779,6 +822,7 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     useClusterStore.getState().setRememberLastContext(true);
     useClusterStore.getState().setRememberNamespaceScope(true);
     const ui = useUiStore.getState();
+    ui.setResourceCacheMode('stale-while-revalidate');
     ui.setPortForwardLocalRange('8000-8999');
     ui.setPortForwardAutoOpen(false);
     toast.success('Kubernetes defaults restored');
@@ -795,35 +839,19 @@ function SettingsSearch({ value, onChange, onKeyDown }: {
   onKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
 }) {
   return (
-    <div className="relative flex items-center w-full">
-      <Search size="calc(13px * var(--ui-factor))" className="absolute left-2 text-[var(--text-muted)] pointer-events-none" />
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          /* Escape first clears the query; the dialog closes on the next press. */
-          if (event.key === 'Escape' && value) event.stopPropagation();
-          onKeyDown?.(event);
-        }}
-        aria-label="Search settings"
-        placeholder="Search settings"
-        spellCheck={false}
-        className={cx(
-          'h-[calc(28px*var(--ui-factor))] w-full bg-[var(--bg-primary)] text-xs text-[var(--text-primary)] rounded-[calc(4px*var(--ui-factor))] border outline-none transition-colors pl-7 pr-7',
-          'placeholder:text-[var(--text-muted)] border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)]'
-        )}
-      />
-      {value && (
-        <button
-          type="button"
-          aria-label="Clear search"
-          onClick={() => onChange('')}
-          className="absolute right-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 rounded"
-        >
-          <X size="calc(12px * var(--ui-factor))" />
-        </button>
-      )}
-    </div>
+    <SearchInput
+      size="md"
+      className="w-full"
+      value={value}
+      onChange={onChange}
+      ariaLabel="Search settings"
+      placeholder="Search settings"
+      onKeyDown={(event) => {
+        /* Escape first clears the query; the dialog closes on the next press. */
+        if (event.key === 'Escape' && value) event.stopPropagation();
+        onKeyDown?.(event);
+      }}
+    />
   );
 }
 

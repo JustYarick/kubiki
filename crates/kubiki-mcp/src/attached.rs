@@ -70,7 +70,7 @@ pub async fn start(server: crate::ClusterServer) -> Result<AttachedEndpoint, Str
                     )
                     .await,
                     Ok(Ok(_))
-                ) || supplied != format!("{token}\n").as_bytes()
+                ) || !crate::http::constant_time_eq(&supplied, format!("{token}\n").as_bytes())
                 {
                     return;
                 }

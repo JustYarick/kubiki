@@ -122,6 +122,8 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     entries: [
       { id: 'kubernetes.remember-context', label: 'Reopen last selected cluster', description: 'Connect to the last selected kubeconfig context after restarting. If it was removed, use the current context from kubeconfig.', keywords: 'cluster context remember startup restore persistence session reopen' },
       { id: 'kubernetes.remember-scope', label: 'Remember namespaces for each cluster', description: 'Restore the namespace selection when switching clusters.', keywords: 'namespace scope context persistence restore' },
+      { id: 'kubernetes.cache-mode', label: 'Cached data on tab reopen', description: 'Show previously loaded data with a Cached indicator while refreshing, or wait for fresh Kubernetes data every time.', keywords: 'cache stale fresh reload reopen tab refresh snapshot revalidate always-fresh кеш обновление' },
+      { id: 'kubernetes.clear-cache', label: 'Clear cached data', description: 'Drop in-memory snapshots for closed tabs, dashboards, metrics and resource details, and refresh active views.', keywords: 'clear flush purge reset cache memory stale snapshots очистить кеш' },
       { id: 'kubernetes.kubeconfig', label: 'Kubeconfig location', description: 'Use a custom file or the default kubeconfig location.', keywords: 'config path credentials files' },
       { id: 'kubernetes.port-range', label: 'Local port forward range', description: 'Choose a range for automatically assigned local ports.', keywords: 'port forward range local listen tunnel network' },
       { id: 'kubernetes.auto-open-browser', label: 'Auto-open browser on port forward', description: 'Automatically launch the default web browser when a port forward tunnel starts.', keywords: 'browser open url port forward tunnel http' },
@@ -130,7 +132,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
   {
     id: 'developer', title: 'Developer', icon: Code2, sectionTitle: 'Developer tools',
     entries: [
-      { id: 'developer.mode', label: 'Developer mode', description: 'Show the demo cluster alongside kubeconfig contexts and enable the SDK Diagnostics extension. Without kubeconfig contexts, the demo cluster is always available.', keywords: 'dev sdk test diagnostics plugin extension debug demo cluster kubeconfig mock' },
+      { id: 'developer.mode', label: 'Developer mode', description: 'Enable Application Logs, structured console/file diagnostics, the demo cluster and SDK Diagnostics. Without kubeconfig contexts, the demo cluster is always available.', keywords: 'dev sdk test diagnostics plugin extension debug demo cluster kubeconfig mock application logs logging jsonl trace console' },
     ],
   },
   {

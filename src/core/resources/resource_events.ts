@@ -1,10 +1,15 @@
 import type { ResourceItem } from '../../types/k8s';
 import { matchesResourceRef } from './identity';
-import { RESOURCE_TYPES, apiVersionFor } from './resource_types';
+import { RESOURCE_TYPES, apiVersionFor, type ResourceType } from './resource_types';
+
+const RESOURCE_TYPE_BY_KIND = new Map<string, ResourceType>();
+for (const type of RESOURCE_TYPES) {
+  if (!RESOURCE_TYPE_BY_KIND.has(type.kind)) RESOURCE_TYPE_BY_KIND.set(type.kind, type);
+}
 
 export function eventReference(event: ResourceItem) {
   const ref = event.raw?.involvedObject ?? event.raw?.regarding ?? {};
-  const builtin = RESOURCE_TYPES.find((type) => type.kind === ref.kind);
+  const builtin = typeof ref.kind === 'string' ? RESOURCE_TYPE_BY_KIND.get(ref.kind) : undefined;
   return {
     ...ref,
     namespace: ref.namespace ?? (builtin?.namespaced === false ? undefined : event.namespace),

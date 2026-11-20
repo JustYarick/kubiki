@@ -5,6 +5,7 @@ import { Filter, X } from 'lucide-react';
 import { cx } from '../../core/utils/cx';
 import { columnFilterCount, type ColumnFilter } from '../../core/resources/column_filters';
 import { uiPixels } from '../../core/appearance';
+import { Checkbox, IconButton, Input } from '../ui';
 
 export interface ColumnFilterProps {
   /** Viewport position of the popup. */
@@ -102,24 +103,18 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
             Clear
           </button>
         )}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close filter"
-          className="shrink-0 rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-        >
-          <X size="calc(12px * var(--ui-factor))" />
-        </button>
+        <IconButton icon={X} size="xs" onClick={onClose} aria-label="Close filter" />
       </div>
 
       <div className="px-2 pb-1.5 shrink-0">
-        <input
+        <Input
           ref={searchRef}
+          size="sm"
+          variant="subtle"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={`Search ${columnLabel.toLowerCase()} values…`}
           aria-label={`Search ${columnLabel} values`}
-          className="w-full h-[var(--control-h-sm)] bg-[var(--bg-canvas)] text-[length:var(--font-size-sm)] text-[var(--text-primary)] rounded-[var(--radius-sm)] border border-[var(--border-default)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] outline-none transition-colors placeholder:text-[var(--text-muted)] px-2"
         />
       </div>
 
@@ -166,15 +161,13 @@ export function ColumnFilterPopup({ rect, columnLabel, values, selected, quick, 
                   checked && 'bg-[var(--accent-subtle)]',
                 )}
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={checked}
-                  ref={element => { if (element) element.indeterminate = excluded; }}
+                  indeterminate={excluded}
                   aria-checked={excluded ? 'mixed' : checked}
                   aria-describedby="column-filter-cycle-hint"
                   onChange={() => onToggle(value)}
                   aria-label={value}
-                  className="shrink-0 w-[calc(13px*var(--ui-factor))] h-[calc(13px*var(--ui-factor))] accent-[var(--accent)] cursor-pointer"
                 />
                 <span className="flex-1 min-w-0 truncate" title={value}>{value}</span>
                 <span className="shrink-0 text-[var(--status-danger)]">{excluded ? 'Excluded' : ''}</span>

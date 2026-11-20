@@ -3,7 +3,7 @@ import { resourceBucket } from '../../core/resources/custom_resource_types';
 import React, { Suspense, lazy, useMemo, useState, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, Boxes, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react';
 import { useResourceStore } from '../../state/resource_store';
-import { useMergedDetailEvents, useMergedDetailResources } from '../../state/detail_cache';
+import { referenceAvailabilityNote, useDetailReadStates, useMergedDetailEvents, useMergedDetailResources } from '../../state/detail_cache';
 import { useDetailPrefetch } from '../../providers/detail_prefetch';
 import { useClusterStore } from '../../state/cluster_store';
 import type { RightTab } from '../../state/ui_store';
@@ -113,6 +113,8 @@ function RelatedRow({
   isCompact?: boolean;
 }) {
   const target = entry.target;
+  const reads = useDetailReadStates();
+  const availability = referenceAvailabilityNote(entry.kind, entry.name, entry.namespace, target, reads);
   return (
     <button
       key={entry.id}
@@ -138,7 +140,7 @@ function RelatedRow({
           {entry.name}
         </span>
         <span className="text-[length:var(--font-size-2xs)] text-[var(--text-muted)] truncate shrink-0">
-          {entry.namespace ?? 'cluster'}{!target && ' · not loaded'}
+          {entry.namespace ?? 'cluster'}{availability ? ` · ${availability}` : !target ? ' · not loaded' : ''}
         </span>
       </div>
       <span className="text-[length:var(--font-size-2xs)] text-[var(--text-muted)] font-mono shrink-0">

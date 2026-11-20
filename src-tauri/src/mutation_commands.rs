@@ -340,6 +340,7 @@ pub async fn mutate_resource(
     let resource = request.resource();
     let _gate = guard.acquire(&resource)?;
     read_cache.invalidate(&resource.query.context);
+    kubiki_core::helm::storage::invalidate_context(&resource.query.context);
     if let ChangeRequest::Batch { primary, steps } = request {
         return run_batch(window, &pool, primary, steps).await;
     }
@@ -363,12 +364,14 @@ pub async fn mutate_resource(
         } else {
             HelmReader::default()
         };
-        return PreparedHelmMutation::prepare(reader, request)
+        let result = PreparedHelmMutation::prepare(reader, request)
             .await?
             .confirm_and_commit(|summary| {
                 crate::mutation_guard::confirm_action(window, &resource, summary, operation)
             })
             .await;
+        kubiki_core::helm::storage::invalidate_context(&resource.query.context);
+        return result;
     }
     let intent = match request {
         ChangeRequest::Action {
@@ -440,6 +443,7 @@ pub async fn delete_resource(
     };
     let _gate = guard.acquire(&resource)?;
     read_cache.invalidate(&resource.query.context);
+    kubiki_core::helm::storage::invalidate_context(&resource.query.context);
     match request {
         DeleteRequest::Resource {
             resource,

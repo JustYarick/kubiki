@@ -16,6 +16,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Configurable tab cache behavior in `Settings → Kubernetes` (`Cached data on tab reopen`: `Show cached` vs `Always fresh`) plus a `Clear cache now` action covering resource tables, CRD lists, Helm/Flux/Argo CD/Metrics dashboards, and detail/manifest caches; reopened tabs showing cached snapshots now display an explicit `Cached · updating…` indicator, and failed refreshes while cached/stale data is visible render a pinned warning banner above the scroll area (with `Last synced` timestamp, `Retry`, and `Clear stale data`) alongside a deduplicated warning toast.
+- Upgraded Flux and Argo CD Overviews (`GitOpsDashboard`, `FluxOverviewPanels`, `ArgoOverviewPanels`) to match Helm Overview's semantic status palette (`Ready`/`Synced`/`Healthy` green, `In progress`/`Out of sync`/`Progressing` amber, `Failed`/`Degraded`/`Missing` red, `Suspended` blue, `Unknown` muted) and unified neutral KPI numeral styling across all three overviews: adds 4-KPI summary cards with stacked status distribution bars and 24h change facts, SVG readiness/sync/health donut charts, clickable Flux CRD kind & namespace health breakdowns, Argo CD project & destination namespace health breakdowns, and a stacked Normal/Warning controller event cadence timeline inside Recent Activity.
+- Modular resource creation forms with a live `Form | YAML` mode switcher (`NewResourceDialog` + `src/components/dialogs/new-resource/` + `src/core/resources/creators/`) for `Secret` (Opaque Text/Base64 + file import, TLS, Docker Registry `.dockerconfigjson`, Basic Auth, SSH Auth, custom type, immutable), `ConfigMap`, `Namespace`, `ServiceAccount`, `Deployment`, `Pod`, `Service`, `Ingress`, `PersistentVolumeClaim`, `Job`, and `CronJob`, with shared `Labels & Annotations`, cluster namespace picker, in-place YAML comment/field preservation across mode switches, and automatic fallback to the YAML manifest editor for other resources and CRDs.
+- Native ARM64 desktop release builds for Linux (`aarch64-unknown-linux-gnu`: DEB, RPM, AppImage on `ubuntu-24.04-arm`) and Windows (`aarch64-pc-windows-msvc`: NSIS EXE on `windows-11-arm`) with full updater manifest and website download support.
+- Automatic update checks across all desktop packages: macOS (ARM64/Intel), Windows (x64 NSIS/MSI, ARM64 NSIS), and Linux x64/ARM64 AppImage/DEB support verified in-app updates, while Linux RPM packages check the signed channel feed in notify-only mode with changelog notes and a direct link to the GitHub Release page.
+- Automatic `## [Unreleased]` release summaries for `dev` preview releases (`vX.Y.Z-dev.N`) in both GitHub Releases and in-app updater manifests (`latest.json`), plus an automatic fallback for stable releases published from `main` that promotes non-empty `## [Unreleased]` entries to `## [X.Y.Z] - YYYY-MM-DD` (updating comparison links and committing `docs/CHANGELOG.md` on `main` after publication) when a versioned section was not prepared manually.
+- Consolidated reusable adaptive UI/UX primitives under `src/components/ui` (`index.ts`, `DataTable`, `Badge`, `CountPill`, `Textarea`, `Field`, `FieldGroup`, `SectionCard`, `EmptyState`, `KeyValueList`, upgraded `Input`/`SearchInput`/`Button`/`Select`/`Checkbox`) and migrated ad-hoc search inputs, dialogs, and secondary tables across the workspace to use them.
+- Actionable `accessHints` and `aiInstruction` guidance in MCP policy denials so AI clients tell the user which Kubiki setting blocked access (`Annotations`, `Custom resources`, `Helm release values`, `Secrets`, etc.) and where to enable it.
+- Fast direct Kubernetes Secret/ConfigMap storage reads for Helm release inventory, revision history, and release documents (`Values`, `Manifest`, `Hooks`, `Notes`) over the warm `kube::Client` (with Kubernetes `(context, uid, resourceVersion)` MVCC caching, concurrent revision-read coalescing, and transparent fallback to the `helm` CLI).
+- Target/pinned Node resolution for unscheduled Pending Pods (DaemonSet `nodeAffinity` `matchFields: metadata.name`, `kubernetes.io/hostname` affinity/`nodeSelector`, and preemption `nominatedNodeName`) in the Pods table, Pod details (including a clickable `Target node` link and rendered `Node Affinity` / `Pod Affinity` / `Pod Anti-Affinity`), Workload child pods, Node details (`Pending pods targeting this node`), resource search, topology/neighborhood graphs, and MCP (`diagnose_resource`, `cluster_info(problems)`, `list_resources(health)`, and `summarize_resources(groupBy: "nodeName")`).
+- MCP Resources (`kubiki://session/info`, `kubiki://evidence/{id}`) and built-in debugging Prompts (`investigate-resource`, `triage-namespace`, `debug-node-pressure`, `debug-rollout-regression`) alongside accurate MCP `serverInfo` and `ToolAnnotations`.
+- Dedicated `helmValues` policy toggle separating Helm release chart values (`helm action=values`) from custom resource defaults, while keeping metadata-only release listings (`helm action=list`) and multi-revision storage conflict diagnostics (`helm action=storage`) available without Secret access.
+- Cross-namespace `namespace: "*"` support in `list_resources`, `summarize_resources` (including `groupBy: "reason"`), and `get_events` (`raw` and `timeline` modes), plus `cluster_info` (`session`, `namespaces`, `catalog`, `problems`) triage, `diagnose_resource` sections (`config`, `diff`, `metrics`, describe-equivalent Pod fields, Node events), `propose_manifests` optional `dryRun` validation, and `topPodsByCpuRequest` on Node metrics.
+- Expanded `diagnostic` CRD field projections for Argo CD (`Application`, `ApplicationSet`, `Rollout`), `cert-manager.io`, Gateway API, and KEDA, with automatic Flux served API version resolution (`v2`/`v2beta2`/`v2beta1`, `v1`/`v1beta2`/`v1beta1`).
+- MCP cluster selection per HTTP profile and named standalone connections with independent scope and policy.
+- Incident diagnostics for nominated Pod nodes, Flux conditions, node grouping, cross-namespace Events, Helm storage checks and client-side chart previews.
+- Historical Pod and Node CPU/memory reads from session observations or a configured Prometheus service.
+
+- Developer-mode Application Logs with filtered, virtualized frontend/native events, correlated Kubernetes API request metadata, structured console/stderr output, bounded private JSONL rotation and export. Capture excludes request/response contents and credentials, reports drops and sink failures, and stops when Developer mode is disabled.
+
 - Cluster-wide Helm Overview with release metrics, status distribution, namespace health, chart versions, recent changes and explicit snapshot freshness, independent of the namespace filter. Counts open the shared typed release table with matching filters; the table supports column sorting, layouts and virtualization. Overview navigation uses the common dashboard icon.
 - Flux Kustomization and HelmRelease reconciliation actions alongside the existing reset-and-retry action for exhausted HelmRelease attempts.
 - MCP Pod/Node CPU and RAM usage with requests, limits, capacity, allocatable and explicit coverage for bounded Node reservations.
@@ -29,13 +49,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Enabled HTTP `gzip` response compression across all `kube` clients, switched non-CRD resource watchers and unbounded reads to Kubernetes apiserver watch-cache lists (`resourceVersion=0`), streamed `Secret` and `ConfigMap` tables via server-side `Table` + `PartialObjectMetadata` watches with on-demand single-object hydration when inspecting or editing, prioritized active-tab watches over background CRD/inspector/sidebar-count probes, skipped ESO/VSO origin lookups for Helm/service-account Secrets, and filtered out superseded Helm revisions during fast release inventory reads.
+- Consolidated the MCP tool catalog from 32 fragmented tools into 19 universal, orthogonal tools (15 read/inspection tools + 4 write tools: `cluster_info`, `diagnose_resource`, `get_events`, `helm`, `gitops`, etc.) and enabled concurrent read execution, shared discovery caching, and background Argo CD/Flux capability detection on external MCP sessions.
+- Expanded `get_logs` tail ceiling to 5000 lines, added `ignoreCase` and `contextLines` in `lines` mode, and broadened diagnostic log error pattern matching (klog, logfmt, JSON severity, network/TLS/OOM failures).
 - Refined Helm Overview layout and density to match the application's overview cards, with a compact header strip, uniform card surfaces, monospace summary metrics, evenly distributed inventory facts, aligned namespace and chart panels, and single-line release change rows.
 - Updated the project website with bundled JetBrains Mono Variable display typography, concise Hero copy with `#download` anchor links, a unified FAQ and Get Kubiki constellation closing band with smooth section gradients, reordered MCP topology and resource workbench sections without redundant labels, keyboard and triage workflow bars, and a non-scrolling interactive Pod inspector card.
 
+### Removed
+
+- Removed the unused standalone `kubiki-cli` binary from `crates/kubiki-core` and desktop release builds.
+
 ### Fixed
 
+- Render Markdown release notes in the in-app update dialog (`AppUpdatePrompt`) with GFM support (headings, lists, bold text, inline/fenced code, blockquotes, tables, and safe external links) instead of plain text.
+- Fixed virtualized resource table scroll jumping when rows are added, removed, or reordered, recognized static Flux OCI `HelmRepository` objects as `Ready` instead of `Not reported`, disabled WebKit/macOS spelling autocorrection across all text input fields, restored the CronJob `Schedule` table column, and eliminated O(N²) scans in workload Pod matching, GitOps relationship resolution, Helm diagnostic descendant traversal, and Event/hook lookups on large clusters.
+- Propagated shared `schemaVersion`, `ruleResolution`, and `allowedFields` into effective Kubiki Agent policies, cleared per-rule writes in MCP `Clear writes` and blank read-only profile creation, corrected the manual OpenCode JSON snippet to use `disabled: false`, fixed `summarize_resources` evidence persistence, and cleaned up HTTP MCP peer/subscription tracking and session pruning.
+- Desktop Pod tables fetch their initial inventory in one collection request per scope. Sidebar counts skip duplicate probes while a covering watch initializes.
+
+- Pod requests remain visible without usage samples. Pending Pod summaries include scheduler placement details.
+- Resource name filters disable spelling corrections. Ready watch snapshots appear immediately and idle status sorting skips an initial table scan.
+
+- Limit Pod Environment tab Secret status notices to unresolved or restricted `env`/`envFrom` references while moving volume Secret availability indicators to Pod `Overview` and `Related`.
 - Allow direct Helm upgrade, rollback and uninstall for Flux-managed releases while preserving backend confirmation.
 - Resolve explicitly requested served CRD API versions even when a more stable version exists, and match Flux Helm storage namespaces correctly.
+
+### Security
+
+- Made `secrets: none` a hard policy ceiling that blocks all Secret reads and `list_resources` membership/label oracles before any Kubernetes API call, even when wildcard rules exist.
+- Fixed `RuleResolution::DenyOverrides` to enforce minimum `DataAccess` and write-set intersection across all matching rules, added wildcard `*` support to `deniedPaths` scrubbing, scrubbed probe `httpHeaders[].value` when `workloadConfiguration` is disabled, and broadened sensitive key redaction without breaking Kubernetes volume Secret references.
+- Hardened `apply_manifest` checks to cover `serviceAccount`, `runAsUser: 0`, `shareProcessNamespace`, `procMount`, `Unconfined` seccomp, `Ingress` TLS secrets, `imagePullSecrets`, ephemeral containers, and legacy volume Secret references.
+- Hardened MCP transports with constant-time attached bridge token checks, `reject_remote_clients(true)` on Windows named pipes, HTTP/1 header read timeout, `503` backpressure, `WWW-Authenticate: Bearer` on `401`, private `0o700` standalone journal directories, and 1 MiB `--connections` size limits.
 
 ## [1.4.0] - 2026-11-17
 

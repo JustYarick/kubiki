@@ -422,6 +422,61 @@ impl HelmReader {
         Ok(value)
     }
 
+    /// Render a named chart from an existing Helm repository with caller-supplied values.
+    pub async fn preview(
+        &self,
+        context: &str,
+        namespace: &str,
+        name: &str,
+        chart: &str,
+        version: &str,
+        values: &serde_json::Value,
+    ) -> Result<String, ApiError> {
+        let mut args = Self::release(context, namespace, name)?;
+        let invalid = || {
+            ApiError::from_status(
+                400,
+                "Expected repository/chart, version and a values object",
+                "helm",
+                Some(context),
+            )
+        };
+        let (repo, package) = chart.split_once('/').ok_or_else(invalid)?;
+        let valid_part = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 128
+                && s.as_bytes()[0].is_ascii_alphanumeric()
+                && s.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._-+".contains(&c))
+        };
+        let input = values.to_string();
+        if !valid_part(repo)
+            || !valid_part(package)
+            || !valid_part(version)
+            || !values.is_object()
+            || input.len() > 65536
+            || std::path::Path::new(package).exists()
+        {
+            return Err(invalid());
+        }
+        let repository = self
+            .repositories()
+            .await?
+            .into_iter()
+            .find(|r| r.name == repo && r.url.starts_with("https://"))
+            .ok_or_else(invalid)?;
+        args.extend([
+            "template".into(),
+            name.into(),
+            package.into(),
+            format!("--repo={}", repository.url),
+            format!("--version={version}"),
+            "--values=-".into(),
+        ]);
+        self.execute(&args, Some(context), false, Some(&input), self.timeout)
+            .await
+    }
+
     pub async fn search_charts(&self, query: &str) -> Result<serde_json::Value, ApiError> {
         if query.len() > 200 || query.starts_with('-') || query.chars().any(char::is_control) {
             return Err(ApiError::from_status(

@@ -37,6 +37,23 @@ test('Flux and Argo dashboards expose status filters, inspection and independent
   const flux = page.getByTestId('flux-dashboard');
   await expect(flux.getByRole('button', { name: 'Kustomizations: 0 of 2 ready', exact: true })).toBeVisible();
   await expect(flux.locator('h1')).toHaveCount(0);
+  // Flux Overview renders Helm-aligned summary KPIs, status distribution, reconciliation donut, and namespace health.
+  await expect(flux.getByRole('region', { name: 'Flux summary', exact: true })).toBeVisible();
+  await expect(flux.getByRole('button', { name: 'Resources: 3', exact: true })).toBeVisible();
+  await expect(flux.getByRole('button', { name: 'Ready: 1', exact: true })).toBeVisible();
+  await expect(flux.getByRole('button', { name: 'Failed: 1', exact: true })).toBeVisible();
+  await expect(flux.getByRole('region', { name: 'Flux reconciliation distribution', exact: true })).toBeVisible();
+  await expect(flux.getByRole('region', { name: 'Flux namespaces', exact: true })).toBeVisible();
+  // Clicking the Ready KPI shows healthy Flux resources; clearing restores Needs attention.
+  await flux.getByRole('button', { name: 'Ready: 1', exact: true }).click();
+  await expect(flux.getByRole('region', { name: 'Flux ready resources', exact: true })).toBeVisible();
+  await expect(flux.getByRole('button', { name: /Inspect GitRepository platform-source/ })).toBeVisible();
+  await flux.getByRole('button', { name: 'Clear dashboard filters' }).click();
+  // Clicking a Namespace health row filters issues to that namespace.
+  await flux.getByRole('button', { name: 'Namespace other: 1 resources, 0 failed, 0 in progress', exact: true }).click();
+  await expect(flux.getByRole('button', { name: /Inspect Kustomization paused/ })).toBeVisible();
+  await expect(flux.getByRole('button', { name: /Inspect Kustomization payments-production/ })).toHaveCount(0);
+  await flux.getByRole('button', { name: 'Clear dashboard filters' }).click();
   await flux.getByRole('button', { name: 'Kustomizations: 0 of 2 ready', exact: true }).click();
   await expect(flux.getByRole('button', { name: /Inspect Kustomization payments-production/ })).toBeVisible();
   await expect(flux.getByRole('button', { name: /Inspect GitRepository/ })).toHaveCount(0);
@@ -50,8 +67,15 @@ test('Flux and Argo dashboards expose status filters, inspection and independent
   const argo = page.getByTestId('argocd-dashboard');
   await expect(argo.getByRole('button', { name: /2 Applications/ })).toBeVisible();
   await expect(argo.locator('h1')).toHaveCount(0);
+  await expect(argo.getByRole('region', { name: 'Argo CD summary', exact: true })).toBeVisible();
+  await expect(argo.getByRole('region', { name: 'Argo CD health and sync distribution', exact: true })).toBeVisible();
+  await expect(argo.getByRole('region', { name: 'Argo CD destination namespaces', exact: true })).toBeVisible();
   await expect(argo.getByRole('button', { name: 'Health Healthy: 2', exact: true })).toBeVisible();
   await expect(argo.getByRole('button', { name: 'Sync OutOfSync: 1', exact: true })).toBeVisible();
+  // Clicking a Destination namespace row filters applications to that target namespace.
+  await argo.getByRole('button', { name: 'Destination backend: 1 applications, 0 degraded, 1 out of sync', exact: true }).click();
+  await expect(argo.getByRole('button', { name: /Inspect Application healthy-but-drifted/ })).toBeVisible();
+  await argo.getByRole('button', { name: 'Clear dashboard filters' }).click();
   await argo.getByRole('button', { name: 'Health Healthy: 2', exact: true }).click();
   await expect(argo.getByRole('button', { name: /Inspect Application healthy-but-drifted/ })).toBeVisible();
   await argo.getByRole('button', { name: 'Sync Synced: 1', exact: true }).click();
@@ -66,15 +90,17 @@ test('Flux and Argo dashboards expose status filters, inspection and independent
 
 test('Helm summary separates failed and pending operations without losing its revision inspection', async ({ page }) => {
   await fixture(page);
-  await page.getByRole('button', { name: 'Open Helm Releases', exact: true }).click();
+  await page.getByRole('button', { name: 'Open Helm Overview', exact: true }).click();
+  const overview = page.getByTestId('helm-overview');
+  await expect(overview.getByRole('button', { name: 'Releases: 3', exact: true })).toBeVisible();
+  await overview.getByRole('button', { name: 'Failed: 1', exact: true }).click();
   const helm = page.getByTestId('helm-releases');
-  await expect(helm.getByRole('button', { name: /Releases 3/ })).toBeVisible();
-  await helm.getByRole('button', { name: /Failed 1/ }).click();
-  await expect(helm.locator('tbody tr')).toHaveCount(1);
-  await helm.getByRole('button', { name: /In progress 1/ }).click();
-  await expect(helm.locator('tbody tr')).toHaveCount(1);
-  await expect(helm.locator('tbody')).toContainText('pending-upgrade');
-  await expect(helm).toContainText('Complete release inventory');
+  await expect(helm.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
+  await expect(helm).toContainText('failed');
+  await page.getByRole('button', { name: 'Open Helm Overview', exact: true }).click();
+  await overview.getByRole('button', { name: 'In progress: 1', exact: true }).click();
+  await expect(helm.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
+  await expect(helm).toContainText('pending-upgrade');
   await captureScreenshot(page, { path: 'test-results/helm-dashboard.png' });
 });
 
@@ -148,6 +174,7 @@ test('GitOps refreshes automatically and controller events remain useful when ev
   await page.getByRole('button', { name: 'Open Flux Overview', exact: true }).click();
   const flux = page.getByTestId('flux-dashboard');
   await expect(flux.getByRole('button', { name: /Inspect event DependencyNotReady/ })).toBeVisible();
+  await expect(flux.getByRole('img', { name: /Controller event timeline: 0 normal and 1 warning events/ })).toBeVisible();
   const count = reads;
   await page.clock.fastForward(16000);
   await expect.poll(() => reads).toBeGreaterThan(count);

@@ -4,6 +4,7 @@ import { resourceType, apiVersionFor as typeApiVersion } from '../../../core/res
 import { memoryText, quantity } from '../../../core/resources/quantities';
 import type { WorkloadPodActivity } from '../../../core/resources/workload_pod_activity';
 import { helmUpdatedAt } from '../../../providers/helm_types';
+import { podNodeInfo } from '../../../core/resources/pod_node';
 
 export interface ColumnDef {
   id: string;
@@ -58,7 +59,15 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
         BASE_COLUMNS[1],
         { id: 'containers', label: 'Containers', get: (i) => String(i.containers?.length ?? 0) },
         { id: 'ip', label: 'IP', mono: true, get: (i) => i.ip },
-        { id: 'node', label: 'Node', mono: true, get: (i) => i.node },
+        {
+          id: 'node',
+          label: 'Node',
+          mono: true,
+          get: (i) => {
+            const info = podNodeInfo(i);
+            return info.assigned ?? info.pendingNode ?? i.node;
+          },
+        },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
       ];
     case 'Deployment':
@@ -100,7 +109,7 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
     case 'CronJob':
       return [
         ...BASE_COLUMNS,
-        { id: 'ready', label: 'Schedule', mono: true, get: (i) => i.ready },
+        { id: 'ready', label: 'Schedule', mono: true, size: 112, get: (i) => i.schedule ?? i.ready ?? (i.raw as any)?.spec?.schedule },
         { id: 'suspend', label: 'Suspend', get: (i) => i.status },
         { id: 'active', label: 'Active', align: 'right', mono: true, get: (i) => (i.activeJobs === undefined ? '0' : String(i.activeJobs)) },
         { id: 'lastSchedule', label: 'Last Schedule', align: 'right', get: (i) => i.lastScheduleTime || '—' },
@@ -128,7 +137,7 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
       return [
         ...BASE_COLUMNS,
         { id: 'keys', label: 'Keys', align: 'right', mono: true, get: (i) => (i.dataKeys === undefined ? undefined : String(i.dataKeys)) },
-        { id: 'size', label: 'Size', align: 'right', mono: true, get: (i) => (i.sizeBytes ? memoryText(i.sizeBytes) : '—') },
+        { id: 'size', label: 'Size', align: 'right', mono: true, hint: 'Payload size (omitted in fast table mode; open details to view contents)', get: (i) => (i.sizeBytes ? memoryText(i.sizeBytes) : '—') },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
       ];
     case 'Secret':
@@ -136,7 +145,7 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
         ...BASE_COLUMNS,
         { id: 'type', label: 'Type', get: (i) => i.secretType },
         { id: 'keys', label: 'Keys', align: 'right', mono: true, get: (i) => (i.dataKeys === undefined ? undefined : String(i.dataKeys)) },
-        { id: 'size', label: 'Size', align: 'right', mono: true, get: (i) => (i.sizeBytes ? memoryText(i.sizeBytes) : '—') },
+        { id: 'size', label: 'Size', align: 'right', mono: true, hint: 'Payload size (omitted in fast table mode; open details to view contents)', get: (i) => (i.sizeBytes ? memoryText(i.sizeBytes) : '—') },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
       ];
     case 'PersistentVolumeClaim':
@@ -217,7 +226,9 @@ export const columnsFor = (kind: ResourceKind, options?: { podsByNode?: Map<stri
         { id: 'status', label: 'Status', get: (i) => i.status },
         { id: 'age', label: 'Age', align: 'right', get: (i) => i.age },
       ];
-    default:
-      return [...BASE_COLUMNS, { id: 'status', label: 'Status', get: (i) => i.status }, { id: 'age', label: 'Age', align: 'right', get: (i) => i.age }];
+    default: {
+      const base = resourceType(kind).namespaced ? BASE_COLUMNS : BASE_COLUMNS.slice(0, 1);
+      return [...base, { id: 'status', label: 'Status', get: (i) => i.status }, { id: 'age', label: 'Age', align: 'right', get: (i) => i.age }];
+    }
   }
 };

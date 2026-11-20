@@ -5,6 +5,10 @@ import './App.css';
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useUiStore } from './state/ui_store';
 import { applyAppearance } from './core/appearance';
+import { initializeDiagnostics } from './core/diagnostics/runtime';
+
+const stopDiagnostics = initializeDiagnostics();
+if (import.meta.hot) import.meta.hot.dispose(stopDiagnostics);
 
 // Apply persisted values before the first render, including body portals.
 applyAppearance(document.documentElement, useUiStore.getState());
@@ -14,6 +18,19 @@ useUiStore.subscribe((state, previous) => {
     if (state.uiScale !== previous.uiScale) window.dispatchEvent(new Event('resize'));
   }
 });
+
+// Prevent WebKit/macOS spelling autocorrection from rewriting literal Kubernetes names on blur/focus changes.
+const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'email']);
+document.addEventListener('focusin', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.dataset.allowAutocorrect === 'true') return;
+  const type = (target.getAttribute('type') ?? '').toLowerCase();
+  if (!TEXT_INPUT_TYPES.has(type)) return;
+  if (!target.hasAttribute('autocorrect')) target.setAttribute('autocorrect', 'off');
+  if (!target.hasAttribute('autocapitalize')) target.setAttribute('autocapitalize', 'none');
+  if (!target.hasAttribute('spellcheck')) target.spellcheck = false;
+}, true);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

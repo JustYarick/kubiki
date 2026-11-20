@@ -30,7 +30,7 @@ fn fixture_scope(
         tower::service_fn(move |request: http::Request<kube::client::Body>| {
             let path = request.uri().path().to_owned();
             seen.lock().unwrap().push(path.clone());
-            let pod = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"apps","uid":"pod-id","creationTimestamp":"2026-11-17T09:00:00Z"},"spec":{"nodeName":"worker","containers":[{"name":"app","resources":{"requests":{"cpu":"250m","memory":"256Mi"},"limits":{"cpu":"1","memory":"512Mi"}}}]},"status":{"phase":"Running"}});
+            let pod = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"apps","uid":"pod-id","creationTimestamp":"2020-11-17T09:00:00Z"},"spec":{"nodeName":"worker","containers":[{"name":"app","resources":{"requests":{"cpu":"250m","memory":"256Mi"},"limits":{"cpu":"1","memory":"512Mi"}}}]},"status":{"phase":"Running"}});
             let body = match path.as_str() {
                 "/api/v1/namespaces" => {
                     json!({"apiVersion":"v1","kind":"NamespaceList","metadata":{},"items":[{"metadata":{"name":"apps"}}]})
@@ -53,10 +53,10 @@ fn fixture_scope(
                     json!({"apiVersion":"v1","kind":"PodList","metadata":{},"items":[pod,finished]})
                 }
                 "/apis/metrics.k8s.io/v1beta1/namespaces/apps/pods/web" => {
-                    json!({"apiVersion":"metrics.k8s.io/v1beta1","kind":"PodMetrics","metadata":{"name":"web","namespace":"apps"},"timestamp":"2026-11-17T10:00:00Z","window":"15s","containers":[{"name":"app","usage":{"cpu":"125000000n","memory":"64Mi"}}]})
+                    json!({"apiVersion":"metrics.k8s.io/v1beta1","kind":"PodMetrics","metadata":{"name":"web","namespace":"apps"},"timestamp":"2020-11-17T10:00:00Z","window":"15s","containers":[{"name":"app","usage":{"cpu":"125000000n","memory":"64Mi"}}]})
                 }
                 "/apis/metrics.k8s.io/v1beta1/nodes/worker" => {
-                    json!({"apiVersion":"metrics.k8s.io/v1beta1","kind":"NodeMetrics","metadata":{"name":"worker"},"timestamp":"2026-11-17T10:00:00Z","window":"15s","usage":{"cpu":"2","memory":"4Gi"}})
+                    json!({"apiVersion":"metrics.k8s.io/v1beta1","kind":"NodeMetrics","metadata":{"name":"worker"},"timestamp":"2020-11-17T10:00:00Z","window":"15s","usage":{"cpu":"2","memory":"4Gi"}})
                 }
                 _ => panic!("Unexpected read: {path}"),
             };
@@ -275,5 +275,27 @@ async fn unavailable_pod_inventory_is_unknown_reservation_instead_of_zero() {
             .unwrap()
             .iter()
             .all(|path| !path.ends_with("/pods"))
+    );
+}
+
+#[tokio::test]
+async fn history_retains_unique_samples_for_the_requested_time_window() {
+    let (session, tools, _) = fixture(AgentPolicy {
+        confirm_reads: false,
+        ..Default::default()
+    });
+    let args = json!({"namespace":"apps","name":"web"});
+    for _ in 0..2 {
+        metrics(&session, &tools, args.clone()).await.unwrap();
+    }
+    let range = json!({"namespace":"apps","name":"web","historyMinutes":15,"historyEnd":"2020-11-17T10:10:00Z"});
+    let result = metrics(&session, &tools, range.clone()).await.unwrap();
+    assert_eq!(result["samples"].as_array().unwrap().len(), 1);
+    assert_eq!(result["samples"][0]["usage"]["cpu"], 0.125);
+    let mut outside = range;
+    outside["historyEnd"] = json!("2020-11-17T11:00:00Z");
+    assert_eq!(
+        metrics(&session, &tools, outside).await.unwrap()["samples"],
+        json!([])
     );
 }

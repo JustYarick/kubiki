@@ -12,7 +12,7 @@ async fn event_pages_are_bound_to_the_query_and_resume_the_server_snapshot() {
         AgentScope {
             context: "fixture".into(),
             namespaces: vec!["apps".into()],
-            all_namespaces: false,
+            all_namespaces: true,
         },
         AgentPolicy {
             confirm_reads: false,
@@ -22,7 +22,10 @@ async fn event_pages_are_bound_to_the_query_and_resume_the_server_snapshot() {
     );
     let client = kube::Client::new(
         tower::service_fn(|request: http::Request<kube::client::Body>| async move {
-            assert_eq!(request.uri().path(), "/api/v1/namespaces/apps/events");
+            assert!(matches!(
+                request.uri().path(),
+                "/api/v1/events" | "/api/v1/namespaces/apps/events"
+            ));
             let query = request.uri().query().unwrap_or("");
             assert!(query.contains("involvedObject.uid"), "{query}");
             let second = query.contains("continue=next");
@@ -67,6 +70,15 @@ async fn event_pages_are_bound_to_the_query_and_resume_the_server_snapshot() {
         .await
         .unwrap();
     assert_eq!(first["items"][0]["metadata"]["name"], "first");
+    let cross = tools
+        .execute(
+            &session,
+            &call(json!({"namespace":"*","uid":"pod-id"})),
+            &emit,
+        )
+        .await
+        .unwrap();
+    assert_eq!(cross["items"][0]["message"], "fixture");
     let cursor = first["cursor"].as_str().unwrap();
     let changed = tools
         .execute(

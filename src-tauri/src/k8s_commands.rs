@@ -99,6 +99,7 @@ pub async fn set_kubeconfig_path(
     }
     agents.invalidate();
     cache.invalidate_all();
+    kubiki_core::helm::storage::invalidate_all();
     pool.set_custom_kubeconfig_path(path_buf);
     pool.invalidate_all().await;
     pool.get_config_manager()

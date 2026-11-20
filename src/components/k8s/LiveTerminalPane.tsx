@@ -1,4 +1,3 @@
-import { Select } from '../ui/Select';
 import { createTerminalView, type TerminalView } from '../../core/terminal_view';
 import { useTerminalAppearance } from './useTerminalAppearance';
 import { useEffect, useRef, useState } from 'react';
@@ -13,7 +12,7 @@ import type { DockSession } from '../../state/dock_store';
 import { useDockStore } from '../../state/dock_store';
 import { ContainerSelect } from './ContainerSelect';
 import { useSessionContainers } from './useSessionContainers';
-import { IconButton } from '../ui/Button';
+import { IconButton, Input, Select } from '../ui';
 
 export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebug }: { nodeDebug?: { sessionId: string; node: string; resource: ResourceRef; shell: string }; session: DockSession; visible: boolean; onContainerChange?: (name: string) => void }) {
   const { containers, container, context, uid } = useSessionContainers(session, true);
@@ -163,9 +162,10 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
       {showSearch && (
         <div className="absolute top-2 right-4 z-20 flex items-center gap-1.5 p-1.5 bg-[var(--bg-card)] border border-[var(--border-default)] shadow-lg rounded-md text-xs backdrop-blur-sm">
           <Search size={13} className="text-[var(--text-muted)] ml-1 shrink-0" aria-hidden="true" />
-          <input
+          <Input
             ref={searchInputRef}
-            type="text"
+            size="sm"
+            variant="subtle"
             placeholder="Find in terminal…"
             value={searchQuery}
             onChange={(e) => {
@@ -195,7 +195,7 @@ export function LiveTerminalPane({ session, visible, onContainerChange, nodeDebu
                 terminal.current?.focus();
               }
             }}
-            className="ide-select h-6 text-xs px-2 py-0 w-44 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] focus:border-[var(--accent)] outline-none"
+            className="w-44"
           />
           {searchQuery && searchFound === false && (
             <span className="text-[10px] text-[var(--status-warn)] shrink-0 px-1 font-sans">No results</span>

@@ -10,6 +10,7 @@
 - [Extensions](EXTENSIONS.md): installation, management and SDK.
 - [Application updates](APP_UPDATES.md): update channels, installation and preferences.
 - [Local state](LOCAL_STATE.md): persistence and sensitive data.
+- [Application diagnostics](DIAGNOSTICS.md): Developer-mode logs, console/JSONL capture and safe AI debugging.
 
 ## Development
 
@@ -23,6 +24,7 @@
 - [Desktop rendering](DESKTOP_RENDERING.md): graphics settings and diagnostic probes.
 - [Extension runtime](EXTENSION_PLATFORM.md): processes, panel isolation and trust boundaries.
 - [Tab metrics](UI_TABS.md): shared interface dimensions.
+- [Shared UI/UX module](UI_KIT.md): reusable adaptive controls, tables, and layout primitives (`src/components/ui`).
 - [Icons](ICONS.md): resource icons, product logo and application icon.
 - [Media](MEDIA.md): generating README and website screenshots and recordings (`scripts/capture-readme.mjs`, `scripts/capture-website-media.mjs`).
 - [Project website](WEBSITE.md): static landing page, local preview and GitHub Pages publication.

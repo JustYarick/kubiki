@@ -24,5 +24,7 @@ context. Follow status clarifications and replacement ADRs for later changes.
 | [011: Trusted Node extension runtime](011-trusted-node-extension-runtime.md) | Accepted; records the existing runtime choice |
 | [012: Bounded log snapshot pages](012-bounded-log-snapshot-pages.md) | Accepted; exact-line MCP log pages reuse bounded session cursors |
 | [013: Diagnostic CRD access and resource metrics](013-diagnostic-crd-access-and-resource-metrics.md) | Accepted; bounded policy-projected status, usage and budgets |
+| [014: Local developer diagnostics](014-local-developer-diagnostics.md) | Accepted; bounded Developer-mode metadata, console/file output and Kubernetes HTTP correlation |
+| [015: Historical metrics](015-historical-metrics.md) | Accepted; host-configured Prometheus service and session observations |
 
 Use the [ADR template](TEMPLATE.md) and [documentation conventions](../DOCUMENTATION.md).

@@ -14,6 +14,7 @@ pub struct Session {
     cancel: watch::Sender<bool>,
     pub query_cursors: Arc<Mutex<CursorStore>>,
     pub working_scope: Arc<Mutex<WorkingScope>>,
+    pub(crate) metric_history: Arc<Mutex<crate::resource_metrics::MetricHistory>>,
     pub evidence: Arc<Mutex<EvidenceStore>>,
     pub plans: Arc<Mutex<PlanStore>>,
     pub accepted_operations: Arc<Mutex<AcceptedOperations>>,
@@ -29,6 +30,7 @@ pub struct Control {
     pub capabilities: ClusterCapabilities,
     pub revision: u64,
     pub active: bool,
+    pub active_reads: usize,
     pub invalidated: bool,
 }
 
@@ -55,9 +57,11 @@ impl Session {
                 capabilities,
                 revision: 0,
                 active: false,
+                active_reads: 0,
                 invalidated: false,
             })),
             query_cursors: Arc::default(),
+            metric_history: Arc::default(),
             evidence: Arc::default(),
             plans: Arc::default(),
             accepted_operations: Arc::default(),
@@ -78,12 +82,34 @@ impl Session {
     }
     pub fn begin_run(&self, expected_revision: u64) -> Result<Running, String> {
         let mut state = self.control.lock().map_err(|_| "Session unavailable")?;
-        if state.active || state.invalidated || state.revision != expected_revision {
+        if state.active
+            || state.active_reads > 0
+            || state.invalidated
+            || state.revision != expected_revision
+        {
             return Err("Session is active, invalidated or its permissions changed".into());
         }
         state.active = true;
         self.cancel.send_replace(false);
         Ok(Running(self.clone()))
+    }
+    pub fn begin_read(&self, expected_revision: u64) -> Result<Reading, String> {
+        let mut state = self.control.lock().map_err(|_| "Session unavailable")?;
+        if state.active || state.invalidated || state.revision != expected_revision {
+            return Err("Session is active, invalidated or its permissions changed".into());
+        }
+        state.active_reads += 1;
+        self.cancel.send_replace(false);
+        Ok(Reading(self.clone()))
+    }
+    pub fn update_capabilities(&self, capabilities: ClusterCapabilities) -> bool {
+        if let Ok(mut state) = self.control.lock() {
+            if state.capabilities != capabilities {
+                state.capabilities = capabilities;
+                return true;
+            }
+        }
+        false
     }
     pub fn control(&self) -> Result<Control, String> {
         self.control
@@ -118,6 +144,14 @@ impl Session {
         self.set_access(policy, None)
     }
     pub fn set_access(&self, policy: AgentPolicy, phase: Option<AgentPhase>) -> Result<(), String> {
+        self.set_access_with_scope(policy, phase, None)
+    }
+    pub fn set_access_with_scope(
+        &self,
+        policy: AgentPolicy,
+        phase: Option<AgentPhase>,
+        scope_override: Option<&AgentScope>,
+    ) -> Result<(), String> {
         policy.validate()?;
         let mut state = self.control.lock().map_err(|_| "AI session lock failed")?;
         if phase == Some(AgentPhase::Action) && state.mode == AgentMode::ReadOnly {
@@ -130,7 +164,8 @@ impl Session {
         self.cancel.send_replace(true);
         self.evidence.lock().map_err(|_| "Evidence store unavailable")?.clear();
         *self.query_cursors.lock().map_err(|_| "Cursor store unavailable")? = CursorStore::default();
-        *self.working_scope.lock().map_err(|_| "Working scope unavailable")? = WorkingScope::initial(&self.scope);
+        *self.working_scope.lock().map_err(|_| "Working scope unavailable")? =
+            WorkingScope::initial(scope_override.unwrap_or(&self.scope));
         self.plans.lock().map_err(|_| "Plan registry unavailable")?.stale();
         Ok(())
     }
@@ -194,6 +229,7 @@ impl Session {
     pub fn begin_action(&self, revision: u64) -> Result<Running, String> {
         let mut state = self.control.lock().map_err(|_| "Session unavailable")?;
         if state.active
+            || state.active_reads > 0
             || state.invalidated
             || state.revision != revision
             || state.phase != AgentPhase::Action
@@ -274,44 +310,27 @@ pub trait ToolExecutor: Send + Sync {
 pub fn mutation_tool(name: &str) -> bool {
     matches!(
         name,
-        "apply_manifest"
-            | "scale_workload"
-            | "restart_workload"
-            | "delete_resource"
-            | "sync_argocd_app"
-            | "reconcile_flux_resource"
+        "apply_manifest" | "scale_workload" | "restart_workload" | "delete_resource"
     )
 }
 
 pub fn parallel_read_tool(name: &str) -> bool {
     matches!(
         name,
-        "verify_workload"
+        "cluster_info"
+            | "verify_workload"
             | "get_evidence"
             | "get_plan"
             | "get_resource"
             | "list_resources"
             | "summarize_resources"
-            | "list_namespaces"
-            | "resource_catalog"
             | "get_neighborhood"
             | "diagnose_resource"
-            | "get_pod_diagnostics"
-            | "get_workload_diagnostics"
-            | "get_service_diagnostics"
-            | "get_pvc_diagnostics"
-            | "get_node_diagnostics"
-            | "get_config_diagnostics"
             | "get_events"
-            | "get_events_timeline"
             | "get_logs"
             | "get_metrics"
-            | "list_helm_releases"
-            | "get_helm_release"
-            | "list_argocd_apps"
-            | "get_argocd_app"
-            | "list_flux_resources"
-            | "get_flux_resource"
+            | "helm"
+            | "gitops"
     )
 }
 pub struct Running(Session);
@@ -319,6 +338,14 @@ impl Drop for Running {
     fn drop(&mut self) {
         if let Ok(mut state) = self.0.control.lock() {
             state.active = false;
+        }
+    }
+}
+pub struct Reading(Session);
+impl Drop for Reading {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.0.control.lock() {
+            state.active_reads = state.active_reads.saturating_sub(1);
         }
     }
 }

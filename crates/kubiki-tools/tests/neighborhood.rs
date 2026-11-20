@@ -276,8 +276,8 @@ async fn dynamic_catalog_exposes_every_kind_through_pages() {
                 &s,
                 &ToolCall {
                     id: "catalog".into(),
-                    name: "resource_catalog".into(),
-                    arguments: json!({"discover":true,"group":"example.io","page":page}),
+                    name: "cluster_info".into(),
+                    arguments: json!({"view":"catalog","discover":true,"group":"example.io","page":page}),
                 },
                 &emit,
             )

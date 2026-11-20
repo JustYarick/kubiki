@@ -43,33 +43,23 @@ const EMPTY_MODELS: ModelInfo[] = [];
 
 const ALWAYS_ASK_TOOLS = [
   ['read_skill', 'Read skill files'],
-  ['propose_manifests', 'Propose manifests'],
+  ['propose_manifests', 'Propose & dry-run manifests'],
   ['get_plan', 'Get plan'],
   ['propose_plan', 'Propose plan'],
+  ['cluster_info', 'Cluster info & triage'],
   ['verify_workload', 'Verify workload'],
   ['get_evidence', 'Get evidence'],
   ['set_working_scope', 'Set working scope'],
-  ['list_namespaces', 'List namespaces'],
   ['summarize_resources', 'Summarize resources'],
   ['list_resources', 'List resources'],
   ['get_resource', 'Get resource'],
-  ['get_pod_diagnostics', 'Get pod diagnostics'],
-  ['get_workload_diagnostics', 'Get workload diagnostics'],
-  ['get_service_diagnostics', 'Get service diagnostics'],
-  ['get_pvc_diagnostics', 'Get PVC diagnostics'],
-  ['get_node_diagnostics', 'Get node diagnostics'],
-  ['get_config_diagnostics', 'Get config diagnostics'],
-  ['resource_catalog', 'Resource catalog'],
-  ['get_events', 'Get events'],
-  ['get_events_timeline', 'Get events timeline'],
+  ['get_neighborhood', 'Neighborhood graph'],
+  ['diagnose_resource', 'Diagnose resource'],
+  ['get_events', 'Events & timeline'],
   ['get_logs', 'Get logs'],
   ['get_metrics', 'Get metrics'],
-  ['list_helm_releases', 'List Helm releases'],
-  ['get_helm_release', 'Get Helm release'],
-  ['list_argocd_apps', 'List Argo CD applications'],
-  ['get_argocd_app', 'Get Argo CD application'],
-  ['list_flux_resources', 'List flux resources'],
-  ['get_flux_resource', 'Get flux resource'],
+  ['helm', 'Helm inspection & preview'],
+  ['gitops', 'GitOps (Argo CD & Flux)'],
   ['apply_manifest', 'Apply manifest'],
   ['scale_workload', 'Scale workload'],
   ['restart_workload', 'Restart workload'],
@@ -997,7 +987,7 @@ function PolicySettings({
                   <h4>Resource rules</h4>
                   <p className="ai-help">
                     {policy.ruleResolution === 'deny_overrides'
-                      ? 'Rules that deny both reading and changes take priority over other matching rules.'
+                      ? 'All matching rules apply: the strictest read level and intersection of allowed writes win regardless of order.'
                       : 'The first matching rule applies. Put specific exceptions before broad rules.'}
                   </p>
                 </div>

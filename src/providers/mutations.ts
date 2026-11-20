@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import type { ResourceAction } from './resource_actions';
 import type { ResourceRef } from '../core/resources/resource_types';
 import type { HelmMutation } from './helm_types';
@@ -49,7 +50,7 @@ async function gateway<T>(command: 'mutate_resource' | 'delete_resource', reques
   if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
     throw requestError('forbidden', 'Changes require the desktop application and backend system confirmation. Browser access is read-only.', { operation: 'mutation' }, 403);
   }
-  const { invoke } = await import('@tauri-apps/api/core');
+  const invoke = diagnosticInvoke;
   try {
     const result = await invoke<T>(command, { request });
     notifyMutationCompleted(command, request, result);

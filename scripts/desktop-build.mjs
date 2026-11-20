@@ -11,7 +11,10 @@ const { values } = parseArgs({ options: {
 } });
 if (values.stage && (!values.target || !process.env.RELEASE_TAG || !process.env.SOURCE_SHA)) throw new Error('Staging requires --target, RELEASE_TAG and SOURCE_SHA');
 const env = { ...process.env, ...(values.target ? { KUBIKI_BUILD_TARGET: values.target } : {}) };
-if (process.platform === 'linux') env.OPENSSL_CONF = '/dev/null';
+if (process.platform === 'linux') {
+  env.OPENSSL_CONF = '/dev/null';
+  env.APPIMAGE_EXTRACT_AND_RUN = '1';
+}
 // Invoke the installed CLI through Node so Windows does not need shell quoting.
 const cli = path.resolve('node_modules/@tauri-apps/cli/tauri.js');
 function tauri(args) {
@@ -43,12 +46,15 @@ if (values['prebuilt-frontend']) {
 }
 const targetArgs = values.target ? ['--target', values.target] : [];
 const linux = (values.target || '').includes('linux') || (!values.target && process.platform === 'linux');
+const windowsArm = values.target === 'aarch64-pc-windows-msvc' || (!values.target && process.platform === 'win32' && process.arch === 'arm64');
 if (values.stage) {
   await rm('.kubiki-build/artifacts', { recursive: true, force: true });
   // Cached build directories must not contribute stale packages to a new release.
   await rm(path.join('src-tauri/target', values.target, 'release/bundle'), { recursive: true, force: true });
 }
-tauri(['build', ...targetArgs, ...configArgs, ...(linux ? ['--bundles', 'deb,appimage'] : []), '--', '--locked']);
+// Tauri WiX MSI bundling is x64-only; Windows ARM64 ships NSIS (`-setup.exe`) with full updater support.
+const bundleArgs = linux ? ['--bundles', 'deb,appimage'] : windowsArm ? ['--bundles', 'nsis'] : [];
+tauri(['build', ...targetArgs, ...configArgs, ...bundleArgs, '--', '--locked']);
 if (linux) {
   const config = rpmBundleConfig(version);
   await writeFile('.kubiki-build/rpm.conf.json', JSON.stringify(config, null, 2) + '\n');

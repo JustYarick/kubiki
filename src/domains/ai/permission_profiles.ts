@@ -2,7 +2,7 @@ import type { AgentPolicy, ResourceRule } from './types';
 export const PERMISSION_PROFILES = ['diagnostic', 'metadata', 'workloads', 'network', 'storage', 'limited actions'] as const;
 export type PermissionProfile = typeof PERMISSION_PROFILES[number];
 export function permissionProfile(policy: AgentPolicy, profile: PermissionProfile): AgentPolicy {
-  const base: AgentPolicy = { ...policy, readOnly: false, schemaVersion: 1, ruleResolution: 'first_match', resources: true, events: true, logs: false, secrets: 'none', configMaps: 'metadata', customResources: profile === 'diagnostic' ? 'diagnostic' : 'metadata', workloadConfiguration: false, annotations: false, clusterResources: false, writes: [], rules: [] };
+  const base: AgentPolicy = { ...policy, readOnly: false, schemaVersion: 1, ruleResolution: 'first_match', resources: true, events: true, logs: false, secrets: 'none', configMaps: 'metadata', customResources: profile === 'diagnostic' ? 'diagnostic' : 'metadata', helmValues: false, workloadConfiguration: false, annotations: false, clusterResources: false, writes: [], rules: [] };
   if (profile === 'limited actions') return { ...base, writes: ['scale', 'restart'] };
   const rule = (group: string, kind: string, read: ResourceRule['read'] = 'content'): ResourceRule => ({ group, kind, namespace: '*', name: '*', read, writes: [] });
   if (profile === 'metadata') return { ...base, rules: [rule('*', '*', 'metadata')] };

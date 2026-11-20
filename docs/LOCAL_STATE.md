@@ -22,6 +22,16 @@ Cluster resource data is loaded again on connection. Context persistence stores
 only the context name, not kubeconfig credentials or an API client. Selecting a
 cluster does not rewrite kubeconfig's `current-context`.
 
+## Developer diagnostic capture
+
+Developer mode enables an in-memory Application Logs view and structured console
+output. Desktop also keeps a local rotating JSONL journal (three files of up to
+2 MiB); records are operational metadata, not resource/conversation contents.
+Turning Developer mode off clears the frontend buffer and revokes that window's
+native capture. Saved files remain until rotation or **Clear saved logs**.
+Browser sessions use memory/console only. See [Application diagnostics](DIAGNOSTICS.md)
+for the exact path, fields, limits, deletion controls and AI debugging workflow.
+
 ## Topology rendering
 
 Open **Settings → Topology**. Rendering controls apply to open diagrams and are

@@ -18,6 +18,7 @@ import { DEFAULT_TOPOLOGY_RENDERING, normalizeTopologyRendering, type TopologyRe
 export type Density = 'compact' | 'comfortable';
 export type RightTab = 'overview' | 'yaml' | 'related' | 'events' | 'env';
 export type LogMode = 'poll' | 'watch';
+export type ResourceCacheMode = 'stale-while-revalidate' | 'always-fresh';
 
 interface UIState extends TopologyRenderingPreferences {
   developerMode: boolean;
@@ -60,6 +61,8 @@ interface UIState extends TopologyRenderingPreferences {
   topologyHiddenKinds: ReadonlySet<ResourceKind>;
   /* cluster behavior */
   rememberNamespaceScope: boolean;
+  /** Controls whether reopened tabs/views show cached snapshots while refreshing or wait for fresh Kubernetes reads. */
+  resourceCacheMode: ResourceCacheMode;
   /* panels geometry */
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -117,6 +120,7 @@ interface UIState extends TopologyRenderingPreferences {
   resetTopologyRendering: () => void;
   setTopologyHiddenKinds: (value: Iterable<string>) => void;
   setRememberNamespaceScope: (value: boolean) => void;
+  setResourceCacheMode: (value: ResourceCacheMode) => void;
   resetAppearance: () => void;
   setSidebarWidth: (w: number) => void;
   toggleSidebar: () => void;
@@ -196,6 +200,7 @@ export const useUiStore = create<UIState>()(
       ...DEFAULT_TOPOLOGY_RENDERING,
       topologyHiddenKinds: new Set(DEFAULT_TOPOLOGY_HIDDEN_KINDS),
       rememberNamespaceScope: true,
+      resourceCacheMode: 'stale-while-revalidate' as ResourceCacheMode,
       sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
       sidebarCollapsed: false,
       inspectorWidth: DEFAULT_LAYOUT.inspectorWidth,
@@ -249,6 +254,7 @@ export const useUiStore = create<UIState>()(
       resetTopologyRendering: () => set({ ...DEFAULT_TOPOLOGY_RENDERING }),
       setTopologyHiddenKinds: (value) => set({ topologyHiddenKinds: new Set(value) as ReadonlySet<ResourceKind> }),
       setRememberNamespaceScope: (rememberNamespaceScope) => set({ rememberNamespaceScope }),
+      setResourceCacheMode: (value) => set({ resourceCacheMode: value === 'always-fresh' ? 'always-fresh' : 'stale-while-revalidate' }),
       resetAppearance: () =>
         set({
           ...DEFAULT_APPEARANCE,
@@ -350,6 +356,7 @@ export const useUiStore = create<UIState>()(
             ? new Set(stored.topologyHiddenKinds as ResourceKind[])
             : new Set(DEFAULT_TOPOLOGY_HIDDEN_KINDS),
           rememberNamespaceScope: normalizeBool(stored?.rememberNamespaceScope, true),
+          resourceCacheMode: stored?.resourceCacheMode === 'always-fresh' ? ('always-fresh' as const) : ('stale-while-revalidate' as const),
         };
       },
       partialize: (s) => ({
@@ -388,6 +395,7 @@ export const useUiStore = create<UIState>()(
         topologyUpdateIntervalMs: s.topologyUpdateIntervalMs,
         topologyHiddenKinds: [...s.topologyHiddenKinds],
         rememberNamespaceScope: s.rememberNamespaceScope,
+        resourceCacheMode: s.resourceCacheMode,
         sidebarWidth: s.sidebarWidth,
         sidebarCollapsed: s.sidebarCollapsed,
         inspectorWidth: s.inspectorWidth,

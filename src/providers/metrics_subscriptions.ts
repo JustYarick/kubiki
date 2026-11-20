@@ -43,4 +43,8 @@ export class MetricsSubscriptions {
   refresh(context: string, namespace: string | null): void {
     this.subscriptions.refresh(JSON.stringify([context, namespace]));
   }
+
+  clearCache(options?: { refreshActive?: boolean }): void {
+    this.subscriptions.clearCache(options);
+  }
 }

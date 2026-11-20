@@ -7,7 +7,7 @@ import { useResourceStore } from '../../../../state/resource_store';
 import { useClusterStore } from '../../../../state/cluster_store';
 import { k8s } from '../../../../providers/k8s_provider';
 import { toast } from '../../../../state/notifications_store';
-import { gitOpsFamily, gitOpsReferences, resolveGitOpsReference } from '../../../../core/resources/gitops';
+import { gitOpsFamily, gitOpsReferences, isStaticFluxOciRepo, resolveGitOpsReference } from '../../../../core/resources/gitops';
 import { fieldText, fieldValue, presentationFor } from '../../../../core/resources/resource_presentations';
 import { summaryTitle } from '../../../../core/resources/kind_labels';
 import { DetailsSection } from '../DetailsSection';
@@ -89,8 +89,10 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
     }
   };
 
-  const health = raw.status?.health?.status ?? item.status ?? 'Not reported';
-  const syncStatus = raw.status?.sync?.status ?? raw.status?.conditions?.find((condition: any) => condition.type === 'Ready')?.status ?? 'Not reported';
+  const staticOciRepo = family === 'flux' && isStaticFluxOciRepo(raw) && raw.spec?.suspend !== true && !raw.metadata?.deletionTimestamp;
+  const readyCondition = raw.status?.conditions?.find((condition: any) => condition.type === 'Ready');
+  const health = raw.status?.health?.status ?? item.status ?? (staticOciRepo ? 'Ready' : 'Not reported');
+  const syncStatus = raw.status?.sync?.status ?? readyCondition?.status ?? (staticOciRepo ? 'Static OCI' : 'Not reported');
 
   return (
     <div className="details-stack">
@@ -101,7 +103,7 @@ export function GitOpsDetails({ item, onNavigate }: { item: ResourceItem; onNavi
         icon={resourceIcon(item.kind, item.apiVersion)}
         tiles={[
           { label: family === 'flux' ? 'Ready' : 'Health', value: health, tone: health === 'Ready' || health === 'Healthy' ? 'ok' : health === 'Not reported' ? 'muted' : 'warn' },
-          { label: 'Sync status', value: syncStatus, tone: syncStatus === 'Synced' || syncStatus === 'True' ? 'ok' : 'muted' },
+          { label: 'Sync status', value: syncStatus, tone: syncStatus === 'Synced' || syncStatus === 'True' || syncStatus === 'Static OCI' ? 'ok' : 'muted' },
           { label: 'Revision', value: raw.status?.sync?.revision ?? raw.status?.artifact?.revision ?? '—', tone: 'muted' },
           { label: 'Suspended', value: raw.spec?.suspend === true ? 'Yes' : 'No', tone: raw.spec?.suspend === true ? 'warn' : 'muted' },
         ]}

@@ -27,6 +27,7 @@ export interface AgentPolicy {
   resources: boolean; events: boolean; logs: boolean; metrics: boolean;
   clusterResources: boolean; secrets: DataAccess; configMaps: DataAccess;
   workloadConfiguration: boolean; annotations: boolean; customResources: DataAccess;
+  helmValues?: boolean;
   helm: OptionalToolMode; argocd: OptionalToolMode; flux: OptionalToolMode;
   contexts: string[]; namespaces: string[]; writes: WriteOperation[];
   maxReplicas: number; rules: ResourceRule[]; deniedPaths: string[];
@@ -49,6 +50,7 @@ export interface McpProfile {
   id: string;
   name: string;
   inheritShared: boolean;
+  pinnedContext?: string | null;
   policy: AgentPolicy;
 }
 export interface McpHttpStatus {
@@ -189,7 +191,7 @@ export const PHASE_LABELS: Record<string, string> = { plan: 'Plan', tooling: 'Ac
 export function defaultPolicy(): AgentPolicy {
   return { confirmReads: false, readOnly: false, disabledTools: [], planDisabledTools: [], actionDisabledTools: [], resources: true, events: true, logs: false, metrics: true, clusterResources: false,
     secrets: 'none', configMaps: 'metadata', workloadConfiguration: false, annotations: false,
-    customResources: 'diagnostic', helm: 'auto', argocd: 'auto', flux: 'auto', contexts: ['*'], namespaces: ['*'],
+    customResources: 'diagnostic', helmValues: false, helm: 'auto', argocd: 'auto', flux: 'auto', contexts: ['*'], namespaces: ['*'],
     writes: [], maxReplicas: 10,
     rules: [], deniedPaths: [] };
 }
@@ -204,6 +206,7 @@ export function normalizeMcpPolicy(policy?: AgentPolicy): AgentPolicy {
     ...policy,
     logs: Boolean(policy.logs),
     clusterResources: Boolean(policy.clusterResources),
+    helmValues: Boolean(policy.helmValues),
     writes: policy.writes ?? [],
     disabledTools: policy.disabledTools ?? [],
     planDisabledTools: policy.planDisabledTools ?? [],
@@ -224,6 +227,7 @@ export function syncSharedPolicyFields(source: AgentPolicy, target: AgentPolicy)
     secrets: source.secrets,
     configMaps: source.configMaps,
     customResources: source.customResources,
+    helmValues: source.helmValues,
     maxReplicas: source.maxReplicas,
     contexts: source.contexts,
     namespaces: source.namespaces,
@@ -257,22 +261,14 @@ export function isToolActiveInPolicy(toolId: string, policy: AgentPolicy, phase?
       return !policy.readOnly && policy.writes.includes('delete');
     case 'get_logs':
       return Boolean(policy.logs);
-    case 'get_node_diagnostics':
-      return Boolean(policy.resources && policy.clusterResources);
     case 'get_events':
-    case 'get_events_timeline':
       return Boolean(policy.events);
     case 'get_metrics':
       return Boolean(policy.metrics);
-    case 'list_helm_releases':
-    case 'get_helm_release':
+    case 'helm':
       return policy.helm !== 'disabled';
-    case 'list_argocd_apps':
-    case 'get_argocd_app':
-      return Boolean(policy.resources) && policy.argocd !== 'disabled';
-    case 'list_flux_resources':
-    case 'get_flux_resource':
-      return Boolean(policy.resources) && policy.flux !== 'disabled';
+    case 'gitops':
+      return Boolean(policy.resources) && (policy.argocd !== 'disabled' || policy.flux !== 'disabled');
     case 'propose_manifests':
       return true;
     default:
@@ -387,10 +383,13 @@ export function resolveEffectiveKubikiPolicy(settings: AiSettings, phase: AgentP
     alwaysAsk: settings.policy.alwaysAsk ?? [],
     planDisabledTools: settings.policy.planDisabledTools ?? [],
     actionDisabledTools: settings.policy.actionDisabledTools ?? [],
+    schemaVersion: settings.policy.schemaVersion,
+    ruleResolution: settings.policy.ruleResolution,
     contexts: settings.policy.contexts,
     namespaces: settings.policy.namespaces,
     rules: settings.policy.rules,
     deniedPaths: settings.policy.deniedPaths,
+    allowedFields: settings.policy.allowedFields,
     writes: phase === 'plan' ? [] : normalized.writes,
   };
 }
@@ -536,30 +535,23 @@ export function patchToolInPolicy(toolId: string, enabled: boolean, policy: Agen
       case 'get_logs':
         next.logs = true;
         break;
-      case 'get_node_diagnostics':
-        next.resources = true;
-        next.clusterResources = true;
-        break;
       case 'get_events':
-      case 'get_events_timeline':
         next.events = true;
         break;
       case 'get_metrics':
         next.metrics = true;
         break;
-      case 'list_helm_releases':
-      case 'get_helm_release':
+      case 'helm':
         if (next.helm === 'disabled') next.helm = 'auto';
         break;
-      case 'list_argocd_apps':
-      case 'get_argocd_app':
+      case 'gitops':
         next.resources = true;
-        if (next.argocd === 'disabled') next.argocd = 'auto';
+        if (next.argocd === 'disabled' && next.flux === 'disabled') {
+          next.argocd = 'auto';
+          next.flux = 'auto';
+        }
         break;
-      case 'list_flux_resources':
-      case 'get_flux_resource':
-        next.resources = true;
-        if (next.flux === 'disabled') next.flux = 'auto';
+      case 'propose_manifests':
         break;
       default:
         next.resources = true;
@@ -578,33 +570,21 @@ export interface McpToolCatalogEntry {
 }
 
 export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
-  { id: 'diagnose_resource', label: 'Diagnose resource', group: 'read', description: 'Comprehensive health bundle: status, relationships, recent warning events, and logs of failing containers' },
-  { id: 'get_resource', label: 'Get resource', group: 'read', description: 'Read a specific Kubernetes resource manifest or selected fields by group, version, kind and name' },
-  { id: 'list_resources', label: 'List resources', group: 'read', description: 'List resources with label and field selectors, namespace filtering, and cursor pagination' },
-  { id: 'summarize_resources', label: 'Summarize resources', group: 'read', description: 'Generate high-level counts, status breakdown and example objects for a resource kind' },
-  { id: 'list_namespaces', label: 'List namespaces', group: 'read', description: 'Discover accessible namespaces in the connected cluster' },
-  { id: 'get_neighborhood', label: 'Neighborhood graph', group: 'read', description: 'Traverse owner references, parent controllers, linked services, pods, and storage relationships' },
-  { id: 'get_pod_diagnostics', label: 'Pod diagnostics', group: 'read', description: 'Detailed pod health: container states, probe failures, restart reasons, and scheduling errors' },
-  { id: 'get_workload_diagnostics', label: 'Workload diagnostics', group: 'read', description: 'Deployment, StatefulSet or DaemonSet rollout status, conditions, revisions, and replica mismatch' },
-  { id: 'get_service_diagnostics', label: 'Service diagnostics', group: 'read', description: 'Inspect Service ports, selector matching, EndpointSlices, and ready backend pods' },
-  { id: 'get_pvc_diagnostics', label: 'PVC diagnostics', group: 'read', description: 'PersistentVolumeClaim binding status, StorageClass capacity, volume attributes, and mount events' },
-  { id: 'get_node_diagnostics', label: 'Node diagnostics', group: 'read', description: 'Node conditions (Ready, MemoryPressure, DiskPressure), taints, allocatable capacity, and daemon pods' },
-  { id: 'get_config_diagnostics', label: 'Config reference diagnostics', group: 'read', description: 'Validate presence and keys of referenced ConfigMaps and Secrets without exposing values' },
-  { id: 'resource_catalog', label: 'Resource catalog', group: 'read', description: 'Explore available API resource types, preferred API versions, and installed CRDs' },
-  { id: 'get_events', label: 'Get events', group: 'read', description: 'Fetch recent Kubernetes warning and informational events in a namespace' },
-  { id: 'get_events_timeline', label: 'Events timeline', group: 'read', description: 'Chronological timeline of events with deduplication and frequency counts' },
-  { id: 'get_logs', label: 'Pod logs', group: 'read', description: 'Stream container logs with support for tail lines, timestamps, and previous crash logs' },
-  { id: 'get_metrics', label: 'Pod and Node metrics', group: 'read', description: 'Read CPU/RAM usage, requests, limits and bounded Node allocations' },
-  { id: 'list_helm_releases', label: 'List Helm releases', group: 'read', description: 'List deployed Helm releases across permitted namespaces' },
-  { id: 'get_helm_release', label: 'Get Helm release', group: 'read', description: 'Inspect Helm release values, revision history, release manifest, and chart metadata' },
-  { id: 'list_argocd_apps', label: 'List Argo CD apps', group: 'read', description: 'List Argo CD applications, sync status, and destination clusters' },
-  { id: 'get_argocd_app', label: 'Get Argo CD app', group: 'read', description: 'Argo CD application health, sync state, Git source repo, revision, and managed resource tree' },
-  { id: 'list_flux_resources', label: 'List Flux resources', group: 'read', description: 'List Flux Kustomizations, HelmReleases, and GitRepositories' },
-  { id: 'get_flux_resource', label: 'Get Flux resource', group: 'read', description: 'Inspect Flux resource reconciliation status, applied commit, and dependency health' },
+  { id: 'cluster_info', label: 'Cluster info & triage', group: 'read', description: 'Active session/policy orientation, namespace discovery, API/CRD catalog, and bounded cluster-wide problem triage' },
+  { id: 'diagnose_resource', label: 'Diagnose resource', group: 'read', description: 'Universal deep diagnostics: kind-specific health/describe (Pod, Workload, Service, PVC, Node), config reference checks, controller revision diff, neighborhood, events, metrics and failing container logs' },
+  { id: 'get_resource', label: 'Get resource', group: 'read', description: 'Read one exact Kubernetes resource manifest or selected fields by group, version, kind and name' },
+  { id: 'list_resources', label: 'List resources', group: 'read', description: 'Page resources in one namespace, across all permitted namespaces (*), or cluster-wide with label/field selectors' },
+  { id: 'summarize_resources', label: 'Summarize resources', group: 'read', description: 'Aggregate bounded pages into counts and examples grouped by phase, nodeName, image, health or reason' },
+  { id: 'get_neighborhood', label: 'Neighborhood graph', group: 'read', description: 'Traverse owner references, parent controllers, linked services, EndpointSlices, pods, and storage relationships' },
+  { id: 'get_events', label: 'Events & timeline', group: 'read', description: 'Read raw paginated Kubernetes events or deduplicated sorted timelines across one or all permitted namespaces (*)' },
+  { id: 'get_logs', label: 'Pod logs', group: 'read', description: 'Stream bounded container logs (up to 5000 lines) with error condensing, literal search, case-insensitive matching and context lines' },
+  { id: 'get_metrics', label: 'Pod and Node metrics', group: 'read', description: 'Read current and historical CPU/RAM usage, requests, limits and Node heavy-Pod allocations' },
+  { id: 'helm', label: 'Helm inspection & preview', group: 'read', description: 'List releases, inspect storage revisions/conflicts without Secret values, read release values (with helmValues toggle), or preview chart templates' },
+  { id: 'gitops', label: 'GitOps (Argo CD & Flux)', group: 'read', description: 'Inspect Argo CD Applications and Flux Kustomizations, HelmReleases and source repositories with automatic API version resolution' },
   { id: 'verify_workload', label: 'Verify workload', group: 'read', description: 'Verify controller state, generation, and replica availability following a mutation' },
-  { id: 'get_evidence', label: 'Get evidence', group: 'read', description: 'Retrieve diagnostic bundle gathered in an earlier step of this investigation' },
-  { id: 'set_working_scope', label: 'Set working scope', group: 'read', description: 'Set current active namespace and target root resource for the session' },
-  { id: 'propose_manifests', label: 'Propose manifests', group: 'read', description: 'Generate and review proposed Kubernetes manifests without applying them' },
+  { id: 'get_evidence', label: 'Get evidence', group: 'read', description: 'Retrieve diagnostic evidence gathered in an earlier step of this investigation' },
+  { id: 'set_working_scope', label: 'Set working scope', group: 'read', description: 'Set default namespace, selector and root resource anchor for subsequent queries' },
+  { id: 'propose_manifests', label: 'Propose & dry-run manifests', group: 'read', description: 'Preview proposed YAML without applying it, with optional dry-run validation' },
   { id: 'apply_manifest', label: 'Apply manifest', group: 'write', description: 'Server-side apply Kubernetes manifest (create or update resources)' },
   { id: 'scale_workload', label: 'Scale workload', group: 'write', description: 'Scale replica count of a Deployment, StatefulSet, or ReplicaSet' },
   { id: 'restart_workload', label: 'Restart workload', group: 'write', description: 'Trigger rolling restart of a Deployment, DaemonSet, or StatefulSet' },

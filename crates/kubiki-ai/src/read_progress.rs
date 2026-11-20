@@ -5,12 +5,7 @@ fn target(call: &ToolCall) -> Option<Value> {
     let a = &call.arguments;
     let name = a["name"].as_str()?;
     let (group, version, kind) = match call.name.as_str() {
-        "get_pod_diagnostics" => ("", "v1", "Pod"),
-        "get_workload_diagnostics"
-        | "get_config_diagnostics"
-        | "get_resource"
-        | "get_neighborhood"
-        | "diagnose_resource" => (
+        "get_resource" | "get_neighborhood" | "diagnose_resource" => (
             a["group"].as_str().unwrap_or(""),
             a["version"].as_str()?,
             a["kind"].as_str()?,
@@ -64,7 +59,7 @@ mod tests {
             arguments: args.clone(),
         };
         let mut history = vec![Turn::User("diagnose pod".into())];
-        for name in ["get_config_diagnostics", "get_workload_diagnostics"] {
+        for name in ["diagnose_resource", "get_neighborhood"] {
             history.push(Turn::Tool {
                 call: call(name),
                 result: json!({"error":"Resource not found (HTTP 404)"}),

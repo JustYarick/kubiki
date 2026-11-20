@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from '../../providers/diagnostic_invoke';
 import type { ToolCall, AgentEvent, AgentMode, AgentPhase, AgentScope, AiSettings, AutoConfigureResult, ClusterCapabilities, GenerationOptions, McpHttpStatus, ModelInfo, SessionView, SettingsView } from './types';
 import { OpenCodeNotStartedError } from '../../providers/tauri_exec';
 
@@ -7,7 +8,7 @@ export function agentError(error: unknown): string {
 }
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!desktopAiAvailable()) throw new Error('AI connections and cluster tools are available in the desktop app.');
-  const { invoke } = await import('@tauri-apps/api/core');
+  const invoke = diagnosticInvoke;
   return invoke<T>(command, args);
 }
 export const agentTransport = {
@@ -38,7 +39,7 @@ export const agentTransport = {
   previewPolicy: (request: { policy: AiSettings['policy']; scope: AgentScope; target: {group:string;version:string;kind:string;namespace:string|null;name:string}; mode:AgentMode;phase:AgentPhase;operation?:string }) => invoke<{explanation:{allowed:boolean;explanation:string;dataAccess:string;writeAllowed:boolean};issues:Array<{ruleIndex:number;kind:string;message:string}>}>('ai_preview_policy', { request }),
   reviewPlan: (sessionId:string,planId:string,version:number,stepIds:string[]) => invoke<{reviewToken:string;plan:import('./types').PlanArtifact;steps:Array<{stepId:string;target:{kind:string;namespace:string|null;name:string};operation:string;call:ToolCall}>}>('ai_review_plan',{request:{sessionId,planId,version,stepIds}}),
   async executePlan(sessionId:string,reviewToken:string,receive:(event:AgentEvent)=>void) {
-    const {invoke,Channel}=await import('@tauri-apps/api/core');const onEvent=new Channel<AgentEvent>();onEvent.onmessage=receive;
+    const { Channel } = await import('@tauri-apps/api/core'); const invoke = diagnosticInvoke;const onEvent=new Channel<AgentEvent>();onEvent.onmessage=receive;
     try{return await invoke<Record<string,unknown>>('ai_execute_plan',{request:{sessionId,reviewToken},onEvent});}
     finally {onEvent.onmessage=()=>{};const w=window as unknown as {__TAURI_INTERNALS__?:{unregisterCallback?:(id:number)=>void}};w.__TAURI_INTERNALS__?.unregisterCallback?.(onEvent.id);}
   },
@@ -52,7 +53,7 @@ export const agentTransport = {
   stop: (sessionId: string, close = false) => invoke<void>('ai_stop', { sessionId, close }),
   async send(sessionId: string, message: string, receive: (event: AgentEvent) => void): Promise<void> {
     if (!desktopAiAvailable()) throw new Error('Open the desktop app to send AI messages.');
-    const { invoke, Channel } = await import('@tauri-apps/api/core');
+    const { Channel } = await import('@tauri-apps/api/core'); const invoke = diagnosticInvoke;
     const onEvent = new Channel<AgentEvent>();
     let text = ''; let timer: ReturnType<typeof setTimeout> | undefined;
     const flush = () => { if (timer) clearTimeout(timer); timer = undefined; if (text) { const value = text; text = ''; receive({ type: 'text_delta', text: value }); } };

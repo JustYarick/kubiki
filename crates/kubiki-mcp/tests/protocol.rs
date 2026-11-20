@@ -419,3 +419,142 @@ async fn dynamic_scope_rebinds_live_mcp_session_without_disconnect() {
     let _ = client.cancel().await;
     let _ = service.cancel().await;
 }
+
+#[tokio::test]
+async fn host_owned_server_runs_parallel_reads_concurrently() {
+    struct BarrierRead(Arc<tokio::sync::Barrier>);
+    #[async_trait::async_trait]
+    impl ToolExecutor for BarrierRead {
+        async fn execute(
+            &self,
+            _: &Session,
+            call: &ToolCall,
+            _: &EventSink,
+        ) -> Result<serde_json::Value, String> {
+            self.0.wait().await;
+            Ok(json!({"name": call.arguments["name"]}))
+        }
+    }
+    let server = ClusterServer::new(
+        session(),
+        Arc::new(BarrierRead(Arc::new(tokio::sync::Barrier::new(2)))),
+        Arc::new(|_| {}),
+        true,
+    );
+    let (c, s) = tokio::io::duplex(65536);
+    let (client, service) = tokio::join!(().serve(c), server.clone().serve(s));
+    let client = client.unwrap();
+    let service = service.unwrap();
+    let p1 = client.peer().clone();
+    let p2 = client.peer().clone();
+    let (r1, r2) = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::join!(
+            p1.call_tool(
+                CallToolRequestParams::new("get_resource")
+                    .with_arguments(serde_json::from_value(json!({"name":"first"})).unwrap())
+            ),
+            p2.call_tool(
+                CallToolRequestParams::new("list_resources")
+                    .with_arguments(serde_json::from_value(json!({"name":"second"})).unwrap())
+            )
+        )
+    })
+    .await
+    .expect("Two host_owned read tools must run concurrently without serializing");
+    assert_eq!(r1.unwrap().structured_content.unwrap()["name"], "first");
+    assert_eq!(r2.unwrap().structured_content.unwrap()["name"], "second");
+    let _ = client.cancel().await;
+    let _ = service.cancel().await;
+}
+
+#[tokio::test]
+async fn server_info_annotations_resources_and_prompts_conform_to_mcp_spec() {
+    let base = session();
+    let session = Session::new(
+        base.id.clone(),
+        base.owner.clone(),
+        base.scope.clone(),
+        AgentPolicy {
+            writes: vec![
+                WriteOperation::Create,
+                WriteOperation::Scale,
+                WriteOperation::Restart,
+                WriteOperation::Delete,
+            ],
+            ..Default::default()
+        },
+        ClusterCapabilities::all(),
+    );
+    session.mode(AgentMode::Accept).unwrap();
+    session.phase(AgentPhase::Action).unwrap();
+    let server = ClusterServer::new(session, Arc::new(Fake::default()), Arc::new(|_| {}), true);
+    let (c, s) = tokio::io::duplex(65536);
+    let (client, service) = tokio::join!(().serve(c), server.clone().serve(s));
+    let client = client.unwrap();
+    let service = service.unwrap();
+
+    // serverInfo must report kubiki-mcp, not rmcp
+    let info = client.peer().peer_info().unwrap();
+    assert_eq!(info.server_info.as_ref().unwrap().name, "kubiki-mcp");
+    assert!(info.capabilities.resources.is_some());
+    assert!(info.capabilities.prompts.is_some());
+
+    // Accurate ToolAnnotations & titles
+    let tools = client.peer().list_all_tools().await.unwrap();
+    let find = |n: &str| tools.iter().find(|t| t.name == n).expect(n);
+    let get_res = find("get_resource");
+    assert!(get_res.title.is_some());
+    assert_eq!(get_res.annotations.as_ref().unwrap().read_only_hint, Some(true));
+    assert_eq!(get_res.annotations.as_ref().unwrap().destructive_hint, None);
+    let scale = find("scale_workload");
+    assert_eq!(scale.annotations.as_ref().unwrap().read_only_hint, Some(false));
+    assert_eq!(scale.annotations.as_ref().unwrap().destructive_hint, Some(false));
+    assert_eq!(scale.annotations.as_ref().unwrap().idempotent_hint, Some(true));
+    let del = find("delete_resource");
+    assert_eq!(del.annotations.as_ref().unwrap().destructive_hint, Some(true));
+    assert_eq!(del.annotations.as_ref().unwrap().idempotent_hint, Some(false));
+
+    // Resources: kubiki://session/info & kubiki://evidence/{id}
+    let resources = client.peer().list_resources(None).await.unwrap();
+    assert!(resources.resources.iter().any(|r| r.uri == "kubiki://session/info"));
+    let session_res = client
+        .peer()
+        .read_resource(rmcp::model::ReadResourceRequestParams::new("kubiki://session/info"))
+        .await
+        .unwrap();
+    assert_eq!(session_res.contents.len(), 1);
+
+    let call = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("get_resource").with_arguments(serde_json::Map::new()))
+        .await
+        .unwrap();
+    let ev_id = call.structured_content.unwrap()["evidenceId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let ev_res = client
+        .peer()
+        .read_resource(rmcp::model::ReadResourceRequestParams::new(format!(
+            "kubiki://evidence/{ev_id}"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(ev_res.contents.len(), 1);
+
+    // Prompts
+    let prompts = client.peer().list_prompts(None).await.unwrap();
+    assert!(prompts.prompts.iter().any(|p| p.name == "debug-node-pressure"));
+    let prompt = client
+        .peer()
+        .get_prompt(
+            rmcp::model::GetPromptRequestParams::new("debug-node-pressure")
+                .with_arguments(serde_json::from_value(json!({"node":"worker-1"})).unwrap()),
+        )
+        .await
+        .unwrap();
+    assert!(!prompt.messages.is_empty());
+
+    let _ = client.cancel().await;
+    let _ = service.cancel().await;
+}

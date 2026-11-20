@@ -12,10 +12,12 @@ import { useDockStore } from './dock_store';
 import { inNamespaceScope, mergeNamespaceScopes, namespaceScopeCovers, namespaceNames } from '../core/resources/namespace_scope';
 import { useResourceRequirements } from './resource_requirements';
 import { useDetailCache } from './detail_cache';
+import { resetStaleRefreshToasts } from './stale_error_toast';
 
 let session: ResourceWatchSession | undefined;
 let unsubscribers: (() => void)[] = [];
 let countsController: AbortController | undefined;
+let countsTimer: ReturnType<typeof setTimeout> | undefined;
 
 function eventsAreTargeted(): boolean {
   return Boolean(
@@ -39,19 +41,22 @@ export function syncResourceCounts(context: string, namespace: string): Promise<
     .filter(type => {
       if (available && !available.includes(type.kind)) return false;
       const snapshot = watchStates[type.kind];
-      return !snapshot?.hasSnapshot || snapshot.query.context !== context || type.namespaced && !namespaceScopeCovers(snapshot.query.namespace ?? 'all', namespace);
+      const suppliesCount = snapshot && (snapshot.hasSnapshot || snapshot.phase === 'connecting' || snapshot.phase === 'syncing');
+      return !suppliesCount || snapshot.query.context !== context || type.namespaced && !namespaceScopeCovers(snapshot.query.namespace ?? 'all', namespace);
     })
     .map(type => type.kind as ResourceKind);
+  if (!kinds.length) return Promise.resolve();
   return k8s.getResourceCounts(context, kinds, namespace, controller.signal).then((counts) => {
     if (controller.signal.aborted || useClusterStore.getState().currentContext !== context || useClusterStore.getState().selectedNamespace !== namespace) return;
     useResourceStore.getState().setResourceCounts(counts);
   }).catch(() => {});
 }
 
-export function stopResourceWatches(): void { countsController?.abort(); countsController = undefined; unsubscribers.forEach(close => close()); unsubscribers = []; session?.stop(); session = undefined; }
+export function stopResourceWatches(): void { clearTimeout(countsTimer); countsTimer = undefined; countsController?.abort(); countsController = undefined; unsubscribers.forEach(close => close()); unsubscribers = []; session?.stop(); session = undefined; }
 export async function startResourceWatches(context: string): Promise<PromiseSettledResult<void>[]> {
   stopResourceWatches();
   useDetailCache.getState().clear(context);
+  resetStaleRefreshToasts();
   const provider: ResourceWatchProvider = k8s.supportsResourceWatch ? k8s : {
     managesInitialSyncTimeout: true,
     // Browser reads are also demand-driven. They refresh explicitly without
@@ -72,7 +77,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
           }
         : null;
       if (!signal.aborted) emit({ query, subscription_id: 'snapshot', messages: [
-        { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: items.map(item => item.raw!) } } } },
+        { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: items.map(item => item.readProjection === 'summary' ? { ...item.raw!, _kubikiSummary: { dataKeys: item.dataKeys ?? 0 } } : item.raw!) } } } },
         { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: partialError } } },
       ] });
       return () => {};
@@ -114,6 +119,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
       }
     }
   }, useClusterStore.getState().selectedNamespace, new Set(), (query, allowPartial) => {
+    if (useUiStore.getState().resourceCacheMode === 'always-fresh') return undefined;
     const state = useResourceStore.getState();
     const snapshot = state.watchStates[query.kind as ResourceKind];
     if (!snapshot || snapshot.query.context !== query.context || !allowPartial && (!snapshot.hasSnapshot || !namespaceScopeCovers(snapshot.query.namespace ?? 'all', query.namespace ?? 'all'))) return;
@@ -133,7 +139,10 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     const extra = requirements.flatMap(entry => entry.kinds);
     for (const entry of requirements) for (const kind of entry.kinds) {
       const type = RESOURCE_TYPES.find(type => type.kind === kind);
-      if (type) demand.scopes.set(kind, mergeNamespaceScopes(demand.scopes.get(kind), type.namespaced ? entry.namespace : 'all'));
+      if (type) {
+        demand.scopes.set(kind, mergeNamespaceScopes(demand.scopes.get(kind), type.namespaced ? entry.namespace : 'all'));
+        if (!demand.priorities.has(kind)) demand.priorities.set(kind, 'low');
+      }
     }
     const kinds = [...new Set([...demand.kinds, ...extra])].filter(kind => {
       const type = RESOURCE_TYPES.find(type => type.kind === kind);
@@ -147,7 +156,16 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     const key = JSON.stringify([kinds, [...demand.clusterKinds], [...demand.scopes]]);
     if (key === demandKey) return Promise.resolve([]);
     demandKey = key;
-    return next.setKinds(kinds, demand.clusterKinds, demand.scopes);
+    return next.setKinds(kinds, demand.clusterKinds, demand.scopes, demand.priorities);
+  };
+  const scheduleCounts = (ns: string) => {
+    clearTimeout(countsTimer);
+    countsController?.abort();
+    countsTimer = setTimeout(() => {
+      countsTimer = undefined;
+      if (session !== next || useClusterStore.getState().currentContext !== context || useClusterStore.getState().selectedNamespace !== ns) return;
+      void syncResourceCounts(context, ns);
+    }, 150);
   };
   let scheduled = false;
   const schedule = () => {
@@ -158,15 +176,20 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
   unsubscribers = [useClusterStore.subscribe((state, previous) => {
     if (session === next && state.currentContext === context && state.selectedNamespace !== previous.selectedNamespace) {
       void next.setNamespace(state.selectedNamespace);
-      schedule();
-      void syncResourceCounts(context, state.selectedNamespace);
+      void synchronize();
+      scheduleCounts(state.selectedNamespace);
     }
   }), useWorkspaceStore.subscribe(schedule), useUiStore.subscribe(schedule), useDockStore.subscribe(schedule), useResourceRequirements.subscribe(schedule), useResourceStore.subscribe((state, previous) => {
     if (state.selectedItem !== previous.selectedItem) schedule();
   })];
   useResourceStore.getState().setSyncMode(k8s.supportsResourceWatch ? 'watch' : 'snapshot');
-  void syncResourceCounts(context, useClusterStore.getState().selectedNamespace);
-  return synchronize();
+  const ready = synchronize();
+  scheduleCounts(useClusterStore.getState().selectedNamespace);
+  return ready;
+}
+export function discardStaleResourceKind(kind: ResourceKind): void {
+  session?.clearSnapshot(kind);
+  useResourceStore.getState().discardStaleResources(kind);
 }
 export async function refreshResourceWatches(kind?: ResourceKind): Promise<boolean> {
   if (!session) return false;

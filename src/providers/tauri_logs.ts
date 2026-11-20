@@ -1,3 +1,4 @@
+import { diagnosticInvoke } from './diagnostic_invoke';
 import type { ResourceRef } from '../core/resources/resource_types';
 import { normalizeK8sError, requestError } from './errors';
 
@@ -24,7 +25,7 @@ export async function fetchLogSlice(params: LogSliceParams, signal?: AbortSignal
     throw requestError('unsupported', 'Live Pod logs require the desktop app.', info);
   }
   if (signal?.aborted) throw requestError('timeout', 'Log read was cancelled', info);
-  const { invoke } = await import('@tauri-apps/api/core');
+  const invoke = diagnosticInvoke;
   try {
     const text = await invoke<unknown>('get_pod_log_slice', { request: params });
     if (typeof text !== 'string') throw requestError('internal', 'Log reader returned an invalid slice', info, 500);

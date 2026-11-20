@@ -4,7 +4,14 @@ import { DEV_FEED_TAG, publishDevUpdateFeed } from '../../scripts/dev-update-fee
 import { reconcileUpdateManifest } from '../../scripts/desktop-release.mjs';
 
 function fixture(tag = 'v1.0.0-dev.10') {
-  const packages = ['kubiki.AppImage', 'kubiki-setup.exe', 'kubiki_aarch64.app.tar.gz', 'kubiki_x64.app.tar.gz'];
+  const packages = [
+    'kubiki_amd64.AppImage',
+    'kubiki_aarch64.AppImage',
+    'kubiki_x64-setup.exe',
+    'kubiki_arm64-setup.exe',
+    'kubiki_aarch64.app.tar.gz',
+    'kubiki_x64.app.tar.gz',
+  ];
   const assets = packages.flatMap(name => [{ name, size: 1000 }, { name: `${name}.sig`, size: 100 }]);
   const signatures = Object.fromEntries(packages.map(name => [`${name}.sig`, `signature-${name}`]));
   return { tag, sha: 'a'.repeat(40), assets, manifest: reconcileUpdateManifest(null, tag, assets, signatures) };

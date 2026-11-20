@@ -24,7 +24,7 @@ export function PodPerformanceBlock({ item, metrics, paused, onPausedChange }: {
       <Button size="sm" aria-label="Refresh pod metrics" disabled={paused || metrics.loading || !metrics.namespace} onClick={metrics.refresh}><RefreshCw size={12} aria-hidden="true" /></Button>
     </div>
     {(metrics.error || metrics.stale || (!hasMetrics && !metrics.loading)) && <p role="status" className="telemetry-notice">{metrics.error ?? (metrics.stale ? 'Pod metrics are stale; showing the last observation.' : 'No metrics for this Pod. Pending or recently started Pods may not have samples yet. Check Metrics Server and permission to read pods.metrics.k8s.io.')}</p>}
-    {hasMetrics && <div className="telemetry-metrics">{(['cpu', 'memory'] as const).map(dimension => {
+    <div className="telemetry-metrics">{(['cpu', 'memory'] as const).map(dimension => {
       const budget = podBudget(item, dimension);
       const value = metrics.usage[dimension];
       const format = dimension === 'cpu' ? cpuText : memoryText;
@@ -32,9 +32,9 @@ export function PodPerformanceBlock({ item, metrics, paused, onPausedChange }: {
       return <section key={dimension} aria-label={`Pod ${dimension === 'cpu' ? 'CPU' : 'RAM'} performance`} className="telemetry-metric" style={{ '--telemetry-color': `var(--chart-${dimension})` } as React.CSSProperties}>
         <div className="telemetry-metric-heading"><h3>{dimension === 'cpu' ? <Cpu size={14} aria-hidden="true" /> : <MemoryStick size={14} aria-hidden="true" />}{dimension === 'cpu' ? 'CPU' : 'RAM'}</h3><span className="telemetry-value">{format(value)}</span><span className="telemetry-utilization">{percent === null ? 'Usage / limit unavailable' : `${percent.toFixed(1)}% of limit`}</span></div>
         <p className="details-caption">Requests {format(budget.request)} · Limit {budget.limit === null ? 'Unbounded / unavailable' : format(budget.limit)}</p>
-        <HistoryChart history={metrics.history} dimension={dimension} minutes={range} reference={fixed ? budget.limit : null} />
+        {hasMetrics && <HistoryChart history={metrics.history} dimension={dimension} minutes={range} reference={fixed ? budget.limit : null} />}
       </section>;
-    })}</div>}
+    })}</div>
     <p className="telemetry-footnote">{metrics.loading ? 'Refreshing…' : paused ? 'Paused' : 'Metrics API · 15s sampling'} · {metrics.sample ? `Source ${new Date(metrics.sample.timestamp).toLocaleTimeString()} · CPU averaging window ${metrics.sample.window} · ${metrics.sample.containers.length} measured containers` : 'Waiting for the first measurement'} · {metrics.history.length} samples</p>
   </DetailsSection>;
 }

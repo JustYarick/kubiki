@@ -5,12 +5,12 @@ import { captureScreenshot } from './helpers/screenshots';
 async function setup(page: Page, unavailable = false) {
   const base = Date.now() - 1000;
   let generation = 0;
-  const pod = (name: string, namespace: string) => ({ apiVersion: 'v1', kind: 'Pod', metadata: { uid: `${namespace}-${name}`, name, namespace, creationTimestamp: new Date(base - 3600000).toISOString() }, spec: { nodeName: 'worker-a', containers: [
+  const pod = (name: string, namespace: string) => ({ apiVersion: 'v1', kind: 'Pod', metadata: { uid: `${namespace}-${name}`, name, namespace, creationTimestamp: new Date(base - 3600000).toISOString() }, spec: { nodeName: name === 'qdrant-0' ? undefined : 'worker-a', containers: [
     { name: 'app', image: 'app:latest', resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '1', memory: '512Mi' } } },
   ], initContainers: [
     { name: 'migrate', image: 'migrate:latest', resources: { requests: { cpu: '20m', memory: '32Mi' }, limits: { cpu: '100m', memory: '64Mi' } } },
     { name: 'sidecar', image: 'sidecar:latest', restartPolicy: 'Always', ports: [{ containerPort: 15090, name: 'metrics' }], resources: { requests: { cpu: '50m', memory: '32Mi' }, limits: { cpu: '500m', memory: '256Mi' } }, readinessProbe: { httpGet: { path: '/ready', port: 15090 } }, volumeMounts: [{ name: 'config', mountPath: '/etc/sidecar' }] },
-  ], ephemeralContainers: [{ name: 'debug', image: 'debug:latest' }] }, status: { phase: 'Running', containerStatuses: [{ name: 'app', ready: true, restartCount: 0, state: { running: {} } }], initContainerStatuses: [
+  ], ephemeralContainers: [{ name: 'debug', image: 'debug:latest' }] }, status: { phase: name === 'qdrant-0' ? 'Pending' : 'Running', ...(name === 'qdrant-0' ? { nominatedNodeName: 'worker-b', conditions: [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable', message: 'Waiting for preemption on worker-b' }] } : {}), containerStatuses: [{ name: 'app', ready: true, restartCount: 0, state: { running: {} } }], initContainerStatuses: [
     { name: 'sidecar', ready: true, restartCount: 3, state: { running: {} }, lastState: { terminated: { reason: 'OOMKilled', exitCode: 137 } } },
     { name: 'migrate', ready: false, restartCount: 0, state: { terminated: { reason: 'Completed', exitCode: 0 } } },
   ], ephemeralContainerStatuses: [{ name: 'debug', ready: false, restartCount: 0, state: { terminated: { reason: 'Completed', exitCode: 0 } } }] } });
@@ -29,7 +29,34 @@ async function setup(page: Page, unavailable = false) {
       ];
       return route.fulfill({ json: { context: 'test', namespace, pods: unavailable ? { items: null, error: { code: 'forbidden', message: 'Pod metrics access denied', operation: 'metrics', retryable: false } } : { items: metrics.filter(item => !namespace || item.namespace === namespace), error: null }, nodes: { items: null, error: null } } });
     }
-    const items = kind === 'Namespace' ? namespaceList(['alpha', 'beta']).items : kind === 'Pod' ? [pod('web-alpha', 'alpha'), pod('neighbor', 'alpha'), pod('web-alpha', 'beta')] : [];
+    const dsPendingPod = {
+      apiVersion: 'v1',
+      kind: 'Pod',
+      metadata: {
+        uid: 'alpha-ds-agent-worker-c',
+        name: 'ds-agent-worker-c',
+        namespace: 'alpha',
+        creationTimestamp: new Date(base - 1800000).toISOString(),
+        ownerReferences: [{ apiVersion: 'apps/v1', kind: 'DaemonSet', name: 'ds-agent', uid: 'ds-uid', controller: true }],
+      },
+      spec: {
+        affinity: {
+          nodeAffinity: {
+            requiredDuringSchedulingIgnoredDuringExecution: {
+              nodeSelectorTerms: [
+                { matchFields: [{ key: 'metadata.name', operator: 'In', values: ['worker-c'] }] },
+              ],
+            },
+          },
+        },
+        containers: [{ name: 'agent', image: 'agent:latest' }],
+      },
+      status: {
+        phase: 'Pending',
+        conditions: [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable', message: '0/3 nodes are available: 1 node(s) were unschedulable' }],
+      },
+    };
+    const items = kind === 'Namespace' ? namespaceList(['alpha', 'beta']).items : kind === 'Pod' ? [pod('web-alpha', 'alpha'), pod('neighbor', 'alpha'), pod('qdrant-0', 'alpha'), dsPendingPod, pod('web-alpha', 'beta')] : [];
     return route.fulfill({ json: { items: items.filter(item => !namespace || !('namespace' in item.metadata) || item.metadata.namespace === namespace) } });
   });
   await page.goto('/');
@@ -148,7 +175,7 @@ test('Unavailable Pod metrics explain the failure and keep charts empty', async 
   await expect(performance.getByRole('status')).toContainText('Pod metrics access denied');
   for (const dimension of ['CPU', 'RAM']) {
     const metric = performance.getByRole('region', { name: `Pod ${dimension} performance`, exact: true });
-    await expect(metric).toHaveCount(0);
+    await expect(metric).toContainText(dimension === 'CPU' ? 'Requests 150m' : 'Requests 160 MiB');
     await expect(performance.getByRole('img', { name: `${dimension} usage history`, exact: true })).toHaveCount(0);
   }
   const containers = details.getByRole('region', { name: 'Containers', exact: true });
@@ -172,4 +199,38 @@ test('A narrow inspector at 200% UI scale keeps rows readable and labels last ob
   await expect(details.getByRole('region', { name: 'Pod performance', exact: true }).getByRole('status')).toContainText('Pod metrics access denied');
   await expect(containers.locator('.container-card-stale')).toHaveCount(2);
   await expect(containers.getByRole('group', { name: 'Usage for sidecar', exact: true })).toContainText('100m');
+});
+
+test('selecting a matching Pod preserves its literal filter', async ({ page }) => {
+  await setup(page);
+  const filter = page.getByTestId('resource-search-toolbar').getByRole('textbox');
+  await expect(filter).toHaveAttribute('autocorrect', 'off');
+  await filter.fill('qdrant');
+  await page.getByTestId('resource-table').getByText('qdrant-0', { exact: true }).click();
+  await expect(page.getByTestId('resource-details').locator('.details-title')).toHaveText('qdrant-0');
+  await expect(filter).toHaveValue('qdrant');
+  const summary = page.getByRole('region', { name: 'Pod summary' });
+  await expect(summary).toContainText('Awaiting assignment');
+  await expect(summary).toContainText('worker-b');
+  await expect(summary).toContainText('Waiting for preemption on worker-b');
+});
+
+test('pending DaemonSet pod displays its pinned target node in both table and Pod details', async ({ page }) => {
+  await setup(page);
+  const filter = page.getByTestId('resource-search-toolbar').getByRole('textbox');
+  await filter.fill('worker-c');
+  const table = page.getByTestId('resource-table');
+  await expect(table).toContainText('ds-agent-worker-c');
+  await expect(table).toContainText('worker-c');
+  await table.getByText('ds-agent-worker-c', { exact: true }).click();
+  const details = page.getByTestId('resource-details');
+  await expect(details.locator('.details-title')).toHaveText('ds-agent-worker-c');
+  const summary = details.getByRole('region', { name: 'Pod summary' });
+  await expect(summary).toContainText('Awaiting assignment');
+  await expect(summary).toContainText('Target node');
+  await expect(summary).toContainText('worker-c');
+  await expect(summary).toContainText('pinned via nodeAffinity');
+  const scheduling = details.getByRole('region', { name: 'Scheduling constraints' });
+  await expect(scheduling).toContainText('Node Affinity');
+  await expect(scheduling).toContainText('metadata.name=worker-c');
 });

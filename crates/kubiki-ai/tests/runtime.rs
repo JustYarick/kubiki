@@ -519,12 +519,11 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     );
     let plan_tool_names: Vec<String> = plan_tools.iter().map(|t| t.name.clone()).collect();
 
-    assert!(plan_tool_names.contains(&"get_pod_diagnostics".to_string()));
-    assert!(plan_tool_names.contains(&"get_workload_diagnostics".to_string()));
-    assert!(plan_tool_names.contains(&"get_service_diagnostics".to_string()));
-    assert!(plan_tool_names.contains(&"get_pvc_diagnostics".to_string()));
+    assert!(plan_tool_names.contains(&"cluster_info".to_string()));
+    assert!(plan_tool_names.contains(&"diagnose_resource".to_string()));
+    assert!(plan_tool_names.contains(&"get_neighborhood".to_string()));
     assert!(!plan_tool_names.contains(&"propose_plan".to_string()));
-    assert!(plan_tool_names.contains(&"get_events_timeline".to_string()));
+    assert!(plan_tool_names.contains(&"get_events".to_string()));
     assert!(!plan_tool_names.contains(&"apply_manifest".to_string()));
 
     // Action phase in Ask mode
@@ -536,12 +535,11 @@ async fn deep_diagnostics_tools_are_offered_in_plan_and_action_phases() {
     );
     let action_tool_names: Vec<String> = action_tools.iter().map(|t| t.name.clone()).collect();
 
-    assert!(action_tool_names.contains(&"get_pod_diagnostics".to_string()));
-    assert!(action_tool_names.contains(&"get_workload_diagnostics".to_string()));
-    assert!(action_tool_names.contains(&"get_service_diagnostics".to_string()));
-    assert!(action_tool_names.contains(&"get_pvc_diagnostics".to_string()));
+    assert!(action_tool_names.contains(&"cluster_info".to_string()));
+    assert!(action_tool_names.contains(&"diagnose_resource".to_string()));
+    assert!(action_tool_names.contains(&"get_neighborhood".to_string()));
     assert!(!action_tool_names.contains(&"propose_plan".to_string()));
-    assert!(action_tool_names.contains(&"get_events_timeline".to_string()));
+    assert!(action_tool_names.contains(&"get_events".to_string()));
     assert!(!action_tool_names.contains(&"apply_manifest".to_string()));
 }
 
@@ -563,12 +561,13 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     );
     let plan_names: Vec<String> = plan_tools.iter().map(|t| t.name.clone()).collect();
 
-    assert!(plan_names.contains(&"list_helm_releases".to_string()));
-    assert!(plan_names.contains(&"get_helm_release".to_string()));
-    assert!(plan_names.contains(&"list_argocd_apps".to_string()));
-    assert!(plan_names.contains(&"get_argocd_app".to_string()));
-    assert!(plan_names.contains(&"list_flux_resources".to_string()));
-    assert!(plan_names.contains(&"get_flux_resource".to_string()));
+    assert!(plan_names.contains(&"helm".to_string()));
+    assert!(plan_names.contains(&"gitops".to_string()));
+    let gitops_tool = plan_tools.iter().find(|t| t.name == "gitops").unwrap();
+    assert_eq!(
+        gitops_tool.parameters["properties"]["provider"]["enum"],
+        json!(["argocd", "flux"])
+    );
     assert!(!plan_names.contains(&"sync_argocd_app".to_string()));
     assert!(!plan_names.contains(&"reconcile_flux_resource".to_string()));
 
@@ -597,11 +596,13 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     let auto_tools = tool_definitions(&policy, AgentMode::Ask, AgentPhase::Action, &partial_caps);
     let auto_names: Vec<String> = auto_tools.iter().map(|t| t.name.clone()).collect();
 
-    assert!(auto_names.contains(&"list_helm_releases".to_string()));
-    assert!(auto_names.contains(&"list_argocd_apps".to_string()));
-    assert!(!auto_names.contains(&"list_flux_resources".to_string()));
-    assert!(!auto_names.contains(&"get_flux_resource".to_string()));
-    assert!(!auto_names.contains(&"reconcile_flux_resource".to_string()));
+    assert!(auto_names.contains(&"helm".to_string()));
+    assert!(auto_names.contains(&"gitops".to_string()));
+    let auto_gitops = auto_tools.iter().find(|t| t.name == "gitops").unwrap();
+    assert_eq!(
+        auto_gitops.parameters["properties"]["provider"]["enum"],
+        json!(["argocd"])
+    );
 
     // Disabled in policy: tools should not be offered even if capability is true
     policy.helm = OptionalToolMode::Disabled;
@@ -616,9 +617,8 @@ async fn gitops_and_helm_tools_are_gated_by_policy_and_phase() {
     );
     let disabled_names: Vec<String> = disabled_tools.iter().map(|t| t.name.clone()).collect();
 
-    assert!(!disabled_names.contains(&"list_helm_releases".to_string()));
-    assert!(!disabled_names.contains(&"list_argocd_apps".to_string()));
-    assert!(!disabled_names.contains(&"list_flux_resources".to_string()));
+    assert!(!disabled_names.contains(&"helm".to_string()));
+    assert!(!disabled_names.contains(&"gitops".to_string()));
     assert!(!disabled_names.contains(&"sync_argocd_app".to_string()));
     assert!(!disabled_names.contains(&"reconcile_flux_resource".to_string()));
 }

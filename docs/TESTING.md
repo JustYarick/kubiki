@@ -73,9 +73,10 @@ interval in Performance mode while retaining the saved interval for other
 profiles. AI scenarios verify that rule-matching help changes with its selected
 semantics and that only discovered integrations show a detection label in Auto.
 
-`topology_readiness.test.ts` distinguishes unknown collections from empty
-snapshots, verifies context and namespace coverage, and covers failed,
-unsupported, stopped and demo collections. `topology_loading.spec.ts` delays
+`topology_preferences_and_readiness.test.ts` covers default hidden kinds, rendering profiles,
+and snapshot readiness (distinguishing unknown collections from empty snapshots, verifying context
+and namespace coverage, and handling failed, unsupported, stopped, and demo collections).
+`topology_loading.spec.ts` delays
 individual Kubernetes reads and Helm inventory and counts actual ELK requests:
 the namespace chooser shows only names and does not request diagram collections
 before selection. The first diagram must have one layout after all required inputs settle,
@@ -83,6 +84,19 @@ including a denied API and dependencies discovered on a later focused-graph
 pass. A failed dependency pass must not retry itself. Further scenarios check
 visible/total counters and retain the scene and camera during live structural
 updates, including replacement of shared Helm items by another reader.
+
+`resource_request_contracts.test.ts`, `large_cluster_scale.test.ts`,
+`resource_columns_and_details.test.ts`, and `resource_tabs_and_budgets.spec.ts` protect
+large-cluster behavior and cross-tab contracts:
+- Every built-in Kubernetes kind in `shared/resource-types.json` is verified for mapping, unique
+  columns (including cluster-scoped layouts), detail routing by API group, O(1) bounded watch
+  demand, `'high'` active-tab priority, and zero Secret leakage into non-Secret views.
+- Deterministic property-access counters (`Object.defineProperty`) verify O(N) / O(P + R)
+  complexity across thousands of Pods, ReplicaSets, Jobs, Secrets, Events, and Flux/Helm objects
+  so quadratic regressions fail loudly without CPU-timing flakiness.
+- Browser request-auditing verifies virtualized tables on 1,500 Pods / 600 Secrets, zero N+1
+  single-GET requests on Secret/ConfigMap lists, single-GET hydration on click, lazy Helm document
+  reads, and error-free opening of all core resource tabs and detail views.
 
 The suite uses two workers across independent files. Tests within one file stay
 sequential. On a small machine, use `pnpm test:e2e --workers=1`.
@@ -177,3 +191,18 @@ Keep cancellation, late-response isolation, unsaved-data retention, exact mutati
 identity and process/watch/tunnel cleanup covered even when simplifying layout
 or catalog checks. Do not compensate for broken fixtures with retries, sleeps
 or larger timeouts.
+
+
+## Application diagnostics
+
+`application_diagnostics.test.ts` and `diagnostics_transport.test.ts` verify safe field admission,
+secret/message exclusion, rate and retention bounds, failed console output,
+monotonic configuration, late native replies and failed-clear lease continuity.
+`diagnostics.spec.ts` exercises Developer-mode panel registration/removal, severity
+filters, JSONL export, safe console output and a narrow detail overlay.
+Native `diagnostics` tests use real temporary files and synthetic HTTP services:
+rotation/privacy, I/O failure, nonblocking backpressure, lease revocation and
+trace propagation through the actual kube client wrapper. Core `http_diagnostics`
+tests check discovery/resource/subresource routing and query-value exclusion.
+See [the logging guide](DIAGNOSTICS.md#implementation-and-verification) for commands
+and platform limits. No live cluster writes or paid-provider calls are required.

@@ -173,11 +173,15 @@ test('ConfigMap has independent editors with find, replace, undo, formatting and
   await expect(editor(annotation, 'Original annotation app/config').locator('.view-lines')).toContainText('nested');
 });
 
-test('new resource manifest uses the code editor and stays in sync with identity fields', async ({ page }) => {
+test('new resource manifest uses Form and YAML modes interchangeably and stays in sync with identity fields', async ({ page }) => {
   await setup(page);
   await openResource(page, 'ConfigMap', 'editor-config');
   await page.getByRole('button', { name: 'New', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New ConfigMap', exact: true });
+  // ConfigMap has a dedicated creator form, so it opens in Form mode with a YAML switcher.
+  await expect(dialog.getByRole('button', { name: 'Form', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.getByRole('textbox', { name: 'ConfigMap key 1', exact: true })).toHaveValue('config.yaml');
+  await dialog.getByRole('button', { name: 'YAML', exact: true }).click();
   const manifest = editor(dialog, 'Manifest · YAML');
   await expect(manifest.locator('.view-lines')).toContainText('kind: ConfigMap');
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('new-editor-config');
@@ -187,6 +191,10 @@ test('new resource manifest uses the code editor and stays in sync with identity
   await manifest.getByRole('button', { name: 'Find in Manifest · YAML', exact: true }).click();
   await page.keyboard.type('new value'); await page.keyboard.press('Escape');
   await expect(dialog).toBeVisible();
+  // Switching back to Form reflects edits typed in YAML mode.
+  await dialog.getByRole('button', { name: 'Form', exact: true }).click();
+  await expect(dialog.getByRole('textbox', { name: 'ConfigMap key 1', exact: true })).toHaveValue('key');
+  await expect(dialog.getByRole('textbox', { name: 'ConfigMap value 1', exact: true })).toHaveValue('new value');
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('new-editor-config');
   await dialog.getByRole('button', { name: 'Review & create', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__dataIntents.length)).toBe(1);
@@ -304,4 +312,78 @@ test('Flux Reconcile requests a controller run separately from resetting exhaust
   const intents = await page.evaluate(() => (window as any).__dataIntents);
   expect(intents).toHaveLength(1);
   expect(intents[0].action).toEqual({ type: 'flux_reconcile' });
+});
+
+test('summary-projected Secret watch renders table metadata without data and hydrates full payload on inspect', async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    const summarySecret = {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: { name: 'lazy-secret', uid: 'lazy-uid', namespace: 'apps', resourceVersion: '10' },
+      type: 'Opaque',
+      _kubikiSummary: { dataKeys: 2 },
+    };
+    const fullSecret = {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: { name: 'lazy-secret', uid: 'lazy-uid', namespace: 'apps', resourceVersion: '10' },
+      type: 'Opaque',
+      data: { token: btoa('hydrated-secret-value'), host: btoa('db.internal') },
+    };
+    w.__getResourceCalls = [];
+    let callback = 0;
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    w.__TAURI_INTERNALS__ = {
+      transformCallback: () => ++callback,
+      unregisterCallback: () => {},
+      invoke: async (command: string, args: any = {}) => {
+        if (command === 'plugin:event|listen') return ++callback;
+        if (command === 'plugin:event|unlisten' || command.startsWith('stop_') || ['ack_resources', 'cancel_read_task'].includes(command)) return;
+        if (command === 'watch_resources') {
+          const items = args.query.kind === 'Secret'
+            ? [summarySecret]
+            : args.query.kind === 'Namespace'
+              ? [{ apiVersion: 'v1', kind: 'Namespace', metadata: { name: 'apps', uid: 'apps' } }]
+              : [];
+          queueMicrotask(() => args.onEvent.onmessage({
+            subscription_id: args.subscriptionId,
+            query: args.query,
+            messages: [
+              { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items } } } },
+              { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } },
+            ],
+          }));
+          return;
+        }
+        if (command === 'get_kube_contexts') return [{ name: 'test', is_current: true }];
+        if (command === 'ping_cluster') return { git_version: 'v1.35.0' };
+        if (command === 'get_namespaces') return ['apps'];
+        if (command === 'get_api_resources') return '';
+        if (command === 'get_resource_counts') return {};
+        if (command === 'get_resources') return { items: [] };
+        if (command === 'get_resource') {
+          w.__getResourceCalls.push({ kind: args.kind, name: args.name, namespace: args.namespace });
+          if (args.kind === 'Secret' && args.name === 'lazy-secret') return fullSecret;
+        }
+        throw new Error(`Unexpected command ${command}`);
+      },
+    };
+  });
+  await page.goto('/');
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').locator('[data-resource-type="Secret"]').click();
+  const row = page.getByTestId('resource-table').getByRole('row', { name: /lazy-secret/ });
+  await expect(row).toContainText('Opaque');
+  await expect(row).toContainText('2');
+  // Opening the Secrets table must not issue per-secret GET calls.
+  expect(await page.evaluate(() => (window as any).__getResourceCalls)).toEqual([]);
+  await page.getByTestId('resource-table').getByText('lazy-secret', { exact: true }).click();
+  const data = page.getByTestId('inspector-panel').getByRole('region', { name: 'Secret data', exact: true });
+  await expect(data).toContainText('Secret data (2)');
+  await data.getByRole('button', { name: 'Reveal values', exact: true }).click();
+  await expect(data.locator('.view-lines').first()).toContainText('hydrated-secret-value');
+  expect(await page.evaluate(() => (window as any).__getResourceCalls)).toEqual([
+    { kind: 'Secret', name: 'lazy-secret', namespace: 'apps' },
+  ]);
 });

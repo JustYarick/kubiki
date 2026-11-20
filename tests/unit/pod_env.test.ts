@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveContainerEnv } from '../../src/core/resources/pod_env';
+import { mapK8sResource } from '../../src/core/utils/k8s_mapper';
 import type { ResourceItem } from '../../src/types/k8s';
 
 describe('resolveContainerEnv', () => {
@@ -273,5 +274,37 @@ describe('resolveContainerEnv', () => {
       sourceName: 'metadata.namespace',
       isSecret: false,
     });
+  });
+
+  /**
+   * WHY THIS TEST EXISTS:
+   * Updating a ConfigMap in place does NOT change `metadata.creationTimestamp`; only
+   * `managedFields` write timestamps record the edit. `mapK8sResource` strips bulky
+   * `managedFields` from `raw`, so it MUST capture the latest write timestamp beforehand
+   * for drift detection to keep working after Pod startup.
+   */
+  it('detects ConfigMap drift from managedFields write timestamps even when creationTimestamp is unchanged', () => {
+    const pod = mapK8sResource({
+      apiVersion: 'v1', kind: 'Pod', metadata: { name: 'web', namespace: 'team', uid: 'p' },
+      spec: { containers: [{ name: 'c', env: [{ name: 'MODE', valueFrom: { configMapKeyRef: { name: 'cfg', key: 'MODE' } } }] }] },
+      status: { containerStatuses: [{ name: 'c', state: { running: { startedAt: '2026-01-02T00:00:00Z' } } }] },
+    }, 'Pod');
+    const configMap = (writes: string[]) => mapK8sResource({
+      apiVersion: 'v1', kind: 'ConfigMap', data: { MODE: 'new' },
+      metadata: {
+        name: 'cfg', namespace: 'team', uid: 'c',
+        creationTimestamp: '2026-01-01T00:00:00Z',
+        managedFields: writes.map(time => ({ manager: 'kubectl', operation: 'Update', time })),
+      },
+    }, 'ConfigMap');
+
+    const updatedCm = configMap(['2026-01-01T00:00:00Z', '2026-01-03T00:00:00Z']);
+    expect(updatedCm.raw!.metadata.managedFields).toBeUndefined();
+    const drifted = resolveContainerEnv(pod, 'c', { ConfigMap: new Map([['c', updatedCm]]) });
+    expect(drifted.hasDrift).toBe(true);
+    expect(drifted.entries[0].drift?.clusterValue).toBe('new');
+
+    const olderCm = configMap(['2026-01-01T00:00:00Z']);
+    expect(resolveContainerEnv(pod, 'c', { ConfigMap: new Map([['c', olderCm]]) }).hasDrift).toBe(false);
   });
 });

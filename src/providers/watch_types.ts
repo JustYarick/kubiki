@@ -1,5 +1,6 @@
 import type { ResourceQuery } from '../core/resources/resource_types';
 import type { K8sErrorPayload } from './errors';
+import type { ReadPriority } from './initial_sync_queue';
 import type { ResourceItem } from '../types/k8s';
 
 export type WatchPhase = 'connecting' | 'syncing' | 'live' | 'reconnecting' | 'failed' | 'stopped';
@@ -11,7 +12,7 @@ export interface WatchMessage {
   event: { type: 'Delta'; payload: WatchDelta } | { type: 'Status'; payload: { phase: WatchPhase; error: K8sErrorPayload | null } };
 }
 export interface WatchBatch { subscription_id: string; query: ResourceQuery; messages: WatchMessage[] }
-export interface WatchState { query: ResourceQuery; phase: WatchPhase; hasSnapshot: boolean; updatedAt?: number }
+export interface WatchState { query: ResourceQuery; phase: WatchPhase; hasSnapshot: boolean; updatedAt?: number; fromCache?: boolean }
 export interface WatchCommit {
   snapshot?: ResourceItem[];
   changes: Array<{ type: 'apply'; item: ResourceItem } | { type: 'delete'; uid: string }>;
@@ -25,7 +26,7 @@ export interface WatchFilter {
 export interface ResourceWatchProvider {
   /** The provider times actual initial reads after they acquire their queue slot. */
   readonly managesInitialSyncTimeout?: boolean;
-  watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void>;
+  watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter, priority?: ReadPriority): Promise<() => void>;
 }
 
 export function sameQuery(a: ResourceQuery, b: ResourceQuery): boolean {

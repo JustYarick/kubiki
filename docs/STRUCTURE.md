@@ -42,7 +42,7 @@ kubiki/
 
 ## Frontend
 
-The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Monaco provides code editors and document viewers, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
+The frontend is a React 19 and TypeScript application. Tailwind CSS and application styles define the interface. Reusable adaptive UI/UX controls (`Button`, `Input`, `SearchInput`, `Textarea`, `Select`, `Checkbox`, `Badge`, `DataTable`, `Field`, `SectionCard`, `EmptyState`, `KeyValueList`, `Modal`, `Popover`, `ResponsiveToolbar`, `CodeEditor`) live in `src/components/ui/` (re-exported via `src/components/ui/index.ts`; see [Shared UI/UX module](UI_KIT.md)). Monaco provides code editors and document viewers, React Flow and ELK provide topology rendering and layout, and xterm.js renders terminal sessions.
 
 `src/components/ui/CodeEditor.tsx` is the shared embedded editor for Helm documents and values, Secret and ConfigMap values, new resource manifests, nested YAML fields, and annotation source. It includes search, replacement in editable fields, line numbers, wrapping, and explicit YAML/JSON formatting. `core/code_language.ts` detects syntax from data key filenames or valid JSON objects/arrays. Models belong to individual mounted fields and are disposed on unmount; hidden Secret values do not mount an editor. `views/monaco_setup.ts` shares the theme, bundled workers, and language registration with the full resource YAML editor, which retains its resource draft/apply workflow.
 
@@ -56,11 +56,12 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 | `src/views/TopologyView.tsx` | Topology data preparation and workspace integration. |
 | `src/views/TopologyCanvas.tsx` | Interactive graph presentation. |
 | `src/views/HelmView.tsx`, `HelmOverview.tsx` | Cluster-wide Helm summary, shared typed release table, repository navigation, release inspection, and action entry points. |
+| `src/views/GitOpsDashboard.tsx`, `FluxOverviewPanels.tsx`, `ArgoOverviewPanels.tsx` | Flux and Argo CD delivery dashboards aligned with Helm Overview's status palette: 4-KPI summaries, stacked status bars, SVG health/sync donuts, kind/project/namespace breakdowns, and controller event cadence charts (`src/core/resources/flux_overview.ts`, `argocd_overview.ts`). |
 | `src/views/ExtensionsView.tsx` | Package installation, enable/disable, manual updates, rollback and logs. |
 | `src/components/updates/AppUpdates.tsx` | Startup update offer, download/install actions and About settings. |
 | `src/navigation/CommandPalette.tsx` | Search and navigation across commands and resource types. |
 
-`src/components/layout/` contains the explorer, workspace, tabs, inspector, and bottom panel. `src/components/k8s/details/` contains resource-specific detail views and reusable field blocks. Dialogs and diagnostic panes live under `src/components/dialogs/` and `src/components/k8s/`.
+`src/components/layout/` contains the explorer, workspace, tabs, inspector, and bottom panel. `src/components/k8s/details/` contains resource-specific detail views and reusable field blocks. Dialogs and diagnostic panes live under `src/components/dialogs/` and `src/components/k8s/`. `NewResourceDialog` resolves per-kind interactive creator forms from `src/components/dialogs/new-resource/registry.ts` (backed by pure YAML-preserving models in `src/core/resources/creators/`) with a live `Form | YAML` switcher and automatic fallback to the YAML manifest editor for unsupported kinds and CRDs.
 
 Every workspace document (tables, dedicated details, YAML, terminals and registered
 panels) occupies the same full-width background layer. `WorkspaceArea` isolates
@@ -78,6 +79,23 @@ inspection. Helm inventory does not use Kubernetes YAML/create/delete actions.
 
 Resource table column geometry lives in `src/components/k8s/table/useColumnLayout.ts`. Actual table width is the sum of its columns, so the browser does not redistribute saved widths. Automatic fitting observes the scroll viewport and does not rerun just because the order changed. Resizing anchors its guide to the rendered header and accounts for UI scale and scrolling. `useColumnReorder.ts` uses pointer gestures with a movement threshold, before/after drop indicators and horizontal edge scrolling; resize handles and menu buttons do not initiate reordering. Escape, pointer cancellation, lost capture and unmount release the gesture without saving unfinished changes. Header menus and keyboard resizing remain available as drag alternatives.
 
+### Developer diagnostics
+
+`src/core/diagnostics/` owns the safe local model, bounded frontend collector and
+Developer-mode lifecycle. `src/providers/diagnostic_invoke.ts` observes native IPC
+without serializing arguments/results; `read_transport.ts` observes browser bridge
+reads. `src/providers/diagnostics.ts` owns batched native forwarding and cursor
+polling. `DiagnosticLogsView` is a registered global workbench panel and subscribes
+only while visible. `shared/diagnostics-contract.json` defines the cross-language
+fields, event names, levels and bounds.
+
+`src-tauri/src/diagnostics.rs` owns per-window leases, native record validation,
+tracing metadata projection, memory retention and the rotating JSONL/stderr output
+worker. `kubiki-core/src/cluster/http_diagnostics.rs` observes actual native Kubernetes
+HTTP requests below caches and policy/budget wrappers, preserving cancellation,
+headers and bodies. See [Application diagnostics](DIAGNOSTICS.md) and
+[ADR-014](decisions/014-local-developer-diagnostics.md).
+
 ### Application state
 
 Zustand stores separate workspace state from cached Kubernetes data and session state.
@@ -87,6 +105,8 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/cluster_store.ts` | Available contexts, active context, namespace scope, and discovered resource availability. |
 | `src/state/resource_store.ts` | Resource cache and synchronization state consumed by views. |
 | `src/state/detail_cache.ts` | Bounded per-context cache for targeted single-resource and per-UID event prefetches. |
+| `src/state/cache_control.ts` | Unified cache flush across stopped resource tables, polling subscriptions, metrics, and detail caches. |
+| `src/state/stale_error_toast.ts` | Deduplicated warning notifications when background refreshes fail while cached or stale data remains visible. |
 | `src/state/resource_watch.ts` | Starting, stopping, refreshing, and rescoping resource watch sessions. |
 | `src/state/workspace_store.ts` | Workspace sections, remembered documents/splits per section, and resource navigation. |
 | `src/state/dock_store.ts` | Bottom-panel sessions and selection. |
@@ -151,9 +171,7 @@ The desktop shell owns transport and application lifecycle concerns. Kubernetes 
 
 `src/cluster/kubeconfig.rs` reads the default kubeconfig or the files listed in `KUBECONFIG`. `src/cluster/client.rs` provides context-specific clients so requests can remain tied to the selected context.
 
-`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`. Helm confirmation has no expiry; uninstall operates on the confirmed context, namespace and release name, while upgrades and rollbacks check the release revision/state.
-
-The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reuses the library. The desktop application does not depend on that executable.
+`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation. Direct storage reads with MVCC caching live in `src/helm/storage.rs`. Operation preparation and execution live in `src/helm/mutations.rs`. Helm confirmation has no expiry; uninstall operates on the confirmed context, namespace and release name, while upgrades and rollbacks check the release revision/state.
 
 ## AI domain
 

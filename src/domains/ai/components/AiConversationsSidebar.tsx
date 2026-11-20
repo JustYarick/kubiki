@@ -1,7 +1,7 @@
 import { externalAgentName } from '../types';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Pencil, Pin, Plus, Search, Server, Settings, Trash2, X } from 'lucide-react';
-import { Button } from '../../../components/ui/Button';
+import { Bot, Check, Pencil, Pin, Plus, Server, Settings, Trash2 } from 'lucide-react';
+import { Button, Checkbox, Input, SearchInput } from '../../../components/ui';
 import { getClusterTone } from '../../../core/cluster_color';
 import { useAiStore } from '../store';
 import { searchAiHistory, historyStorageError } from '../history_storage';
@@ -133,28 +133,18 @@ const KubikiConversationsSidebar: React.FC = () => {
       </div>
 
       <div className="ai-search-container">
-        <Search size={12} className="ai-search-icon" aria-hidden="true" />
-        <input
-          type="text"
-          className="ai-search-input"
+        <SearchInput
+          size="sm"
+          variant="subtle"
+          className="w-full"
           placeholder="Search conversations..."
+          ariaLabel="Search conversations"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          aria-label="Search conversations"
+          onChange={setSearchQuery}
         />
-        {searchQuery && (
-          <button
-            type="button"
-            className="ai-search-clear"
-            onClick={() => setSearchQuery('')}
-            aria-label="Clear search"
-          >
-            <X size={12} aria-hidden="true" />
-          </button>
-        )}
       </div>
 
-      <details className="p-2 text-xs"><summary>History filters</summary><input aria-label="History namespace filter" placeholder="Namespace" value={namespace} onChange={e=>setNamespace(e.target.value)}/><label>Updated since<input aria-label="History updated since" type="date" value={after} onChange={e=>setAfter(e.target.value)}/></label><label><input type="checkbox" checked={includeArchived} onChange={e=>setIncludeArchived(e.target.checked)}/>Include archived</label></details>
+      <details className="p-2 text-xs"><summary>History filters</summary><div className="mt-1.5 space-y-1.5"><Input size="sm" aria-label="History namespace filter" placeholder="Namespace" value={namespace} onChange={e=>setNamespace(e.target.value)}/><label className="flex flex-col gap-1">Updated since<Input size="sm" aria-label="History updated since" type="date" value={after} onChange={e=>setAfter(e.target.value)}/></label><label className="flex items-center gap-2"><Checkbox checked={includeArchived} onChange={e=>setIncludeArchived(e.target.checked)}/>Include archived</label></div></details>
       {historyError&&<p role="alert" className="ai-error">{historyError}</p>}
       <div className="ai-cluster-tags kubiki-scrollbar" role="tablist" aria-label="Filter conversations by cluster">
         <button

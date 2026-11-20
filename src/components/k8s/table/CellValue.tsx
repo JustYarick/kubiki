@@ -10,6 +10,7 @@ import { useWorkspaceStore } from '../../../state/workspace_store';
 import { ResourceWarnings } from '../ResourceWarnings';
 import { StatusBadge } from '../StatusBadge';
 import { cx } from '../../../core/utils/cx';
+import { podNodeInfo, podNodeSourceLabel } from '../../../core/resources/pod_node';
 
 /** Kind icon colored by the shared group palette — the same color as in the sidebar. */
 function KindIcon({ item }: { item: ResourceItem }) {
@@ -102,6 +103,25 @@ export function CellValue({
   if (col.id === 'restarts') {
     const n = Number(v);
     return <span className={cx('font-mono text-[length:calc(11px*var(--ui-factor))]', n > 10 ? 'text-[var(--status-danger)]' : n > 0 ? 'text-[var(--status-warn)]' : 'text-[var(--text-secondary)]')}>{v}</span>;
+  }
+  if (col.id === 'node' && item.kind === 'Pod') {
+    const info = podNodeInfo(item);
+    if (!info.assigned && info.pendingNode) {
+      const prefix = info.pendingSource === 'nominated' ? '~' : '→';
+      const hint = `${info.pendingNode} (${podNodeSourceLabel(info.pendingSource)} — awaiting scheduling)`;
+      return (
+        <span
+          className="inline-flex items-center gap-1 min-w-0 max-w-full text-[var(--text-muted)]"
+          title={hint}
+          aria-label={hint}
+        >
+          <span className="text-[var(--status-warn)] shrink-0" aria-hidden="true">{prefix}</span>
+          <span className="truncate">{info.pendingNode}</span>
+        </span>
+      );
+    }
+    if (v === '-') return <span className="text-[var(--text-disabled)]">—</span>;
+    return <span className="text-[var(--text-secondary)] block truncate" title={v}>{v}</span>;
   }
   if (col.id === 'age') return <span className="text-[var(--text-secondary)]">{v}</span>;
   return <span className="text-[var(--text-secondary)]">{v}</span>;

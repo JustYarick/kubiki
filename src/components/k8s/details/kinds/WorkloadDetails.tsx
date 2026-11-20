@@ -1,6 +1,7 @@
 import { performResourceAction, restartManifest } from '../../../../providers/resource_actions';
 import { useState } from 'react';
 import { findWorkloadPods } from '../../../../core/resources/workload_pods';
+import { podNodeInfo, podNodeSourceLabel } from '../../../../core/resources/pod_node';
 import { Layers, Activity, Users, Plus, Minus, RotateCw } from 'lucide-react';
 import type { ResourceItem } from '../../../../types/k8s';
 import { useResourceStore } from '../../../../state/resource_store';
@@ -293,23 +294,39 @@ export function WorkloadDetails({ item, onNavigate, onLogs, onShell }: WorkloadD
           {pods.length === 0 ? (
             <div className="text-xs text-[var(--text-muted)] italic">No pods currently loaded for this workload.</div>
           ) : (
-            pods.slice(0, 30).map((pod) => (
-              <div key={pod.uid} className="flex items-center justify-between py-1.5 text-xs">
-                <button
-                  type="button"
-                  onClick={() => onNavigate(pod)}
-                  className="font-mono text-[var(--accent)] hover:underline truncate text-left"
-                >
-                  {pod.name}
-                </button>
-                <div className="flex items-center gap-2 text-[length:calc(10.5px*var(--ui-factor))] font-mono">
-                  <span className="text-[var(--text-muted)]">{pod.node || 'unassigned'}</span>
-                  <span className={pod.status === 'Running' ? 'text-emerald-400' : 'text-amber-400'}>
-                    {pod.status ?? '—'}
-                  </span>
+            pods.slice(0, 30).map((pod) => {
+              const nodeInfo = podNodeInfo(pod);
+              const nodeLabel = nodeInfo.assigned
+                ? nodeInfo.assigned
+                : nodeInfo.pendingNode
+                  ? `${nodeInfo.pendingSource === 'nominated' ? '~' : '→'} ${nodeInfo.pendingNode}`
+                  : 'unassigned';
+              const nodeTitle = !nodeInfo.assigned && nodeInfo.pendingNode
+                ? `${nodeInfo.pendingNode} (${podNodeSourceLabel(nodeInfo.pendingSource)} — awaiting scheduling)`
+                : nodeInfo.assigned;
+              return (
+                <div key={pod.uid} className="flex items-center justify-between py-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate(pod)}
+                    className="font-mono text-[var(--accent)] hover:underline truncate text-left"
+                  >
+                    {pod.name}
+                  </button>
+                  <div className="flex items-center gap-2 text-[length:calc(10.5px*var(--ui-factor))] font-mono">
+                    <span
+                      className={!nodeInfo.assigned && nodeInfo.pendingNode ? 'text-[var(--status-warn)]' : 'text-[var(--text-muted)]'}
+                      title={nodeTitle}
+                    >
+                      {nodeLabel}
+                    </span>
+                    <span className={pod.status === 'Running' ? 'text-emerald-400' : 'text-amber-400'}>
+                      {pod.status ?? '—'}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
           {pods.length > 30 && (
             <div className="pt-2 text-center text-xs text-[var(--text-muted)]">

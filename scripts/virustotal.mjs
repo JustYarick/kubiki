@@ -195,10 +195,11 @@ export async function scanReleaseAssets(client, dir, assets, report, { progress 
       if (flaggedCount === 0) {
         verdictMessage = `no detections reported (${cleanCount} clean engines)`;
       } else {
-        const flaggedDetails = Object.entries(analysis.results).concat(Object.entries(uploaded.attributes?.last_analysis_results || {}))
-          .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
-          .map(([engine, r]) => `${r.engine_name || engine}: ${r.result || r.category}`)
-          .join(', ');
+        const flaggedDetails = [...new Set(
+          Object.entries(analysis.results).concat(Object.entries(uploaded.attributes?.last_analysis_results || {}))
+            .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
+            .map(([engine, r]) => `${r.engine_name || engine}: ${r.result || r.category}`),
+        )].join(', ');
         verdictMessage = `detections reported (${flaggedCount} flagged: ${flaggedDetails || 'unknown'}) - ${file.url}`;
       }
       progress(`Completed ${file.name}: ${verdictMessage}`);
@@ -230,10 +231,11 @@ export function renderVirusTotalReport(report) {
   if (flaggedFiles.length > 0) {
     lines.push('', '### Detections and engine details');
     for (const file of flaggedFiles) {
-      const details = Object.entries(file.results || {}).concat(Object.entries(file.fileInfo?.results || {}))
-        .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
-        .map(([engine, r]) => `- **${cell(file.name)}**: \`${cell(r.engine_name || engine)}\` reported \`${cell(r.result || r.category)}\``)
-        .join('\n');
+      const details = [...new Set(
+        Object.entries(file.results || {}).concat(Object.entries(file.fileInfo?.results || {}))
+          .filter(([, r]) => r.category === 'malicious' || r.category === 'suspicious')
+          .map(([engine, r]) => `- **${cell(file.name)}**: \`${cell(r.engine_name || engine)}\` reported \`${cell(r.result || r.category)}\``),
+      )].join('\n');
       if (details) lines.push(details);
     }
   }

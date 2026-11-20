@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRelatedGraph, buildResourceGraph, relatedResourceScope } from '../../src/core/resources/relationships';
 import { resourceKey } from '../../src/core/resources/identity';
 import { buildTopology, EMPTY_GRAPH } from '../../src/core/resources/topology';
+import { mapK8sResource } from '../../src/core/utils/k8s_mapper';
 import { useResourceStore } from '../../src/state/resource_store';
 import type { ResourceItem } from '../../src/types/k8s';
 
@@ -168,5 +169,29 @@ describe('Bounded topology construction', () => {
     const namespace: ResourceItem = { uid: 'ns', name: 'busy', kind: 'Namespace', apiVersion: 'v1' }; resources.Namespace.set(namespace.uid, namespace);
     const graph = buildResourceGraph(resources, { adjacentTo: new Set([resourceKey(namespace)]) });
     expect(graph.relations).toHaveLength(1); expect(graph.relations[0].type).toBe('contains');
+  });
+
+  /**
+   * WHY THIS TEST EXISTS:
+   * Argo CD Applications and Flux HelmReleases commonly live in `argocd` / `flux-system`
+   * while managing workloads in another namespace (`backend`). `relatedResourceScope`
+   * must NOT slice away cross-namespace targets when the focus object is a GitOps resource.
+   */
+  it('keeps explicit cross-namespace references of GitOps resources in relatedResourceScope', () => {
+    const app = mapK8sResource({
+      apiVersion: 'argoproj.io/v1alpha1', kind: 'Application',
+      metadata: { name: 'shop', namespace: 'argocd', uid: 'app' },
+      spec: { destination: { name: 'in-cluster' } },
+      status: { resources: [{ group: 'apps', version: 'v1', kind: 'Deployment', namespace: 'backend', name: 'api' }] },
+    }, 'Application' as any);
+    const deployment = mapK8sResource({
+      apiVersion: 'apps/v1', kind: 'Deployment',
+      metadata: { name: 'api', namespace: 'backend', uid: 'dep' }, spec: {},
+    }, 'Deployment');
+    const resources: any = { Application: new Map([['app', app]]), Deployment: new Map([['dep', deployment]]) };
+    const scoped = relatedResourceScope(resources, app) as any;
+    expect(scoped.Deployment.size).toBe(1);
+    const graph = buildResourceGraph(scoped, { adjacentTo: new Set([resourceKey(app)]) });
+    expect(graph.relations.some(edge => edge.source === resourceKey(app) && edge.target === resourceKey(deployment) && !edge.missing)).toBe(true);
   });
 });

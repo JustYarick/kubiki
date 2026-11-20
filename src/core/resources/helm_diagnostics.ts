@@ -5,19 +5,41 @@ import { resourceKey } from './identity';
 import type { HelmHistory, HelmRelease } from '../../providers/helm_types';
 import { helmUpdatedAt } from '../../providers/helm_types';
 
-/** Include workload descendants such as ReplicaSets, Pods and hook Job Pods. */
+const CLUSTER_SCOPED_MANIFEST_KINDS = new Set([
+  'Namespace', 'Node', 'PersistentVolume', 'StorageClass', 'ClusterRole', 'ClusterRoleBinding',
+  'CustomResourceDefinition', 'IngressClass', 'PriorityClass', 'RuntimeClass',
+  'MutatingWebhookConfiguration', 'ValidatingWebhookConfiguration',
+]);
+
+/** Include workload descendants such as ReplicaSets, Pods and hook Job Pods in O(N) via owner-UID BFS. */
 export function releaseDiagnosticObjects(release: HelmRelease, rendered: ResourceItem[], loaded: ResourceItem[]) {
   const targets = new Map(releaseObjects(release, loaded).map(item => [item.uid, item]));
   for (const row of releaseHealth(rendered, loaded)) if (row.item) targets.set(row.item.uid, row.item);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const item of loaded) {
-      if (targets.has(item.uid)) continue;
-      const owners = item.raw?.metadata?.ownerReferences ?? item.metadata?.ownerReferences ?? [];
-      if (owners.some((owner: { uid?: string }) => owner.uid && targets.get(owner.uid)?.namespace === item.namespace)) {
-        targets.set(item.uid, item); changed = true;
+  if (!targets.size) return [];
+
+  const childrenByOwnerUid = new Map<string, ResourceItem[]>();
+  for (const item of loaded) {
+    const owners = item.raw?.metadata?.ownerReferences ?? item.metadata?.ownerReferences ?? [];
+    for (const owner of owners as { uid?: string }[]) {
+      if (!owner.uid) continue;
+      let children = childrenByOwnerUid.get(owner.uid);
+      if (!children) {
+        children = [];
+        childrenByOwnerUid.set(owner.uid, children);
       }
+      children.push(item);
+    }
+  }
+
+  const queue = [...targets.values()];
+  for (let i = 0; i < queue.length; i++) {
+    const parent = queue[i];
+    const children = childrenByOwnerUid.get(parent.uid);
+    if (!children) continue;
+    for (const child of children) {
+      if (child.namespace !== parent.namespace || targets.has(child.uid)) continue;
+      targets.set(child.uid, child);
+      queue.push(child);
     }
   }
   return [...targets.values()];
@@ -59,8 +81,7 @@ export function parseReleaseManifest(manifest: string, namespace: string): Resou
       if (raw == null) continue;
       if (typeof raw.kind !== 'string' || typeof raw.apiVersion !== 'string' || typeof raw.metadata?.name !== 'string') throw new Error('A rendered object is missing its identity.');
       // Cluster-scoped objects must not inherit the release namespace.
-      const clusterKinds = new Set(['Namespace', 'Node', 'PersistentVolume', 'StorageClass', 'ClusterRole', 'ClusterRoleBinding', 'CustomResourceDefinition', 'IngressClass', 'PriorityClass', 'RuntimeClass', 'MutatingWebhookConfiguration', 'ValidatingWebhookConfiguration']);
-      const ns = raw.metadata.namespace ?? (clusterKinds.has(raw.kind) ? undefined : namespace);
+      const ns = raw.metadata.namespace ?? (CLUSTER_SCOPED_MANIFEST_KINDS.has(raw.kind) ? undefined : namespace);
       output.push({ kind: raw.kind, apiVersion: raw.apiVersion, name: raw.metadata.name, namespace: ns, uid: '', raw: { ...raw, metadata: { ...raw.metadata, namespace: ns } }, metadata: { ...raw.metadata, namespace: ns } });
       if (output.length > 10000) throw new Error('Too many rendered objects to inspect.');
     }

@@ -8,6 +8,7 @@ export interface ResourceQuery extends GroupVersionKind { context: string; names
 export interface ResourceRef extends ResourceQuery { name: string; uid: string | null }
 
 export const RESOURCE_TYPES: readonly ResourceType[] = types;
+const RESOURCE_TYPE_BY_KIND = new Map<string, ResourceType>(RESOURCE_TYPES.map((type) => [type.kind, type]));
 const discoveredVersions = new Map<string, Pick<ResourceType, 'version' | 'watch'>>();
 export function setDiscoveredResourceTypes(resources: readonly ResourceType[] = []) {
   discoveredVersions.clear();
@@ -31,7 +32,7 @@ export function scopeForKind(kind: ResourceKind, scope: string): string {
 
 export function resourceType(kind: ResourceKind): ResourceType {
   if (kind === 'HelmRelease') return { group: 'helm.sh', version: 'v1', kind, plural: 'releases', namespaced: true };
-  const type = RESOURCE_TYPES.find((type) => type.kind === kind);
+  const type = RESOURCE_TYPE_BY_KIND.get(kind);
   if (!type) throw new Error(`Unsupported resource kind: ${kind}`);
   const discovered = discoveredVersions.get(kind);
   return discovered ? { ...type, ...discovered } : type;

@@ -98,9 +98,10 @@ test('Helm supports inspection, revision documents, name/namespace filters, the 
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
   await expect(view.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
   await search.fill('');
+  await expect(view.locator('table')).toHaveAttribute('aria-rowcount', '102');
+  await expect.poll(() => view.getByTestId('resource-table').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
   await view.getByTestId('resource-table').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
-  await expect(view.locator('table')).toHaveAttribute('aria-rowcount', '102');
   await open(page, 'Overview');
   const overview = page.getByTestId('helm-overview');
   await expect(overview.getByRole('region', { name: 'Helm summary', exact: true })).toBeVisible();
@@ -244,7 +245,7 @@ test('Helm reuses the resource inspector, navigation, resizing, tabs and split d
   await expect(workspace.getByRole('tablist', { name: 'Resource details', exact: true })).toHaveCount(2);
   await captureScreenshot(page, { path: 'test-results/helm-shared-details.png' });
   await page.reload();
-  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toBeVisible();
+  await expect(page.getByTestId('workspace-tab-panel').getByTestId('resource-details')).toHaveCount(2);
   expect(errors).toEqual([]);
 });
 

@@ -1,5 +1,6 @@
 import type { WorkspaceTab } from '../../state/workspace_store';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
+import type { ReadPriority } from '../../providers/initial_sync_queue';
 import { RESOURCE_TYPES, parseApiVersion } from './resource_types';
 import { inNamespaceScope, mergeNamespaceScopes, namespaceNames } from './namespace_scope';
 import type { ResourceGraph } from './relationships';
@@ -125,6 +126,8 @@ export function topologyResourceKinds(scope: string, focus?: ResourceItem, depth
   return [...kinds];
 }
 
+const PRIORITY_RANK: Record<ReadPriority, number> = { low: 0, normal: 1, high: 2 };
+
 /** Data dependencies of visible views. Sidebar navigation only needs namespaces and CRDs. */
 export function resourceDemand(input: {
   context: string; tabs: readonly WorkspaceTab[]; activeTabId: string; splitTabId: string | null;
@@ -132,33 +135,43 @@ export function resourceDemand(input: {
   eventsVisible?: boolean;
   portsVisible?: boolean;
   selectedNamespace?: string;
-}): { kinds: ResourceKind[]; clusterKinds: ReadonlySet<ResourceKind>; scopes: Map<ResourceKind, string> } {
+}): { kinds: ResourceKind[]; clusterKinds: ReadonlySet<ResourceKind>; scopes: Map<ResourceKind, string>; priorities: Map<ResourceKind, ReadPriority> } {
   const selectedNamespace = input.selectedNamespace ?? 'all';
   const scopes = new Map<ResourceKind, string>();
+  const priorities = new Map<ResourceKind, ReadPriority>([
+    ['Namespace', 'normal'],
+    ['CustomResourceDefinition', 'low'],
+  ]);
   const kinds = new Set<ResourceKind>(['Namespace', 'CustomResourceDefinition']);
-  const request = (kind: ResourceKind, scope = selectedNamespace) => {
+  const elevate = (kind: ResourceKind, priority: ReadPriority) => {
+    const prev = priorities.get(kind);
+    if (!prev || PRIORITY_RANK[priority] > PRIORITY_RANK[prev]) priorities.set(kind, priority);
+  };
+  const request = (kind: ResourceKind, scope = selectedNamespace, priority: ReadPriority = 'normal') => {
     const type = RESOURCE_TYPES.find(type => type.kind === kind);
     if (!type || type.namespaced && namespaceNames(scope)?.length === 0) return;
     kinds.add(kind);
     scopes.set(kind, mergeNamespaceScopes(scopes.get(kind), type.namespaced ? scope : 'all'));
+    elevate(kind, priority);
   };
   const clusterKinds = new Set<ResourceKind>();
-  if (input.eventsVisible) request('Event');
-  if (input.portsVisible) { request('Pod'); request('Service'); }
-  const add = (kind?: ResourceKind, inspect = false, scope = selectedNamespace) => {
+  if (input.eventsVisible) request('Event', selectedNamespace, 'normal');
+  if (input.portsVisible) { request('Pod', selectedNamespace, 'normal'); request('Service', selectedNamespace, 'normal'); }
+  const add = (kind?: ResourceKind, inspect = false, scope = selectedNamespace, primaryPriority: ReadPriority = 'high') => {
     if (!kind) return;
-    request(kind, scope);
+    request(kind, scope, primaryPriority);
     if (WORKLOADS.has(kind)) {
-      request('Pod', scope);
-      if (kind === 'Deployment') request('ReplicaSet', scope);
-      if (kind === 'CronJob') request('Job', scope);
+      request('Pod', scope, 'normal');
+      if (kind === 'Deployment') request('ReplicaSet', scope, 'normal');
+      if (kind === 'CronJob') request('Job', scope, 'normal');
     }
     // Node details and node table counts intentionally cover every namespace.
-    if (kind === 'Node') { request('Pod', 'all'); clusterKinds.add('Pod'); }
+    if (kind === 'Node') { request('Pod', 'all', 'normal'); clusterKinds.add('Pod'); }
     if (inspect) {
-      request('Event', scope);
-      if (kind === 'HelmRelease') for (const related of ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'Service', 'Ingress', 'PersistentVolumeClaim'] as ResourceKind[]) request(related, scope);
-      for (const dependency of details[kind] ?? []) request(dependency, scope);
+      // Background inspector dependencies (Events, UsedBy) run at low priority so active views always win.
+      request('Event', scope, 'low');
+      if (kind === 'HelmRelease') for (const related of ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'Service', 'Ingress', 'PersistentVolumeClaim'] as ResourceKind[]) request(related, scope, 'low');
+      for (const dependency of details[kind] ?? []) request(dependency, scope, 'low');
     }
   };
   const active = input.tabs.find(tab => tab.id === input.activeTabId);
@@ -166,27 +179,28 @@ export function resourceDemand(input: {
   const visible = input.tabs.filter(tab => tab === active || tab.id === input.splitTabId && workspaceArea(tab) === area);
   for (const tab of visible) {
     if (tab.context && tab.context !== input.context) continue;
+    const tabPriority: ReadPriority = tab === active ? 'high' : 'normal';
     if (tab.type === 'overview') {
       for (const kind of OVERVIEW_KINDS) {
         if (selectedNamespace !== 'all' && (kind === 'Node' || kind === 'Namespace')) continue;
-        request(kind);
+        request(kind, selectedNamespace, kind === 'Event' ? 'low' : 'normal');
       }
     }
     else if (tab.type === 'topology') {
       // The mounted view owns its chosen scope. A focused tab only needs its
       // target collection to mount before the view registers dependencies.
-      if (tab.uid && tab.kind && RESOURCE_TYPES.some(type => type.kind === tab.kind && (!tab.apiVersion || type.group === parseApiVersion(tab.apiVersion).group))) request(tab.kind, tab.namespace ?? selectedNamespace);
+      if (tab.uid && tab.kind && RESOURCE_TYPES.some(type => type.kind === tab.kind && (!tab.apiVersion || type.group === parseApiVersion(tab.apiVersion).group))) request(tab.kind, tab.namespace ?? selectedNamespace, tabPriority);
     } else if (tab.type === 'resource-list' || tab.type === 'resource-detail' || tab.type === 'yaml-editor' || tab.type === 'logs' || tab.type === 'terminal') {
       const inScope = tab.namespacePinned || inNamespaceScope(selectedNamespace, tab.namespace);
       const scope = tab.type === 'resource-list' || !inScope ? selectedNamespace : tab.namespace ?? (tab.kind === 'Namespace' ? tab.name : undefined) ?? selectedNamespace;
-      add(tab.kind, tab.type === 'resource-detail' && inScope, scope);
+      add(tab.kind, tab.type === 'resource-detail' && inScope, scope, tabPriority);
     }
   }
   if (areaHasInspector(area) && !input.inspectorCollapsed && input.selectedItem && inNamespaceScope(selectedNamespace, input.selectedItem.namespace)) {
     const item = input.selectedItem;
     const scope = item.namespace ?? (item.kind === 'Namespace' ? item.name : undefined) ?? selectedNamespace;
-    add(item.kind, true, scope);
-    if (input.rightTab === 'related') for (const kind of relatedResourceKinds(item)) request(kind, scope);
+    add(item.kind, true, scope, 'normal');
+    if (input.rightTab === 'related') for (const kind of relatedResourceKinds(item)) request(kind, scope, 'low');
   }
-  return { kinds: [...kinds], clusterKinds, scopes };
+  return { kinds: [...kinds], clusterKinds, scopes, priorities };
 }
