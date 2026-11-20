@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-20
+
 ### Added
 
 - Configurable tab cache behavior in `Settings → Kubernetes` (`Cached data on tab reopen`: `Show cached` vs `Always fresh`) plus a `Clear cache now` action covering resource tables, CRD lists, Helm/Flux/Argo CD/Metrics dashboards, and detail/manifest caches; reopened tabs showing cached snapshots now display an explicit `Cached · updating…` indicator, and failed refreshes while cached/stale data is visible render a pinned warning banner above the scroll area (with `Last synced` timestamp, `Retry`, and `Clear stale data`) alongside a deduplicated warning toast.
@@ -220,7 +222,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local extension platform (`@kubiki/extension-sdk`) with sandboxed extension panels, settings, and Node host runtime.
 - Desktop auto-updater with signed update feeds and Apache-2.0 licensing.
 
-[unreleased]: https://github.com/JustYarick/kubiki/compare/v1.4.0...HEAD
+[unreleased]: https://github.com/JustYarick/kubiki/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/JustYarick/kubiki/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/JustYarick/kubiki/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/JustYarick/kubiki/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/JustYarick/kubiki/compare/v1.2.0...v1.3.0
