@@ -168,9 +168,7 @@ The desktop shell owns transport and application lifecycle concerns. Kubernetes 
 
 `src/cluster/kubeconfig.rs` reads the default kubeconfig or the files listed in `KUBECONFIG`. `src/cluster/client.rs` provides context-specific clients so requests can remain tied to the selected context.
 
-`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation. Helm inventories use one complete list command rather than repeating storage reads for CLI offset pages. Operation preparation and execution live in `src/helm/mutations.rs`. Helm confirmation has no expiry; uninstall operates on the confirmed context, namespace and release name, while upgrades and rollbacks check the release revision/state.
-
-The crate also contains `src/bin/kubiki-cli.rs`, an inspection utility that reuses the library. The desktop application does not depend on that executable.
+`src/informer/watcher.rs` implements the informer manager, while `store.rs`, `delta.rs`, and `reconcile.rs` implement snapshot storage and update handling. Helm subprocess handling lives in `src/helm/reader.rs`; `helm/kubeconfig.rs` pins a private merged configuration through the complete operation. Direct storage reads with MVCC caching live in `src/helm/storage.rs`. Operation preparation and execution live in `src/helm/mutations.rs`. Helm confirmation has no expiry; uninstall operates on the confirmed context, namespace and release name, while upgrades and rollbacks check the release revision/state.
 
 ## AI domain
 

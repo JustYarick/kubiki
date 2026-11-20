@@ -28,8 +28,8 @@ async function fixture() {
   return root;
 }
 
-function run(root, args = []) {
-  return spawnSync(process.execPath, [script, '--target', 'x86_64-unknown-linux-gnu', ...args], {
+function run(root, args = [], target = 'x86_64-unknown-linux-gnu') {
+  return spawnSync(process.execPath, [script, '--target', target, ...args], {
     cwd: root, encoding: 'utf8',
   });
 }
@@ -97,5 +97,18 @@ test('the workflow archive transfers shared resources without the build host Nod
       assert.equal(await readFile(path.join(destination, file), 'utf8'), 'shared build resource');
     }
     await assert.rejects(readFile(path.join(destination, '.kubiki-build/runtime/node')), { code: 'ENOENT' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows ARM64 builds NSIS only (without WiX MSI or RPM bundling)', async () => {
+  const root = await fixture();
+  try {
+    const result = run(root, ['--prebuilt-frontend'], 'aarch64-pc-windows-msvc');
+    assert.equal(result.status, 0, result.stderr);
+    const calls = (await readFile(path.join(root, 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(calls.map(call => call[0]), ['build']);
+    const bundlesIndex = calls[0].indexOf('--bundles');
+    assert.ok(bundlesIndex > 0);
+    assert.equal(calls[0][bundlesIndex + 1], 'nsis');
   } finally { await rm(root, { recursive: true, force: true }); }
 });

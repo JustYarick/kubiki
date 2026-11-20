@@ -6,22 +6,27 @@ function fixture(names: string[]) {
 }
 const release = parseRelease(fixture([
   'kubiki_1.4.0_aarch64.dmg', 'kubiki_1.4.0_x64.dmg',
-  'kubiki_1.4.0_x64-setup.exe', 'kubiki_1.4.0_x64_en-US.msi',
+  'kubiki_1.4.0_x64-setup.exe', 'kubiki_1.4.0_x64_en-US.msi', 'kubiki_1.4.0_arm64-setup.exe',
   'kubiki_1.4.0_amd64.AppImage', 'kubiki_1.4.0_amd64.deb', 'kubiki-1.4.0-1.x86_64.rpm',
-  'kubiki-cli-windows-amd64.exe', 'kubiki_1.4.0_x64-setup.exe.sig', 'kubiki_aarch64.app.tar.gz', 'latest.json',
+  'kubiki_1.4.0_aarch64.AppImage', 'kubiki_1.4.0_arm64.deb', 'kubiki-1.4.0-1.aarch64.rpm',
+  'helper-windows-amd64.exe', 'kubiki_1.4.0_x64-setup.exe.sig', 'kubiki_aarch64.app.tar.gz', 'latest.json',
 ]));
 
 describe('website release downloads', () => {
-  it('offers installers rather than CLI executables, signatures or updater archives', () => {
-    expect(release.downloads).toHaveLength(7);
+  it('offers installers across x64 and ARM64 rather than auxiliary executables, signatures or updater archives', () => {
+    expect(release.downloads).toHaveLength(11);
     expect(preferredDownload(release, { os: 'macos', arch: 'arm64' })?.name).toBe('kubiki_1.4.0_aarch64.dmg');
     expect(preferredDownload(release, { os: 'macos', arch: 'x64' })?.name).toBe('kubiki_1.4.0_x64.dmg');
     expect(preferredDownload(release, { os: 'windows', arch: 'x64' })?.format).toBe('EXE');
-    expect(preferredDownload(release, { os: 'linux', arch: 'x64' })?.format).toBe('AppImage');
-    expect(release.downloads.find(item => item.format === 'RPM')?.arch).toBe('x64');
+    expect(preferredDownload(release, { os: 'windows', arch: 'arm64' })?.name).toBe('kubiki_1.4.0_arm64-setup.exe');
+    expect(preferredDownload(release, { os: 'linux', arch: 'x64' })?.name).toBe('kubiki_1.4.0_amd64.AppImage');
+    expect(preferredDownload(release, { os: 'linux', arch: 'arm64' })?.name).toBe('kubiki_1.4.0_aarch64.AppImage');
+    expect(release.downloads.find(item => item.format === 'RPM' && item.arch === 'x64')?.name).toBe('kubiki-1.4.0-1.x86_64.rpm');
+    expect(release.downloads.find(item => item.format === 'RPM' && item.arch === 'arm64')?.name).toBe('kubiki-1.4.0-1.aarch64.rpm');
   });
   it('never substitutes an unavailable or unknown architecture', () => {
-    expect(preferredDownload(release, { os: 'windows', arch: 'arm64' })).toBeUndefined();
+    const x64Only = parseRelease(fixture(['kubiki_1.4.0_x64-setup.exe']));
+    expect(preferredDownload(x64Only, { os: 'windows', arch: 'arm64' })).toBeUndefined();
     expect(preferredDownload(release, { os: 'macos', arch: null })).toBeUndefined();
   });
   it('rejects prereleases, drafts and malformed data', () => {

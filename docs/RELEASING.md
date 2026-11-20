@@ -2,8 +2,9 @@
 
 CI and Release share the [desktop pipeline](../.github/workflows/release.yml)
 and offer two entry points: CI runs tests alongside installer builds; a manual
-Release builds and publishes without tests by default. Both build all four desktop
-targets and validate the release artifacts before publishing.
+Release builds and publishes without tests by default. Both build all six desktop
+targets (x64 and ARM64 across Linux, macOS and Windows) and validate the release
+artifacts before publishing.
 
 ## Run from GitHub Actions
 
@@ -45,7 +46,7 @@ For **build and publish without tests**, open **Actions → Release → Run work
 | Push a `v*` tag | Skipped | Yes | Yes |
 
 The frontend and bundled extensions are compiled once, with the selected release
-version, and shared by all four installer jobs. Each platform prepares and caches
+version, and shared by all six installer jobs. Each platform prepares and caches
 its own verified Node runtime. Native test suites share a Cargo target directory
 to reuse compiled dependencies. Browser tests run as two shards with two workers
 each, retaining separate timing summaries, failure screenshots and traces.
@@ -82,10 +83,10 @@ links at the bottom of the file.
 
 ### GitHub Release summary template
 
-Stable GitHub Releases use one standard summary layout generated from
-[CHANGELOG.md](CHANGELOG.md) by `scripts/release-notes.mjs` during
-publication (`scripts/publish-desktop-release.mjs`), and previewable locally with
-`node scripts/release-notes.mjs vX.Y.Z`:
+Stable (`vX.Y.Z`) and dev preview (`vX.Y.Z-dev.NUMBER`) GitHub Releases use one standard
+summary layout generated from [CHANGELOG.md](CHANGELOG.md) by `scripts/release-notes.mjs`
+during publication (`scripts/publish-desktop-release.mjs`), and previewable locally with
+`node scripts/release-notes.mjs vX.Y.Z` or `node scripts/release-notes.mjs vX.Y.Z-dev.1`:
 
 ```markdown
 ## Kubiki X.Y.Z
@@ -96,14 +97,18 @@ publication (`scripts/publish-desktop-release.mjs`), and previewable locally wit
 
 ### Release Artifacts
 
-- Desktop packages: Linux (DEB, RPM, AppImage), macOS (ARM64/x64 DMG and updater `.app.tar.gz`), Windows (NSIS EXE, MSI), and standalone `kubiki-cli` binaries.
+- Desktop packages: Linux x64/ARM64 (DEB, RPM, AppImage), macOS Apple Silicon/Intel (DMG and updater `.app.tar.gz`), Windows x64 (NSIS EXE, MSI) and Windows ARM64 (NSIS EXE).
 - Verification & updates: `SHA256SUMS`, signed updater manifest `latest.json`, and advisory `VIRUSTOTAL-REPORT.md` / `VIRUSTOTAL-REPORT.json`.
 
 **Full Changelog**: https://github.com/JustYarick/kubiki/compare/vPREV...vX.Y.Z
 ```
 
-Prerelease builds (`-dev.NUMBER`, `-rc.N`) have no `CHANGELOG.md` version
-section, so publication falls back to GitHub's generated release notes.
+Dev preview builds (`vX.Y.Z-dev.NUMBER`) render the current `## [Unreleased]` section of
+`docs/CHANGELOG.md` under `## Kubiki X.Y.Z-dev.NUMBER (Dev Preview)` (pinning the
+`Full Changelog` comparison link from the previous stable tag to the dev tag) without
+mutating `CHANGELOG.md`; the same changelog entries are also embedded in `latest.json`
+for in-app update dialogs. Other prereleases (`-rc.N`, `-beta.N`) or releases with an
+empty `## [Unreleased]` section fall back to GitHub's generated release notes.
 
 An explicit tag selects the channel regardless of branch. Plain `vX.Y.Z` tags
 are stable. Tags with prerelease suffixes or build metadata are prereleases and
@@ -155,7 +160,7 @@ The scanner receives this secret only in its upload/analysis step. No additional
 Node dependencies or hosted application service are needed.
 
 For publishing runs, the scanner downloads and verifies every platform's build
-records and scans every installer, updater archive and standalone CLI. Detached
+records and scans every installer and updater archive. Detached
 `.sig` files are excluded. Files with identical SHA-256 hashes share one upload,
 but each release filename gets a report entry. Build-only CI and local builds
 skip the external scan and need no VirusTotal secret.
@@ -199,11 +204,13 @@ embedded files. This supplements dependency checks and artifact signatures.
 | Runner | Target | Installers and updater package |
 | --- | --- | --- |
 | Ubuntu 22.04 | Linux x86_64 | DEB, RPM, AppImage |
+| Ubuntu 24.04 ARM | Linux ARM64 (`aarch64`) | DEB, RPM, AppImage |
 | macOS 15 ARM | macOS Apple Silicon | DMG, signed app archive for releases |
 | macOS 15 Intel | macOS Intel | DMG, signed app archive for releases |
 | Windows 2022 | Windows x86_64 | NSIS EXE, MSI |
+| Windows 11 ARM | Windows ARM64 (`aarch64`) | NSIS EXE |
 
-Every target also builds a standalone CLI and runs its native tests when
+Every target runs its native tests when
 **run_tests** is enabled. All jobs
 check out the same resolved commit SHA. Node.js 24 and the pnpm version pinned in
 `package.json` are used throughout. Cargo builds/tests use committed lockfiles.
@@ -218,12 +225,13 @@ command first builds the application with the full version, then bundles that
 existing binary as an RPM with numeric Version and a separate Release. For
 `1.0.1-dev`, these are `Version=1.0.1`, `Release=0.dev`; stable `1.0.1` uses
 `Release=1`. The application's embedded version remains `1.0.1-dev`. RPM updater
-artifacts are disabled; Linux self-updates use AppImage. MSI uses a separate
+artifacts are disabled; RPM builds check the release feed in notify-only mode,
+while Linux AppImage and DEB packages support verified in-app updates. MSI uses a separate
 numeric WiX version (`1.0.1` for `1.0.1-dev`), and macOS uses a numeric bundle
 build version. Full SemVer stays embedded in the application. Versions beyond
 MSI limits (`255.255.65535`) are rejected during planning.
 
-Each matrix job stages only distributable packages, signatures and CLI binaries.
+Each matrix job stages only distributable packages and signatures.
 It verifies all required formats and writes a build record containing target,
 commit, tag and SHA-256 hashes. Download these files from the run's **Artifacts**
 section (`kubiki-TARGET`, retained for 14 days), including build-only runs.
@@ -233,10 +241,12 @@ section (`kubiki-TARGET`, retained for 14 days), including build-only runs.
 The publish job writes distributable packages and updater metadata. The separate
 advisory report job attaches antivirus reports after publication. The publisher:
 
-1. Downloads all four matrix artifacts and checks their source SHA, tag, target,
+1. Downloads all six matrix artifacts and checks their source SHA, tag, target,
    signed mode, package presence and file hashes.
 2. Creates one updater manifest from matching package/signature pairs. macOS ARM
-   and Intel require distinct app archives; Windows uses NSIS; Linux uses AppImage.
+   and Intel require distinct app archives; Windows publishes x64 NSIS (and MSI when
+   signed) plus ARM64 NSIS; Linux publishes x64 and ARM64 AppImage (and DEB when
+   signed). RPM remains notify-only.
 3. Creates the tag if needed and creates or reuses an unpublished draft.
 4. Uploads packages, signatures, `SHA256SUMS`
    and a single `latest.json`, then

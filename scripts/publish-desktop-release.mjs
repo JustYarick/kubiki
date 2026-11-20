@@ -4,7 +4,7 @@ import path from 'node:path';
 import { desktopRelease, reconcileUpdateManifest, updateChannel, validateUpdateManifest } from './desktop-release.mjs';
 import { compareStableTags, verifyDesktopArtifacts } from './desktop-pipeline.mjs';
 import { publishDevUpdateFeed } from './dev-update-feed.mjs';
-import { loadReleaseNotes } from './release-notes.mjs';
+import { loadReleaseNotes, loadUpdaterNotes } from './release-notes.mjs';
 
 function verifyUploadedArtifacts(assets, uploaded) {
   for (const asset of assets) {
@@ -17,13 +17,14 @@ export async function publishDesktopRelease({ github, context, core }, { tag, sh
   const release = desktopRelease(tag);
   const repo = { owner: context.repo.owner, repo: context.repo.repo };
   const releaseBody = await loadReleaseNotes(tag, root);
+  const updaterNotes = await loadUpdaterNotes(tag, root);
   const assets = await verifyDesktopArtifacts(dir, tag, sha);
   const releaseAssets = [...assets];
   const signatures = {};
   for (const asset of assets.filter(a => a.name.endsWith('.sig'))) {
     signatures[asset.name] = await readFile(path.join(dir, asset.name), 'utf8');
   }
-  const manifest = reconcileUpdateManifest(null, tag, assets, signatures);
+  const manifest = reconcileUpdateManifest(updaterNotes ? { notes: updaterNotes } : null, tag, assets, signatures);
   validateUpdateManifest(manifest, tag, assets);
 
   // Peel annotated tags too; never attach packages to another commit.

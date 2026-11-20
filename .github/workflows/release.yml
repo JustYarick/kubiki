@@ -247,12 +247,16 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - os: macos-15
             target: aarch64-apple-darwin
           - os: macos-15-intel
             target: x86_64-apple-darwin
           - os: windows-2022
             target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
     env:
       KUBIKI_BUILD_TARGET: ${{ matrix.target }}
       MACOSX_DEPLOYMENT_TARGET: '13.5'
@@ -271,7 +275,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -316,9 +321,6 @@ jobs:
           else
             node scripts/desktop-release.mjs "$RELEASE_TAG" --unsigned
           fi
-      - name: Build standalone CLI
-        shell: bash
-        run: cargo build --release --locked --manifest-path crates/kubiki-core/Cargo.toml --bin kubiki-cli --target "$KUBIKI_BUILD_TARGET"
       - name: Disable Spotlight indexing on macOS
         if: runner.os == 'macOS'
         run: |
@@ -334,7 +336,7 @@ jobs:
           args=(--target "$KUBIKI_BUILD_TARGET" --config .kubiki-build/updater.conf.json --stage --prebuilt-frontend)
           if [ "$PUBLISH" = true ]; then args+=(--signed); fi
           pnpm desktop:build "${args[@]}"
-      - name: Upload verified installers, CLI and checksums
+      - name: Upload verified installers and checksums
         uses: actions/upload-artifact@v4
         with:
           name: kubiki-${{ matrix.target }}

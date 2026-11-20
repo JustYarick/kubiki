@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Native ARM64 desktop release builds for Linux (`aarch64-unknown-linux-gnu`: DEB, RPM, AppImage on `ubuntu-24.04-arm`) and Windows (`aarch64-pc-windows-msvc`: NSIS EXE on `windows-11-arm`) with full updater manifest and website download support.
+- Automatic update checks across all desktop packages: macOS (ARM64/Intel), Windows (x64 NSIS/MSI, ARM64 NSIS), and Linux x64/ARM64 AppImage/DEB support verified in-app updates, while Linux RPM packages check the signed channel feed in notify-only mode with changelog notes and a direct link to the GitHub Release page.
+- Automatic `## [Unreleased]` release summaries for `dev` preview releases (`vX.Y.Z-dev.N`) in both GitHub Releases and in-app updater manifests (`latest.json`), while keeping `docs/CHANGELOG.md` versioned strictly by stable `main` releases.
 - Consolidated reusable adaptive UI/UX primitives under `src/components/ui` (`index.ts`, `DataTable`, `Badge`, `CountPill`, `Textarea`, `Field`, `FieldGroup`, `SectionCard`, `EmptyState`, `KeyValueList`, upgraded `Input`/`SearchInput`/`Button`/`Select`/`Checkbox`) and migrated ad-hoc search inputs, dialogs, and secondary tables across the workspace to use them.
 - Actionable `accessHints` and `aiInstruction` guidance in MCP policy denials so AI clients tell the user which Kubiki setting blocked access (`Annotations`, `Custom resources`, `Helm release values`, `Secrets`, etc.) and where to enable it.
 - Fast direct Kubernetes Secret/ConfigMap storage reads for Helm release inventory, revision history, and release documents (`Values`, `Manifest`, `Hooks`, `Notes`) over the warm `kube::Client` (with Kubernetes `(context, uid, resourceVersion)` MVCC caching, concurrent revision-read coalescing, and transparent fallback to the `helm` CLI).
@@ -48,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded `get_logs` tail ceiling to 5000 lines, added `ignoreCase` and `contextLines` in `lines` mode, and broadened diagnostic log error pattern matching (klog, logfmt, JSON severity, network/TLS/OOM failures).
 - Refined Helm Overview layout and density to match the application's overview cards, with a compact header strip, uniform card surfaces, monospace summary metrics, evenly distributed inventory facts, aligned namespace and chart panels, and single-line release change rows.
 - Updated the project website with bundled JetBrains Mono Variable display typography, concise Hero copy with `#download` anchor links, a unified FAQ and Get Kubiki constellation closing band with smooth section gradients, reordered MCP topology and resource workbench sections without redundant labels, keyboard and triage workflow bars, and a non-scrolling interactive Pod inspector card.
+
+### Removed
+
+- Removed the unused standalone `kubiki-cli` binary from `crates/kubiki-core` and desktop release builds.
 
 ### Fixed
 

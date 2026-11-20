@@ -4,10 +4,12 @@ import path from 'node:path';
 import { desktopRelease, updateChannel } from './desktop-release.mjs';
 
 export const DESKTOP_TARGETS = {
-  'x86_64-unknown-linux-gnu': { cli: 'kubiki-cli-linux-amd64', bundles: ['deb', 'rpm', 'appimage'], updater: '.AppImage' },
-  'aarch64-apple-darwin': { cli: 'kubiki-cli-macos-arm64', bundles: ['dmg'], updater: '_aarch64.app.tar.gz' },
-  'x86_64-apple-darwin': { cli: 'kubiki-cli-macos-amd64', bundles: ['dmg'], updater: '_x64.app.tar.gz' },
-  'x86_64-pc-windows-msvc': { cli: 'kubiki-cli-windows-amd64.exe', bundles: ['nsis', 'msi'], updater: '-setup.exe' },
+  'x86_64-unknown-linux-gnu': { bundles: ['deb', 'rpm', 'appimage'], updater: '.AppImage' },
+  'aarch64-unknown-linux-gnu': { bundles: ['deb', 'rpm', 'appimage'], updater: '.AppImage' },
+  'aarch64-apple-darwin': { bundles: ['dmg'], updater: '_aarch64.app.tar.gz' },
+  'x86_64-apple-darwin': { bundles: ['dmg'], updater: '_x64.app.tar.gz' },
+  'x86_64-pc-windows-msvc': { bundles: ['nsis', 'msi'], updater: '-setup.exe' },
+  'aarch64-pc-windows-msvc': { bundles: ['nsis'], updater: '-setup.exe' },
 };
 
 export function compareStableTags(a, b) {
@@ -73,7 +75,7 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 export function validateTargetAssets(target, assets, signed) {
   const spec = DESKTOP_TARGETS[target];
   if (!spec) throw new Error(`Unsupported desktop target: ${target}`);
-  for (const suffix of [spec.cli, ...spec.bundles.map(b => extensions[b]), ...(signed ? [spec.updater, `${spec.updater}.sig`] : [])]) {
+  for (const suffix of [...spec.bundles.map(b => extensions[b]), ...(signed ? [spec.updater, `${spec.updater}.sig`] : [])]) {
     if (!assets.some(a => a.name.endsWith(suffix) && a.size > 0)) throw new Error(`Missing ${suffix} for ${target}`);
   }
 }
@@ -99,7 +101,6 @@ export async function stageDesktopArtifacts(root, target, { tag, sha, signed }) 
       files.push({ source: path.join(dir, entry.name), name });
     }
   }
-  files.push({ source: path.join(root, 'crates/kubiki-core/target', target, 'release', target.includes('windows') ? 'kubiki-cli.exe' : 'kubiki-cli'), name: spec.cli });
   const assets = [];
   for (const file of files) {
     const bytes = await readFile(file.source);
