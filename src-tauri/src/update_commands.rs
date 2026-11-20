@@ -1,5 +1,7 @@
 //! Desktop update boundary: separate stable/dev feeds, signed artifacts, shared
 //! mutation gate, and awaited session cleanup before invoking the installer.
+//! macOS, Windows (NSIS/MSI), and Linux AppImage/DEB support verified in-app installation;
+//! Linux RPM builds check the same signed release feed in notify-only mode.
 use crate::mutation_guard::MutationGuard;
 use kubiki_core::{
     InformerManager,
@@ -11,13 +13,14 @@ use kubiki_core::{
 use semver::Version;
 use serde::Serialize;
 use std::time::Duration;
-use tauri::{Manager, ipc::Channel};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri::{Manager, ipc::Channel, utils::config::BundleType};
+use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 
 const STABLE_FEED: &str =
     "https://github.com/JustYarick/kubiki/releases/latest/download/latest.json";
 const DEV_FEED: &str =
     "https://github.com/JustYarick/kubiki/releases/download/updates-dev/latest.json";
+const RELEASES_BASE_URL: &str = "https://github.com/JustYarick/kubiki/releases/tag";
 const PUBLIC_KEY: Option<&str> = option_env!("KUBIKI_UPDATER_PUBLIC_KEY");
 
 #[derive(Default)]
@@ -29,12 +32,24 @@ struct PendingUpdate {
     bytes: Option<Vec<u8>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateInstallMode {
+    Auto,
+    NotifyOnly,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     version: String,
     current_version: String,
     notes: String,
+    install_mode: UpdateInstallMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notice: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -85,6 +100,42 @@ impl UpdateChannel {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinuxUpdatePolicy {
+    AppImageAuto,
+    DebPreferAuto,
+    NotifyOnly(&'static str),
+}
+
+fn classify_linux_bundle(bundle: Option<BundleType>, has_appimage_env: bool) -> LinuxUpdatePolicy {
+    if has_appimage_env || matches!(bundle, Some(BundleType::AppImage)) {
+        LinuxUpdatePolicy::AppImageAuto
+    } else if matches!(bundle, Some(BundleType::Deb)) {
+        LinuxUpdatePolicy::DebPreferAuto
+    } else if matches!(bundle, Some(BundleType::Rpm)) {
+        LinuxUpdatePolicy::NotifyOnly(
+            "RPM installations receive update notifications only. Download the new RPM package from the release page or update via your package manager.",
+        )
+    } else {
+        LinuxUpdatePolicy::NotifyOnly(
+            "Automatic in-app installation is available for AppImage and DEB packages. Download the new release from the release page.",
+        )
+    }
+}
+
+fn release_page_url(version: &str) -> String {
+    let clean = version.trim_start_matches('v');
+    format!("{RELEASES_BASE_URL}/v{clean}")
+}
+
+#[cfg(target_os = "linux")]
+fn linux_manifest_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "aarch64",
+        _ => "x86_64",
+    }
+}
+
 fn channel_upgrade(current: &Version, candidate: &Version) -> bool {
     let channel = UpdateChannel::for_version(current);
     channel.is_some() && channel == UpdateChannel::for_version(candidate) && candidate > current
@@ -100,17 +151,59 @@ fn disabled_reason(app: &tauri::AppHandle) -> Option<String> {
     if UpdateChannel::for_version(&app.package_info().version).is_none() {
         return Some("In-app updates support stable and dev versions only. Other preview builds and build metadata are excluded.".into());
     }
-    // Package-manager installations must retain their package ownership. Never
-    // replace a deb/rpm installation with an AppImage.
-    #[cfg(target_os = "linux")]
-    if app.env().appimage.is_none() {
-        return Some("Update this installation with your package manager, or install the AppImage to use in-app updates.".into());
-    }
     None
 }
 
-fn require_enabled(app: &tauri::AppHandle) -> Result<(), String> {
-    disabled_reason(app).map_or(Ok(()), Err)
+fn require_auto_install(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(reason) = disabled_reason(app) {
+        return Err(reason);
+    }
+    #[cfg(target_os = "linux")]
+    if let LinuxUpdatePolicy::NotifyOnly(notice) = classify_linux_bundle(
+        tauri::utils::platform::bundle_type(),
+        app.env().appimage.is_some(),
+    ) {
+        return Err(notice.into());
+    }
+    Ok(())
+}
+
+fn build_updater(
+    app: &tauri::AppHandle,
+    channel: UpdateChannel,
+    target_override: Option<&str>,
+) -> Result<Updater, String> {
+    let mut builder = app
+        .updater_builder()
+        .pubkey(PUBLIC_KEY.unwrap_or_default())
+        .endpoints(vec![
+            channel
+                .feed()
+                .parse()
+                .map_err(|_| "Invalid update endpoint.")?,
+        ])
+        .map_err(|e| e.to_string())?
+        .timeout(Duration::from_secs(15))
+        .version_comparator(|current, remote| channel_upgrade(&current, &remote.version));
+    if let Some(target) = target_override {
+        builder = builder.target(target);
+    }
+    builder.build().map_err(|e| e.to_string())
+}
+
+fn update_info(
+    update: &Update,
+    install_mode: UpdateInstallMode,
+    notice: Option<String>,
+) -> UpdateInfo {
+    UpdateInfo {
+        version: update.version.clone(),
+        current_version: update.current_version.clone(),
+        notes: update.body.clone().unwrap_or_default(),
+        install_mode,
+        release_url: Some(release_page_url(&update.version)),
+        notice,
+    }
 }
 
 #[tauri::command]
@@ -127,42 +220,128 @@ pub async fn check_app_update(
         .0
         .try_lock()
         .map_err(|_| "An update operation is already running.")?;
-    // Keep the selected artifact pinned until the user installs or dismisses it.
-    let mut update = app
-        .updater_builder()
-        .pubkey(PUBLIC_KEY.unwrap_or_default())
-        .endpoints(vec![
-            channel
-                .feed()
-                .parse()
-                .map_err(|_| "Invalid update endpoint.")?,
-        ])
-        .map_err(|e| e.to_string())?
-        .timeout(Duration::from_secs(15))
-        .version_comparator(|current, remote| channel_upgrade(&current, &remote.version))
-        .build()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
-    if let Some(update) = &mut update {
-        update.timeout = Some(Duration::from_secs(600));
+
+    #[cfg(target_os = "linux")]
+    {
+        let arch = linux_manifest_arch();
+        let generic_target = format!("linux-{arch}");
+        let deb_target = format!("linux-{arch}-deb");
+        match classify_linux_bundle(
+            tauri::utils::platform::bundle_type(),
+            app.env().appimage.is_some(),
+        ) {
+            LinuxUpdatePolicy::AppImageAuto => {
+                let mut update = build_updater(&app, channel, None)?
+                    .check()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if let Some(update) = &mut update {
+                    update.timeout = Some(Duration::from_secs(600));
+                }
+                let result = match &update {
+                    Some(update) => CheckResult::Available {
+                        update: update_info(update, UpdateInstallMode::Auto, None),
+                    },
+                    None => CheckResult::UpToDate,
+                };
+                *pending = PendingUpdate {
+                    update,
+                    bytes: None,
+                };
+                return Ok(result);
+            }
+            LinuxUpdatePolicy::DebPreferAuto => {
+                match build_updater(&app, channel, Some(&deb_target))?
+                    .check()
+                    .await
+                {
+                    Ok(mut update) => {
+                        if let Some(update) = &mut update {
+                            update.timeout = Some(Duration::from_secs(600));
+                        }
+                        let result = match &update {
+                            Some(update) => CheckResult::Available {
+                                update: update_info(update, UpdateInstallMode::Auto, None),
+                            },
+                            None => CheckResult::UpToDate,
+                        };
+                        *pending = PendingUpdate {
+                            update,
+                            bytes: None,
+                        };
+                        return Ok(result);
+                    }
+                    Err(
+                        tauri_plugin_updater::Error::TargetNotFound(_)
+                        | tauri_plugin_updater::Error::TargetsNotFound(_),
+                    ) => {
+                        let update = build_updater(&app, channel, Some(&generic_target))?
+                            .check()
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        *pending = PendingUpdate {
+                            update: None,
+                            bytes: None,
+                        };
+                        return Ok(match &update {
+                            Some(update) => CheckResult::Available {
+                                update: update_info(
+                                    update,
+                                    UpdateInstallMode::NotifyOnly,
+                                    Some("Signed DEB updater metadata is not available for this release. Download the DEB package from the release page.".into()),
+                                ),
+                            },
+                            None => CheckResult::UpToDate,
+                        });
+                    }
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+            LinuxUpdatePolicy::NotifyOnly(notice) => {
+                let update = build_updater(&app, channel, Some(&generic_target))?
+                    .check()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                *pending = PendingUpdate {
+                    update: None,
+                    bytes: None,
+                };
+                return Ok(match &update {
+                    Some(update) => CheckResult::Available {
+                        update: update_info(
+                            update,
+                            UpdateInstallMode::NotifyOnly,
+                            Some(notice.into()),
+                        ),
+                    },
+                    None => CheckResult::UpToDate,
+                });
+            }
+        }
     }
-    let result = match &update {
-        Some(update) => CheckResult::Available {
-            update: UpdateInfo {
-                version: update.version.clone(),
-                current_version: update.current_version.clone(),
-                notes: update.body.clone().unwrap_or_default(),
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Keep the selected artifact pinned until the user installs or dismisses it.
+        let mut update = build_updater(&app, channel, None)?
+            .check()
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(update) = &mut update {
+            update.timeout = Some(Duration::from_secs(600));
+        }
+        let result = match &update {
+            Some(update) => CheckResult::Available {
+                update: update_info(update, UpdateInstallMode::Auto, None),
             },
-        },
-        None => CheckResult::UpToDate,
-    };
-    *pending = PendingUpdate {
-        update,
-        bytes: None,
-    };
-    Ok(result)
+            None => CheckResult::UpToDate,
+        };
+        *pending = PendingUpdate {
+            update,
+            bytes: None,
+        };
+        Ok(result)
+    }
 }
 
 #[tauri::command]
@@ -172,7 +351,7 @@ pub async fn download_app_update(
     on_progress: Channel<DownloadProgress>,
     state: tauri::State<'_, DesktopUpdater>,
 ) -> Result<(), String> {
-    require_enabled(&app)?;
+    require_auto_install(&app)?;
     let mut pending = state
         .0
         .try_lock()
@@ -206,7 +385,7 @@ pub async fn install_app_update(
     state: tauri::State<'_, DesktopUpdater>,
     mutations: tauri::State<'_, MutationGuard>,
 ) -> Result<(), String> {
-    require_enabled(&app)?;
+    require_auto_install(&app)?;
     let mut pending = state
         .0
         .try_lock()
@@ -344,5 +523,37 @@ mod tests {
                 &Version::parse("2.0.0-dev.1").unwrap()
             ));
         }
+    }
+
+    #[test]
+    fn linux_bundle_policy_enables_auto_for_appimage_and_deb_and_notify_only_for_rpm() {
+        assert_eq!(
+            classify_linux_bundle(Some(BundleType::AppImage), false),
+            LinuxUpdatePolicy::AppImageAuto
+        );
+        assert_eq!(
+            classify_linux_bundle(None, true),
+            LinuxUpdatePolicy::AppImageAuto
+        );
+        assert_eq!(
+            classify_linux_bundle(Some(BundleType::Deb), false),
+            LinuxUpdatePolicy::DebPreferAuto
+        );
+        assert!(matches!(
+            classify_linux_bundle(Some(BundleType::Rpm), false),
+            LinuxUpdatePolicy::NotifyOnly(msg) if msg.contains("RPM")
+        ));
+        assert!(matches!(
+            classify_linux_bundle(None, false),
+            LinuxUpdatePolicy::NotifyOnly(_)
+        ));
+        assert_eq!(
+            release_page_url("1.5.0-dev.42"),
+            "https://github.com/JustYarick/kubiki/releases/tag/v1.5.0-dev.42"
+        );
+        assert_eq!(
+            release_page_url("v1.5.0"),
+            "https://github.com/JustYarick/kubiki/releases/tag/v1.5.0"
+        );
     }
 }

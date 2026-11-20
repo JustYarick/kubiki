@@ -37,8 +37,9 @@ After the first render, independently of Kubernetes connectivity, the app checks
 - Dev: `https://github.com/JustYarick/kubiki/releases/download/updates-dev/latest.json`.
 
 The workflow
-keeps releases as drafts until the combined manifest contains all four supported
-OS/architecture combinations and their packages and signatures. The optional
+keeps releases as drafts until the combined manifest contains all six supported
+OS/architecture combinations (x64 and ARM64 across Linux, macOS and Windows) and
+their packages and signatures. The optional
 [VirusTotal scan](RELEASING.md#virustotal-setup) is report-only: it runs alongside
 publication and its results never block or gate the release. Package URLs
 must point to the exact release tag. Do not mark a CLI-only or preview release
@@ -81,11 +82,20 @@ CI requires both keys, synchronizes the tag into `package.json`, `src-tauri/taur
 updater artifacts with an additional generated Tauri configuration. This changes
 only the CI checkout, not the tagged commit. Local builds do not require keys.
 
-Debug builds (including `pnpm tauri dev`), unsupported previews, browsers and
-Linux deb/rpm installations do not self-update. Signed packaged dev releases
-support dev updates. Linux in-app updates use AppImage; deb/rpm users keep their package
-manager's ownership. Windows uses the native installer and macOS updates the app
-bundle. The first release containing this feature must be installed normally.
+Debug builds (including `pnpm tauri dev`), unsupported previews and browsers do
+not self-update. Signed packaged stable and dev releases check for updates on
+every desktop platform:
+
+- **macOS (ARM64/Intel)**, **Windows (x64 NSIS/MSI & ARM64 NSIS)**, and **Linux x64/ARM64 AppImage & DEB**:
+  full verified in-app download, signature verification, installation and restart
+  (when signed DEB metadata is absent in an older manifest, DEB falls back to
+  notify-only rather than downloading an AppImage).
+- **Linux RPM** (and custom unpacked Linux binaries): check the same signed
+  channel feed in **notify-only** mode — the dialog shows the new version,
+  changelog notes, and a button to open the GitHub Release page, while leaving
+  installation to `dnf`/`rpm`.
+
+The first release containing this feature must be installed normally.
 Existing dev builds that disabled update checks need one manual installation of
 a dev release containing the new channel support.
 

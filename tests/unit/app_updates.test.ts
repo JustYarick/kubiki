@@ -108,10 +108,44 @@ describe('desktop update coordinator', () => {
     expect(service.store.getState()).toMatchObject({ phase: { status: 'downloaded', update }, dialogOpen: true });
   });
 
-  it('does not announce updates for debug, browser, or package-manager builds', async () => {
+  it('does not announce updates for debug or unsupported preview builds', async () => {
     const { service, adapter } = setup();
     vi.mocked(adapter.check).mockResolvedValue({ status: 'disabled', reason: 'Development build' });
     await service.startup();
     expect(service.store.getState()).toMatchObject({ phase: { status: 'disabled' }, dialogOpen: false });
+  });
+
+  /**
+   * WHY THIS TEST EXISTS:
+   * Linux RPM builds run in `notifyOnly` mode: they check the signed release feed and notify
+   * the user with changelog notes and a release page link, while strictly refusing any in-app
+   * download or self-install that would conflict with `dnf`/`rpm` ownership.
+   */
+  it('supports notify-only updates (RPM) with skip/later suppression while blocking download and install', async () => {
+    const rpmUpdate = {
+      ...update,
+      installMode: 'notifyOnly' as const,
+      releaseUrl: 'https://github.com/JustYarick/kubiki/releases/tag/v0.2.1',
+      notice: 'RPM installations receive update notifications only.',
+    };
+    const { service, adapter } = setup();
+    vi.mocked(adapter.check).mockResolvedValue({ status: 'available', update: rpmUpdate });
+    await service.startup();
+    expect(service.store.getState()).toMatchObject({ phase: { status: 'available', update: rpmUpdate }, dialogOpen: true });
+
+    // Download and install must be safe no-ops in notifyOnly mode.
+    await service.download();
+    await service.install();
+    expect(adapter.download).not.toHaveBeenCalled();
+    expect(adapter.install).not.toHaveBeenCalled();
+    expect(service.store.getState().phase.status).toBe('available');
+
+    // Skip and Later still suppress automatic startup popups.
+    service.skip();
+    expect(service.store.getState().dialogOpen).toBe(false);
+    await service.check(false);
+    expect(service.store.getState().dialogOpen).toBe(false);
+    await service.check(true);
+    expect(service.store.getState().dialogOpen).toBe(true);
   });
 });

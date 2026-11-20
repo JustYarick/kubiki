@@ -1,9 +1,14 @@
 import { createStore } from 'zustand/vanilla';
 
+export type UpdateInstallMode = 'auto' | 'notifyOnly';
+
 export interface AppUpdate {
   version: string;
   currentVersion: string;
   notes: string;
+  installMode?: UpdateInstallMode;
+  releaseUrl?: string;
+  notice?: string;
 }
 export interface UpdateProgress { downloaded: number; total?: number | null }
 export type UpdateCheck =
@@ -81,7 +86,7 @@ export class UpdateService {
     const phase = this.store.getState().phase;
     if (phase.status !== 'available' && !(phase.status === 'error' && phase.stage === 'download')) return Promise.resolve();
     const update = phase.update;
-    if (!update) return Promise.resolve();
+    if (!update || update.installMode === 'notifyOnly') return Promise.resolve();
     this.store.setState({ phase: { status: 'downloading', update, progress: { downloaded: 0 } }, dialogOpen: true });
     return this.run(async () => {
       try {
@@ -100,7 +105,7 @@ export class UpdateService {
     const phase = this.store.getState().phase;
     if (phase.status !== 'downloaded' && !(phase.status === 'error' && phase.stage === 'install')) return Promise.resolve();
     const update = phase.update;
-    if (!update) return Promise.resolve();
+    if (!update || update.installMode === 'notifyOnly') return Promise.resolve();
     return this.run(async () => {
       try {
         this.beforeInstall();
