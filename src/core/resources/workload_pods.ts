@@ -16,15 +16,56 @@ function matchesSelector(workload: ResourceItem, pod: ResourceItem): boolean {
 }
 
 /**
+ * O(1) owner lookup matching `ownerMatches` semantics without scanning the full
+ * ReplicaSet/Job list for every Pod (avoids O(Pods × ReplicaSets) on large clusters).
+ */
+function buildOwnerMatcher(items: ResourceItem[], expectedKind: string) {
+  const byUid = new Map<string, ResourceItem>();
+  const byName = new Map<string, ResourceItem[]>();
+  const noUidByName = new Map<string, ResourceItem[]>();
+
+  for (const item of items) {
+    if (item.uid) {
+      byUid.set(item.uid, item);
+    } else if (item.name) {
+      const list = noUidByName.get(item.name);
+      if (list) list.push(item);
+      else noUidByName.set(item.name, [item]);
+    }
+    if (item.name) {
+      const list = byName.get(item.name);
+      if (list) list.push(item);
+      else byName.set(item.name, [item]);
+    }
+  }
+
+  return (owner: OwnerReference): boolean => {
+    if (owner.kind !== expectedKind || typeof owner.name !== 'string' || !owner.name) return false;
+    if (owner.uid) {
+      const direct = byUid.get(owner.uid);
+      if (direct && ownerMatches(owner, direct, expectedKind)) return true;
+      const incomplete = noUidByName.get(owner.name);
+      return incomplete ? incomplete.some((item) => ownerMatches(owner, item, expectedKind)) : false;
+    }
+    const candidates = byName.get(owner.name);
+    return candidates ? candidates.some((item) => ownerMatches(owner, item, expectedKind)) : false;
+  };
+}
+
+/**
  * Selector fallback is only safe when the pod has no owner, or when its
  * ReplicaSet owner was not loaded into the current snapshot. A loaded owner
  * that points somewhere else means the pod belongs to another workload.
  */
-function hasUnresolvedReplicaSetOwner(pod: ResourceItem, owners: OwnerReference[], replicaSets: ResourceItem[]): boolean {
+function hasUnresolvedReplicaSetOwner(
+  pod: ResourceItem,
+  owners: OwnerReference[],
+  replicaSetNames: ReadonlySet<string>,
+): boolean {
   return owners.length > 0
     && owners.every((owner) => owner.kind === 'ReplicaSet')
     && owners.every((owner) =>
-      !replicaSets.some((rs) => rs.namespace === pod.namespace && rs.name === owner.name)
+      !replicaSetNames.has(`${pod.namespace ?? ''}\0${owner.name ?? ''}`)
     );
 }
 
@@ -54,20 +95,24 @@ export function findWorkloadPods(
   }
 
   if (workload.kind === 'Deployment') {
-    const replicaSets = [...(resources.ReplicaSet?.values() ?? [])].filter(
-      (rs) => !targetNs || rs.namespace === targetNs
-    );
-    const ownedReplicaSets = replicaSets.filter((rs) =>
-      ownersOf(rs).some((owner) => ownerMatches(owner, workload, 'Deployment'))
-    );
+    const replicaSetNames = new Set<string>();
+    const ownedReplicaSets: ResourceItem[] = [];
+    for (const rs of resources.ReplicaSet?.values() ?? []) {
+      if (targetNs && rs.namespace !== targetNs) continue;
+      replicaSetNames.add(`${rs.namespace ?? ''}\0${rs.name}`);
+      if (ownersOf(rs).some((owner) => ownerMatches(owner, workload, 'Deployment'))) {
+        ownedReplicaSets.push(rs);
+      }
+    }
+    const matchesOwnedReplicaSet = buildOwnerMatcher(ownedReplicaSets, 'ReplicaSet');
 
     return scopedPods.filter((pod) => {
       const owners = ownersOf(pod);
-      if (owners.some((owner) => ownedReplicaSets.some((rs) => ownerMatches(owner, rs, 'ReplicaSet')))) {
+      if (owners.some((owner) => matchesOwnedReplicaSet(owner))) {
         return true;
       }
       if (owners.some((owner) => ownerMatches(owner, workload, 'Deployment'))) return true;
-      if (owners.length === 0 || hasUnresolvedReplicaSetOwner(pod, owners, replicaSets)) {
+      if (owners.length === 0 || hasUnresolvedReplicaSetOwner(pod, owners, replicaSetNames)) {
         return matchesSelector(workload, pod);
       }
       return false;
@@ -81,14 +126,16 @@ export function findWorkloadPods(
   }
 
   if (workload.kind === 'CronJob') {
-    const jobs = [...(resources.Job?.values() ?? [])].filter(
-      (job) => !targetNs || job.namespace === targetNs
-    );
-    const ownedJobs = jobs.filter((job) =>
-      ownersOf(job).some((owner) => ownerMatches(owner, workload, 'CronJob'))
-    );
+    const ownedJobs: ResourceItem[] = [];
+    for (const job of resources.Job?.values() ?? []) {
+      if (targetNs && job.namespace !== targetNs) continue;
+      if (ownersOf(job).some((owner) => ownerMatches(owner, workload, 'CronJob'))) {
+        ownedJobs.push(job);
+      }
+    }
+    const matchesOwnedJob = buildOwnerMatcher(ownedJobs, 'Job');
     return scopedPods.filter((pod) =>
-      ownersOf(pod).some((owner) => ownedJobs.some((job) => ownerMatches(owner, job, 'Job')))
+      ownersOf(pod).some((owner) => matchesOwnedJob(owner))
     );
   }
 

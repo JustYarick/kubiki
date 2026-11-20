@@ -1,9 +1,21 @@
 import podReferenceRules from '../../../shared/pod-reference-rules.json';
 import type { ResourceItem, ResourceKind } from '../../types/k8s';
 import { matchesResourceRef, resourceKey } from './identity';
-import { RESOURCE_TYPES, apiVersionFor, parseApiVersion } from './resource_types';
+import { RESOURCE_TYPES, apiVersionFor, parseApiVersion, type ResourceType } from './resource_types';
 import { gitOpsReferences, gitOpsFamily } from './gitops';
 import { podNodeInfo } from './pod_node';
+
+/** Pre-indexed builtin resource metadata to keep reference resolution O(1) on large clusters. */
+const BUILTIN_BY_GROUP_KIND = new Map<string, ResourceType>();
+const BUILTIN_BY_KIND = new Map<string, ResourceType>();
+for (const type of RESOURCE_TYPES) {
+  BUILTIN_BY_GROUP_KIND.set(`${type.group}\0${type.kind}`, type);
+  if (!BUILTIN_BY_KIND.has(type.kind)) BUILTIN_BY_KIND.set(type.kind, type);
+}
+
+function findBuiltinType(kind: string, group?: string): ResourceType | undefined {
+  return group === undefined ? BUILTIN_BY_KIND.get(kind) : BUILTIN_BY_GROUP_KIND.get(`${group}\0${kind}`);
+}
 
 export type RelationType = 'owns' | 'selects' | 'routes' | 'schedules' | 'uses' | 'binds' | 'contains' | 'manages';
 export interface ResourceRelation {
@@ -107,13 +119,20 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
   const adjacentNamespaces = adjacentItems && adjacentItems.length > 0 && adjacentItems.every(referencesStayInNamespace)
     ? new Set(adjacentItems.map((item) => item.namespace!))
     : undefined;
-  const byGroupKind = new Map<string, ResourceItem[]>();
+  const admissionPolicyByKindName = new Map<string, ResourceItem>();
+  const fluxGroupByKind = new Map<string, string>();
+  const byUid = new Map<string, ResourceItem>();
   for (const item of all) {
-    const key = JSON.stringify([parseApiVersion(item.apiVersion).group, item.kind]);
-    if (!byGroupKind.has(key)) byGroupKind.set(key, []);
-    byGroupKind.get(key)!.push(item);
+    byUid.set(item.uid, item);
+    const group = parseApiVersion(item.apiVersion).group;
+    if (group === 'admissionregistration.k8s.io') {
+      const policyKey = `${item.kind}\0${item.name}`;
+      if (!admissionPolicyByKindName.has(policyKey)) admissionPolicyByKindName.set(policyKey, item);
+    }
+    if (!fluxGroupByKind.has(item.kind) && gitOpsFamily(item) === 'flux') {
+      fluxGroupByKind.set(item.kind, item.apiVersion.split('/')[0]);
+    }
   }
-  const byUid = new Map(all.map((item) => [item.uid, item]));
   const relations = new Map<string, ResourceRelation>();
   const included = new Set(options.adjacentTo ?? items.keys());
   if (!options.adjacentTo && included.size > (options.maxNodes ?? Infinity)) throw new GraphLimitError(`This scope contains ${included.size} resources. Select a smaller scope (limit ${options.maxNodes}).`);
@@ -152,7 +171,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
   const reference = (from: ResourceItem, kind: string, name: string | undefined, namespace: string | null = from.namespace ?? null, type: RelationType = 'uses', reverse = false, uid?: string, apiVersion?: string, label?: string) => {
     if (!name || name === '-' || kind === 'Event') return;
     const group = apiVersion === undefined ? undefined : parseApiVersion(apiVersion).group;
-    const builtin = RESOURCE_TYPES.find((resource) => resource.kind === kind && (group === undefined || group === resource.group));
+    const builtin = findBuiltinType(kind, group);
     const reference = { kind, name, namespace: builtin?.namespaced === false ? undefined : namespace ?? undefined, uid, apiVersion: apiVersion ?? (builtin ? apiVersionFor(builtin) : '') };
     const key = resourceKey(reference);
     const target = uid ? byUid.get(uid) : items.get(key);
@@ -171,7 +190,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     const spec: any = raw.spec ?? {};
     const metadata: any = raw.metadata ?? {};
     const group = parseApiVersion(item.apiVersion).group;
-    const native = RESOURCE_TYPES.some(type => type.kind === item.kind && type.group === group);
+    const native = BUILTIN_BY_GROUP_KIND.has(`${group}\0${item.kind}`);
     if ((native && item.kind === 'HorizontalPodAutoscaler') || (group === 'autoscaling.k8s.io' && item.kind === 'VerticalPodAutoscaler')) {
       const target = spec.scaleTargetRef ?? spec.targetRef;
       if (target) reference(item, target.kind, target.name, item.namespace, 'uses', false, undefined, target.apiVersion);
@@ -226,7 +245,7 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
     if (native && item.kind.endsWith('AdmissionPolicyBinding')) {
       const policyKind = item.kind.startsWith('Validating') ? 'ValidatingAdmissionPolicy' : 'MutatingAdmissionPolicy';
       reference(item, policyKind, spec.policyName, null, 'binds');
-      const policy = (byGroupKind.get(JSON.stringify(['admissionregistration.k8s.io', policyKind])) ?? []).find(candidate => candidate.name === spec.policyName);
+      const policy = typeof spec.policyName === 'string' ? admissionPolicyByKindName.get(`${policyKind}\0${spec.policyName}`) : undefined;
       const paramKind = policy?.raw?.spec?.paramKind;
       if (paramKind && spec.paramRef?.name) reference(item, paramKind.kind, spec.paramRef.name, spec.paramRef.namespace ?? item.namespace, 'uses', false, undefined, paramKind.apiVersion);
     }
@@ -240,8 +259,8 @@ export function buildResourceGraph(resources: Record<ResourceKind, Map<string, R
       const refs = gitOpsReferences(item);
       for (const [managed, entries] of [[false, refs.sources], [true, refs.managed]] as const) for (const ref of entries) {
         if (ref.local === false) continue;
-        const group = ref.group ?? all.find(candidate => candidate.kind === ref.kind && gitOpsFamily(candidate) === 'flux')?.apiVersion.split('/')[0];
-        const builtin = RESOURCE_TYPES.find(type => type.kind === ref.kind && (group === undefined || type.group === group));
+        const group = ref.group ?? fluxGroupByKind.get(ref.kind);
+        const builtin = findBuiltinType(ref.kind, group);
         const apiVersion = group !== undefined ? (group ? `${group}/${ref.version ?? builtin?.version ?? 'v1'}` : ref.version ?? 'v1') : undefined;
         reference(item, ref.kind, ref.name, ref.namespace ?? null, managed ? 'manages' : 'uses', false, undefined, apiVersion);
       }
