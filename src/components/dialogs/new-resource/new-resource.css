@@ -1,0 +1,164 @@
+/* Scoped adaptive styles for the modular New Resource creation dialog. */
+
+.nr-shell {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: calc(12px * var(--ui-factor));
+  min-width: 0;
+}
+
+.nr-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: calc(8px * var(--ui-factor)) calc(12px * var(--ui-factor));
+  min-width: 0;
+}
+
+.nr-context-meta {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--ui-factor));
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.nr-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: calc(2px * var(--ui-factor));
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+  gap: calc(2px * var(--ui-factor));
+  flex-shrink: 0;
+}
+
+.nr-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px * var(--ui-factor));
+  height: calc(24px * var(--ui-factor));
+  padding: 0 calc(9px * var(--ui-factor));
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: background-color 120ms ease, color 120ms ease;
+  cursor: pointer;
+}
+
+.nr-mode-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.nr-mode-btn[aria-pressed="true"] {
+  background: var(--bg-surface);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.nr-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nr-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) auto;
+  gap: calc(6px * var(--ui-factor));
+  align-items: center;
+  min-width: 0;
+}
+
+.nr-port-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 0.75fr) auto;
+  gap: calc(6px * var(--ui-factor));
+  align-items: center;
+  min-width: 0;
+}
+
+.nr-service-port-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr) minmax(0, 0.8fr) minmax(0, 0.75fr) auto;
+  gap: calc(6px * var(--ui-factor));
+  align-items: center;
+  min-width: 0;
+}
+
+.nr-service-port-row[data-nodeport="true"] {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.7fr) minmax(0, 0.75fr) minmax(0, 0.75fr) minmax(0, 0.7fr) auto;
+}
+
+.nr-ingress-path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.65fr) auto;
+  gap: calc(6px * var(--ui-factor));
+  align-items: center;
+  min-width: 0;
+}
+
+.nr-data-card {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6px * var(--ui-factor));
+  padding: calc(8px * var(--ui-factor));
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  min-width: 0;
+}
+
+.nr-data-card-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(6px * var(--ui-factor));
+  min-width: 0;
+}
+
+.nr-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px * var(--ui-factor));
+  margin-top: calc(4px * var(--ui-factor));
+}
+
+.nr-preset-chip {
+  height: calc(20px * var(--ui-factor));
+  padding: 0 calc(7px * var(--ui-factor));
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  font-family: var(--font-mono, monospace);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.nr-preset-chip:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.nr-preset-chip[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+}
+
+@container (max-width: 520px) {
+  .nr-kv-row,
+  .nr-port-row,
+  .nr-service-port-row,
+  .nr-service-port-row[data-nodeport="true"],
+  .nr-ingress-path-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

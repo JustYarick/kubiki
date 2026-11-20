@@ -70,15 +70,22 @@ export function Popover({ trigger, children, align = 'start', width, className }
       if (panelRef.current?.contains(e.target as Node) || anchorRef.current?.contains(e.target as Node)) return;
       close();
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) { close(); anchorRef.current?.focus(); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+        anchorRef.current?.focus();
+      }
+    };
     document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', update);
       document.removeEventListener('scroll', onScroll, true);
       document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
     };
   }, [open, align, width]);
 
@@ -87,6 +94,7 @@ export function Popover({ trigger, children, align = 'start', width, className }
 
   const triggerEl = trigger({ open, toggle });
   const ownProps = triggerEl.props;
+  const insideDialog = Boolean(anchorRef.current?.closest('[role="dialog"]'));
   return (
     <>
       {React.cloneElement(triggerEl, {
@@ -117,7 +125,8 @@ export function Popover({ trigger, children, align = 'start', width, className }
             }}
             style={{ top: pos.top, left: pos.left, maxHeight: pos.maxHeight, width: width ? uiPixels(width) : undefined, minWidth: 'min(calc(180px * var(--ui-factor)), calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)' }}
             className={cx(
-              'fixed z-[70] min-w-[calc(180px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)]',
+              'fixed min-w-[calc(180px*var(--ui-factor))] rounded-[calc(6px*var(--ui-factor))] border border-[var(--border-default)] bg-[var(--bg-overlay)]',
+              insideDialog ? 'z-[94]' : 'z-[70]',
               'shadow-[var(--shadow-popup)] py-1 max-h-[70vh] overflow-y-auto kubiki-scrollbar kub-pop',
               className
             )}

@@ -5,6 +5,7 @@ import { useResourceTableModel } from '../components/k8s/table/useResourceTableM
 import { useColumnLayout } from '../components/k8s/table/useColumnLayout';
 import { CellValue } from '../components/k8s/table/CellValue';
 import { NewResourceDialog } from '../components/dialogs/NewResourceDialog';
+import { encodeText } from '../core/resources/secret_data';
 import { openAiChat } from '../domains/ai';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { useShallow } from 'zustand/react/shallow';
@@ -970,7 +971,7 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                   </tr>
                 );
               })}
-              {virtualized && virtualRows.length > 0 && <tr aria-hidden="true" data-virtual-spacer><td colSpan={rows.cols.length + 1} style={{ height: Math.max(0, rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end), padding: 0, border: 0 }} /></tr>}
+              {virtualized && <tr aria-hidden="true" data-virtual-spacer><td colSpan={rows.cols.length + 1} style={{ height: Math.max(0, virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end : rowVirtualizer.getTotalSize()), padding: 0, border: 0 }} /></tr>}
             </tbody>
           </table>
         )}
@@ -1010,7 +1011,19 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         onCreate={async (object, yaml) => {
           if (!currentContext || useClusterStore.getState().currentContext !== currentContext) throw new Error('The selected context changed. Reopen the creation dialog.');
           if (k8s.demo) {
-            const item = mapK8sResource({ ...object, metadata: { ...object.metadata, uid: `new-${crypto.randomUUID()}`, creationTimestamp: new Date().toISOString() } }, object.kind as ResourceKind);
+            const demoObject: Record<string, any> = {
+              ...object,
+              metadata: { ...object.metadata, uid: `new-${crypto.randomUUID()}`, creationTimestamp: new Date().toISOString() },
+            };
+            if (demoObject.kind === 'Secret' && demoObject.stringData && typeof demoObject.stringData === 'object') {
+              const encodedData: Record<string, string> = { ...(demoObject.data ?? {}) };
+              for (const [key, value] of Object.entries(demoObject.stringData)) {
+                encodedData[key] = encodeText(value === null || value === undefined ? '' : String(value));
+              }
+              demoObject.data = encodedData;
+              delete demoObject.stringData;
+            }
+            const item = mapK8sResource(demoObject, object.kind as ResourceKind);
             applyDelta({ type: 'Applied', payload: { gvk: effectiveKind, data: item } });
             toast.success(`${displayKind} created (demo)`, object.metadata.name);
             setNewOpen(false);

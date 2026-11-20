@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Modular resource creation forms with a live `Form | YAML` mode switcher (`NewResourceDialog` + `src/components/dialogs/new-resource/` + `src/core/resources/creators/`) for `Secret` (Opaque Text/Base64 + file import, TLS, Docker Registry `.dockerconfigjson`, Basic Auth, SSH Auth, custom type, immutable), `ConfigMap`, `Namespace`, `ServiceAccount`, `Deployment`, `Pod`, `Service`, `Ingress`, `PersistentVolumeClaim`, `Job`, and `CronJob`, with shared `Labels & Annotations`, cluster namespace picker, in-place YAML comment/field preservation across mode switches, and automatic fallback to the YAML manifest editor for other resources and CRDs.
 - Native ARM64 desktop release builds for Linux (`aarch64-unknown-linux-gnu`: DEB, RPM, AppImage on `ubuntu-24.04-arm`) and Windows (`aarch64-pc-windows-msvc`: NSIS EXE on `windows-11-arm`) with full updater manifest and website download support.
 - Automatic update checks across all desktop packages: macOS (ARM64/Intel), Windows (x64 NSIS/MSI, ARM64 NSIS), and Linux x64/ARM64 AppImage/DEB support verified in-app updates, while Linux RPM packages check the signed channel feed in notify-only mode with changelog notes and a direct link to the GitHub Release page.
 - Automatic `## [Unreleased]` release summaries for `dev` preview releases (`vX.Y.Z-dev.N`) in both GitHub Releases and in-app updater manifests (`latest.json`), while keeping `docs/CHANGELOG.md` versioned strictly by stable `main` releases.

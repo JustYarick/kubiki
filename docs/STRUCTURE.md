@@ -60,7 +60,7 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 | `src/components/updates/AppUpdates.tsx` | Startup update offer, download/install actions and About settings. |
 | `src/navigation/CommandPalette.tsx` | Search and navigation across commands and resource types. |
 
-`src/components/layout/` contains the explorer, workspace, tabs, inspector, and bottom panel. `src/components/k8s/details/` contains resource-specific detail views and reusable field blocks. Dialogs and diagnostic panes live under `src/components/dialogs/` and `src/components/k8s/`.
+`src/components/layout/` contains the explorer, workspace, tabs, inspector, and bottom panel. `src/components/k8s/details/` contains resource-specific detail views and reusable field blocks. Dialogs and diagnostic panes live under `src/components/dialogs/` and `src/components/k8s/`. `NewResourceDialog` resolves per-kind interactive creator forms from `src/components/dialogs/new-resource/registry.ts` (backed by pure YAML-preserving models in `src/core/resources/creators/`) with a live `Form | YAML` switcher and automatic fallback to the YAML manifest editor for unsupported kinds and CRDs.
 
 Every workspace document (tables, dedicated details, YAML, terminals and registered
 panels) occupies the same full-width background layer. `WorkspaceArea` isolates

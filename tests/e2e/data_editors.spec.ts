@@ -173,11 +173,15 @@ test('ConfigMap has independent editors with find, replace, undo, formatting and
   await expect(editor(annotation, 'Original annotation app/config').locator('.view-lines')).toContainText('nested');
 });
 
-test('new resource manifest uses the code editor and stays in sync with identity fields', async ({ page }) => {
+test('new resource manifest uses Form and YAML modes interchangeably and stays in sync with identity fields', async ({ page }) => {
   await setup(page);
   await openResource(page, 'ConfigMap', 'editor-config');
   await page.getByRole('button', { name: 'New', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New ConfigMap', exact: true });
+  // ConfigMap has a dedicated creator form, so it opens in Form mode with a YAML switcher.
+  await expect(dialog.getByRole('button', { name: 'Form', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.getByRole('textbox', { name: 'ConfigMap key 1', exact: true })).toHaveValue('config.yaml');
+  await dialog.getByRole('button', { name: 'YAML', exact: true }).click();
   const manifest = editor(dialog, 'Manifest · YAML');
   await expect(manifest.locator('.view-lines')).toContainText('kind: ConfigMap');
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('new-editor-config');
@@ -187,6 +191,10 @@ test('new resource manifest uses the code editor and stays in sync with identity
   await manifest.getByRole('button', { name: 'Find in Manifest · YAML', exact: true }).click();
   await page.keyboard.type('new value'); await page.keyboard.press('Escape');
   await expect(dialog).toBeVisible();
+  // Switching back to Form reflects edits typed in YAML mode.
+  await dialog.getByRole('button', { name: 'Form', exact: true }).click();
+  await expect(dialog.getByRole('textbox', { name: 'ConfigMap key 1', exact: true })).toHaveValue('key');
+  await expect(dialog.getByRole('textbox', { name: 'ConfigMap value 1', exact: true })).toHaveValue('new value');
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('new-editor-config');
   await dialog.getByRole('button', { name: 'Review & create', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__dataIntents.length)).toBe(1);
