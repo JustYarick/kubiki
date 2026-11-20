@@ -12,7 +12,8 @@ import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { useUiStore } from '../state/ui_store';
-import { IconButton, SearchInput } from '../components/ui';
+import { useStaleRefreshToast } from '../state/stale_error_toast';
+import { Button, IconButton, SearchInput } from '../components/ui';
 import { deliveryIcons } from '../components/ui/DeliverySummary';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { ResourceLoading } from '../components/ui/ResourceLoading';
@@ -86,15 +87,53 @@ function Dashboard({ family, result }: { family: 'flux' | 'argocd'; result: Retu
   };
   const summaryText = !result.definitions.length ? 'Resource discovery' : !available ? result.loading ? 'Loading resources…' : 'Resource data unavailable' : partial ? 'Some resource data is unavailable or stale' : failed.length ? `${failed.length} resource${failed.length === 1 ? ' needs' : 's need'} attention` : unknown.length ? `${unknown.length} resource${unknown.length === 1 ? '' : 's'} with unknown state` : progressing.length ? `${progressing.length} reconciliation${progressing.length === 1 ? '' : 's'} in progress` : suspended.length ? `${suspended.length} resource${suspended.length === 1 ? '' : 's'} paused` : !primary.length ? `No ${family === 'flux' ? 'reconciliation resources' : 'applications'} in this scope` : family === 'flux' ? 'All observed resources are reconciled' : 'All observed applications are healthy and synced';
   const timeline = fluxSummary?.timeline ?? argoSummary?.timeline;
+  const staleError = result.error ?? errors[0]?.error;
+  useStaleRefreshToast({
+    scopeId: `gitops:${family}:${result.context ?? ''}:${result.scope}`,
+    label: `${name} overview`,
+    error: staleError,
+    retainedData: available,
+    fromCache: result.fromCache,
+  });
   if (!result.context) return <p className="p-6 text-[var(--text-secondary)]">Select a cluster to view {name}.</p>;
-  return <section data-testid={`${family}-dashboard`} aria-label={`${name} overview`} aria-busy={result.loading && !available} className="delivery-page kubiki-scrollbar">
+  return <section data-testid={`${family}-dashboard`} aria-label={`${name} overview`} aria-busy={result.loading && !available} className="delivery-workspace">
+    {crdError && <RequestErrorNotice error={crdError} />}
+    {result.error && (
+      <RequestErrorNotice
+        error={result.error}
+        retainedData={available}
+        updatedAt={result.updated}
+        fromCache={result.fromCache}
+        onRetry={result.refresh}
+        onDiscardStale={available ? result.discardStale : undefined}
+      />
+    )}
+    {!!errors.length && (
+      <div className="delivery-pinned-notice">
+        <details className="delivery-notice">
+          <summary>Partial or stale data · {errors.length} resource type{errors.length === 1 ? '' : 's'} unavailable</summary>
+          {errors.map(entry => <div key={entry.type.key}><strong>{entry.type.kind}</strong><RequestErrorNotice error={entry.error!} retainedData={entry.items !== undefined} updatedAt={result.updated} fromCache={result.fromCache} onRetry={result.refresh} /></div>)}
+        </details>
+        <div className="delivery-pinned-actions">
+          <Button size="xs" variant="secondary" onClick={result.refresh}>Retry</Button>
+          {available && <Button size="xs" variant="ghost" onClick={result.discardStale}>Clear stale data</Button>}
+        </div>
+      </div>
+    )}
+    <div className="delivery-page kubiki-scrollbar">
     <div className="delivery-health-strip" data-tone={failed.length ? 'attention' : !available || partial || unknown.length ? 'unknown' : progressing.length ? 'progressing' : suspended.length ? 'suspended' : 'healthy'}>
       <span className="delivery-health-message">{failed.length || partial ? <TriangleAlert size={15} aria-hidden="true" /> : !complete || unknown.length ? <CircleHelp size={15} aria-hidden="true" /> : progressing.length ? <Clock3 size={15} aria-hidden="true" /> : suspended.length ? <CirclePause size={15} aria-hidden="true" /> : <CheckCircle2 size={15} aria-hidden="true" />}{summaryText}</span>
-      <div className="delivery-refresh"><span>{k8s.demo ? 'Demo · ' : ''}{result.updated ? `Updated ${new Date(result.updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · auto 15s` : 'Auto refresh · 15s'}</span><IconButton icon={RefreshCw} size="sm" aria-label={`Refresh ${name} overview`} tooltip="Refresh overview" disabled={result.loading} onClick={result.refresh} /></div>
+      <div className="delivery-refresh">
+        {result.fromCache && result.loading && available && (
+          <span className="delivery-cache-pill" data-state="cached-refreshing">Cached · updating…</span>
+        )}
+        {staleError && available && (
+          <span className="delivery-cache-pill" data-state="stale-error">Stale · refresh failed</span>
+        )}
+        <span>{k8s.demo ? 'Demo · ' : ''}{result.updated ? `Updated ${new Date(result.updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · auto 15s` : 'Auto refresh · 15s'}</span>
+        <IconButton icon={RefreshCw} size="sm" aria-label={`Refresh ${name} overview`} tooltip="Refresh overview" disabled={result.loading} onClick={result.refresh} />
+      </div>
     </div>
-    {crdError && <RequestErrorNotice error={crdError} />}
-    {result.error && <RequestErrorNotice error={result.error} retainedData={available} onRetry={result.refresh} />}
-    {!!errors.length && <details className="delivery-notice"><summary>Partial or stale data · {errors.length} resource type{errors.length === 1 ? '' : 's'} unavailable</summary>{errors.map(entry => <div key={entry.type.key}><strong>{entry.type.kind}</strong><RequestErrorNotice error={entry.error!} retainedData={entry.items !== undefined} onRetry={result.refresh} /></div>)}</details>}
     {family === 'flux' && fluxSummary ? <>
       {result.definitions.length > 0 && (
         <FluxSummaryCard
@@ -183,5 +222,6 @@ function Dashboard({ family, result }: { family: 'flux' | 'argocd'; result: Retu
         </section>
       </div>
     </>}
+    </div>
   </section>;
 }

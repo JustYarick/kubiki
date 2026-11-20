@@ -7,6 +7,10 @@ import { MetricsSubscriptions } from './metrics_subscriptions';
 interface State { key: string; data?: OverviewMetrics; loading: boolean; error?: string; history: HistoryPoint[]; nodeHistory: Record<string, HistoryPoint[]> }
 const subscriptions = new MetricsSubscriptions((context, namespace, signal) => k8s.getOverviewMetrics(context, namespace, signal), () => document, () => k8s.demo);
 
+export function clearOverviewMetricsCache(refreshActive = false): void {
+  subscriptions.clearCache({ refreshActive });
+}
+
 /** Keep collecting for an open Overview tab while another workspace tab is selected. */
 export function useRetainedOverviewMetrics(context: string | null, namespace: string | null, enabled: boolean) {
   useEffect(() => enabled && context ? subscriptions.subscribe(context, namespace, () => {}) : undefined, [context, namespace, enabled]);

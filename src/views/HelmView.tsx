@@ -13,6 +13,7 @@ import { helmStatusTone, type HelmDocument, type HelmHistory, type HelmRelease, 
 import { Button, DataTable, FixedMenu, IconButton, MenuList, Popover, ResourceLoading, SearchInput, type MenuItem } from '../components/ui';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { toast } from '../state/notifications_store';
+import { useStaleRefreshToast } from '../state/stale_error_toast';
 import { HelmActionDialog, type HelmAction } from '../components/dialogs/HelmActionDialog';
 import { useResourceStore } from '../state/resource_store';
 import { retainResourceKinds } from '../state/resource_requirements';
@@ -70,15 +71,18 @@ subscribeHelmChanges(() => {
 
 async function readHelmDocument(context: string, namespace: string, name: string, revision: number, document: HelmDocument, signal: AbortSignal): Promise<string> {
   const key = JSON.stringify([context, namespace, name, revision, document]);
-  const cached = helmDocumentCache.get(key);
+  const allowCache = useUiStore.getState().resourceCacheMode !== 'always-fresh';
+  const cached = allowCache ? helmDocumentCache.get(key) : undefined;
   if (cached !== undefined) return cached;
 
   let entry = inFlightHelmDocuments.get(key);
   if (!entry) {
     const controller = new AbortController();
     const promise = k8s.getHelmContent(context, namespace, name, revision, document, controller.signal).then(content => {
-      helmDocumentCache.set(key, content);
-      if (helmDocumentCache.size > 64) helmDocumentCache.delete(helmDocumentCache.keys().next().value!);
+      if (useUiStore.getState().resourceCacheMode !== 'always-fresh') {
+        helmDocumentCache.set(key, content);
+        if (helmDocumentCache.size > 64) helmDocumentCache.delete(helmDocumentCache.keys().next().value!);
+      }
       return content;
     }).finally(() => {
       if (inFlightHelmDocuments.get(key) === entry) inFlightHelmDocuments.delete(key);
@@ -158,6 +162,13 @@ function HelmReleases({ context, namespace, overview }: { context: string; names
     });
   }, [context, result.data, resources]);
   useEffect(() => { if (result.data) cacheHelmReleases(context, result.data); }, [context, result.data]);
+  useStaleRefreshToast({
+    scopeId: `helm-overview:${context}:${namespace ?? 'all'}`,
+    label: 'Helm overview',
+    error: overview ? result.error : null,
+    retainedData: overview && Boolean(result.data),
+    fromCache: result.fromCache,
+  });
   const openReleases = (columnFilters: ColumnFilters = {}) => {
     if (overview) useClusterStore.getState().selectNamespace('all');
     useTableViewStore.getState().update('kind:HelmRelease', { searchQuery: '', columnFilters });
@@ -172,13 +183,22 @@ function HelmReleases({ context, namespace, overview }: { context: string; names
   const install = <Button size="sm" aria-label="Install release" disabled={!k8s.supportsHelmMutations} onClick={() => setAction({ action: 'install' })}><Plus size={13} aria-hidden="true" />Install release</Button>;
   return <section aria-label={overview ? 'Helm overview' : 'Helm releases'} data-testid={overview ? 'helm-overview' : 'helm-releases'} aria-busy={result.loading} className="helm-workspace">
     {overview ? <>
-      {result.error && <RequestErrorNotice error={result.error} onRetry={result.refresh} retainedData={!!result.data} />}
+      {result.error && (
+        <RequestErrorNotice
+          error={result.error}
+          onRetry={result.refresh}
+          retainedData={!!result.data}
+          updatedAt={result.updated}
+          fromCache={result.fromCache}
+          onDiscardStale={result.data ? result.discardStale : undefined}
+        />
+      )}
       {notice}
-      <HelmOverview context={context} releases={result.data ?? null} updated={result.updated} loading={result.loading} partial={result.partialErrors.length > 0} stale={!!result.error}
+      <HelmOverview context={context} releases={result.data ?? null} updated={result.updated} loading={result.loading} partial={result.partialErrors.length > 0} stale={!!result.error} fromCache={result.fromCache}
         actions={<><Button size="sm" onClick={() => openReleases()}>View releases</Button>{install}<IconButton icon={RefreshCw} size="sm" disabled={result.loading} onClick={result.refresh} aria-label="Refresh Helm releases" /></>}
         onBrowse={openReleases} onInspect={release => inspectHelmRelease(context, release)} />
     </> : <ResourceView explicitKind="HelmRelease" source={{
-      items: rows, loading: result.loading, error: result.error, label: 'Helm Releases', refresh: result.refresh, toolbar: install, notice,
+      items: rows, loading: result.loading, error: result.error, updatedAt: result.updated, fromCache: result.fromCache, onDiscardStale: result.data ? result.discardStale : undefined, label: 'Helm Releases', refresh: result.refresh, toolbar: install, notice,
       rowLabel: item => `Inspect Helm release ${item.name} in ${item.namespace}`,
       rowMenu: item => [
         { id: 'inspect', label: 'Inspect release', onSelect: () => inspectHelmRelease(context, item.raw!.release) },

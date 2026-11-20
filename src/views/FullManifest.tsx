@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { k8s } from '../providers/k8s_provider';
 import { useClusterStore } from '../state/cluster_store';
 import { useDetailCache } from '../state/detail_cache';
+import { useUiStore } from '../state/ui_store';
 import type { ResourceItem } from '../types/k8s';
 
 /** Watch summaries omit CRD schemas and Secret/ConfigMap payloads; load the full object on demand before editing or viewing. */
@@ -14,7 +15,7 @@ export const needsFullManifest = (item: ResourceItem) =>
   );
 
 function cachedFullManifest(context: string | null, item: ResourceItem): ResourceItem | undefined {
-  if (!context) return undefined;
+  if (!context || useUiStore.getState().resourceCacheMode === 'always-fresh') return undefined;
   const cache = useDetailCache.getState();
   if (cache.context !== context) return undefined;
   const cached = cache.byKind[item.kind]?.get(item.uid);

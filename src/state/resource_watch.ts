@@ -12,6 +12,7 @@ import { useDockStore } from './dock_store';
 import { inNamespaceScope, mergeNamespaceScopes, namespaceScopeCovers, namespaceNames } from '../core/resources/namespace_scope';
 import { useResourceRequirements } from './resource_requirements';
 import { useDetailCache } from './detail_cache';
+import { resetStaleRefreshToasts } from './stale_error_toast';
 
 let session: ResourceWatchSession | undefined;
 let unsubscribers: (() => void)[] = [];
@@ -55,6 +56,7 @@ export function stopResourceWatches(): void { clearTimeout(countsTimer); countsT
 export async function startResourceWatches(context: string): Promise<PromiseSettledResult<void>[]> {
   stopResourceWatches();
   useDetailCache.getState().clear(context);
+  resetStaleRefreshToasts();
   const provider: ResourceWatchProvider = k8s.supportsResourceWatch ? k8s : {
     managesInitialSyncTimeout: true,
     // Browser reads are also demand-driven. They refresh explicitly without
@@ -117,6 +119,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
       }
     }
   }, useClusterStore.getState().selectedNamespace, new Set(), (query, allowPartial) => {
+    if (useUiStore.getState().resourceCacheMode === 'always-fresh') return undefined;
     const state = useResourceStore.getState();
     const snapshot = state.watchStates[query.kind as ResourceKind];
     if (!snapshot || snapshot.query.context !== query.context || !allowPartial && (!snapshot.hasSnapshot || !namespaceScopeCovers(snapshot.query.namespace ?? 'all', query.namespace ?? 'all'))) return;
@@ -183,6 +186,10 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
   const ready = synchronize();
   scheduleCounts(useClusterStore.getState().selectedNamespace);
   return ready;
+}
+export function discardStaleResourceKind(kind: ResourceKind): void {
+  session?.clearSnapshot(kind);
+  useResourceStore.getState().discardStaleResources(kind);
 }
 export async function refreshResourceWatches(kind?: ResourceKind): Promise<boolean> {
   if (!session) return false;

@@ -105,6 +105,8 @@ Zustand stores separate workspace state from cached Kubernetes data and session 
 | `src/state/cluster_store.ts` | Available contexts, active context, namespace scope, and discovered resource availability. |
 | `src/state/resource_store.ts` | Resource cache and synchronization state consumed by views. |
 | `src/state/detail_cache.ts` | Bounded per-context cache for targeted single-resource and per-UID event prefetches. |
+| `src/state/cache_control.ts` | Unified cache flush across stopped resource tables, polling subscriptions, metrics, and detail caches. |
+| `src/state/stale_error_toast.ts` | Deduplicated warning notifications when background refreshes fail while cached or stale data remains visible. |
 | `src/state/resource_watch.ts` | Starting, stopping, refreshing, and rescoping resource watch sessions. |
 | `src/state/workspace_store.ts` | Workspace sections, remembered documents/splits per section, and resource navigation. |
 | `src/state/dock_store.ts` | Bottom-panel sessions and selection. |

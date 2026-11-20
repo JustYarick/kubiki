@@ -10,6 +10,9 @@ const subscriptions = new ReadSubscriptions<ResourceItem[]>(async (key, signal) 
   const items = await k8s.getCustomResources(context, type.name, type.uid, namespace ?? null, signal, { priority: 'low' });
   return namespace ? items.filter(item => item.raw?.spec?.storageNamespace === namespace || item.raw?.spec?.targetNamespace === namespace || item.namespace === namespace) : items;
 }, 30000);
+export function clearFluxHelmOwnersCache(refreshActive = false): void {
+  subscriptions.clearCache({ refreshActive });
+}
 export function useFluxHelmOwners(context: string, namespace: string | null) {
   const crds = useResourceStore(state => state.resources.CustomResourceDefinition);
   const type = useMemo(() => [...crds.values()].map(customResourceType).find(type => type?.kind === 'HelmRelease' && type.group === 'helm.toolkit.fluxcd.io'), [crds]);

@@ -223,7 +223,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
 
     if (tab.type === 'resource-detail') return (
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {loadErrors[kind] && <div className="p-4 border-b border-[var(--border-subtle)]"><RequestErrorNotice error={loadErrors[kind]} onRetry={() => { if (customDefinition) { custom.refresh(); } else { void refreshResourceWatches(kind).catch(() => {}); } }} retainedData={true} /></div>}
+        {loadErrors[kind] && <RequestErrorNotice error={loadErrors[kind]} onRetry={() => { if (customDefinition) { custom.refresh(); } else { void refreshResourceWatches(kind).catch(() => {}); } }} retainedData={true} updatedAt={watchStates[kind]?.updatedAt} fromCache={watchStates[kind]?.fromCache} />}
         <ResourceDetails key={item.uid} item={item} onClose={() => useWorkspaceStore.getState().closeTab(tab.id)} onNavigate={(next) => useWorkspaceStore.getState().openResourceDetail(next)} />
       </div>
     );
@@ -236,7 +236,7 @@ function TabContent({ tab, visible = true }: { tab?: WorkspaceTab; visible?: boo
 
     return (
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {loadErrors[kind] && <div className="p-4 border-b border-[var(--border-subtle)]"><RequestErrorNotice error={loadErrors[kind]} onRetry={() => { if (customDefinition) { custom.refresh(); } else { void refreshResourceWatches(kind).catch(() => {}); } }} retainedData={true} /></div>}
+        {loadErrors[kind] && <RequestErrorNotice error={loadErrors[kind]} onRetry={() => { if (customDefinition) { custom.refresh(); } else { void refreshResourceWatches(kind).catch(() => {}); } }} retainedData={true} updatedAt={watchStates[kind]?.updatedAt} fromCache={watchStates[kind]?.fromCache} />}
         <Suspense
           fallback={
             <div className="h-full flex items-center justify-center gap-2 text-[length:calc(11px*var(--ui-factor))] text-[var(--text-muted)]">

@@ -1,4 +1,10 @@
+.delivery-workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .delivery-page { container-type: inline-size; flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: calc(20px * var(--ui-factor)); font-size: calc(12px * var(--ui-factor)); }
+.delivery-pinned-notice { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: calc(8px * var(--ui-factor)); padding: calc(8px * var(--ui-factor)) calc(12px * var(--ui-factor)); border-bottom: 1px solid color-mix(in srgb, var(--status-warn) 35%, var(--border-default)); background: color-mix(in srgb, var(--status-warn) 8%, var(--bg-secondary)); flex-shrink: 0; }
+.delivery-pinned-notice .delivery-notice { flex: 1 1 calc(240px * var(--ui-factor)); min-width: 0; padding: 0; border: 0; margin: 0; }
+.delivery-pinned-actions { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); flex-shrink: 0; }
+.delivery-cache-pill { display: inline-flex; align-items: center; padding: calc(1px * var(--ui-factor)) calc(6px * var(--ui-factor)); border-radius: calc(4px * var(--ui-factor)); font-size: calc(10px * var(--ui-factor)); font-weight: 500; border: 1px solid var(--border-strong); background: var(--bg-secondary); color: var(--text-secondary); }
+.delivery-cache-pill[data-state='stale-error'] { border-color: color-mix(in srgb, var(--status-warn) 40%, transparent); background: color-mix(in srgb, var(--status-warn) 14%, transparent); color: var(--status-warn); }
 .delivery-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(130px * var(--ui-factor))), 1fr)); gap: calc(8px * var(--ui-factor)); margin-bottom: calc(16px * var(--ui-factor)); }
 .delivery-metric { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: calc(12px * var(--ui-factor)); gap: calc(6px * var(--ui-factor)); border: 1px solid var(--border-default); border-radius: calc(6px * var(--ui-factor)); background: var(--bg-secondary); cursor: pointer; }
 .delivery-metric:hover { background: var(--bg-hover); border-color: var(--border-strong); }

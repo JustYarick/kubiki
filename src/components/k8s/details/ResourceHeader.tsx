@@ -131,7 +131,8 @@ export function ResourceHeader({
         const context = useClusterStore.getState().currentContext;
         if (context) {
           const cache = useDetailCache.getState();
-          const cached = cache.context === context ? cache.byKind[item.kind]?.get(item.uid) : undefined;
+          const allowCache = useUiStore.getState().resourceCacheMode !== 'always-fresh';
+          const cached = allowCache && cache.context === context ? cache.byKind[item.kind]?.get(item.uid) : undefined;
           if (cached && !cached.readProjection && cached.raw?.metadata?.resourceVersion === item.raw?.metadata?.resourceVersion) {
             source = cached;
           } else if (k8s.getResource) {

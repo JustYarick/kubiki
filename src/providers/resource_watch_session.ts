@@ -17,7 +17,7 @@ const PHASES: WatchPhase[] = ['connecting', 'syncing', 'live', 'reconnecting', '
 interface Subscription {
   query: ResourceQuery; filter?: WatchFilter; abort: AbortController; close?: () => void; sequence: number;
   changes: Map<string, WatchDelta>; snapshot?: Record<string, any>[];
-  phase: WatchPhase; error?: K8sRequestError; hasSnapshot: boolean;
+  phase: WatchPhase; error?: K8sRequestError; hasSnapshot: boolean; fromCache: boolean; updatedAt?: number;
   flushTimer?: ReturnType<typeof setTimeout>; firstTimer?: ReturnType<typeof setTimeout>;
   settle: (error?: K8sRequestError) => void;
 }
@@ -66,7 +66,7 @@ export class ResourceWatchSession {
     for (const [kind, subscription] of this.subscriptions) if (!wanted.has(kind)) {
       this.closeSubscription(subscription);
       this.subscriptions.delete(kind);
-      this.commit(kind, { changes: [], state: { query: subscription.query, phase: 'stopped', hasSnapshot: subscription.hasSnapshot } });
+      this.commit(kind, { changes: [], state: { query: subscription.query, phase: 'stopped', hasSnapshot: subscription.hasSnapshot, fromCache: subscription.fromCache, updatedAt: subscription.updatedAt } });
     }
     const toRefresh = [...wanted].filter(kind => {
       const previous = this.subscriptions.get(kind);
@@ -92,13 +92,15 @@ export class ResourceWatchSession {
     // Keep overlapping observations while a broader scope initializes, without
     // claiming that these rows form a complete snapshot of the new scope.
     const retained = cached ?? (!sameScope ? this.cachedSnapshot?.(query, true) : undefined);
+    const fromCache = sameScope ? previous.fromCache : retained !== undefined;
+    const updatedAt = sameScope ? previous.updatedAt : undefined;
     let resolve!: () => void; let reject!: (error: K8sRequestError) => void;
     const ready = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     let settled = false;
-    const subscription: Subscription = { query, filter, abort: new AbortController(), sequence: 0, changes: new Map(), phase: 'connecting', hasSnapshot: sameScope ? previous.hasSnapshot : cached !== undefined,
+    const subscription: Subscription = { query, filter, abort: new AbortController(), sequence: 0, changes: new Map(), phase: 'connecting', hasSnapshot: sameScope ? previous.hasSnapshot : cached !== undefined, fromCache, updatedAt,
       settle: (error) => { if (settled) return; settled = true; clearTimeout(subscription.firstTimer); if (error) reject(error); else resolve(); } };
     this.subscriptions.set(kind, subscription);
-    this.commit(kind, { ...(!sameScope ? { snapshot: retained ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot } });
+    this.commit(kind, { ...(!sameScope ? { snapshot: retained ?? [] } : {}), changes: [], state: { query, phase: 'connecting', hasSnapshot: subscription.hasSnapshot, fromCache, updatedAt } });
     void (async () => {
       if (!this.current(kind, subscription)) return;
       if (!this.provider.managesInitialSyncTimeout) subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
@@ -161,7 +163,7 @@ export class ResourceWatchSession {
           }
         } else throw new Error('Unknown resource watch message');
       }
-      if (!subscription.hasSnapshot && subscription.snapshot && subscription.phase === 'live') {
+      if ((!subscription.hasSnapshot || subscription.fromCache) && subscription.snapshot && subscription.phase === 'live') {
         clearTimeout(subscription.flushTimer);
         this.flush(kind, subscription);
         return;
@@ -185,12 +187,14 @@ export class ResourceWatchSession {
     if (!this.current(kind, subscription)) return;
     try {
       const snapshot = subscription.snapshot?.map((raw) => this.map(raw, kind));
-      if (snapshot) subscription.hasSnapshot = true;
+      if (snapshot) { subscription.hasSnapshot = true; subscription.fromCache = false; subscription.updatedAt = Date.now(); }
       if (subscription.phase === 'live' && !subscription.hasSnapshot) throw new Error('Resource watch reported live without a complete snapshot');
       const changes: WatchCommit['changes'] = [...subscription.changes.values()].map((delta) => delta.type === 'Applied'
         ? { type: 'apply', item: this.map(delta.payload.data, kind) } : { type: 'delete', uid: (delta as Extract<WatchDelta, { type: 'Deleted' }>).payload.uid });
+      if (changes.length > 0 || (subscription.phase === 'live' && !subscription.updatedAt)) subscription.updatedAt = Date.now();
+      if (subscription.phase === 'live') subscription.fromCache = false;
       if ((subscription.phase === 'failed' || subscription.phase === 'stopped') && !subscription.error) subscription.error = requestError('unavailable', 'Resource watch stopped', { operation: 'watch', context: this.context, resource: subscription.query });
-      this.commit(kind, { snapshot, changes, state: { query: subscription.query, phase: subscription.phase, hasSnapshot: subscription.hasSnapshot, updatedAt: Date.now() }, error: subscription.error });
+      this.commit(kind, { snapshot, changes, state: { query: subscription.query, phase: subscription.phase, hasSnapshot: subscription.hasSnapshot, fromCache: subscription.fromCache, updatedAt: subscription.updatedAt }, error: subscription.error });
       subscription.snapshot = undefined; subscription.changes.clear();
       if (subscription.phase === 'failed' || subscription.phase === 'stopped') {
         const error = subscription.error ?? requestError('unavailable', 'Resource watch stopped', { operation: 'watch', context: this.context, resource: subscription.query });
@@ -201,8 +205,17 @@ export class ResourceWatchSession {
 
   private fail(kind: ResourceKind, subscription: Subscription, error: K8sRequestError): void {
     if (!this.current(kind, subscription)) return;
-    this.commit(kind, { changes: [], state: { query: subscription.query, phase: 'failed', hasSnapshot: subscription.hasSnapshot }, error });
+    this.commit(kind, { changes: [], state: { query: subscription.query, phase: 'failed', hasSnapshot: subscription.hasSnapshot, fromCache: subscription.fromCache, updatedAt: subscription.updatedAt }, error });
     subscription.settle(error); this.closeSubscription(subscription);
+  }
+
+  /** Clear cached/retained snapshot metadata for a kind after the user discards stale data. */
+  clearSnapshot(kind: ResourceKind): void {
+    const subscription = this.subscriptions.get(kind);
+    if (!subscription) return;
+    subscription.hasSnapshot = false;
+    subscription.fromCache = false;
+    subscription.updatedAt = undefined;
   }
 
   private closeSubscription(subscription: Subscription): void {

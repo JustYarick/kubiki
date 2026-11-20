@@ -7,6 +7,7 @@ import { UpdateSettings } from '../updates/AppUpdates';
 import { TerminalFontSettings } from '../TerminalFontSettings';
 import { LogTimeZoneSelect } from '../k8s/LogTimeZoneSelect';
 import { toast } from '../../state/notifications_store';
+import { clearAllResourceCaches } from '../../state/cache_control';
 import { useClusterStore } from '../../state/cluster_store';
 import { useTableViewStore } from '../../state/table_view_store';
 import { k8s } from '../../providers/k8s_provider';
@@ -20,6 +21,7 @@ import {
   TERMINAL_ACK_TIMEOUT_PRESETS,
   TERMINAL_SCROLLBACK_PRESETS,
   useUiStore,
+  type ResourceCacheMode,
 } from '../../state/ui_store';
 import { DEFAULT_TERMINAL_FONT, DEFAULT_TERMINAL_BACKGROUND, TERMINAL_BACKGROUND_PRESETS } from '../../core/terminal_appearance';
 import { APPEARANCE_LIMITS, DEFAULT_APPEARANCE } from '../../core/appearance';
@@ -530,8 +532,30 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
   const setPortForwardLocalRange = useUiStore((s) => s.setPortForwardLocalRange);
   const portForwardAutoOpen = useUiStore((s) => s.portForwardAutoOpen);
   const setPortForwardAutoOpen = useUiStore((s) => s.setPortForwardAutoOpen);
+  const resourceCacheMode = useUiStore((s) => s.resourceCacheMode);
+  const setResourceCacheMode = useUiStore((s) => s.setResourceCacheMode);
   const [kubeconfigPath, setKubeconfigPath] = useState('');
   const [loading, setLoading] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  const handleCacheModeChange = (mode: ResourceCacheMode) => {
+    setResourceCacheMode(mode);
+    if (mode === 'always-fresh') {
+      void clearAllResourceCaches({ refreshActive: false });
+    }
+  };
+
+  const handleClearCache = async () => {
+    try {
+      setClearingCache(true);
+      await clearAllResourceCaches({ refreshActive: true });
+      toast.success('Cache cleared', 'Cached snapshots removed and active views are refreshing.');
+    } catch (err) {
+      toast.error('Failed to clear cache', String(err));
+    } finally {
+      setClearingCache(false);
+    }
+  };
 
   React.useEffect(() => {
     void k8s.getKubeconfigPath().then((path) => {
@@ -588,6 +612,22 @@ function KubernetesPage({ sectionTitle }: { sectionTitle: string }) {
           checked={rememberNamespaceScope}
           onChange={(event) => setRememberNamespaceScope(event.target.checked)}
         />
+      </Row>
+      <Row entry={findEntry('kubernetes.cache-mode')}>
+        <Segmented
+          ariaLabel="Cached data on tab reopen"
+          value={resourceCacheMode}
+          onChange={(value) => handleCacheModeChange(value as ResourceCacheMode)}
+          options={[
+            { value: 'stale-while-revalidate', label: 'Show cached' },
+            { value: 'always-fresh', label: 'Always fresh' },
+          ]}
+        />
+      </Row>
+      <Row entry={findEntry('kubernetes.clear-cache')}>
+        <Button size="sm" variant="secondary" loading={clearingCache} disabled={clearingCache} onClick={() => void handleClearCache()}>
+          Clear cache now
+        </Button>
       </Row>
       <Row entry={findEntry('kubernetes.kubeconfig')} wide>
         <div className="flex flex-col gap-2 w-full max-w-lg">
@@ -782,6 +822,7 @@ const RESET_HANDLERS: Partial<Record<SettingsPageId, () => void>> = {
     useClusterStore.getState().setRememberLastContext(true);
     useClusterStore.getState().setRememberNamespaceScope(true);
     const ui = useUiStore.getState();
+    ui.setResourceCacheMode('stale-while-revalidate');
     ui.setPortForwardLocalRange('8000-8999');
     ui.setPortForwardAutoOpen(false);
     toast.success('Kubernetes defaults restored');

@@ -26,6 +26,8 @@ interface ResourceState {
 
   setActiveKind: (kind: ResourceKind) => void;
   reset: () => void;
+  discardStaleResources: (kind: ResourceKind) => void;
+  clearStoppedSnapshots: () => void;
   setLoadError: (kind: ResourceKind, error: unknown) => void;
   selectItem: (item: ResourceItem | null, options?: { history?: boolean; origin?: string }) => void;
   setResourcesForKind: (kind: ResourceKind, items: ResourceItem[]) => void;
@@ -56,8 +58,21 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     }
     for (const change of update.changes) { if (change.type === 'apply') map.set(change.item.uid, change.item); else map.delete(change.uid); }
     const prevWatch = state.watchStates[kind];
-    const sameWatch = prevWatch && prevWatch.phase === update.state.phase && prevWatch.hasSnapshot === update.state.hasSnapshot && sameQuery(prevWatch.query, update.state.query);
-    const isLoading = update.state.phase === 'connecting' || update.state.phase === 'syncing';
+    const preservedUpdatedAt = update.state.updatedAt ?? (
+      (update.state.fromCache || update.state.hasSnapshot) && prevWatch?.query.context === update.state.query.context
+        ? prevWatch.updatedAt
+        : undefined
+    );
+    const nextWatch: WatchState = preservedUpdatedAt !== undefined
+      ? { ...update.state, updatedAt: preservedUpdatedAt }
+      : update.state;
+    const sameWatch = prevWatch
+      && prevWatch.phase === nextWatch.phase
+      && prevWatch.hasSnapshot === nextWatch.hasSnapshot
+      && Boolean(prevWatch.fromCache) === Boolean(nextWatch.fromCache)
+      && prevWatch.updatedAt === nextWatch.updatedAt
+      && sameQuery(prevWatch.query, nextWatch.query);
+    const isLoading = nextWatch.phase === 'connecting' || nextWatch.phase === 'syncing';
     const sameLoading = state.loadingKinds[kind] === isLoading;
     const nextError = update.error ? normalizeK8sError(update.error, { operation: 'watch', context: useClusterStore.getState().currentContext ?? undefined }) : undefined;
     const sameError = (state.loadErrors[kind] === undefined && nextError === undefined) || (state.loadErrors[kind]?.message === nextError?.message && state.loadErrors[kind]?.status === nextError?.status);
@@ -65,8 +80,8 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
       resources: map === state.resources[kind] ? state.resources : { ...state.resources, [kind]: map },
       selectedItem: state.selectedItem && resourceBucket(state.selectedItem) === kind ? map.get(state.selectedItem.uid) ?? null : state.selectedItem,
       // Scope changes must not leave navigation history pointing to stale, unloaded objects.
-      selectionHistory: update.snapshot && !update.state.hasSnapshot ? state.selectionHistory.filter((item) => resourceBucket(item) !== kind || map.has(item.uid)) : state.selectionHistory,
-      watchStates: sameWatch ? state.watchStates : { ...state.watchStates, [kind]: update.state },
+      selectionHistory: update.snapshot && !nextWatch.hasSnapshot ? state.selectionHistory.filter((item) => resourceBucket(item) !== kind || map.has(item.uid)) : state.selectionHistory,
+      watchStates: sameWatch ? state.watchStates : { ...state.watchStates, [kind]: nextWatch },
       loadingKinds: sameLoading ? state.loadingKinds : { ...state.loadingKinds, [kind]: isLoading },
       loadErrors: sameError ? state.loadErrors : { ...state.loadErrors, [kind]: nextError },
     };
@@ -84,6 +99,51 @@ export const useResourceStore = create<ResourceState>((set, get) => ({
     return { selectionHistory: [] };
   }),
   reset: () => set({ resources: initialResources(), resourceCounts: {}, selectedItem: null, selectionHistory: [], selectionOrigin: null, loadErrors: {}, loadingKinds: {}, watchStates: {}, syncMode: 'snapshot' }),
+  discardStaleResources: (kind) => set((state) => {
+    const prevWatch = state.watchStates[kind];
+    const nextMap = new Map<string, ResourceItem>();
+    return {
+      resources: { ...state.resources, [kind]: nextMap },
+      selectedItem: state.selectedItem && resourceBucket(state.selectedItem) === kind ? null : state.selectedItem,
+      selectionHistory: state.selectionHistory.filter((item) => resourceBucket(item) !== kind),
+      watchStates: prevWatch
+        ? { ...state.watchStates, [kind]: { ...prevWatch, hasSnapshot: false, fromCache: false, updatedAt: undefined } }
+        : state.watchStates,
+    };
+  }),
+  clearStoppedSnapshots: () => set((state) => {
+    let changed = false;
+    const resources = { ...state.resources };
+    const watchStates = { ...state.watchStates };
+    const loadErrors = { ...state.loadErrors };
+    const selectedKind = state.selectedItem ? resourceBucket(state.selectedItem) : null;
+    for (const kind of Object.keys(resources) as ResourceKind[]) {
+      const ws = watchStates[kind];
+      if (ws && ws.phase !== 'stopped') continue;
+      if (!ws && kind === selectedKind) continue;
+      if (resources[kind]?.size) {
+        resources[kind] = new Map<string, ResourceItem>();
+        changed = true;
+      }
+      if (ws) {
+        delete watchStates[kind];
+        changed = true;
+      }
+      if (loadErrors[kind]) {
+        delete loadErrors[kind];
+        changed = true;
+      }
+    }
+    if (!changed) return state;
+    const keepSelected = state.selectedItem && resources[resourceBucket(state.selectedItem)]?.has(state.selectedItem.uid);
+    return {
+      resources,
+      watchStates,
+      loadErrors,
+      selectedItem: keepSelected ? state.selectedItem : null,
+      selectionHistory: state.selectionHistory.filter((item) => resources[resourceBucket(item)]?.has(item.uid)),
+    };
+  }),
   setLoadError: (kind, error) => set((state) => ({ loadingKinds: error == null ? state.loadingKinds : { ...state.loadingKinds, [kind]: false }, loadErrors: { ...state.loadErrors, [kind]: error == null ? undefined : normalizeK8sError(error, { operation: 'resources', context: useClusterStore.getState().currentContext ?? undefined }) } })),
 
   setActiveKind: (activeKind) => set({ activeKind }),

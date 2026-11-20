@@ -12,7 +12,7 @@ export interface WatchMessage {
   event: { type: 'Delta'; payload: WatchDelta } | { type: 'Status'; payload: { phase: WatchPhase; error: K8sErrorPayload | null } };
 }
 export interface WatchBatch { subscription_id: string; query: ResourceQuery; messages: WatchMessage[] }
-export interface WatchState { query: ResourceQuery; phase: WatchPhase; hasSnapshot: boolean; updatedAt?: number }
+export interface WatchState { query: ResourceQuery; phase: WatchPhase; hasSnapshot: boolean; updatedAt?: number; fromCache?: boolean }
 export interface WatchCommit {
   snapshot?: ResourceItem[];
   changes: Array<{ type: 'apply'; item: ResourceItem } | { type: 'delete'; uid: string }>;

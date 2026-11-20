@@ -26,6 +26,7 @@ import {
   Boxes,
   Braces,
   ChevronDown,
+  Clock3,
   Copy,
   FileText,
   Filter,
@@ -38,6 +39,7 @@ import {
   SlidersHorizontal,
   Terminal,
   Trash2,
+  TriangleAlert,
   XCircle,
   ExternalLink,
   Columns2,
@@ -73,7 +75,8 @@ import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { uiFactor, uiPixels } from '../core/appearance';
 import { resourceTabId } from '../core/resources/identity';
 import { podContainers } from '../core/resources/containers';
-import { refreshResourceWatches } from '../state/resource_watch';
+import { discardStaleResourceKind, refreshResourceWatches } from '../state/resource_watch';
+import { useStaleRefreshToast } from '../state/stale_error_toast';
 import { cx } from '../core/utils/cx';
 
 /* ------------------------------------------------------------------ */
@@ -93,6 +96,9 @@ interface ResourceViewProps {
     items: ResourceItem[];
     loading: boolean;
     error?: import('../providers/errors').K8sRequestError | null;
+    updatedAt?: number;
+    fromCache?: boolean;
+    onDiscardStale?: () => void;
     label: string;
     refresh: () => void;
     toolbar?: React.ReactNode;
@@ -214,6 +220,31 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
   const tableError = source ? source.error : loadError;
   const pending = source ? source.loading : !loadError && (customType ? custom.loading : syncMode === 'watch' ? !watchState ? isLoading : ['connecting', 'syncing'].includes(watchState.phase) : kindLoading ?? isLoading);
   const initialLoading = pending && !allItems.length;
+  const hasRetainedData = allItems.length > 0 || (!source && watchState?.hasSnapshot === true);
+  const isFromCache = source
+    ? Boolean(source.fromCache)
+    : (customType && !k8s.supportsResourceWatch ? custom.fromCache : Boolean(watchState?.fromCache));
+  const lastUpdatedAt = source
+    ? source.updatedAt
+    : (customType && !k8s.supportsResourceWatch ? custom.updatedAt : watchState?.updatedAt);
+  const handleDiscardStale = source
+    ? source.onDiscardStale
+    : customType
+      ? custom.discardStale
+      : () => discardStaleResourceKind(effectiveKind);
+  useStaleRefreshToast({
+    scopeId: `resource:${currentContext ?? ''}:${selectedNamespace}:${effectiveKind}:${source ? 'source' : 'k8s'}`,
+    label: (source?.label ?? listLabel).toLowerCase(),
+    error: tableError,
+    retainedData: hasRetainedData,
+    fromCache: isFromCache,
+  });
+  const isReconnecting = !source && watchState?.phase === 'reconnecting';
+  const showCachedRefreshingPill = !tableError && hasRetainedData && ((isFromCache && (pending || spinning)) || isReconnecting);
+  const showStaleErrorPill = Boolean(tableError && hasRetainedData);
+  const syncedTooltip = lastUpdatedAt
+    ? `Last synced ${new Date(lastUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+    : 'Previously loaded snapshot';
   useEffect(() => { setFocusedIndex(0); setLastSelectedIndex(null); }, [selectedNamespace, deferredSearchQuery, columnFilters, sorts]);
 
   const virtualized = rows.list.length > 80;
@@ -645,6 +676,32 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         <KindIcon size="calc(15px * var(--ui-factor))" strokeWidth={1.75} className="text-blue-400 shrink-0" />
         <span title={source?.label ?? listLabel} className="truncate text-[length:calc(13px*var(--ui-factor))] font-semibold text-[var(--text-primary)]">{source?.label ?? listLabel}</span>
 
+        {showStaleErrorPill && (
+          <Tooltip label={`${syncedTooltip} · latest refresh failed`} delay={250}>
+            <span
+              data-testid="resource-freshness-pill"
+              data-state="stale-error"
+              className="inline-flex items-center gap-1 shrink-0 rounded px-1.5 py-[1px] text-[length:calc(10px*var(--ui-factor))] font-medium bg-[var(--status-warn)]/15 text-[var(--status-warn)] border border-[var(--status-warn)]/35"
+            >
+              <TriangleAlert size="calc(11px * var(--ui-factor))" aria-hidden="true" />
+              <span>Stale · refresh failed</span>
+            </span>
+          </Tooltip>
+        )}
+
+        {showCachedRefreshingPill && (
+          <Tooltip label={`${syncedTooltip} · waiting for fresh Kubernetes data`} delay={250}>
+            <span
+              data-testid="resource-freshness-pill"
+              data-state="cached-refreshing"
+              className="inline-flex items-center gap-1 shrink-0 rounded px-1.5 py-[1px] text-[length:calc(10px*var(--ui-factor))] font-medium bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-strong)]"
+            >
+              <Clock3 size="calc(11px * var(--ui-factor))" className="text-[var(--status-warn)]" aria-hidden="true" />
+              <span>{isReconnecting ? 'Reconnecting · cached' : 'Cached · updating…'}</span>
+            </span>
+          </Tooltip>
+        )}
+
         {selectedUids.size > 0 && (
           <span className="text-[length:calc(11px*var(--ui-factor))] font-mono text-[var(--accent)] px-2 py-[1px] rounded bg-[var(--accent-subtle)] font-medium">
             {selectedUids.size} selected
@@ -750,14 +807,28 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         </span>
       </div>
 
+      {tableError && (
+        <RequestErrorNotice
+          error={tableError}
+          onRetry={() => void refresh()}
+          retainedData={hasRetainedData}
+          updatedAt={lastUpdatedAt}
+          fromCache={isFromCache}
+          onDiscardStale={hasRetainedData ? handleDiscardStale : undefined}
+        />
+      )}
+      {!source && watchState?.phase === 'reconnecting' && !loadError && (
+        <div className="shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
+          <ResourceLoading compact label="Reconnecting… Showing the last complete snapshot." />
+        </div>
+      )}
+
       {/* JetBrains DataGrip Data Table */}
       <div ref={tableRef} tabIndex={0} aria-label={`${displayKind} resource table`} aria-busy={pending || spinning} className="flex-1 overflow-auto kubiki-scrollbar min-h-0 select-none resource-table-scroll" data-testid="resource-table">
         {source?.notice}
         {!source && k8s.supportsResourceWatch && !customType && resourceType(effectiveKind).watch === false && <p className="px-3 py-1 text-xs text-[var(--text-secondary)]">This API supports snapshots only · refreshed every 30 seconds</p>}
-        {tableError && <RequestErrorNotice error={tableError} onRetry={() => void refresh()} retainedData={allItems.length > 0 || !source && watchState?.hasSnapshot === true} />}
         {initialLoading && <ResourceLoading label={`Loading ${displayKind} resources…`} description={watchState ? 'Waiting for the first complete snapshot from Kubernetes.' : 'Waiting for Kubernetes to respond.'} />}
         {!initialLoading && (pending || spinning) && <div className="resource-loading-overlay"><ResourceLoading compact label={`Refreshing ${displayKind} resources…`} /></div>}
-        {!source && watchState?.phase === 'reconnecting' && !loadError && <ResourceLoading compact label="Reconnecting… Showing the last complete snapshot." />}
         {rows.list.length === 0 ? !initialLoading && !tableError && (
           <EmptyState
             kind={displayKind}

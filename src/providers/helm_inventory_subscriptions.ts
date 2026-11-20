@@ -46,9 +46,24 @@ export function refreshHelmInventory(context: string, namespace: string | null) 
   subscriptions.refresh(helmInventoryKey(context, namespace));
 }
 
+export function discardStaleHelmInventory(context: string, namespace: string | null) {
+  const key = helmInventoryKey(context, namespace);
+  partialErrorsByKey.delete(key);
+  subscriptions.discardStale(key);
+}
+
 export function subscribeHelmChanges(listener: () => void) {
   changes.add(listener);
   return () => { changes.delete(listener); };
+}
+
+export function clearHelmInventoryCache(refreshActive = false) {
+  partialErrorsByKey.clear();
+  if (refreshActive) {
+    invalidateHelmGraphs();
+    return;
+  }
+  subscriptions.clearCache();
 }
 
 export function invalidateHelmGraphs() {
