@@ -116,4 +116,21 @@ describe('Secret source metadata loading', () => {
     expect(await loadSecretOrigin('prod', secret, signal, reader)).toMatchObject({ type: 'external', sources: [{ provider: 'Vault' }] });
     expect(reader.getCustomResources.mock.calls.map((call: unknown[]) => call[3])).toEqual(['apps', null]);
   });
+
+  it('skips ESO/VSO CRD lookups for Helm release and service-account token Secrets', async () => {
+    const reader = {
+      getResources: vi.fn().mockResolvedValue([definition('ExternalSecret')]),
+      getCustomResources: vi.fn().mockResolvedValue([]),
+    };
+    const helmSecret: ResourceItem = {
+      ...secret,
+      name: 'sh.helm.release.v1.web.v1',
+      secretType: 'helm.sh/release.v1',
+      raw: { type: 'helm.sh/release.v1', metadata: { name: 'sh.helm.release.v1.web.v1', namespace: 'apps', labels: { owner: 'helm' } } },
+    };
+    const result = await loadSecretOrigin('prod', helmSecret, new AbortController().signal, reader);
+    expect(result).toEqual({ type: 'internal', sources: [] });
+    expect(reader.getResources).not.toHaveBeenCalled();
+    expect(reader.getCustomResources).not.toHaveBeenCalled();
+  });
 });

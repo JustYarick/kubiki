@@ -5,6 +5,28 @@ import { extractForwardRefs, prefetchDetailDependencies } from '../../src/provid
 import { useDetailCache, detailReadKey } from '../../src/state/detail_cache';
 import { mapK8sResource } from '../../src/core/utils/k8s_mapper';
 
+/**
+ * WHY THIS TEST EXISTS:
+ * Switching tabs or namespaces quickly aborts older reads. The queue must enforce
+ * its concurrency ceiling AND drop aborted tasks before starting them so stale tabs
+ * never burn API-server slots or bandwidth.
+ */
+it('limits in-flight initial collections until they finish and skips cancelled queued work', async () => {
+  const queue = new InitialSyncQueue(2);
+  const finish: (() => void)[] = [];
+  const signals = Array.from({ length: 6 }, () => new AbortController());
+  let started = 0;
+  const results = signals.map(controller => queue.run(() => new Promise<void>(resolve => { started++; finish.push(resolve); }), controller.signal));
+  expect(started).toBe(2);
+  signals[2].abort();
+  finish.shift()!(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  expect(started).toBe(3);
+  signals[4].abort(); signals[5].abort();
+  while (finish.length) finish.shift()!();
+  await Promise.all(results);
+  expect(started).toBe(3);
+});
+
 it('prioritizes high/normal reads ahead of low background reads without starvation', async () => {
   const queue = new InitialSyncQueue(4);
   const started: string[] = [];
@@ -155,4 +177,64 @@ it('keeps Secret existence separate from contents and distinguishes 404 from den
     useDetailCache.getState().clear('other');
     expect(useDetailCache.getState().readStates.size).toBe(0);
   } finally { read.mockRestore(); events.mockRestore(); useDetailCache.getState().clear(); useResourceStore.setState(previous); }
+});
+
+it('hydrates summary-projected live Secrets and ConfigMaps when full payloads are needed', async () => {
+  const { k8s, K8sProvider } = await import('../../src/providers/k8s_provider');
+  const { useResourceStore } = await import('../../src/state/resource_store');
+  const previous = useResourceStore.getState();
+  const summarySecret = mapK8sResource({
+    apiVersion: 'v1',
+    kind: 'Secret',
+    metadata: { name: 'db-creds', namespace: 'prod', uid: 'sec-summary', resourceVersion: '10' },
+    type: 'Opaque',
+    _kubikiSummary: { dataKeys: 2 },
+  }, 'Secret');
+  expect(summarySecret.readProjection).toBe('summary');
+  expect(summarySecret.dataKeys).toBe(2);
+  expect(summarySecret.raw?._kubikiSummary).toBeUndefined();
+
+  useResourceStore.setState({
+    resources: { ...previous.resources, Secret: new Map([['sec-summary', summarySecret]]) },
+    watchStates: { Secret: { query: { context: 'test', group: '', version: 'v1', kind: 'Secret', namespace: 'prod' }, phase: 'live', hasSnapshot: true } },
+  });
+  useDetailCache.getState().clear('test');
+  const reads: Record<string, unknown>[] = [];
+  const provider = new K8sProvider({
+    native: false,
+    request: async <T>(_command: string, _path: string, args: Record<string, unknown>) => {
+      if (args.kind === 'Secret') reads.push(args);
+      return {
+        apiVersion: 'v1',
+        kind: args.kind,
+        metadata: { name: args.name, namespace: args.namespace, uid: 'sec-summary', resourceVersion: '10' },
+        type: 'Opaque',
+        data: { password: btoa('super-secret') },
+      } as T;
+    },
+  });
+  const read = vi.spyOn(k8s, 'getResource').mockImplementation(provider.getResource.bind(provider));
+  const events = vi.spyOn(k8s, 'getResources').mockResolvedValue([]);
+  const pod = mapK8sResource({
+    apiVersion: 'v1',
+    kind: 'Pod',
+    metadata: { uid: 'pod', name: 'web', namespace: 'prod' },
+    spec: { containers: [{ name: 'web', envFrom: [{ secretRef: { name: 'db-creds' } }] }] },
+  }, 'Pod');
+  try {
+    await prefetchDetailDependencies('test', pod, new AbortController().signal, { includeSecretPayloads: false });
+    // Metadata-only prefetch does not re-fetch a summary-projected Secret that is already in live watch cache.
+    expect(reads).toHaveLength(0);
+    await prefetchDetailDependencies('test', pod, new AbortController().signal, { includeSecretPayloads: true });
+    // Environment access hydrates the full Secret payload on demand.
+    expect(reads).toHaveLength(1);
+    const hydrated = useDetailCache.getState().byKind.Secret?.get('sec-summary');
+    expect(hydrated?.readProjection).toBeUndefined();
+    expect(hydrated?.raw?.data?.password).toBe(btoa('super-secret'));
+  } finally {
+    read.mockRestore();
+    events.mockRestore();
+    useDetailCache.getState().clear();
+    useResourceStore.setState(previous);
+  }
 });

@@ -5,7 +5,10 @@ import { parseCustomResources } from './custom_resources';
 import type { ResourceType } from '../core/resources/resource_types';
 import { mapK8sResource } from '../core/utils/k8s_mapper';
 import { normalizeK8sError, requestError, type K8sRequestError } from './errors';
+import type { ReadPriority } from './initial_sync_queue';
 import { sameQuery, type ResourceWatchProvider, type WatchBatch, type WatchCommit, type WatchDelta, type WatchFilter, type WatchPhase } from './watch_types';
+
+const PRIORITY_ORDER: Record<ReadPriority, number> = { high: 0, normal: 1, low: 2 };
 
 export const WATCH_FLUSH_MS = 50;
 export const FIRST_SYNC_TIMEOUT_MS = 30000;
@@ -30,6 +33,7 @@ export class ResourceWatchSession {
   /** Kinds that fell back to namespace-scoped reads because cluster-wide access was denied. */
   private scopedFallback = new Set<ResourceKind>();
   private kindScopes: ReadonlyMap<ResourceKind, string> = new Map();
+  private kindPriorities: ReadonlyMap<ResourceKind, ReadPriority> = new Map();
   constructor(readonly context: string, private provider: ResourceWatchProvider, private commit: (kind: ResourceKind, update: WatchCommit) => void, private namespace = 'all', private clusterKinds: ReadonlySet<ResourceKind> = SCOPE_INDEPENDENT_KINDS, private cachedSnapshot?: (query: ResourceQuery, allowPartial?: boolean) => ResourceItem[] | undefined, private customType?: ResourceType, private kindFilter?: (kind: ResourceKind) => WatchFilter | undefined) {}
 
   private query(kind: ResourceKind, scope: string): ResourceQuery {
@@ -48,20 +52,27 @@ export class ResourceWatchSession {
   }
 
   /** Stop unused streams and keep exactly one subscription for each demanded kind. */
-  async setKinds(kinds: readonly ResourceKind[], clusterKinds: ReadonlySet<ResourceKind> = this.clusterKinds, scopes: ReadonlyMap<ResourceKind, string> = this.kindScopes): Promise<PromiseSettledResult<void>[]> {
+  async setKinds(
+    kinds: readonly ResourceKind[],
+    clusterKinds: ReadonlySet<ResourceKind> = this.clusterKinds,
+    scopes: ReadonlyMap<ResourceKind, string> = this.kindScopes,
+    priorities: ReadonlyMap<ResourceKind, ReadPriority> = this.kindPriorities,
+  ): Promise<PromiseSettledResult<void>[]> {
     if (!this.active) return [];
     this.clusterKinds = clusterKinds;
     this.kindScopes = scopes;
+    this.kindPriorities = priorities;
     const wanted = new Set(kinds);
     for (const [kind, subscription] of this.subscriptions) if (!wanted.has(kind)) {
       this.closeSubscription(subscription);
       this.subscriptions.delete(kind);
       this.commit(kind, { changes: [], state: { query: subscription.query, phase: 'stopped', hasSnapshot: subscription.hasSnapshot } });
     }
-    return Promise.allSettled([...wanted].filter(kind => {
+    const toRefresh = [...wanted].filter(kind => {
       const previous = this.subscriptions.get(kind);
       return !previous || !sameQuery(previous.query, this.query(kind, this.scope(kind))) || !sameFilter(previous.filter, this.kindFilter?.(kind));
-    }).map(kind => this.refresh(kind)));
+    }).sort((a, b) => PRIORITY_ORDER[this.kindPriorities.get(a) ?? 'normal'] - PRIORITY_ORDER[this.kindPriorities.get(b) ?? 'normal']);
+    return Promise.allSettled(toRefresh.map(kind => this.refresh(kind)));
   }
 
   /**
@@ -93,7 +104,8 @@ export class ResourceWatchSession {
       if (!this.provider.managesInitialSyncTimeout) subscription.firstTimer = setTimeout(() => this.fail(kind, subscription, requestError('timeout', 'Initial resource watch sync timed out', { operation: 'watch', context: this.context, resource: query }, 504)), FIRST_SYNC_TIMEOUT_MS);
       void Promise.resolve().then(() => {
         if (!this.current(kind, subscription)) return;
-        return this.provider.watchResources(query, (batch) => this.receive(kind, subscription, batch), subscription.abort.signal, filter);
+        const priority = this.kindPriorities.get(kind) ?? 'normal';
+        return this.provider.watchResources(query, (batch) => this.receive(kind, subscription, batch), subscription.abort.signal, filter, priority);
       }).then((close) => {
         subscription.close = close;
         if (!this.current(kind, subscription)) close?.();

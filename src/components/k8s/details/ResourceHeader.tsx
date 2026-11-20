@@ -24,8 +24,12 @@ import type { ResourceItem } from '../../../types/k8s';
 import { kindTone } from '../../../core/perspectives';
 import { parseApiVersion } from '../../../core/resources/resource_types';
 import { useResourceStore } from '../../../state/resource_store';
+import { useClusterStore } from '../../../state/cluster_store';
+import { useDetailCache } from '../../../state/detail_cache';
 import { useUiStore } from '../../../state/ui_store';
 import { useWorkspaceStore } from '../../../state/workspace_store';
+import { needsFullManifest } from '../../../views/FullManifest';
+import { k8s } from '../../../providers/k8s_provider';
 import { IconButton, Button } from '../../ui/Button';
 import { toast } from '../../../state/notifications_store';
 import { stringify } from 'yaml';
@@ -119,10 +123,24 @@ export function ResourceHeader({
       .catch(() => toast.error('Clipboard unavailable'));
   };
 
-  // Generate clean YAML
-  const copyCleanYaml = () => {
+  // Generate clean YAML (hydrate projected Secret/ConfigMap/CRD objects first)
+  const copyCleanYaml = async () => {
     try {
-      const clone = JSON.parse(JSON.stringify(item.raw ?? {}));
+      let source = item;
+      if (needsFullManifest(item)) {
+        const context = useClusterStore.getState().currentContext;
+        if (context) {
+          const cache = useDetailCache.getState();
+          const cached = cache.context === context ? cache.byKind[item.kind]?.get(item.uid) : undefined;
+          if (cached && !cached.readProjection && cached.raw?.metadata?.resourceVersion === item.raw?.metadata?.resourceVersion) {
+            source = cached;
+          } else if (k8s.getResource) {
+            source = await k8s.getResource(context, item.kind, item.name, item.namespace, { priority: 'high' });
+            useDetailCache.getState().upsert(context, source);
+          }
+        }
+      }
+      const clone = JSON.parse(JSON.stringify(source.raw ?? {}));
       if (clone.metadata) {
         delete clone.metadata.managedFields;
         delete clone.metadata.generation;

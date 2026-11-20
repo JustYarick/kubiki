@@ -531,3 +531,253 @@ async fn crd_watch_strips_schema_and_validation() {
     manager.stop_owner("main").await;
     server.abort();
 }
+
+async fn api_with_headers(
+    responses: Vec<(u16, String)>,
+) -> (Client, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = Client::try_from(Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    ))
+    .unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let captured = requests.clone();
+    let task = tokio::spawn(async move {
+        for (status, body) in responses {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            loop {
+                let mut chunk = [0u8; 4096];
+                let count = socket.read(&mut chunk).await.unwrap();
+                if count == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..count]);
+                if bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            captured
+                .lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&bytes).into_owned());
+            if body == "HOLD" {
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    .await
+                    .unwrap();
+                std::future::pending::<()>().await;
+            }
+            let response = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+    (client, requests, task)
+}
+
+#[tokio::test]
+async fn secret_watch_uses_table_list_and_metadata_watch_with_gzip_and_no_payloads() {
+    let secret_query = ResourceQuery {
+        context: "test".into(),
+        group: "".into(),
+        version: "v1".into(),
+        kind: "Secret".into(),
+        namespace: Some("backend".into()),
+    };
+    let table_list = json!({
+        "apiVersion": "meta.k8s.io/v1",
+        "kind": "Table",
+        "metadata": { "resourceVersion": "42" },
+        "columnDefinitions": [
+            { "name": "Name", "type": "string" },
+            { "name": "Type", "type": "string" },
+            { "name": "Data", "type": "integer" },
+            { "name": "Age", "type": "string" }
+        ],
+        "rows": [
+            {
+                "cells": ["app-creds", "Opaque", 3, "2d"],
+                "object": {
+                    "apiVersion": "meta.k8s.io/v1",
+                    "kind": "PartialObjectMetadata",
+                    "metadata": {
+                        "name": "app-creds",
+                        "namespace": "backend",
+                        "uid": "sec-1",
+                        "resourceVersion": "41"
+                    }
+                }
+            },
+            {
+                "cells": ["sh.helm.release.v1.web.v7", "helm.sh/release.v1", 1, "5d"],
+                "object": {
+                    "apiVersion": "meta.k8s.io/v1",
+                    "kind": "PartialObjectMetadata",
+                    "metadata": {
+                        "name": "sh.helm.release.v1.web.v7",
+                        "namespace": "backend",
+                        "uid": "sec-helm",
+                        "resourceVersion": "42",
+                        "labels": { "owner": "helm", "name": "web", "version": "7" }
+                    }
+                }
+            }
+        ]
+    })
+    .to_string();
+    let watch_stream = format!(
+        "{}\n",
+        json!({
+            "type": "ADDED",
+            "object": {
+                "apiVersion": "meta.k8s.io/v1",
+                "kind": "PartialObjectMetadata",
+                "metadata": {
+                    "name": "tls-cert",
+                    "namespace": "backend",
+                    "uid": "sec-2",
+                    "resourceVersion": "43"
+                }
+            }
+        })
+    );
+    let single_table = json!({
+        "apiVersion": "meta.k8s.io/v1",
+        "kind": "Table",
+        "metadata": {},
+        "columnDefinitions": [
+            { "name": "Name", "type": "string" },
+            { "name": "Type", "type": "string" },
+            { "name": "Data", "type": "integer" }
+        ],
+        "rows": [{
+            "cells": ["tls-cert", "kubernetes.io/tls", 2],
+            "object": { "metadata": { "name": "tls-cert", "namespace": "backend", "uid": "sec-2" } }
+        }]
+    })
+    .to_string();
+    let (client, requests, server) = api_with_headers(vec![
+        (200, table_list),
+        (200, watch_stream),
+        (200, single_table),
+        (200, "HOLD".into()),
+    ])
+    .await;
+
+    let manager = InformerManager::new(ResourceStore::new());
+    let mut rx = manager
+        .start_watch("main", "secrets", secret_query, async move { Ok(client) })
+        .await
+        .unwrap();
+
+    let mut initial = None;
+    let mut applied = None;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(msg) = rx.recv().await {
+            match msg.event {
+                WatchEvent::Delta(ResourceDelta::Restarted { items }) => initial = Some(items),
+                WatchEvent::Delta(ResourceDelta::Applied { data }) => {
+                    applied = Some(data);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let initial = initial.expect("initial snapshot");
+    assert_eq!(initial.len(), 2);
+    let app = initial
+        .iter()
+        .find(|i| i["metadata"]["uid"] == "sec-1")
+        .unwrap();
+    assert_eq!(app["type"], "Opaque");
+    assert_eq!(app["_kubikiSummary"]["dataKeys"], 3);
+    assert!(app.get("data").is_none());
+
+    let added = applied.expect("live applied secret");
+    assert_eq!(added["metadata"]["name"], "tls-cert");
+    assert_eq!(added["type"], "kubernetes.io/tls");
+    assert_eq!(added["_kubikiSummary"]["dataKeys"], 2);
+    assert!(added.get("data").is_none());
+
+    let recorded = requests.lock().unwrap().clone();
+    assert!(recorded[0].contains("includeObject=Metadata"));
+    assert!(recorded[0].contains("resourceVersion=0"));
+    assert!(recorded[0].to_ascii_lowercase().contains("as=table"));
+    assert!(
+        recorded[0].to_ascii_lowercase().contains("accept-encoding: gzip"),
+        "kube client must request gzip compression: {}",
+        recorded[0]
+    );
+    assert!(
+        recorded[1]
+            .to_ascii_lowercase()
+            .contains("partialobjectmetadata"),
+        "live Secret watch must request PartialObjectMetadata: {}",
+        recorded[1]
+    );
+
+    manager.stop_owner("main").await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn secret_watch_strips_payload_data_when_server_returns_plain_secret_list() {
+    let secret_query = ResourceQuery {
+        context: "test".into(),
+        group: "".into(),
+        version: "v1".into(),
+        kind: "Secret".into(),
+        namespace: Some("backend".into()),
+    };
+    let plain_list = json!({
+        "apiVersion": "v1",
+        "kind": "SecretList",
+        "metadata": { "resourceVersion": "50" },
+        "items": [{
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": { "name": "plain", "namespace": "backend", "uid": "plain-1", "resourceVersion": "50" },
+            "type": "Opaque",
+            "data": { "token": "c2VjcmV0LXRva2Vu", "key": "dmFs" }
+        }]
+    })
+    .to_string();
+    let (client, _, server) = api(vec![(200, plain_list), (200, "HOLD".into())]).await;
+
+    let manager = InformerManager::new(ResourceStore::new());
+    let mut rx = manager
+        .start_watch("main", "plain-secrets", secret_query, async move { Ok(client) })
+        .await
+        .unwrap();
+
+    let mut received = None;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(msg) = rx.recv().await {
+            if let WatchEvent::Delta(ResourceDelta::Restarted { items }) = msg.event {
+                received = Some(items);
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let items = received.unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(items[0].get("data").is_none());
+    assert_eq!(items[0]["type"], "Opaque");
+    assert_eq!(items[0]["_kubikiSummary"]["dataKeys"], 2);
+    assert!(items[0]["_kubikiSummary"]["sizeBytes"].as_u64().unwrap() > 0);
+
+    manager.stop_owner("main").await;
+    server.abort();
+}

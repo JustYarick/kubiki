@@ -46,8 +46,8 @@ it('subscribes to selected namespace, preserves cluster watches and removes the 
     emit({ query, subscription_id: 'test', messages: [{ sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: [] } } } }, { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } }] });
     return vi.fn();
   });
-  const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(50); await ready;
-  expect(queries.map(query => query.kind)).toEqual(['Namespace', 'CustomResourceDefinition', 'Pod']);
+  const ready = startResourceWatches('test'); await vi.advanceTimersByTimeAsync(200); await ready;
+  expect(queries.map(query => query.kind)).toEqual(['Pod', 'Namespace', 'CustomResourceDefinition']);
   expect(mock.getResourceCounts).toHaveBeenLastCalledWith('test', expect.not.arrayContaining(['Pod']), 'backend', expect.any(AbortSignal));
   for (const query of queries) expect(query.namespace).toBe(!resourceType(query.kind as any).namespaced ? null : 'backend');
   const cluster = queries.filter((query) => !resourceType(query.kind as any).namespaced);

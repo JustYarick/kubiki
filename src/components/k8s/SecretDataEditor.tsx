@@ -6,6 +6,7 @@ import { Copy } from 'lucide-react';
 import { toast } from '../../state/notifications_store';
 import { useClusterStore } from '../../state/cluster_store';
 import { useResourceStore } from '../../state/resource_store';
+import { useDetailCache } from '../../state/detail_cache';
 import { resourceRef } from '../../core/resources/identity';
 import { decodeBase64, encodeSecretRows, validateSecretRows, encodeText, secretRows, type SecretRow } from '../../core/resources/secret_data';
 import { mapK8sResource } from '../../core/utils/k8s_mapper';
@@ -56,7 +57,9 @@ export function SecretDataEditor({ item }: { item: ResourceItem }) {
       const raw = k8s.demo ? { ...item.raw, data } : await k8s.updateSecretData({ resource: draft.resource, resource_version: draft.version, data });
       if (useClusterStore.getState().currentContext !== draft.context) return;
       if (raw?.metadata?.uid !== item.uid || raw?.metadata?.name !== item.name || raw?.metadata?.namespace !== item.namespace) throw new Error('Unexpected Secret identity returned; refresh to verify saved state');
-      useResourceStore.getState().updateItem('Secret', item.uid, mapK8sResource(raw, 'Secret'));
+      const mapped = mapK8sResource(raw, 'Secret');
+      useResourceStore.getState().updateItem('Secret', item.uid, mapped);
+      useDetailCache.getState().upsert(draft.context, mapped);
       setDraft(undefined); setReveal(false); setSaved(k8s.demo ? 'Saved in demo memory' : 'Secret data saved');
       if (k8s.demo) toast.success('Secret data saved in demo memory', `${item.namespace}/${item.name}`);
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Secret update failed. Refresh to verify saved state'); }

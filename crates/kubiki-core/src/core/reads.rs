@@ -310,8 +310,15 @@ async fn list_with_options(
     options: &ReadListOptions,
 ) -> Result<Value, ApiError> {
     let access = super::access::ResourceAccess::from_resource(client, query, ar.clone());
-    let limit = options.limit.unwrap_or(500).clamp(1, 1000);
-    let mut params = ListParams::default().limit(limit);
+    let is_crd =
+        ar.kind == "CustomResourceDefinition" && ar.group == "apiextensions.k8s.io";
+    let mut params = if let Some(limit) = options.limit {
+        ListParams::default().limit(limit.clamp(1, 1000))
+    } else if is_crd {
+        ListParams::default().limit(500)
+    } else {
+        ListParams::default().match_any()
+    };
     if let Some(labels) = options
         .label_selector
         .as_deref()
@@ -328,8 +335,6 @@ async fn list_with_options(
     {
         params = params.fields(fields);
     }
-    let is_crd =
-        ar.kind == "CustomResourceDefinition" && ar.group == "apiextensions.k8s.io";
     let search_projection =
         !options.metadata_only && options.projection.as_deref() == Some("search");
     let mut items = Vec::new();
@@ -374,6 +379,29 @@ pub async fn resources_with_options(
     list_with_options(client, &query, &ar, &options).await
 }
 
+fn extract_payload_updated_at(item: &Value) -> Option<String> {
+    let entries = item.pointer("/metadata/managedFields")?.as_array()?;
+    let mut latest: Option<(chrono::DateTime<chrono::Utc>, String)> = None;
+    for entry in entries {
+        let Some(fields) = entry.get("fieldsV1").and_then(Value::as_object) else {
+            continue;
+        };
+        if !fields.contains_key("f:data") && !fields.contains_key("f:binaryData") {
+            continue;
+        }
+        let Some(time_str) = entry.get("time").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(time_str) {
+            let utc = parsed.with_timezone(&chrono::Utc);
+            if latest.as_ref().is_none_or(|(prev, _)| utc > *prev) {
+                latest = Some((utc, time_str.to_owned()));
+            }
+        }
+    }
+    latest.map(|(_, s)| s)
+}
+
 fn strip_managed_fields(item: &mut Value) {
     if let Some(metadata) = item.get_mut("metadata").and_then(Value::as_object_mut) {
         metadata.remove("managedFields");
@@ -397,6 +425,13 @@ pub async fn get_resource(
     let mut item = bounded(&query.context, "resource", access.get(&name, metadata_only))
         .await
         .map_err(|e| e.with_resource(&query))?;
+    if !metadata_only && query.group.is_empty() && matches!(query.kind.as_str(), "ConfigMap" | "Secret") {
+        if let Some(updated_at) = extract_payload_updated_at(&item) {
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("_kubikiDataUpdatedAt".into(), Value::String(updated_at));
+            }
+        }
+    }
     strip_managed_fields(&mut item);
     Ok(item)
 }
@@ -443,7 +478,7 @@ pub async fn resource_counts(
             let kind = query.kind.clone();
             async move { (kind, resource_count(client, query).await) }
         })
-        .buffer_unordered(24)
+        .buffer_unordered(8)
         .collect()
         .await;
     let mut counts = std::collections::HashMap::new();

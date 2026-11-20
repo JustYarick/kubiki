@@ -305,3 +305,77 @@ test('Flux Reconcile requests a controller run separately from resetting exhaust
   expect(intents).toHaveLength(1);
   expect(intents[0].action).toEqual({ type: 'flux_reconcile' });
 });
+
+test('summary-projected Secret watch renders table metadata without data and hydrates full payload on inspect', async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    const summarySecret = {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: { name: 'lazy-secret', uid: 'lazy-uid', namespace: 'apps', resourceVersion: '10' },
+      type: 'Opaque',
+      _kubikiSummary: { dataKeys: 2 },
+    };
+    const fullSecret = {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: { name: 'lazy-secret', uid: 'lazy-uid', namespace: 'apps', resourceVersion: '10' },
+      type: 'Opaque',
+      data: { token: btoa('hydrated-secret-value'), host: btoa('db.internal') },
+    };
+    w.__getResourceCalls = [];
+    let callback = 0;
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    w.__TAURI_INTERNALS__ = {
+      transformCallback: () => ++callback,
+      unregisterCallback: () => {},
+      invoke: async (command: string, args: any = {}) => {
+        if (command === 'plugin:event|listen') return ++callback;
+        if (command === 'plugin:event|unlisten' || command.startsWith('stop_') || ['ack_resources', 'cancel_read_task'].includes(command)) return;
+        if (command === 'watch_resources') {
+          const items = args.query.kind === 'Secret'
+            ? [summarySecret]
+            : args.query.kind === 'Namespace'
+              ? [{ apiVersion: 'v1', kind: 'Namespace', metadata: { name: 'apps', uid: 'apps' } }]
+              : [];
+          queueMicrotask(() => args.onEvent.onmessage({
+            subscription_id: args.subscriptionId,
+            query: args.query,
+            messages: [
+              { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items } } } },
+              { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: null } } },
+            ],
+          }));
+          return;
+        }
+        if (command === 'get_kube_contexts') return [{ name: 'test', is_current: true }];
+        if (command === 'ping_cluster') return { git_version: 'v1.35.0' };
+        if (command === 'get_namespaces') return ['apps'];
+        if (command === 'get_api_resources') return '';
+        if (command === 'get_resource_counts') return {};
+        if (command === 'get_resources') return { items: [] };
+        if (command === 'get_resource') {
+          w.__getResourceCalls.push({ kind: args.kind, name: args.name, namespace: args.namespace });
+          if (args.kind === 'Secret' && args.name === 'lazy-secret') return fullSecret;
+        }
+        throw new Error(`Unexpected command ${command}`);
+      },
+    };
+  });
+  await page.goto('/');
+  await page.getByTestId('explorer-panel').getByRole('button', { name: 'Expand All', exact: true }).click();
+  await page.getByTestId('explorer-panel').locator('[data-resource-type="Secret"]').click();
+  const row = page.getByTestId('resource-table').getByRole('row', { name: /lazy-secret/ });
+  await expect(row).toContainText('Opaque');
+  await expect(row).toContainText('2');
+  // Opening the Secrets table must not issue per-secret GET calls.
+  expect(await page.evaluate(() => (window as any).__getResourceCalls)).toEqual([]);
+  await page.getByTestId('resource-table').getByText('lazy-secret', { exact: true }).click();
+  const data = page.getByTestId('inspector-panel').getByRole('region', { name: 'Secret data', exact: true });
+  await expect(data).toContainText('Secret data (2)');
+  await data.getByRole('button', { name: 'Reveal values', exact: true }).click();
+  await expect(data.locator('.view-lines').first()).toContainText('hydrated-secret-value');
+  expect(await page.evaluate(() => (window as any).__getResourceCalls)).toEqual([
+    { kind: 'Secret', name: 'lazy-secret', namespace: 'apps' },
+  ]);
+});

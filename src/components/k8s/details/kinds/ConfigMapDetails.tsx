@@ -1,4 +1,5 @@
 import type { ResourceItem } from '../../../../types/k8s';
+import { FullManifest } from '../../../../views/FullManifest';
 import { ProblemsBanner } from '../blocks/ProblemsBanner';
 import { ConfigMapDataBlock } from '../blocks/ConfigMapDataBlock';
 import { UsedByList } from '../blocks/UsedByList';
@@ -15,8 +16,10 @@ export function ConfigMapDetails({ item, onNavigate }: ConfigMapDetailsProps) {
       {/* 1. "What's wrong" diagnostic banner */}
       <ProblemsBanner item={item} />
 
-      {/* 2. ConfigMap Data Block */}
-      <ConfigMapDataBlock item={item} />
+      {/* 2. ConfigMap Data Block (hydrates full ConfigMap payload on demand) */}
+      <FullManifest item={item} loadingLabel="Loading ConfigMap data…">
+        {(hydrated) => <ConfigMapDataBlock item={hydrated} />}
+      </FullManifest>
 
       {/* 3. Used by consumers */}
       <UsedByList item={item} onNavigate={onNavigate} />

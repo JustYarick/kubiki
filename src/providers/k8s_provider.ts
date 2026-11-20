@@ -61,17 +61,17 @@ export class K8sProvider implements KubernetesProvider {
     catch (error) { throw normalizeK8sError(error, { operation: 'unwatch' }); }
   }
 
-  async watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void> {
+  async watchResources(query: ResourceQuery, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter, priority: ReadPriority = 'normal'): Promise<() => void> {
     if (!this.supportsResourceWatch) throw requestError('unsupported', 'Resource watch is available in the desktop app. Browser mode uses snapshots.', { operation: 'watch', context: query.context, resource: query });
-    if (resourceType(query.kind).watch === false) return watchNamespaceSelection({ watchResources: (scoped, receive, abort) => pollResourceSnapshots(scoped, () => this.request('get_resources', 'resources', { ...scoped }, undefined, undefined, abort), receive, abort) }, query, onBatch, signal);
+    if (resourceType(query.kind).watch === false) return watchNamespaceSelection({ watchResources: (scoped, receive, abort) => pollResourceSnapshots(scoped, () => this.request('get_resources', 'resources', { ...scoped }, undefined, undefined, abort, priority), receive, abort) }, query, onBatch, signal, undefined, priority);
     const { watchTauriResources } = await import('./tauri_watch');
-    return watchNamespaceSelection({ watchResources: (scoped, receive, abort, activeFilter) => watchTauriResources(scoped, receive, abort, undefined, activeFilter) }, query, onBatch, signal, filter);
+    return watchNamespaceSelection({ watchResources: (scoped, receive, abort, activeFilter) => watchTauriResources(scoped, receive, abort, undefined, activeFilter) }, query, onBatch, signal, filter, priority);
   }
 
-  async watchCustomResources(query: ResourceQuery, definition: {name: string; uid: string}, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter): Promise<() => void> {
+  async watchCustomResources(query: ResourceQuery, definition: {name: string; uid: string}, onBatch: (batch: WatchBatch) => void, signal: AbortSignal, filter?: WatchFilter, priority: ReadPriority = 'high'): Promise<() => void> {
     if (!this.supportsResourceWatch) throw requestError('unsupported', 'Custom resource watch requires the desktop app', {operation:'watch', context:query.context, resource:query});
     const { watchTauriResources } = await import('./tauri_watch');
-    return watchNamespaceSelection({watchResources:(scoped, receive, abort, activeFilter) => watchTauriResources(scoped, receive, abort, definition, activeFilter)}, query, onBatch, signal, filter);
+    return watchNamespaceSelection({watchResources:(scoped, receive, abort, activeFilter) => watchTauriResources(scoped, receive, abort, definition, activeFilter)}, query, onBatch, signal, filter, priority);
   }
 
   private isTauriEnv(): boolean {
@@ -314,6 +314,7 @@ export class K8sProvider implements KubernetesProvider {
         undefined,
         { context, queries },
         signal,
+        'low',
       );
       const counts: Partial<Record<ResourceKind, number>> = { ...cachedCounts };
       for (const [kind, count] of Object.entries(raw ?? {})) {
@@ -467,7 +468,7 @@ export class K8sProvider implements KubernetesProvider {
       const { demoHelmInventory } = await import('./mock/mock_helm');
       return demoHelmInventory(namespace);
     }
-    const items = parseHelmReleases(await this.request('get_helm_inventory', 'helm/inventory', { context, namespace }, undefined, undefined, signal));
+    const items = parseHelmReleases(await this.request('get_helm_inventory', 'helm/inventory', { context, namespace }, undefined, undefined, signal, 'high'));
     if (namespace && items.some(item => item.namespace !== namespace)) throw requestError('internal', 'Helm returned releases outside the requested namespace', { operation: 'helm', context }, 500);
     return items;
   }
@@ -475,13 +476,13 @@ export class K8sProvider implements KubernetesProvider {
   async getHelmHistory(context: string, namespace: string, name: string, signal?: AbortSignal) {
     validateHelmTarget(context, namespace, name);
     if (this.demo) return (await import('./mock/mock_helm')).demoHelmHistory(name);
-    return parseHelmHistory(await this.request('get_helm_history', 'helm/history', { context, namespace, name }, undefined, undefined, signal));
+    return parseHelmHistory(await this.request('get_helm_history', 'helm/history', { context, namespace, name }, undefined, undefined, signal, 'high'));
   }
 
   async getHelmContent(context: string, namespace: string, name: string, revision: number, document: HelmDocument, signal?: AbortSignal): Promise<string> {
     validateHelmTarget(context, namespace, name); validateHelmDocument(document, revision);
     if (this.demo) return (await import('./mock/mock_helm')).demoHelmContent(name, namespace, revision, document);
-    const content = await this.request<unknown>('get_helm_content', 'helm/content', { context, namespace, name, revision, document }, undefined, undefined, signal);
+    const content = await this.request<unknown>('get_helm_content', 'helm/content', { context, namespace, name, revision, document }, undefined, undefined, signal, 'high');
     if (typeof content !== 'string') throw requestError('internal', 'Helm returned an invalid document', { operation: 'helm', context }, 500);
     return content;
   }

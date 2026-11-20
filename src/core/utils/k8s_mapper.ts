@@ -268,17 +268,28 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
     }
 
     case 'ConfigMap': {
-      const dataKeys = Object.keys(raw.data || {}).length;
-      let sizeBytes = 0;
-      for (const val of Object.values(raw.data || {})) {
-        if (typeof val === 'string') sizeBytes += val.length;
-      }
-      for (const val of Object.values(raw.binaryData || {})) {
-        if (typeof val === 'string') sizeBytes += Math.floor((val.length * 3) / 4);
+      const summary = raw._kubikiSummary && typeof raw._kubikiSummary === 'object' ? raw._kubikiSummary : undefined;
+      if (summary) delete raw._kubikiSummary;
+      const dataKeys = typeof summary?.dataKeys === 'number'
+        ? summary.dataKeys
+        : Object.keys(raw.data || {}).length + Object.keys(raw.binaryData || {}).length;
+      let sizeBytes: number | undefined;
+      if (typeof summary?.sizeBytes === 'number') {
+        sizeBytes = summary.sizeBytes;
+      } else if (!summary) {
+        sizeBytes = 0;
+        for (const val of Object.values(raw.data || {})) {
+          if (typeof val === 'string') sizeBytes += val.length;
+        }
+        for (const val of Object.values(raw.binaryData || {})) {
+          if (typeof val === 'string') sizeBytes += Math.floor((val.length * 3) / 4);
+        }
       }
 
       return {
         ...base,
+        readProjection: summary ? 'summary' : undefined,
+        dataUpdatedAt: typeof summary?.dataUpdatedAt === 'string' ? summary.dataUpdatedAt : undefined,
         status: 'Active',
         dataKeys,
         sizeBytes,
@@ -286,17 +297,28 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
     }
 
     case 'Secret': {
-      const dataKeys = Object.keys(raw.data || {}).length;
-      let sizeBytes = 0;
-      for (const val of Object.values(raw.data || {})) {
-        if (typeof val === 'string') sizeBytes += Math.floor((val.length * 3) / 4);
-      }
-      for (const val of Object.values(raw.stringData || {})) {
-        if (typeof val === 'string') sizeBytes += val.length;
+      const summary = raw._kubikiSummary && typeof raw._kubikiSummary === 'object' ? raw._kubikiSummary : undefined;
+      if (summary) delete raw._kubikiSummary;
+      const dataKeys = typeof summary?.dataKeys === 'number'
+        ? summary.dataKeys
+        : Object.keys(raw.data || {}).length + Object.keys(raw.stringData || {}).length;
+      let sizeBytes: number | undefined;
+      if (typeof summary?.sizeBytes === 'number') {
+        sizeBytes = summary.sizeBytes;
+      } else if (!summary) {
+        sizeBytes = 0;
+        for (const val of Object.values(raw.data || {})) {
+          if (typeof val === 'string') sizeBytes += Math.floor((val.length * 3) / 4);
+        }
+        for (const val of Object.values(raw.stringData || {})) {
+          if (typeof val === 'string') sizeBytes += val.length;
+        }
       }
 
       return {
         ...base,
+        readProjection: summary ? 'summary' : undefined,
+        dataUpdatedAt: typeof summary?.dataUpdatedAt === 'string' ? summary.dataUpdatedAt : undefined,
         status: 'Active',
         secretType: raw.type || 'Opaque',
         dataKeys,
@@ -354,6 +376,10 @@ function mapResource(raw: any, kind: ResourceKind): ResourceItem {
 /** Serialize YAML only when an editor or copy action requests it. */
 export function mapK8sResource(raw: any, kind: ResourceKind): ResourceItem {
   const item = mapResource(raw, kind);
+  if ((kind === 'ConfigMap' || kind === 'Secret') && typeof raw?._kubikiDataUpdatedAt === 'string') {
+    item.dataUpdatedAt = raw._kubikiDataUpdatedAt;
+    delete raw._kubikiDataUpdatedAt;
+  }
   if ((kind === 'ConfigMap' || kind === 'Secret') && Array.isArray(raw?.metadata?.managedFields)) {
     // The bridge keeps only payload writers' timestamps; they are not part of the editable manifest.
     const times = raw.metadata.managedFields.map((entry: any) => Date.parse(entry?.time)).filter(Number.isFinite);

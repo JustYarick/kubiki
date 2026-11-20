@@ -139,7 +139,16 @@ export function useMergedDetailResources(): Record<ResourceKind, Map<string, Res
         continue;
       }
       const next = new Map(cached);
-      for (const [uid, item] of live) next.set(uid, item);
+      for (const [uid, item] of live) {
+        const existing = next.get(uid);
+        // Never overwrite a full on-demand Secret/ConfigMap copy with a summary watch row.
+        if (existing && !existing.readProjection && item.readProjection) {
+          const existingRv = existing.raw?.metadata?.resourceVersion;
+          const liveRv = item.raw?.metadata?.resourceVersion;
+          if (!existingRv || !liveRv || existingRv === liveRv) continue;
+        }
+        next.set(uid, item);
+      }
       merged[kind] = next;
     }
     return merged;

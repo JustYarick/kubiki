@@ -16,6 +16,7 @@ import { useDetailCache } from './detail_cache';
 let session: ResourceWatchSession | undefined;
 let unsubscribers: (() => void)[] = [];
 let countsController: AbortController | undefined;
+let countsTimer: ReturnType<typeof setTimeout> | undefined;
 
 function eventsAreTargeted(): boolean {
   return Boolean(
@@ -50,7 +51,7 @@ export function syncResourceCounts(context: string, namespace: string): Promise<
   }).catch(() => {});
 }
 
-export function stopResourceWatches(): void { countsController?.abort(); countsController = undefined; unsubscribers.forEach(close => close()); unsubscribers = []; session?.stop(); session = undefined; }
+export function stopResourceWatches(): void { clearTimeout(countsTimer); countsTimer = undefined; countsController?.abort(); countsController = undefined; unsubscribers.forEach(close => close()); unsubscribers = []; session?.stop(); session = undefined; }
 export async function startResourceWatches(context: string): Promise<PromiseSettledResult<void>[]> {
   stopResourceWatches();
   useDetailCache.getState().clear(context);
@@ -74,7 +75,7 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
           }
         : null;
       if (!signal.aborted) emit({ query, subscription_id: 'snapshot', messages: [
-        { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: items.map(item => item.raw!) } } } },
+        { sequence: 1, event: { type: 'Delta', payload: { type: 'Restarted', payload: { items: items.map(item => item.readProjection === 'summary' ? { ...item.raw!, _kubikiSummary: { dataKeys: item.dataKeys ?? 0 } } : item.raw!) } } } },
         { sequence: 2, event: { type: 'Status', payload: { phase: 'live', error: partialError } } },
       ] });
       return () => {};
@@ -135,7 +136,10 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     const extra = requirements.flatMap(entry => entry.kinds);
     for (const entry of requirements) for (const kind of entry.kinds) {
       const type = RESOURCE_TYPES.find(type => type.kind === kind);
-      if (type) demand.scopes.set(kind, mergeNamespaceScopes(demand.scopes.get(kind), type.namespaced ? entry.namespace : 'all'));
+      if (type) {
+        demand.scopes.set(kind, mergeNamespaceScopes(demand.scopes.get(kind), type.namespaced ? entry.namespace : 'all'));
+        if (!demand.priorities.has(kind)) demand.priorities.set(kind, 'low');
+      }
     }
     const kinds = [...new Set([...demand.kinds, ...extra])].filter(kind => {
       const type = RESOURCE_TYPES.find(type => type.kind === kind);
@@ -149,7 +153,16 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     const key = JSON.stringify([kinds, [...demand.clusterKinds], [...demand.scopes]]);
     if (key === demandKey) return Promise.resolve([]);
     demandKey = key;
-    return next.setKinds(kinds, demand.clusterKinds, demand.scopes);
+    return next.setKinds(kinds, demand.clusterKinds, demand.scopes, demand.priorities);
+  };
+  const scheduleCounts = (ns: string) => {
+    clearTimeout(countsTimer);
+    countsController?.abort();
+    countsTimer = setTimeout(() => {
+      countsTimer = undefined;
+      if (session !== next || useClusterStore.getState().currentContext !== context || useClusterStore.getState().selectedNamespace !== ns) return;
+      void syncResourceCounts(context, ns);
+    }, 150);
   };
   let scheduled = false;
   const schedule = () => {
@@ -161,14 +174,14 @@ export async function startResourceWatches(context: string): Promise<PromiseSett
     if (session === next && state.currentContext === context && state.selectedNamespace !== previous.selectedNamespace) {
       void next.setNamespace(state.selectedNamespace);
       void synchronize();
-      void syncResourceCounts(context, state.selectedNamespace);
+      scheduleCounts(state.selectedNamespace);
     }
   }), useWorkspaceStore.subscribe(schedule), useUiStore.subscribe(schedule), useDockStore.subscribe(schedule), useResourceRequirements.subscribe(schedule), useResourceStore.subscribe((state, previous) => {
     if (state.selectedItem !== previous.selectedItem) schedule();
   })];
   useResourceStore.getState().setSyncMode(k8s.supportsResourceWatch ? 'watch' : 'snapshot');
   const ready = synchronize();
-  void syncResourceCounts(context, useClusterStore.getState().selectedNamespace);
+  scheduleCounts(useClusterStore.getState().selectedNamespace);
   return ready;
 }
 export async function refreshResourceWatches(kind?: ResourceKind): Promise<boolean> {

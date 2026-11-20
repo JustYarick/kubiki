@@ -16,6 +16,18 @@ export function clearSecretOriginCache(): void {
 
 /** Read Kubernetes integration metadata only; never contact Vault or read authentication Secrets. */
 export async function loadSecretOrigin(context: string, secret: ResourceItem, signal: AbortSignal, reader: OriginReader = k8s): Promise<SecretOrigin> {
+  // Helm storage and ServiceAccount token Secrets are Kubernetes-managed; avoid
+  // listing ESO/VSO CRDs unless explicit external-operator metadata is present.
+  const secretType = secret.secretType ?? secret.raw?.type;
+  const labels = secret.labels ?? secret.raw?.metadata?.labels ?? {};
+  const owners = secret.raw?.metadata?.ownerReferences ?? [];
+  const hasExternalHint = owners.some((ref: any) => typeof ref?.apiVersion === 'string' && (ref.apiVersion.startsWith('external-secrets.io/') || ref.apiVersion.startsWith('secrets.hashicorp.com/')))
+    || labels['reconcile.external-secrets.io/managed'] === 'true'
+    || ['external-secrets', 'external-secrets-operator', 'vault-secrets-operator'].includes(labels['app.kubernetes.io/managed-by']);
+  if (!hasExternalHint && (secretType === 'helm.sh/release.v1' || secretType === 'kubernetes.io/service-account-token')) {
+    return { type: 'internal', sources: [] };
+  }
+
   const rv = secret.raw?.metadata?.resourceVersion ?? '';
   const cacheKey = `${context}:${secret.namespace ?? ''}:${secret.name}:${rv}`;
   if (reader === k8s) {
@@ -61,7 +73,9 @@ export async function loadSecretOrigin(context: string, secret: ResourceItem, si
     if (!request) {
       const definition = definitions.find(item => item.raw?.spec?.group === group && item.raw?.spec?.names?.kind === kind);
       request = definition
-        ? reader.getCustomResources(context, definition.name, definition.uid, namespace ?? null, signal)
+        ? (reader === k8s
+            ? reader.getCustomResources(context, definition.name, definition.uid, namespace ?? null, signal, { priority: 'low' })
+            : reader.getCustomResources(context, definition.name, definition.uid, namespace ?? null, signal))
             .then(items => {
               if (reader === k8s) sourcesCache.set(key, { items, timestamp: performance.now() });
               return items;
