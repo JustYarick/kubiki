@@ -1,10 +1,13 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useCallback, useEffect } from 'react';
 import { Download, ExternalLink } from 'lucide-react';
 import { appUpdates, useAppUpdates } from '../../state/update_store';
 import { useUiStore } from '../../state/ui_store';
 import { toast } from '../../state/notifications_store';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import './app-updates.css';
+
+const ReleaseNotesMarkdown = lazy(() => import('./ReleaseNotesMarkdown'));
 
 async function openReleaseUrl(url: string) {
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
@@ -36,13 +39,14 @@ export function AppUpdatePrompt() {
   const total = downloading ? phase.progress.total : undefined;
   const percent = downloading && total ? Math.min(100, Math.round(phase.progress.downloaded / total * 100)) : undefined;
   const releaseUrl = update?.releaseUrl ?? (update ? `https://github.com/JustYarick/kubiki/releases/tag/v${update.version.replace(/^v/, '')}` : undefined);
+  const handleOpenLink = useCallback((url: string) => { void openReleaseUrl(url); }, []);
 
   return <>
     {update && !dialogOpen && (downloading || canInstall) && <div role="status" className="fixed bottom-10 right-4 z-[80] w-[calc(340px*var(--ui-factor))] max-w-[calc(100vw-32px)] rounded-md border border-[var(--border-default)] bg-[var(--bg-overlay)] p-3 shadow-[var(--shadow-popup)]">
       <div className="flex items-center gap-2 text-xs font-medium"><Download size={14} aria-hidden="true" />Kubiki {update.version} is available</div>
       <div className="mt-2 flex justify-end gap-2"><Button size="sm" onClick={() => appUpdates.open()}>View update</Button></div>
     </div>}
-    <Modal open={dialogOpen} onClose={() => appUpdates.close()} title={update ? (notifyOnly ? `Kubiki ${update.version} is available` : `Update Kubiki to ${update.version}`) : 'Kubiki updates'} width={540} footer={<>
+    <Modal open={dialogOpen} onClose={() => appUpdates.close()} title={update ? (notifyOnly ? `Kubiki ${update.version} is available` : `Update Kubiki to ${update.version}`) : 'Kubiki updates'} width={600} footer={<>
       {phase.status === 'available' && <Button size="sm" variant="ghost" onClick={() => appUpdates.skip()}>Skip this version</Button>}
       <span className="flex-1" />
       <Button size="sm" disabled={installing} onClick={() => appUpdates.later()}>{update ? 'Later' : 'Close'}</Button>
@@ -58,7 +62,13 @@ export function AppUpdatePrompt() {
         {phase.status === 'upToDate' && <p role="status">You are using the latest version in this update channel.</p>}
         {phase.status === 'disabled' && <p role="status">{phase.reason}</p>}
         {phase.status === 'error' && <p role="alert" className="text-[var(--status-danger)]">{phase.message}</p>}
-        {update?.notes && <div className="whitespace-pre-wrap break-words max-h-56 overflow-y-auto kubiki-scrollbar rounded border border-[var(--border-subtle)] p-3">{update.notes}</div>}
+        {update?.notes && (
+          <div data-testid="update-release-notes" className="update-notes-box kubiki-scrollbar">
+            <Suspense fallback={<div className="whitespace-pre-wrap break-words">{update.notes}</div>}>
+              <ReleaseNotesMarkdown notes={update.notes} onOpenUrl={handleOpenLink} />
+            </Suspense>
+          </div>
+        )}
         {downloading && <div role="status">
           <p>Downloading update{percent === undefined ? '…' : `: ${percent}%`}</p>
           <progress aria-label="Update download progress" max={100} value={percent} className="w-full mt-2 accent-[var(--accent-fill)]" />

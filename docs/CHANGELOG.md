@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Render Markdown release notes in the in-app update dialog (`AppUpdatePrompt`) with GFM support (headings, lists, bold text, inline/fenced code, blockquotes, tables, and safe external links) instead of plain text.
 - Fixed virtualized resource table scroll jumping when rows are added, removed, or reordered, recognized static Flux OCI `HelmRepository` objects as `Ready` instead of `Not reported`, disabled WebKit/macOS spelling autocorrection across all text input fields, restored the CronJob `Schedule` table column, and eliminated O(N²) scans in workload Pod matching, GitOps relationship resolution, Helm diagnostic descendant traversal, and Event/hook lookups on large clusters.
 - Propagated shared `schemaVersion`, `ruleResolution`, and `allowedFields` into effective Kubiki Agent policies, cleared per-rule writes in MCP `Clear writes` and blank read-only profile creation, corrected the manual OpenCode JSON snippet to use `disabled: false`, fixed `summarize_resources` evidence persistence, and cleaned up HTTP MCP peer/subscription tracking and session pruning.
 - Desktop Pod tables fetch their initial inventory in one collection request per scope. Sidebar counts skip duplicate probes while a covering watch initializes.
