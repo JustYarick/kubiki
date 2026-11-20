@@ -52,6 +52,13 @@ export function resolveGitOpsReference(reference: GitOpsReference, items: Iterab
     if (item.kind === reference.kind && item.name === reference.name && item.namespace === reference.namespace && (reference.group !== undefined ? reference.group === group : gitOpsFamily(item) === 'flux')) return item;
   }
 }
+/** Flux OCI HelmRepository objects are static and do not reconcile an index or emit Ready conditions. */
+export function isStaticFluxOciRepo(raw: any): boolean {
+  return raw?.kind === 'HelmRepository'
+    && gitOpsFamily({ apiVersion: String(raw?.apiVersion ?? ''), kind: 'HelmRepository' }) === 'flux'
+    && raw?.spec?.type === 'oci';
+}
+
 export function resourceStatus(raw: any): string | undefined {
   if (raw.metadata?.deletionTimestamp) return 'Terminating';
   if (raw.spec?.suspend === true) return 'Suspended';
@@ -64,5 +71,6 @@ export function resourceStatus(raw: any): string | undefined {
   const reconciling = conditions.find(condition => condition.type === 'Reconciling' && condition.status === 'True');
   if (reconciling) return 'Reconciling';
   const ready = conditions.find(condition => ['Ready', 'Available', 'Established', 'ScalingActive', 'Healthy'].includes(condition.type));
+  if (!ready && !status.phase && !status.state && isStaticFluxOciRepo(raw)) return 'Ready';
   return status.phase || status.state || (ready ? ready.status === 'True' ? 'Ready' : ready.reason || (ready.status === 'False' ? 'NotReady' : 'Unknown') : undefined);
 }

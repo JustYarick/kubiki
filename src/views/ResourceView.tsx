@@ -217,11 +217,15 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
 
   const virtualized = rows.list.length > 80;
   const rowHeight = Math.ceil(Math.max((density === 'compact' ? 24 : 28) * uiFactor(uiScale), (11.5 * 1.45 + 7) * uiFactor(uiScale) + 1));
-  const rowVirtualizer = useVirtualizer({ count: rows.list.length, getScrollElement: () => tableRef.current, estimateSize: () => rowHeight, overscan: 12,
-    enabled: virtualized, getItemKey: index => rows.list[index]?.uid ?? index });
+  const rowVirtualizer = useVirtualizer({
+    count: rows.list.length,
+    getScrollElement: () => tableRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 12,
+    enabled: virtualized,
+  });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const renderedRows = virtualized ? virtualRows.map(row => ({ item: rows.list[row.index], index: row.index })) : rows.list.map((item, index) => ({ item, index }));
-  useEffect(() => { if (virtualized && rows.list.length) rowVirtualizer.scrollToIndex(Math.min(focusedIndex, rows.list.length - 1), { align: 'auto' }); }, [focusedIndex, virtualized, rows.list.length]);
 
   /* ------------------- Keyboard Navigation ------------------- */
   useEffect(() => {
@@ -244,10 +248,14 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
         if (virtualized) rowVirtualizer.scrollToIndex(index, { align: 'auto' });
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setFocusedIndex((prev) => Math.min(rows.list.length - 1, prev + 1));
+        const next = Math.min(rows.list.length - 1, focusedIndex + 1);
+        setFocusedIndex(next);
+        if (virtualized) rowVirtualizer.scrollToIndex(next, { align: 'auto' });
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setFocusedIndex((prev) => Math.max(0, prev - 1));
+        const next = Math.max(0, focusedIndex - 1);
+        setFocusedIndex(next);
+        if (virtualized) rowVirtualizer.scrollToIndex(next, { align: 'auto' });
       } else if (e.key === ' ') {
         e.preventDefault();
         const cur = rows.list[focusedIndex];
@@ -907,7 +915,6 @@ export const ResourceView: React.FC<ResourceViewProps> = ({ explicitKind, custom
                     tabIndex={source ? 0 : undefined}
                     onFocus={source ? () => setFocusedIndex(idx) : undefined}
                     data-index={idx} data-row-index={idx} data-resource-uid={item.uid} aria-rowindex={idx + 2}
-                    ref={virtualized ? rowVirtualizer.measureElement : undefined}
                     style={virtualized ? { height: rowHeight } : undefined}
                     onClick={(e) => {
                       setFocusedIndex(idx);

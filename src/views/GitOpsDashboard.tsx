@@ -1,6 +1,6 @@
 import { CATEGORY_ICONS } from '../core/resource_icons';
 import { useMemo, useState } from 'react';
-import { ArrowRight, CheckCircle2, CircleHelp, CirclePause, Clock3, GitBranch, Layers, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
+import { ArrowRight, CheckCircle2, CircleHelp, CirclePause, Clock3, GitBranch, Layers, RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { useGitOpsDashboard } from '../providers/use_gitops_dashboard';
 import { k8s } from '../providers/k8s_provider';
 import { argoHealth, argoSync, deliveryReason, deliveryRevision, deliverySource, deliveryState, deliveryTimestamp, fluxCategory } from '../core/resources/delivery';
@@ -10,7 +10,7 @@ import { useResourceStore } from '../state/resource_store';
 import { useClusterStore } from '../state/cluster_store';
 import { useWorkspaceStore } from '../state/workspace_store';
 import { useUiStore } from '../state/ui_store';
-import { IconButton } from '../components/ui/Button';
+import { IconButton, SearchInput } from '../components/ui';
 import { deliveryIcons } from '../components/ui/DeliverySummary';
 import { RequestErrorNotice } from '../components/k8s/RequestErrorNotice';
 import { ResourceLoading } from '../components/ui/ResourceLoading';
@@ -85,7 +85,7 @@ function Dashboard({ family, result }: { family: 'flux' | 'argocd'; result: Retu
     </>}
     <div className="delivery-links" aria-label={`${name} resource lists`}>{(family === 'flux' ? ['Kustomization', 'HelmRelease', 'GitRepository', 'OCIRepository', 'ImagePolicy'] : ['Application', 'ApplicationSet', 'AppProject']).filter(kind => result.definitions.some(type => type.kind === kind)).map(kind => <button key={kind} onClick={() => openList(kind)}>{kind === 'AppProject' ? 'Projects' : kind === 'ApplicationSet' ? 'Application sets' : kind}<ArrowRight size={11} aria-hidden="true" /></button>)}</div>
     {!result.definitions.length ? <div className="delivery-empty"><Icon size={28} aria-hidden="true" /><h3>{clusterLoading ? 'Discovering resource types…' : `No ${name} resource types discovered`}</h3><p>Install its CRDs or check your discovery permissions.</p></div> : result.loading && !available ? <ResourceLoading label={`Loading ${name} resources…`} /> : <>
-      <div className="delivery-dashboard-filter"><label className="delivery-search"><Search size={14} aria-hidden="true" /><input aria-label={`Search ${name} resources`} placeholder="Filter problems and activity…" value={query} onChange={event => { setQuery(event.target.value);setIssueLimit(8);setActivityLimit(15); }} /></label>{hasFilter && <IconButton icon={X} aria-label="Clear dashboard filters" tooltip="Clear filters" onClick={clear} />}</div>
+      <div className="delivery-dashboard-filter"><SearchInput size="sm" className="delivery-search flex-1 min-w-0" clearable={false} ariaLabel={`Search ${name} resources`} placeholder="Filter problems and activity…" value={query} onChange={value => { setQuery(value);setIssueLimit(8);setActivityLimit(15); }} />{hasFilter && <IconButton icon={X} aria-label="Clear dashboard filters" tooltip="Clear filters" onClick={clear} />}</div>
       <div className="delivery-dashboard-grid">
         <section className="delivery-panel" aria-label={`${name} needs attention`}><header><h2>Needs attention</h2><span>{problems.length}</span></header><div className="delivery-issues kubiki-scrollbar">
           {!problems.length && <div className="delivery-panel-empty">{!available ? 'Resource data unavailable.' : partial ? 'No issues in the available data. Some resources could not be checked.' : hasFilter ? 'No issues match these filters.' : 'No reconciliation issues detected.'}</div>}

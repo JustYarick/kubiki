@@ -1,5 +1,5 @@
 import type { ResourceItem } from '../../types/k8s';
-import { gitOpsFamily, resourceStatus } from './gitops';
+import { gitOpsFamily, isStaticFluxOciRepo, resourceStatus } from './gitops';
 
 export type DeliveryState = 'healthy' | 'attention' | 'progressing' | 'suspended' | 'unknown';
 export const deliveryLabels: Record<DeliveryState, string> = { healthy: 'Healthy', attention: 'Needs attention', progressing: 'In progress', suspended: 'Suspended', unknown: 'Unknown' };
@@ -22,6 +22,7 @@ export function deliveryState(item: ResourceItem): DeliveryState {
   if (conditions.some(c => ['Stalled', 'Failed', 'Degraded'].includes(c.type) && c.status === 'True')) return 'attention';
   if (conditions.some(c => c.type === 'Reconciling' && c.status === 'True')) return 'progressing';
   const ready = conditions.find(c => c.type === 'Ready');
+  if (!ready && isStaticFluxOciRepo(raw)) return 'healthy';
   const observed = ready?.observedGeneration ?? status.observedGeneration;
   if (observed != null && raw.metadata?.generation != null && observed < raw.metadata.generation) return 'progressing';
   return ready?.status === 'True' ? 'healthy' : ready?.status === 'False' ? 'attention' : 'unknown';
@@ -79,6 +80,7 @@ export function deliveryReason(item: ResourceItem): string {
   const condition = conditions.find((entry: any) => ['Stalled', 'Failed', 'Degraded'].includes(entry.type) && entry.status === 'True')
     ?? conditions.find((entry: any) => entry.type === 'Ready' && entry.status === 'False')
     ?? conditions.find((entry: any) => entry.type === 'Reconciling' && entry.status === 'True');
+  if (!condition && isStaticFluxOciRepo(raw)) return 'Static OCI HelmRepository (no index polling required).';
   if (!condition && deliveryState(item) === 'progressing') return 'Waiting for the controller to observe the current resource generation.';
   return condition?.message || condition?.reason || deliveryDescription(item);
 }
