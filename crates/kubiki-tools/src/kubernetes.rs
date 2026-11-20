@@ -1578,7 +1578,15 @@ fn field_access_report(policy: &AgentPolicy, target: &Target, builtin: bool, fie
     let requested = fields.unwrap_or_default();
     let denied = policy.denied_fields(target, builtin, requested);
     let per_resource = target.name.is_empty() && !policy.rules.is_empty();
-    json!({"requested":requested,"denied":if per_resource {None}else{Some(&denied)},"allRequestedFieldsDenied":if per_resource {None}else{Some(!requested.is_empty() && requested.len()==denied.len())},"perResourceRules":per_resource,"coverage":"Reported denials follow policy; per-resource rules require exact reads for field explanations. A permitted but omitted field may be absent or partially projected."})
+    let mut report = json!({"requested":requested,"denied":if per_resource {None}else{Some(&denied)},"allRequestedFieldsDenied":if per_resource {None}else{Some(!requested.is_empty() && requested.len()==denied.len())},"perResourceRules":per_resource,"coverage":"Reported denials follow policy; per-resource rules require exact reads for field explanations. A permitted but omitted field may be absent or partially projected."});
+    if !per_resource && !denied.is_empty() {
+        let hints = policy.denial_hints(target, builtin, &denied);
+        if !hints.is_empty() {
+            report["accessHints"] = json!(hints);
+            report["aiInstruction"] = json!("Some requested fields were blocked by Kubiki's active AI/MCP access policy. Tell the user which setting blocked access and where in Kubiki Settings to enable it (see accessHints).");
+        }
+    }
+    report
 }
 fn flux_gvk(kind: &str) -> Result<(&'static str, &'static [&'static str]), String> {
     match kind {
@@ -4530,24 +4538,58 @@ impl KubernetesTools {
                 validate_target(&target, true)?;
                 state.policy.check_scope(&session.scope, &target)?;
                 if !state.policy.helm_values {
-                    return Err("Reading Helm release values is disabled by policy (enable helmValues to allow Helm release values; use helm action='storage' for metadata-only revision checks)".into());
+                    return Err("Reading Helm release values is disabled by policy (helmValues=false). Tell the user to enable 'Helm release values' in Settings → AI / MCP Access → Data & Categories → Helm release values (or use helm action='storage' for metadata-only revision checks).".into());
                 }
                 if state.policy.access(&target, false) == DataAccess::None {
                     return Err("Helm release access is denied by policy".into());
                 }
-                let manager = self.pool.get_config_manager().clone();
-                let reader = tokio::task::spawn_blocking(move || {
-                    kubiki_core::helm::reader::HelmReader::default().with_config_manager(&manager)
-                })
-                .await
-                .map_err(|_| "Cannot prepare Helm configuration")?
-                .map_err(error_message)?
-                .with_read_timeout(Duration::from_secs(20));
                 self.ensure_connection(session).await?;
-                let history = reader
-                    .history(&session.scope.context, &namespace, &name)
+                let fast_client = self.pool.get_client(&session.scope.context).await.ok();
+                let mut cli_reader: Option<kubiki_core::helm::reader::HelmReader> = None;
+                let history = if let Some(ref client) = fast_client {
+                    if let Some(history) = kubiki_core::helm::storage::release_history_fast(
+                        client,
+                        &session.scope.context,
+                        &namespace,
+                        &name,
+                    )
                     .await
-                    .map_err(error_message)?;
+                    {
+                        history
+                    } else {
+                        let manager = self.pool.get_config_manager().clone();
+                        let reader = tokio::task::spawn_blocking(move || {
+                            kubiki_core::helm::reader::HelmReader::default()
+                                .with_config_manager(&manager)
+                        })
+                        .await
+                        .map_err(|_| "Cannot prepare Helm configuration")?
+                        .map_err(error_message)?
+                        .with_read_timeout(Duration::from_secs(20));
+                        let history = reader
+                            .history(&session.scope.context, &namespace, &name)
+                            .await
+                            .map_err(error_message)?;
+                        cli_reader = Some(reader);
+                        history
+                    }
+                } else {
+                    let manager = self.pool.get_config_manager().clone();
+                    let reader = tokio::task::spawn_blocking(move || {
+                        kubiki_core::helm::reader::HelmReader::default()
+                            .with_config_manager(&manager)
+                    })
+                    .await
+                    .map_err(|_| "Cannot prepare Helm configuration")?
+                    .map_err(error_message)?
+                    .with_read_timeout(Duration::from_secs(20));
+                    let history = reader
+                        .history(&session.scope.context, &namespace, &name)
+                        .await
+                        .map_err(error_message)?;
+                    cli_reader = Some(reader);
+                    history
+                };
                 let revision = history
                     .iter()
                     .map(|h| h.revision)
@@ -4555,8 +4597,9 @@ impl KubernetesTools {
                     .filter(|r| *r > 0)
                     .ok_or("Helm release history has no revision")? as u32;
                 self.ensure_connection(session).await?;
-                let values = reader
-                    .content(
+                let values = if let Some(ref client) = fast_client {
+                    if let Some(values) = kubiki_core::helm::storage::release_content_fast(
+                        client,
                         &session.scope.context,
                         &namespace,
                         &name,
@@ -4564,7 +4607,47 @@ impl KubernetesTools {
                         kubiki_core::helm::reader::HelmDocument::Values,
                     )
                     .await
-                    .map_err(error_message)?;
+                    {
+                        values
+                    } else {
+                        let reader = match cli_reader {
+                            Some(reader) => reader,
+                            None => {
+                                let manager = self.pool.get_config_manager().clone();
+                                tokio::task::spawn_blocking(move || {
+                                    kubiki_core::helm::reader::HelmReader::default()
+                                        .with_config_manager(&manager)
+                                })
+                                .await
+                                .map_err(|_| "Cannot prepare Helm configuration")?
+                                .map_err(error_message)?
+                                .with_read_timeout(Duration::from_secs(20))
+                            }
+                        };
+                        reader
+                            .content(
+                                &session.scope.context,
+                                &namespace,
+                                &name,
+                                revision,
+                                kubiki_core::helm::reader::HelmDocument::Values,
+                            )
+                            .await
+                            .map_err(error_message)?
+                    }
+                } else {
+                    cli_reader
+                        .expect("cli reader initialized when fast client unavailable")
+                        .content(
+                            &session.scope.context,
+                            &namespace,
+                            &name,
+                            revision,
+                            kubiki_core::helm::reader::HelmDocument::Values,
+                        )
+                        .await
+                        .map_err(error_message)?
+                };
                 let values: Value = serde_yaml::from_str(&values)
                     .map_err(|_| "Cannot parse Helm values for policy projection")?;
                 let value = json!({"apiVersion":"helm.sh/v1","kind":"Release","metadata":{"name":name,"namespace":namespace},"spec":{"values":values},"status":{"history":history}});
@@ -4847,6 +4930,7 @@ impl KubernetesTools {
                             "namespace": namespace,
                             "fields": [
                                 "metadata.name",
+                                "spec.type",
                                 "spec.suspend",
                                 "status.conditions",
                                 "status.lastAppliedRevision",
@@ -4866,21 +4950,26 @@ impl KubernetesTools {
                                     fields.iter().any(|field| field == "status.conditions")
                                 })
                             {
-                                unavailable
-                                    .push(format!("{kind}: status.conditions denied by policy"));
+                                unavailable.push(format!(
+                                    "{kind}: status.conditions denied by policy (set 'Custom resources' to 'Diagnostic fields' or 'Full contents' in Settings → AI / MCP Access → Data & Categories → Custom resources)"
+                                ));
                             }
                             for item in page["items"].as_array().ok_or("Invalid Flux page")? {
                                 let ready = item["status"]["conditions"]
                                     .as_array()
                                     .and_then(|cs| cs.iter().find(|c| c["type"] == "Ready"));
+                                let is_static_oci = kind == "HelmRepository"
+                                    && item["spec"]["type"].as_str() == Some("oci")
+                                    && item["spec"]["suspend"].as_bool() != Some(true)
+                                    && ready.is_none();
                                 items.push(json!({
                                     "kind": kind,
                                     "apiVersion": format!("{group}/{version}"),
                                     "name": item["metadata"]["name"],
                                     "namespace": item["metadata"]["namespace"],
                                     "conditions": item["status"]["conditions"],
-                                    "ready": ready.map(|c| &c["status"]),
-                                    "message": ready.map(|c| &c["message"]),
+                                    "ready": if is_static_oci { json!("True") } else { json!(ready.map(|c| &c["status"])) },
+                                    "message": if is_static_oci { json!("Static OCI HelmRepository") } else { json!(ready.map(|c| &c["message"])) },
                                     "suspended": item["spec"]["suspend"],
                                     "lastAppliedRevision": item["status"]["lastAppliedRevision"],
                                     "lastAttemptedRevision": item["status"]["lastAttemptedRevision"],
@@ -4891,7 +4980,7 @@ impl KubernetesTools {
                         Err(_) => unavailable.push(format!("{kind}: unavailable or denied")),
                     }
                 }
-                bounded_result(json!({
+                let mut out = json!({
                     "provider": "flux",
                     "action": "list",
                     "resources": items,
@@ -4902,7 +4991,16 @@ impl KubernetesTools {
                         "completeness": "partial",
                         "coverage": "Bounded policy-projected Flux inspection; unavailable is not an empty healthy result"
                     }
-                }))
+                });
+                if unavailable.iter().any(|u| u.contains("denied by policy")) {
+                    out["accessHints"] = json!([{
+                        "setting": "Custom resources",
+                        "location": "Settings → AI / MCP Access → Data & Categories → Custom resources",
+                        "recommendedAction": "Change 'Custom resources' from 'Metadata only' to 'Diagnostic fields' (or 'Full contents') so Flux status.conditions can be inspected."
+                    }]);
+                    out["aiInstruction"] = json!("Flux status fields were blocked by Kubiki's active AI/MCP access policy. Tell the user to set 'Custom resources' to 'Diagnostic fields' or 'Full contents' in Settings → AI / MCP Access → Data & Categories → Custom resources.");
+                }
+                bounded_result(out)
             }
             ("flux", "get") => {
                 if !state.policy.is_flux_active(&state.capabilities) {

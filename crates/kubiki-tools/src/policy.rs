@@ -492,6 +492,139 @@ impl AgentPolicy {
         }).cloned().collect()
     }
 
+    /// Actionable UI settings hints explaining why requested fields are blocked so the AI can
+    /// tell the user which Kubiki toggle controls access and where to enable it.
+    pub fn denial_hints(&self, target: &Target, builtin: bool, fields: &[String]) -> Vec<Value> {
+        let mut hints: Vec<Value> = Vec::new();
+        let mut seen = std::collections::HashSet::<&'static str>::new();
+        let mut push = |key: &'static str, setting: &str, location: &str, action: &str| {
+            if seen.insert(key) {
+                hints.push(json!({
+                    "setting": setting,
+                    "location": location,
+                    "recommendedAction": action,
+                }));
+            }
+        };
+        let access = self.access(target, builtin);
+        let configured = self.configured_access(target, builtin);
+        let is_crd = !builtin || !native_api_group(&target.group);
+        for field in fields {
+            let Ok(selection) = crate::FieldSelection::new(&[field.clone()]) else {
+                continue;
+            };
+            if !self.annotations && selection.has_key("annotations") {
+                push(
+                    "annotations",
+                    "Annotations",
+                    "Settings → AI / MCP Access → Data & Categories → Annotations (or TitleBar MCP popover → MCP Access settings)",
+                    "Enable 'Annotations' in the active profile to allow reading Kubernetes object annotations.",
+                );
+            }
+            if !self.workload_configuration && selection.has_workload_configuration() {
+                push(
+                    "workload_configuration",
+                    "Workload configuration",
+                    "Settings → AI / MCP Access → Data & Categories → Workload configuration",
+                    "Enable 'Workload configuration' to read inline env values, commands, args, or probe HTTP headers.",
+                );
+            }
+            if access == DataAccess::None || (access == DataAccess::Metadata && !selection.metadata_only()) {
+                if target.kind == "Secret" && target.group.is_empty() {
+                    push(
+                        "secrets",
+                        "Secrets",
+                        "Settings → AI / MCP Access → Data & Categories → Secrets",
+                        "Change 'Secrets' from 'No access' to 'Metadata only' (or 'Full contents' / add an exact resource rule).",
+                    );
+                } else if target.kind == "ConfigMap" && target.group.is_empty() {
+                    push(
+                        "config_maps",
+                        "ConfigMaps",
+                        "Settings → AI / MCP Access → Data & Categories → ConfigMaps",
+                        "Change 'ConfigMaps' to 'Full contents' (or add an exact resource rule).",
+                    );
+                } else if is_crd {
+                    let rec = if diagnostic_fields(target).is_some() {
+                        "Change 'Custom resources' to 'Diagnostic fields' (exposes Flux/Argo CD/cert-manager/Gateway/KEDA status without values) or 'Full contents'."
+                    } else {
+                        "Change 'Custom resources' to 'Full contents' (or add a resource rule for this CRD)."
+                    };
+                    push(
+                        "custom_resources",
+                        "Custom resources",
+                        "Settings → AI / MCP Access → Data & Categories → Custom resources",
+                        rec,
+                    );
+                } else {
+                    push(
+                        "rules",
+                        "Resource rules",
+                        "Settings → AI / MCP Access → Scope & rules → Resource rules",
+                        "Adjust the matching resource rule to allow reading this resource's contents.",
+                    );
+                }
+            } else if configured == DataAccess::Diagnostic {
+                if let Some(allowed) = diagnostic_fields(target) {
+                    if crate::FieldSelection::new(
+                        &allowed.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(),
+                    )
+                    .is_ok_and(|allow| !allow.intersects(&selection))
+                    {
+                        push(
+                            "custom_resources_full",
+                            "Custom resources",
+                            "Settings → AI / MCP Access → Data & Categories → Custom resources",
+                            "Field is outside the 'Diagnostic fields' projection. Change 'Custom resources' to 'Full contents' (or add an exact resource rule) to read it.",
+                        );
+                    }
+                }
+            }
+            if self.denied_paths.iter().any(|path| {
+                crate::FieldSelection::new(&[path.clone()]).is_ok_and(|deny| deny.covers(&selection))
+            }) {
+                push(
+                    "denied_paths",
+                    "Excluded JSON pointer paths",
+                    "Settings → AI / MCP Access → Scope & rules → Excluded paths",
+                    "Remove the matching JSON pointer from Excluded paths to allow reading this field.",
+                );
+            }
+            if !self.allowed_fields.is_empty()
+                && crate::FieldSelection::new(&self.allowed_fields)
+                    .is_ok_and(|allow| !allow.intersects(&selection))
+            {
+                push(
+                    "allowed_fields",
+                    "Included fields",
+                    "Settings → AI / MCP Access → Scope & rules → Included fields",
+                    "Add the requested field to Included fields or leave Included fields empty.",
+                );
+            }
+        }
+        hints
+    }
+
+    /// Human- and AI-actionable error message when a resource/collection read is blocked by policy.
+    pub fn resource_denial_message(&self, target: &Target, builtin: bool) -> String {
+        let hint = if target.kind == "Secret" && target.group.is_empty() && self.secrets == DataAccess::None {
+            "Tell the user Secrets access is blocked by Kubiki's active AI/MCP policy ('Secrets: No access'). To enable it, open Settings → AI / MCP Access → Data & Categories → Secrets."
+        } else if target.kind == "Event" && matches!(target.group.as_str(), "" | "events.k8s.io") && !self.events {
+            "Tell the user Events access is disabled by Kubiki's active AI/MCP policy. Enable it in Settings → AI / MCP Access → Data & Categories → Events."
+        } else if target.group == "metrics.k8s.io" && !self.metrics {
+            "Tell the user Metrics access is disabled by Kubiki's active AI/MCP policy. Enable it in Settings → AI / MCP Access → Data & Categories → Metrics."
+        } else if target.kind == "ConfigMap" && target.group.is_empty() && self.config_maps == DataAccess::None {
+            "Tell the user ConfigMaps access is disabled by Kubiki's active AI/MCP policy. Enable it in Settings → AI / MCP Access → Data & Categories → ConfigMaps."
+        } else if (!builtin || !native_api_group(&target.group)) && self.custom_resources == DataAccess::None {
+            "Tell the user Custom resources access is disabled by Kubiki's active AI/MCP policy. Set Custom resources to 'Diagnostic fields' or 'Full contents' in Settings → AI / MCP Access → Data & Categories → Custom resources."
+        } else if target.namespace.is_none() && !self.cluster_resources {
+            "Tell the user Cluster-scoped resources are disabled by Kubiki's active AI/MCP policy. Enable it in Settings → AI / MCP Access → Data & Categories → Cluster resources."
+        } else {
+            "Tell the user this resource is blocked by Kubiki's active AI/MCP access policy (check Settings → AI / MCP Access → Scope & rules or Data & Categories)."
+        };
+        format!("Reading this resource is disabled by the AI access policy. {hint}")
+    }
+
     /// Conservative proof that no object in this collection can be read at all.
     /// Prevents listing denied categories (such as Secrets when secrets=none) or exposing
     /// omittedByPolicy membership oracles.
@@ -725,7 +858,7 @@ impl AgentPolicy {
     pub fn project(&self, target: &Target, source: &Value, builtin: bool) -> Result<Value, String> {
         let access = self.access(target, builtin);
         if access == DataAccess::None {
-            return Err("Reading this resource is disabled by the AI access policy".into());
+            return Err(self.resource_denial_message(target, builtin));
         }
         let metadata = &source["metadata"];
         let mut result = json!({"apiVersion": source["apiVersion"], "kind": source["kind"], "metadata": {
@@ -771,7 +904,7 @@ fn diagnostic_fields(target: &Target) -> Option<&'static [&'static str]> {
         ("kustomize.toolkit.fluxcd.io", "Kustomization")
         | ("helm.toolkit.fluxcd.io", "HelmRelease")
         | ("source.toolkit.fluxcd.io", "GitRepository" | "OCIRepository" | "HelmRepository" | "HelmChart" | "Bucket") => Some(&[
-            "metadata", "spec.suspend", "spec.dependsOn", "spec.path", "spec.sourceRef", "spec.chartRef",
+            "metadata", "spec.type", "spec.suspend", "spec.dependsOn", "spec.path", "spec.sourceRef", "spec.chartRef",
             "spec.releaseName", "spec.targetNamespace", "spec.storageNamespace", "spec.interval",
             "status.conditions", "status.observedGeneration", "status.lastAppliedRevision", "status.lastAttemptedRevision",
             "status.artifact", "status.inventory", "status.failures", "status.installFailures", "status.upgradeFailures",

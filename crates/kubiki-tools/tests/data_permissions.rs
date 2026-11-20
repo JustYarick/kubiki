@@ -488,3 +488,23 @@ fn expanded_diagnostic_crds_expose_argocd_cert_manager_gateway_keda_without_valu
     let cert_proj = policy.project(&cert_target, &cert, false).unwrap();
     assert_eq!(cert_proj["status"]["conditions"][0]["message"], "ACME challenge failed");
 }
+
+#[test]
+fn denial_hints_point_to_exact_settings_toggles_for_annotations_flux_and_secrets() {
+    let mut policy = AgentPolicy::default();
+    policy.annotations = false;
+    policy.custom_resources = DataAccess::Metadata;
+    policy.secrets = DataAccess::None;
+
+    let svc = Target { group: "".into(), version: "v1".into(), kind: "Service".into(), namespace: Some("istio-system".into()), name: "istio-gateway".into() };
+    let svc_hints = policy.denial_hints(&svc, true, &["metadata.annotations".into()]);
+    assert!(svc_hints.iter().any(|h| h["setting"] == "Annotations" && h["location"].as_str().unwrap_or("").contains("Settings → AI / MCP Access")));
+
+    let hr = Target { group: "helm.toolkit.fluxcd.io".into(), version: "v2".into(), kind: "HelmRelease".into(), namespace: Some("istio-system".into()), name: "istio-gateway".into() };
+    let hr_hints = policy.denial_hints(&hr, false, &["status.conditions".into()]);
+    assert!(hr_hints.iter().any(|h| h["setting"] == "Custom resources" && h["recommendedAction"].as_str().unwrap_or("").contains("Diagnostic fields")));
+
+    let secret = Target { group: "".into(), version: "v1".into(), kind: "Secret".into(), namespace: Some("default".into()), name: "db".into() };
+    let err = policy.resource_denial_message(&secret, true);
+    assert!(err.contains("Settings → AI / MCP Access → Data & Categories → Secrets"));
+}
