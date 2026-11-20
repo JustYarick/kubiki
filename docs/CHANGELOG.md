@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Consolidated reusable adaptive UI/UX primitives under `src/components/ui` (`index.ts`, `DataTable`, `Badge`, `CountPill`, `Textarea`, `Field`, `FieldGroup`, `SectionCard`, `EmptyState`, `KeyValueList`, upgraded `Input`/`SearchInput`/`Button`/`Select`/`Checkbox`) and migrated ad-hoc search inputs, dialogs, and secondary tables across the workspace to use them.
+- Actionable `accessHints` and `aiInstruction` guidance in MCP policy denials so AI clients tell the user which Kubiki setting blocked access (`Annotations`, `Custom resources`, `Helm release values`, `Secrets`, etc.) and where to enable it.
+- Fast direct Kubernetes Secret/ConfigMap storage reads for Helm release inventory, revision history, and release documents (`Values`, `Manifest`, `Hooks`, `Notes`) over the warm `kube::Client` (with Kubernetes `(context, uid, resourceVersion)` MVCC caching, concurrent revision-read coalescing, and transparent fallback to the `helm` CLI).
 - Target/pinned Node resolution for unscheduled Pending Pods (DaemonSet `nodeAffinity` `matchFields: metadata.name`, `kubernetes.io/hostname` affinity/`nodeSelector`, and preemption `nominatedNodeName`) in the Pods table, Pod details (including a clickable `Target node` link and rendered `Node Affinity` / `Pod Affinity` / `Pod Anti-Affinity`), Workload child pods, Node details (`Pending pods targeting this node`), resource search, topology/neighborhood graphs, and MCP (`diagnose_resource`, `cluster_info(problems)`, `list_resources(health)`, and `summarize_resources(groupBy: "nodeName")`).
 - MCP Resources (`kubiki://session/info`, `kubiki://evidence/{id}`) and built-in debugging Prompts (`investigate-resource`, `triage-namespace`, `debug-node-pressure`, `debug-rollout-regression`) alongside accurate MCP `serverInfo` and `ToolAnnotations`.
 - Dedicated `helmValues` policy toggle separating Helm release chart values (`helm action=values`) from custom resource defaults, while keeping metadata-only release listings (`helm action=list`) and multi-revision storage conflict diagnostics (`helm action=storage`) available without Secret access.
@@ -40,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Enabled HTTP `gzip` response compression across all `kube` clients, switched non-CRD resource watchers and unbounded reads to Kubernetes apiserver watch-cache lists (`resourceVersion=0`), streamed `Secret` and `ConfigMap` tables via server-side `Table` + `PartialObjectMetadata` watches with on-demand single-object hydration when inspecting or editing, prioritized active-tab watches over background CRD/inspector/sidebar-count probes, skipped ESO/VSO origin lookups for Helm/service-account Secrets, and filtered out superseded Helm revisions during fast release inventory reads.
 - Consolidated the MCP tool catalog from 32 fragmented tools into 19 universal, orthogonal tools (15 read/inspection tools + 4 write tools: `cluster_info`, `diagnose_resource`, `get_events`, `helm`, `gitops`, etc.) and enabled concurrent read execution, shared discovery caching, and background Argo CD/Flux capability detection on external MCP sessions.
 - Expanded `get_logs` tail ceiling to 5000 lines, added `ignoreCase` and `contextLines` in `lines` mode, and broadened diagnostic log error pattern matching (klog, logfmt, JSON severity, network/TLS/OOM failures).
 - Refined Helm Overview layout and density to match the application's overview cards, with a compact header strip, uniform card surfaces, monospace summary metrics, evenly distributed inventory facts, aligned namespace and chart panels, and single-line release change rows.
@@ -47,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed virtualized resource table scroll jumping when rows are added, removed, or reordered, recognized static Flux OCI `HelmRepository` objects as `Ready` instead of `Not reported`, disabled WebKit/macOS spelling autocorrection across all text input fields, restored the CronJob `Schedule` table column, and eliminated O(N²) scans in workload Pod matching, GitOps relationship resolution, Helm diagnostic descendant traversal, and Event/hook lookups on large clusters.
 - Propagated shared `schemaVersion`, `ruleResolution`, and `allowedFields` into effective Kubiki Agent policies, cleared per-rule writes in MCP `Clear writes` and blank read-only profile creation, corrected the manual OpenCode JSON snippet to use `disabled: false`, fixed `summarize_resources` evidence persistence, and cleaned up HTTP MCP peer/subscription tracking and session pruning.
 - Desktop Pod tables fetch their initial inventory in one collection request per scope. Sidebar counts skip duplicate probes while a covering watch initializes.
 

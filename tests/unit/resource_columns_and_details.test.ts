@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { mapK8sResource, formatDuration } from '../../src/core/utils/k8s_mapper';
+import { columnsFor } from '../../src/components/k8s/table/columns';
+import { RESOURCE_TYPES, apiVersionFor } from '../../src/core/resources/resource_types';
+import { ResourceDetailsRouter } from '../../src/components/k8s/details/ResourceDetailsRouter';
+import { GenericResourceDetails } from '../../src/components/k8s/details/kinds/GenericResourceDetails';
+import { PodDetails } from '../../src/components/k8s/details/kinds/PodDetails';
+import { GatewayDetails } from '../../src/components/k8s/details/kinds/GatewayDetails';
+import type { ResourceKind } from '../../src/types/k8s';
 
 describe('Resource columns mapping and Lens parity', () => {
   it('maps Deployment with clean Pods ready/desired and real Condition status without duplicate replicas', () => {
@@ -107,6 +114,11 @@ describe('Resource columns mapping and Lens parity', () => {
     expect(item.ready).toBeUndefined();
     expect(item.activeJobs).toBe(1);
     expect(item.lastScheduleTime).toBe('1h');
+
+    // INVARIANT: table columns must read the mapped schedule field (regression guard for blank Schedule column).
+    const cols = columnsFor('CronJob');
+    const scheduleCol = cols.find((c) => c.label === 'Schedule');
+    expect(scheduleCol?.get(item)).toBe('0 2 * * *');
   });
 
   it('maps Service with externalIP and selectorText', () => {
@@ -176,5 +188,88 @@ describe('Resource columns mapping and Lens parity', () => {
     }, 'ConfigMap');
 
     expect(cm.sizeBytes).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Exhaustive contract for EVERY built-in Kubernetes resource kind in `RESOURCE_TYPES` (+ HelmRelease).
+ *
+ * WHY THIS SUITE EXISTS:
+ * Past regressions occurred when a mapper field was renamed or a new built-in kind was added
+ * without updating `columnsFor(...)` or `ResourceDetailsRouter(...)`. Running every registered
+ * kind through mapping -> columns -> detail routing catches silent blank columns, wrong
+ * cluster-vs-namespaced column layouts, and misrouted custom resources with colliding kind names.
+ */
+describe('All built-in resource kinds: mapping, columns, and detail routing contract', () => {
+  const allKinds = [...RESOURCE_TYPES.map((t) => t.kind as ResourceKind), 'HelmRelease' as ResourceKind];
+
+  it('maps, computes non-empty unique table columns, and routes a valid detail view for every built-in kind', () => {
+    for (const type of RESOURCE_TYPES) {
+      const kind = type.kind as ResourceKind;
+      const apiVersion = apiVersionFor(type);
+      const raw = {
+        apiVersion,
+        kind,
+        metadata: {
+          name: `sample-${type.plural}`,
+          ...(type.namespaced ? { namespace: 'prod' } : {}),
+          uid: `uid-${kind}`,
+          creationTimestamp: '2026-10-20T00:00:00Z',
+        },
+        spec: kind === 'CronJob' ? { schedule: '*/5 * * * *' } : {},
+        status: {},
+      };
+      const item = mapK8sResource(raw, kind);
+      expect(item.name, `${kind} should map metadata.name`).toBe(`sample-${type.plural}`);
+      expect(item.uid, `${kind} should preserve uid`).toBe(`uid-${kind}`);
+
+      const cols = columnsFor(kind);
+      expect(cols.length, `${kind} must expose table columns`).toBeGreaterThanOrEqual(2);
+      const ids = cols.map((c) => c.id);
+      expect(new Set(ids).size, `${kind} column ids must be unique`).toBe(ids.length);
+      expect(ids[0], `${kind} first column must be name`).toBe('name');
+      // Cluster-scoped kinds must never show an empty Namespace column.
+      if (!type.namespaced) {
+        expect(ids, `Cluster-scoped ${kind} must not show a Namespace column`).not.toContain('namespace');
+      }
+      // Every column getter must execute cleanly without throwing on a minimal object.
+      for (const col of cols) {
+        expect(() => col.get(item), `${kind}.${col.id} getter must not throw`).not.toThrow();
+      }
+      // Every built-in kind must route to a React component without throwing.
+      const routed = ResourceDetailsRouter({
+        item,
+        onNavigate() {},
+        onLogs() {},
+        onShell() {},
+      });
+      expect(typeof routed.type, `${kind} must route to a valid detail component`).toBe('function');
+    }
+
+    // HelmRelease virtual kind also exposes unique, safe columns.
+    const helmCols = columnsFor('HelmRelease');
+    expect(helmCols.map((c) => c.id)).toContain('chart');
+    expect(allKinds.length).toBeGreaterThan(40);
+  });
+
+  /**
+   * WHY THIS TEST EXISTS:
+   * CRDs can legitimately reuse built-in kind names such as `Pod` or `Gateway` under a third-party
+   * API group (`example.org/v1`). The router MUST check API group so a foreign CRD never renders
+   * inside `PodDetails` or `GatewayDetails` and crashes on missing core fields.
+   */
+  it.each([
+    ['Pod', 'example.org/v1', GenericResourceDetails],
+    ['Gateway', 'example.org/v1', GenericResourceDetails],
+    ['Pod', 'v1', PodDetails],
+    ['Gateway', 'gateway.networking.k8s.io/v1', GatewayDetails],
+  ] as const)('routes %s from %s by API group, without relying on function names', (kind, apiVersion, expected) => {
+    const view = ResourceDetailsRouter({
+      item: { uid: 'resource', name: 'example', namespace: 'default', kind, apiVersion },
+      onNavigate() {},
+      onLogs() {},
+      onShell() {},
+    });
+    expect(view.type).toBe(expected);
   });
 });
