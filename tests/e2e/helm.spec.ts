@@ -98,9 +98,10 @@ test('Helm supports inspection, revision documents, name/namespace filters, the 
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
   await expect(view.getByRole('row', { name: /^Inspect Helm release/ })).toHaveCount(1);
   await search.fill('');
+  await expect(view.locator('table')).toHaveAttribute('aria-rowcount', '102');
+  await expect.poll(() => view.getByTestId('resource-table').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
   await view.getByTestId('resource-table').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(view.getByRole('row', { name: 'Inspect Helm release zz-next-page in backend' })).toBeVisible();
-  await expect(view.locator('table')).toHaveAttribute('aria-rowcount', '102');
   await open(page, 'Overview');
   const overview = page.getByTestId('helm-overview');
   await expect(overview.getByRole('region', { name: 'Helm summary', exact: true })).toBeVisible();
