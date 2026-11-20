@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { extractChangelogSection, formatReleaseNotes, formatUpdaterNotes, loadReleaseNotes, loadUpdaterNotes } from '../../scripts/release-notes.mjs';
+import { extractChangelogSection, formatReleaseNotes, formatUpdaterNotes, loadReleaseNotes, loadUpdaterNotes, promoteUnreleasedChangelog } from '../../scripts/release-notes.mjs';
 
 const SAMPLE_CHANGELOG = `# Changelog
 
@@ -89,4 +89,32 @@ test('loadReleaseNotes and loadUpdaterNotes read docs/CHANGELOG.md and ignore mi
   } finally {
     await rm(emptyRoot, { recursive: true, force: true });
   }
+});
+
+test('promoteUnreleasedChangelog promotes non-empty Unreleased entries for stable tags and updates compare links', () => {
+  const promoted = promoteUnreleasedChangelog(SAMPLE_CHANGELOG, 'v1.5.0', '2026-11-20');
+  assert.ok(promoted);
+  assert.equal(promoted.version, '1.5.0');
+  assert.equal(promoted.date, '2026-11-20');
+  assert.equal(promoted.compareUrl, 'https://github.com/JustYarick/kubiki/compare/v1.4.0...v1.5.0');
+  assert.match(promoted.changelog, /^# Changelog\n\n## \[Unreleased\]\n\n## \[1\.5\.0\] - 2026-11-20\n\n### Added\n- Pending work/);
+  assert.match(promoted.changelog, /\[unreleased\]: https:\/\/github\.com\/JustYarick\/kubiki\/compare\/v1\.5\.0\.\.\.HEAD\n\[1\.5\.0\]: https:\/\/github\.com\/JustYarick\/kubiki\/compare\/v1\.4\.0\.\.\.v1\.5\.0\n\[1\.4\.0\]:/);
+
+  const notes = formatReleaseNotes(promoted.changelog, 'v1.5.0');
+  assert.ok(notes);
+  assert.match(notes, /^## Kubiki 1\.5\.0\n\n### Added\n- Pending work\n\n### Fixed\n- Dev preview fix/);
+  assert.match(notes, /\*\*Full Changelog\*\*: https:\/\/github\.com\/JustYarick\/kubiki\/compare\/v1\.4\.0\.\.\.v1\.5\.0\n$/);
+  assert.equal(formatUpdaterNotes(promoted.changelog, 'v1.5.0'), '### Added\n- Pending work\n\n### Fixed\n- Dev preview fix');
+
+  // Idempotent: already-promoted version or empty Unreleased returns null, and prereleases never mutate CHANGELOG.
+  assert.equal(promoteUnreleasedChangelog(promoted.changelog, 'v1.5.0', '2026-11-20'), null);
+  assert.equal(promoteUnreleasedChangelog(promoted.changelog, 'v1.5.1', '2026-11-20'), null);
+  assert.equal(promoteUnreleasedChangelog(SAMPLE_CHANGELOG, 'v1.4.0', '2026-11-20'), null);
+  assert.equal(promoteUnreleasedChangelog(SAMPLE_CHANGELOG, 'v1.5.0-dev.1', '2026-11-20'), null);
+  assert.equal(promoteUnreleasedChangelog(SAMPLE_CHANGELOG, 'v1.5.0-rc.1', '2026-11-20'), null);
+
+  // Explicit fallbackToUnreleased formats stable notes from Unreleased without mutating the source text.
+  const fallback = formatReleaseNotes(SAMPLE_CHANGELOG, 'v1.5.0', { fallbackToUnreleased: true });
+  assert.equal(fallback, notes);
+  assert.equal(formatUpdaterNotes(SAMPLE_CHANGELOG, 'v1.5.0', { fallbackToUnreleased: true }), '### Added\n- Pending work\n\n### Fixed\n- Dev preview fix');
 });

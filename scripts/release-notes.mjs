@@ -30,12 +30,65 @@ export function extractChangelogSection(changelog, version) {
   return { version, date, body, compareUrl };
 }
 
-function resolveChangelogSection(changelog, tag) {
+/**
+ * Promote non-empty `## [Unreleased]` entries to a stable `## [X.Y.Z] - YYYY-MM-DD` section
+ * when `## [X.Y.Z]` has not been created yet, leaving a fresh empty `## [Unreleased]` heading
+ * and updating the bottom comparison links.
+ */
+export function promoteUnreleasedChangelog(changelog, tag, date = new Date().toISOString().slice(0, 10)) {
+  if (updateChannel(tag) !== 'stable') return null;
+  const release = desktopRelease(tag);
+  const version = release.version;
+  const eol = changelog.includes('\r\n') ? '\r\n' : '\n';
+  const normalized = changelog.replace(/\r\n/g, '\n');
+
+  const existingHeading = new RegExp(`^## \\[${escapeRegExp(version)}\\](?:\\s+-\\s+\\d{4}-\\d{2}-\\d{2})?\\s*$`, 'm');
+  if (existingHeading.test(normalized)) return null;
+
+  const unreleased = extractChangelogSection(normalized, 'Unreleased');
+  if (!unreleased) return null;
+
+  const headingPattern = /^## \[Unreleased\][ \t]*\n+/m;
+  if (!headingPattern.test(normalized)) return null;
+  let updated = normalized.replace(
+    headingPattern,
+    `## [Unreleased]\n\n## [${version}] - ${date}\n\n`,
+  );
+
+  let compareUrl = null;
+  const unreleasedLinkPattern = /^(\[unreleased\]:[ \t]+)(https?:\/\/\S+\/compare\/)([^/\s]+)\.\.\.HEAD[ \t]*$/mi;
+  const versionLinkPattern = new RegExp(`^\\[${escapeRegExp(version)}\\]:\\s+\\S+\\s*$`, 'mi');
+  const linkMatch = unreleasedLinkPattern.exec(updated);
+  if (linkMatch) {
+    const [, prefix, base, previousRef] = linkMatch;
+    compareUrl = `${base}${previousRef}...${tag}`;
+    const replacement = versionLinkPattern.test(updated)
+      ? `${prefix}${base}${tag}...HEAD`
+      : `${prefix}${base}${tag}...HEAD\n[${version}]: ${compareUrl}`;
+    updated = updated.replace(unreleasedLinkPattern, replacement);
+  }
+
+  return {
+    version,
+    date,
+    compareUrl,
+    changelog: eol === '\r\n' ? updated.replace(/\n/g, '\r\n') : updated,
+  };
+}
+
+function resolveChangelogSection(changelog, tag, { fallbackToUnreleased = false } = {}) {
   const release = desktopRelease(tag);
   const channel = updateChannel(tag);
   if (channel === 'stable') {
     const section = extractChangelogSection(changelog, release.version);
-    return section ? { release, channel, section } : null;
+    if (section) return { release, channel, section, promotedFromUnreleased: false };
+    if (!fallbackToUnreleased) return null;
+    const unreleased = extractChangelogSection(changelog, 'Unreleased');
+    if (!unreleased) return null;
+    const compareUrl = unreleased.compareUrl
+      ? unreleased.compareUrl.replace(/\.\.\.HEAD$/, `...${tag}`)
+      : null;
+    return { release, channel, section: { ...unreleased, version: release.version, compareUrl }, promotedFromUnreleased: true };
   }
   if (channel === 'dev') {
     const section = extractChangelogSection(changelog, 'Unreleased');
@@ -43,14 +96,14 @@ function resolveChangelogSection(changelog, tag) {
     const compareUrl = section.compareUrl
       ? section.compareUrl.replace(/\.\.\.HEAD$/, `...${tag}`)
       : null;
-    return { release, channel, section: { ...section, compareUrl } };
+    return { release, channel, section: { ...section, compareUrl }, promotedFromUnreleased: false };
   }
   return null;
 }
 
 /** Build the canonical GitHub Release summary for stable (vX.Y.Z) and dev (vX.Y.Z-dev.N) tags from docs/CHANGELOG.md. */
-export function formatReleaseNotes(changelog, tag) {
-  const resolved = resolveChangelogSection(changelog, tag);
+export function formatReleaseNotes(changelog, tag, options = {}) {
+  const resolved = resolveChangelogSection(changelog, tag, options);
   if (!resolved) return null;
   const { release, channel, section } = resolved;
 
@@ -79,13 +132,13 @@ export function formatReleaseNotes(changelog, tag) {
 }
 
 /** Extract clean changelog notes for the in-app updater manifest (`latest.json`). */
-export function formatUpdaterNotes(changelog, tag) {
-  const resolved = resolveChangelogSection(changelog, tag);
+export function formatUpdaterNotes(changelog, tag, options = {}) {
+  const resolved = resolveChangelogSection(changelog, tag, options);
   if (!resolved) return null;
   return resolved.section.body;
 }
 
-async function readChangelog(root = process.cwd()) {
+export async function readChangelog(root = process.cwd()) {
   try {
     return await readFile(path.join(root, 'docs/CHANGELOG.md'), 'utf8');
   } catch (error) {
@@ -94,27 +147,29 @@ async function readChangelog(root = process.cwd()) {
   }
 }
 
-export async function loadReleaseNotes(tag, root = process.cwd()) {
+export async function loadReleaseNotes(tag, root = process.cwd(), options = {}) {
   if (!updateChannel(tag)) return null;
   const changelog = await readChangelog(root);
   if (!changelog) return null;
-  return formatReleaseNotes(changelog, tag);
+  return formatReleaseNotes(changelog, tag, options);
 }
 
-export async function loadUpdaterNotes(tag, root = process.cwd()) {
+export async function loadUpdaterNotes(tag, root = process.cwd(), options = {}) {
   if (!updateChannel(tag)) return null;
   const changelog = await readChangelog(root);
   if (!changelog) return null;
-  return formatUpdaterNotes(changelog, tag);
+  return formatUpdaterNotes(changelog, tag, options);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const tag = process.argv[2];
+  const args = process.argv.slice(2);
+  const fallbackToUnreleased = args.includes('--fallback-unreleased');
+  const tag = args.find(arg => !arg.startsWith('--'));
   if (!tag) {
-    console.error('Usage: node scripts/release-notes.mjs <vX.Y.Z|vX.Y.Z-dev.N>');
+    console.error('Usage: node scripts/release-notes.mjs <vX.Y.Z|vX.Y.Z-dev.N> [--fallback-unreleased]');
     process.exit(1);
   }
-  const notes = await loadReleaseNotes(tag);
+  const notes = await loadReleaseNotes(tag, process.cwd(), { fallbackToUnreleased });
   if (!notes) {
     console.error(`No changelog entry found in docs/CHANGELOG.md for ${tag}.`);
     process.exit(1);

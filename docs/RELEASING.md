@@ -79,7 +79,13 @@ Only stable `vX.Y.Z` releases get versioned sections in
 as separate releases and stay under `## [Unreleased]`. Before tagging a stable
 `vX.Y.Z` release, promote `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, keep
 a fresh empty `## [Unreleased]` section at the top, and update the comparison
-links at the bottom of the file.
+links at the bottom of the file. As a safety fallback when publishing a stable
+release from `main` without a matching `## [X.Y.Z]` section,
+`scripts/publish-desktop-release.mjs` automatically promotes non-empty
+`## [Unreleased]` entries into the GitHub Release summary and `latest.json`
+updater notes, and commits the promoted `docs/CHANGELOG.md` back to `main` after
+publication succeeds (warning without failing the release if branch protection
+blocks direct commits).
 
 ### GitHub Release summary template
 

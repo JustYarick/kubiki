@@ -431,6 +431,7 @@ jobs:
             await publishDesktopRelease({ github, context, core }, {
               tag: process.env.RELEASE_TAG, sha: process.env.SOURCE_SHA,
               dir: `${process.env.GITHUB_WORKSPACE}/release-artifacts`,
+              ref: context.ref,
             });
 
   attach_antivirus_report:

@@ -232,13 +232,15 @@ async function artifacts(tag = 'v9876.1.0-rc.1') {
   return { root, dir, tag, sha };
 }
 
-function githubMock({ exists = true, draft = true, latest = 'v1.0.0', failUpload = false, failDevUpload = false } = {}) {
+function githubMock({ exists = true, draft = true, latest = 'v1.0.0', failUpload = false, failDevUpload = false, ref, mainChangelog, failChangelogUpdate = false } = {}) {
   let assets = [{ id: 1, name: 'stale-package', size: 100 }];
   let feedAssets = [], feed;
   let releaseExists = exists, releaseDraft = draft;
   let fail = failUpload;
   let failFeed = failDevUpload;
+  let currentMainChangelog = mainChangelog;
   const events = [];
+  const warnings = [];
   const github = {
     rest: { git: { createRef: async () => events.push('tag') }, repos: {
       getReleaseByTag: async ({ tag }) => {
@@ -279,6 +281,18 @@ function githubMock({ exists = true, draft = true, latest = 'v1.0.0', failUpload
         return { data: assets.at(-1) };
       },
       getLatestRelease: async () => ({ data: { tag_name: latest } }),
+      getContent: async ({ path: filePath, ref: fileRef }) => {
+        if (filePath !== 'docs/CHANGELOG.md' || fileRef !== 'main' || currentMainChangelog == null) {
+          throw Object.assign(new Error('Not found'), { status: 404 });
+        }
+        return { data: { type: 'file', sha: 'changelog-sha-1', content: Buffer.from(currentMainChangelog, 'utf8').toString('base64') } };
+      },
+      createOrUpdateFileContents: async options => {
+        events.push({ updateFile: options });
+        if (failChangelogUpdate) throw new Error('Branch protection blocked push');
+        currentMainChangelog = Buffer.from(options.content, 'base64').toString('utf8');
+        return { data: { commit: { sha: 'c'.repeat(40) } } };
+      },
       updateRelease: async options => {
         events.push(options);
         if (options.release_id === 456) feed = { ...feed, ...options };
@@ -288,7 +302,12 @@ function githubMock({ exists = true, draft = true, latest = 'v1.0.0', failUpload
     } },
     paginate: async (_route, { release_id }) => release_id === 456 ? feedAssets : assets,
   };
-  return { github, context: { repo: { owner: 'JustYarick', repo: 'kubiki' } }, core: { info() {} }, events,
+  return { github, context: { repo: { owner: 'JustYarick', repo: 'kubiki' }, ...(ref ? { ref } : {}) }, core: { info() {}, warning(msg) { warnings.push(msg); } }, events, warnings,
+    getMainChangelog: () => currentMainChangelog,
+    getReleaseManifest: () => {
+      const asset = assets.find(a => a.name === 'latest.json');
+      return asset ? JSON.parse(asset.data.toString()) : null;
+    },
     getFeed: () => ({ release: feed, manifest: feedAssets[0] && JSON.parse(feedAssets[0].data.toString()) }) };
 }
 
@@ -406,6 +425,61 @@ test('a dev release publishes Unreleased changelog notes, advances its own feed,
     assert.equal(feed.manifest.platforms['linux-x86_64-rpm'], undefined);
     assert.equal(feed.manifest.platforms['linux-aarch64-rpm'], undefined);
     assert.ok(Object.values(feed.manifest.platforms).every(p => p.url.includes('/releases/download/v9876.1.0-dev.10/')));
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test('a stable release from main auto-promotes Unreleased into release notes, latest.json, and docs/CHANGELOG.md', async () => {
+  const fixture = await artifacts('v9876.2.0');
+  const unreleasedChangelog = [
+    '# Changelog',
+    '',
+    '## [Unreleased]',
+    '',
+    '### Added',
+    '- Cache mode setting.',
+    '',
+    '## [9876.1.0] - 2026-11-17',
+    '',
+    '### Fixed',
+    '- Earlier fix.',
+    '',
+    '[unreleased]: https://example.test/compare/v9876.1.0...HEAD',
+    '[9876.1.0]: https://example.test/compare/v9876.0.0...v9876.1.0',
+    '',
+  ].join('\n');
+  try {
+    await mkdir(path.join(fixture.root, 'docs'));
+    await writeFile(path.join(fixture.root, 'docs/CHANGELOG.md'), unreleasedChangelog);
+
+    const mock = githubMock({ exists: false, ref: 'refs/heads/main', mainChangelog: unreleasedChangelog });
+    await publishDesktopRelease(mock, { ...fixture, root: fixture.root });
+
+    const created = mock.events.find(e => e?.create)?.create;
+    assert.equal(created.generate_release_notes, false);
+    assert.match(created.body, /^## Kubiki 9876\.2\.0\n\n### Added\n- Cache mode setting\./);
+    assert.match(created.body, /\*\*Full Changelog\*\*: https:\/\/example\.test\/compare\/v9876\.1\.0\.\.\.v9876\.2\.0\n$/);
+    assert.equal(mock.getReleaseManifest().notes, '### Added\n- Cache mode setting.');
+
+    const publishIndex = mock.events.findIndex(e => typeof e === 'object' && e.release_id === 123 && e.draft === false);
+    const updateIndex = mock.events.findIndex(e => e?.updateFile);
+    assert.ok(publishIndex >= 0 && updateIndex > publishIndex, 'CHANGELOG.md must only be updated after publication succeeds');
+    assert.equal(mock.events[updateIndex].updateFile.branch, 'main');
+    assert.equal(mock.events[updateIndex].updateFile.message, 'docs(changelog): promote Unreleased to v9876.2.0');
+    assert.match(mock.getMainChangelog(), /## \[Unreleased\]\n\n## \[9876\.2\.0\] - \d{4}-\d{2}-\d{2}\n\n### Added\n- Cache mode setting\./);
+    assert.match(mock.getMainChangelog(), /\[unreleased\]: https:\/\/example\.test\/compare\/v9876\.2\.0\.\.\.HEAD\n\[9876\.2\.0\]: https:\/\/example\.test\/compare\/v9876\.1\.0\.\.\.v9876\.2\.0/);
+
+    // If main already has a promoted section, no changelog commit is made.
+    await writeFile(path.join(fixture.root, 'docs/CHANGELOG.md'), mock.getMainChangelog());
+    const alreadyPromoted = githubMock({ exists: false, ref: 'refs/heads/main', mainChangelog: mock.getMainChangelog() });
+    await publishDesktopRelease(alreadyPromoted, { ...fixture, root: fixture.root });
+    assert.equal(alreadyPromoted.events.some(e => e?.updateFile), false);
+
+    // Branch protection errors warn without failing the already-published release.
+    await writeFile(path.join(fixture.root, 'docs/CHANGELOG.md'), unreleasedChangelog);
+    const protectedMain = githubMock({ exists: false, ref: 'refs/heads/main', mainChangelog: unreleasedChangelog, failChangelogUpdate: true });
+    await publishDesktopRelease(protectedMain, { ...fixture, root: fixture.root });
+    assert.equal(protectedMain.warnings.length, 1);
+    assert.match(protectedMain.warnings[0], /Branch protection blocked push/);
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 
