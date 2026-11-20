@@ -4,10 +4,7 @@
 .helm-toolbar h1 svg { flex-shrink: 0; }
 .helm-filterbar { display: flex; align-items: center; gap: calc(6px * var(--ui-factor)); height: calc(34px * var(--ui-factor)); padding: calc(4px * var(--ui-factor)) calc(8px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
 .helm-filter-count { width: 1ch; font-variant-numeric: tabular-nums; }
-.helm-search { display: flex; flex: 1; min-width: 0; height: calc(26px * var(--ui-factor)); align-items: center; gap: calc(6px * var(--ui-factor)); border: 1px solid var(--border-default); border-radius: calc(4px * var(--ui-factor)); padding: 0 calc(6px * var(--ui-factor)); color: var(--text-secondary); background: var(--bg-canvas); }
-.helm-search svg { flex-shrink: 0; }
-.helm-search:focus-within { border-color: var(--accent); }
-.helm-search input { background: transparent; color: var(--text-primary); min-width: 0; width: 100%; outline: none; }
+.helm-search { flex: 1; min-width: 0; }
 .helm-scope { height: calc(24px * var(--ui-factor)); padding: calc(4px * var(--ui-factor)) calc(8px * var(--ui-factor)); color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; font-size: calc(10px * var(--ui-factor)); }
 .helm-workspace[aria-busy="true"]::before { content: ''; position: absolute; inset: 0 0 auto; height: 2px; background: var(--accent); z-index: 2; }
 .helm-content { flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; }

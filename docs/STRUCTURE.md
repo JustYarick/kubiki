@@ -56,6 +56,7 @@ The frontend is a React 19 and TypeScript application. Tailwind CSS and applicat
 | `src/views/TopologyView.tsx` | Topology data preparation and workspace integration. |
 | `src/views/TopologyCanvas.tsx` | Interactive graph presentation. |
 | `src/views/HelmView.tsx`, `HelmOverview.tsx` | Cluster-wide Helm summary, shared typed release table, repository navigation, release inspection, and action entry points. |
+| `src/views/GitOpsDashboard.tsx`, `FluxOverviewPanels.tsx`, `ArgoOverviewPanels.tsx` | Flux and Argo CD delivery dashboards aligned with Helm Overview's status palette: 4-KPI summaries, stacked status bars, SVG health/sync donuts, kind/project/namespace breakdowns, and controller event cadence charts (`src/core/resources/flux_overview.ts`, `argocd_overview.ts`). |
 | `src/views/ExtensionsView.tsx` | Package installation, enable/disable, manual updates, rollback and logs. |
 | `src/components/updates/AppUpdates.tsx` | Startup update offer, download/install actions and About settings. |
 | `src/navigation/CommandPalette.tsx` | Search and navigation across commands and resource types. |

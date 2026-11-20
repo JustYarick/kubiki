@@ -159,10 +159,6 @@
   color: var(--text-primary);
 }
 
-.helm-kpi[data-tone="ok"] .helm-kpi-value { color: var(--status-ok); }
-.helm-kpi[data-tone="warn"] .helm-kpi-value { color: var(--status-warn); }
-.helm-kpi[data-tone="danger"] .helm-kpi-value { color: var(--status-danger); }
-
 .helm-kpi-detail {
   font-size: calc(10px * var(--ui-factor));
   line-height: 1.5;

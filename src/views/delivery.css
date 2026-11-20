@@ -10,17 +10,15 @@
 .delivery-metric[data-tone='warn'] .delivery-metric-label svg { color: var(--status-warn); }
 .delivery-metric-value { font: 600 calc(25px * var(--ui-factor))/1.15 var(--font-mono); color: var(--text-primary); }
 .delivery-metric-detail { color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); line-height: 1.5; }
-.delivery-search { display: flex; align-items: center; flex: 1 1 calc(220px * var(--ui-factor)); gap: calc(8px * var(--ui-factor)); height: calc(30px * var(--ui-factor)); border: 1px solid var(--border-default); border-radius: calc(4px * var(--ui-factor)); background: var(--bg-canvas); padding-inline: calc(8px * var(--ui-factor)); color: var(--text-secondary); }
-.delivery-search:focus-within { border-color: var(--focus-ring); }
-.delivery-search svg { flex: none; }
-.delivery-search input { width: 100%; min-width: 0; background: transparent; color: var(--text-primary); outline: none; }
+.delivery-search { flex: 1 1 calc(220px * var(--ui-factor)); min-width: 0; }
 .delivery-resource-meta { display: flex; flex-wrap: wrap; align-items: center; gap: calc(4px * var(--ui-factor)); min-width: 0; margin-top: calc(5px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); }
 .delivery-status { display: flex; align-items: center; gap: calc(5px * var(--ui-factor)); font-size: calc(11px * var(--ui-factor)); }
 .delivery-status svg { flex: none; }
 .delivery-status[data-state='healthy'] { color: var(--status-ok); }
-.delivery-status[data-state='attention'] { color: var(--status-warn); }
-.delivery-status[data-state='progressing'] { color: var(--accent-text); }
-.delivery-status[data-state='suspended'], .delivery-status[data-state='unknown'] { color: var(--text-secondary); }
+.delivery-status[data-state='attention'] { color: var(--status-danger); }
+.delivery-status[data-state='progressing'] { color: var(--status-warn); }
+.delivery-status[data-state='suspended'] { color: var(--status-pending); }
+.delivery-status[data-state='unknown'] { color: var(--text-muted); }
 .delivery-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: calc(10px * var(--ui-factor)); padding: calc(40px * var(--ui-factor)) calc(16px * var(--ui-factor)); color: var(--text-secondary); }
 .delivery-empty h3 { color: var(--text-primary); font-weight: 500; }
 .delivery-notice { padding: calc(12px * var(--ui-factor)); border: 1px solid var(--status-warn); border-radius: calc(4px * var(--ui-factor)); margin-block: calc(12px * var(--ui-factor)); overflow-wrap: anywhere; }
@@ -37,8 +35,9 @@
 .delivery-health-message { display: flex; align-items: center; gap: calc(8px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(12px * var(--ui-factor)); min-width: 0; overflow-wrap: anywhere; }
 .delivery-health-message svg { flex: none; }
 .delivery-health-strip[data-tone='healthy'] .delivery-health-message svg { color: var(--status-ok); }
-.delivery-health-strip[data-tone='attention'] .delivery-health-message svg { color: var(--status-warn); }
-.delivery-health-strip[data-tone='progressing'] .delivery-health-message svg { color: var(--status-pending); }
+.delivery-health-strip[data-tone='attention'] .delivery-health-message svg { color: var(--status-danger); }
+.delivery-health-strip[data-tone='progressing'] .delivery-health-message svg { color: var(--status-warn); }
+.delivery-health-strip[data-tone='suspended'] .delivery-health-message svg { color: var(--status-pending); }
 .delivery-refresh { display: flex; align-items: center; gap: calc(8px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); }
 .delivery-kind-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: calc(12px * var(--ui-factor)); }
 .delivery-kind-card { min-width: 0; padding: calc(16px * var(--ui-factor)); text-align: left; border: 1px solid var(--border-default); border-radius: calc(7px * var(--ui-factor)); background: var(--bg-secondary); }
@@ -69,7 +68,7 @@
 .delivery-status-axis button[data-status='OutOfSync'] { color: var(--status-warn); }
 .delivery-status-axis button:hover { background: var(--bg-hover); }
 .delivery-status-axis button[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-subtle); color: var(--text-primary); }
-.delivery-dashboard-filter { display: flex; align-items: center; gap: calc(8px * var(--ui-factor)); margin-bottom: calc(12px * var(--ui-factor)); max-width: calc(480px * var(--ui-factor)); }
+.delivery-dashboard-filter { display: flex; flex-wrap: wrap; align-items: center; gap: calc(8px * var(--ui-factor)); margin-bottom: calc(12px * var(--ui-factor)); width: 100%; min-width: 0; }
 .delivery-dashboard-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: calc(16px * var(--ui-factor)); align-items: start; }
 .delivery-panel { border: 1px solid var(--border-default); border-radius: calc(7px * var(--ui-factor)); background: var(--bg-secondary); min-width: 0; overflow: hidden; }
 .delivery-panel > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: calc(8px * var(--ui-factor)); padding: calc(13px * var(--ui-factor)) calc(16px * var(--ui-factor)); border-bottom: 1px solid var(--border-subtle); }
@@ -82,7 +81,10 @@
 .delivery-issue-target { display: flex; align-items: center; gap: calc(8px * var(--ui-factor)); width: 100%; text-align: left; font-size: calc(12px * var(--ui-factor)); }
 .delivery-issue-target > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .delivery-issue-target svg { flex: none; color: var(--text-secondary); }
-.delivery-issue[data-tone='attention'] .delivery-issue-target > svg:first-child { color: var(--status-warn); }
+.delivery-issue[data-tone='attention'] .delivery-issue-target > svg:first-child { color: var(--status-danger); }
+.delivery-issue[data-tone='progressing'] .delivery-issue-target > svg:first-child { color: var(--status-warn); }
+.delivery-issue[data-tone='suspended'] .delivery-issue-target > svg:first-child { color: var(--status-pending); }
+.delivery-issue[data-tone='healthy'] .delivery-issue-target > svg:first-child { color: var(--status-ok); }
 .delivery-issue-target:hover > span { color: var(--accent-text); }
 .delivery-issue-reason { color: var(--text-secondary); font-size: calc(11px * var(--ui-factor)); line-height: 1.6; margin: calc(8px * var(--ui-factor)) 0; overflow-wrap: anywhere; }
 .delivery-issue-footnote { display: flex; flex-direction: column; gap: calc(5px * var(--ui-factor)); color: var(--text-secondary); font-size: calc(10px * var(--ui-factor)); }

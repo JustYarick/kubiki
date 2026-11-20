@@ -1,0 +1,670 @@
+/* Flux Overview analytics, KPI summary, charts, and namespace/kind breakdowns.
+ * Synchronized 1:1 with Helm Overview (helm-overview.css) tokens, surfaces, and breakpoints. */
+
+.flux-cluster-summary {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: calc(8px * var(--ui-factor));
+  overflow: hidden;
+  margin-bottom: calc(14px * var(--ui-factor));
+}
+
+.flux-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.flux-kpi {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: calc(15px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  text-align: left;
+  box-shadow: inset 1px 0 var(--border-subtle);
+  transition: background-color 150ms ease;
+}
+
+.flux-kpi:first-child {
+  box-shadow: none;
+}
+
+.flux-kpi:hover {
+  background: var(--bg-hover);
+}
+
+.flux-kpi[aria-pressed="true"] {
+  background: var(--accent-subtle);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.flux-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--ui-factor));
+  color: var(--text-secondary);
+  font-size: calc(10px * var(--ui-factor));
+  line-height: 1.5;
+}
+
+.flux-kpi-label svg {
+  flex: none;
+}
+
+.flux-kpi[data-tone="ok"] .flux-kpi-label svg:first-child { color: var(--status-ok); }
+.flux-kpi[data-tone="warn"] .flux-kpi-label svg:first-child { color: var(--status-warn); }
+.flux-kpi[data-tone="danger"] .flux-kpi-label svg:first-child { color: var(--status-danger); }
+.flux-kpi[data-tone="pending"] .flux-kpi-label svg:first-child { color: var(--status-pending); }
+
+.flux-kpi-value {
+  font: 500 calc(26px * var(--ui-factor))/1.35 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.04em;
+  margin-block: calc(2px * var(--ui-factor));
+  color: var(--text-primary);
+}
+
+.flux-kpi-detail {
+  font-size: calc(10px * var(--ui-factor));
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Stacked status bar & clickable legend matching Helm Overview */
+.flux-status-distribution {
+  border-top: 1px solid var(--border-subtle);
+  padding: calc(12px * var(--ui-factor)) calc(16px * var(--ui-factor));
+}
+
+.flux-status-bar {
+  display: flex;
+  gap: 2px;
+  height: calc(4px * var(--ui-factor));
+  background: var(--border-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.flux-status-bar > span {
+  min-width: 2px;
+}
+
+.flux-status-caption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(8px * var(--ui-factor)) calc(12px * var(--ui-factor));
+  margin-top: calc(10px * var(--ui-factor));
+  color: var(--text-secondary);
+  font-size: calc(10px * var(--ui-factor));
+}
+
+.flux-status-legend {
+  display: flex;
+  gap: calc(4px * var(--ui-factor)) calc(8px * var(--ui-factor));
+  flex-wrap: wrap;
+}
+
+.flux-status-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px * var(--ui-factor));
+  padding: calc(3px * var(--ui-factor)) calc(7px * var(--ui-factor));
+  border-radius: 4px;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.flux-status-legend button:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.flux-status-legend button:not(:disabled):hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.flux-status-legend button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
+
+.flux-status-legend strong {
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.flux-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
+}
+
+.flux-status-note {
+  color: var(--text-muted);
+}
+
+/* 3-column facts footer matching .helm-inventory-facts */
+.flux-inventory-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--border-subtle);
+}
+
+.flux-inventory-facts > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(10px * var(--ui-factor));
+  padding: calc(10px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  box-shadow: inset 1px 0 var(--border-subtle);
+  font-size: calc(10px * var(--ui-factor));
+}
+
+.flux-inventory-facts > div:first-child {
+  box-shadow: none;
+}
+
+.flux-inventory-facts dt { color: var(--text-secondary); }
+.flux-inventory-facts dd {
+  font-size: calc(12px * var(--ui-factor));
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* Analytics 2-column section grid matching .helm-overview-grid */
+.flux-analytics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.1fr);
+  gap: calc(14px * var(--ui-factor));
+  margin-bottom: calc(14px * var(--ui-factor));
+  min-width: 0;
+  align-items: stretch;
+}
+
+.flux-analytics-grid .overview-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flux-analytics-grid .overview-section-body {
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.flux-section-count {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--ui-factor));
+}
+
+.flux-health-chart-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(16px * var(--ui-factor));
+  padding: calc(14px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.flux-donut {
+  width: calc(116px * var(--ui-factor));
+  max-width: 100%;
+  flex: 0 0 calc(116px * var(--ui-factor));
+}
+
+.flux-donut-value {
+  fill: var(--text-primary);
+  font: 600 24px var(--font-mono);
+  letter-spacing: -.04em;
+}
+
+.flux-donut-sub {
+  fill: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.flux-state-breakdown {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: calc(6px * var(--ui-factor));
+  flex: 1 1 calc(150px * var(--ui-factor));
+  min-width: 0;
+  margin: 0;
+}
+
+.flux-state-breakdown > button {
+  display: flex;
+  align-items: center;
+  gap: calc(7px * var(--ui-factor));
+  padding: calc(3px * var(--ui-factor)) calc(6px * var(--ui-factor));
+  border-radius: 4px;
+  font-size: calc(11px * var(--ui-factor));
+  text-align: left;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.flux-state-breakdown > button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.flux-state-breakdown > button[aria-pressed="true"] {
+  background: var(--accent-subtle);
+}
+
+.flux-state-breakdown > button:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.flux-state-breakdown-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.flux-state-breakdown-pct {
+  color: var(--text-secondary);
+  font: calc(10px * var(--ui-factor)) var(--font-mono);
+  min-width: 3.5ch;
+  text-align: right;
+}
+
+/* Kind & Namespace breakdown tables matching Helm Overview rows */
+.flux-table-columns {
+  display: grid;
+  font-size: calc(10px * var(--ui-factor));
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
+  padding: calc(7px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  align-items: center;
+}
+
+.flux-ns-columns,
+.flux-ns-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 4.5ch 13px;
+  gap: calc(12px * var(--ui-factor));
+  align-items: center;
+}
+
+.flux-ns-columns {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) calc(4.5ch + 13px + 12px * var(--ui-factor));
+}
+
+.flux-ns-columns > :last-child {
+  text-align: right;
+}
+
+.flux-ns-row {
+  width: 100%;
+  text-align: left;
+  min-width: 0;
+  padding: calc(8px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  font-size: calc(11px * var(--ui-factor));
+}
+
+.flux-ns-row + .flux-ns-row,
+.flux-kind-row + .flux-kind-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.flux-ns-row:hover,
+.flux-kind-row:hover {
+  background: var(--bg-hover);
+}
+
+.flux-ns-row[aria-pressed="true"] {
+  background: var(--accent-subtle);
+}
+
+.flux-ns-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--ui-factor));
+}
+
+.flux-ns-name > span {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.flux-ns-name small {
+  font-size: calc(10px * var(--ui-factor));
+  color: var(--text-secondary);
+}
+
+.flux-ns-name small[data-tone="danger"] { color: var(--status-danger); }
+.flux-ns-name small[data-tone="warn"] { color: var(--status-warn); }
+.flux-ns-name small[data-tone="pending"] { color: var(--status-pending); }
+.flux-ns-name small[data-tone="ok"] { color: var(--status-ok); }
+
+.flux-ns-row > strong,
+.flux-kind-row > strong {
+  text-align: right;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.flux-kind-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, .9fr) 5ch 13px;
+  gap: calc(10px * var(--ui-factor));
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  min-width: 0;
+  padding: calc(7px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  font-size: calc(11px * var(--ui-factor));
+}
+
+.flux-kind-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(1px * var(--ui-factor));
+}
+
+.flux-kind-name > span {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.flux-kind-name small {
+  font-size: calc(10px * var(--ui-factor));
+  color: var(--text-secondary);
+}
+
+.flux-row-arrow {
+  color: var(--text-muted);
+  opacity: .5;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.flux-ns-row:hover .flux-row-arrow,
+.flux-kind-row:hover .flux-row-arrow {
+  opacity: 1;
+  transform: translateX(1px);
+}
+
+.flux-card-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: calc(8px * var(--ui-factor));
+  padding: calc(9px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  border-top: 1px solid var(--border-subtle);
+  font-size: calc(10px * var(--ui-factor));
+  color: var(--text-secondary);
+}
+
+.flux-section-link {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(4px * var(--ui-factor));
+  color: var(--accent-text);
+  font-size: calc(10px * var(--ui-factor));
+  font-weight: 500;
+}
+
+.flux-section-link:hover {
+  text-decoration: underline;
+}
+
+/* Compact controller event activity chart inside Recent Activity */
+.flux-event-chart {
+  padding: calc(10px * var(--ui-factor)) calc(16px * var(--ui-factor)) calc(8px * var(--ui-factor));
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-canvas) 35%, transparent);
+}
+
+.flux-event-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: calc(6px * var(--ui-factor));
+  margin-bottom: calc(6px * var(--ui-factor));
+  font-size: calc(10px * var(--ui-factor));
+  color: var(--text-secondary);
+}
+
+.flux-event-chart-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(10px * var(--ui-factor));
+}
+
+.flux-event-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px * var(--ui-factor));
+}
+
+.flux-event-bars {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: end;
+  gap: calc(4px * var(--ui-factor));
+  height: calc(42px * var(--ui-factor));
+}
+
+.flux-event-bar-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--border-subtle) 45%, transparent);
+  overflow: hidden;
+}
+
+.flux-event-bar-seg {
+  width: 100%;
+  min-height: 2px;
+}
+
+.flux-event-bar-seg.is-warning {
+  background: var(--status-warn);
+}
+
+.flux-event-bar-seg.is-normal {
+  background: var(--status-ok);
+}
+
+.flux-event-chart-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: calc(4px * var(--ui-factor));
+  font-family: var(--font-mono);
+  font-size: calc(9px * var(--ui-factor));
+  color: var(--text-muted);
+}
+
+/* Active filter chips inline with the search bar above Needs Attention / Recent Activity */
+.flux-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(6px * var(--ui-factor));
+  min-width: 0;
+}
+
+.flux-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px * var(--ui-factor));
+  padding: calc(3px * var(--ui-factor)) calc(8px * var(--ui-factor));
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+  font-size: calc(10px * var(--ui-factor));
+}
+
+.flux-filter-chip:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* Group card inline progress bar & Helm-aligned detail accents */
+.delivery-kind-card-bar {
+  margin-bottom: calc(10px * var(--ui-factor));
+}
+
+.delivery-kind-card[data-tone="danger"] .delivery-card-detail { color: var(--status-danger); }
+.delivery-kind-card[data-tone="warn"] .delivery-card-detail { color: var(--status-warn); }
+
+/* Argo CD dual-axis bars and Sync/Health mini donuts */
+.argo-axes-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: calc(12px * var(--ui-factor));
+  border-top: 1px solid var(--border-subtle);
+  padding: calc(12px * var(--ui-factor)) calc(16px * var(--ui-factor));
+}
+
+.argo-axis-block {
+  display: flex;
+  flex-direction: column;
+  gap: calc(7px * var(--ui-factor));
+  min-width: 0;
+}
+
+.argo-axis-header {
+  display: grid;
+  grid-template-columns: calc(48px * var(--ui-factor)) minmax(0, 1fr);
+  align-items: center;
+  gap: calc(10px * var(--ui-factor));
+}
+
+.argo-axis-title {
+  font-size: calc(10px * var(--ui-factor));
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.argo-donuts-wrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(12px * var(--ui-factor));
+  padding: calc(14px * var(--ui-factor)) calc(16px * var(--ui-factor));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.argo-donut-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(6px * var(--ui-factor));
+  min-width: 0;
+}
+
+.argo-mini-donut {
+  width: calc(100px * var(--ui-factor));
+  flex: 0 0 auto;
+}
+
+.argo-donut-caption {
+  font-size: calc(10px * var(--ui-factor));
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* Responsive container queries aligned with helm-overview.css */
+@container (max-width: 900px) {
+  .flux-analytics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 640px) {
+  .flux-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .flux-kpi:nth-child(3) {
+    box-shadow: none;
+  }
+  .flux-kpi:nth-child(n + 3) {
+    border-top: 1px solid var(--border-subtle);
+  }
+  .flux-inventory-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .flux-inventory-facts > div {
+    box-shadow: none;
+  }
+  .flux-inventory-facts > div + div {
+    border-top: 1px solid var(--border-subtle);
+  }
+}
+
+@container (max-width: 380px) {
+  .flux-kpi {
+    padding: calc(11px * var(--ui-factor)) calc(12px * var(--ui-factor));
+  }
+  .flux-kpi-label svg:first-child {
+    display: none;
+  }
+  .flux-ns-row,
+  .flux-ns-columns,
+  .flux-kind-row,
+  .flux-health-chart-wrap {
+    gap: calc(8px * var(--ui-factor));
+    padding-inline: calc(12px * var(--ui-factor));
+  }
+  .flux-ns-columns,
+  .flux-ns-row {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr) 3.5ch 13px;
+  }
+  .flux-ns-columns {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr) calc(3.5ch + 13px + 8px * var(--ui-factor));
+  }
+  .argo-axes-wrap,
+  .argo-donuts-wrap {
+    padding-inline: calc(12px * var(--ui-factor));
+  }
+  .argo-donuts-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .argo-axis-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: calc(4px * var(--ui-factor));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flux-kpi,
+  .flux-status-legend button,
+  .flux-row-arrow {
+    transition: none;
+  }
+}
